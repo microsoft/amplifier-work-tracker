@@ -61,20 +61,11 @@ jobs:
           sudo install -m 0755 "bd-${BD_VERSION}/bd" /usr/local/bin/bd
           bd --version
 
-      - name: Start the shared dolt server
-        run: |
-          set -euo pipefail
-          nohup dolt sql-server -H 127.0.0.1 -P 3308 > /tmp/dolt-server.log 2>&1 &
-          for _ in $(seq 1 30); do
-            if (echo > /dev/tcp/127.0.0.1/3308) 2>/dev/null; then
-              echo "dolt sql-server is up"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "dolt sql-server did not come up in time"
-          cat /tmp/dolt-server.log
-          exit 1
+      # NOTE: we deliberately do NOT pre-start a dolt server here.
+      # `bd` owns the shared-server lifecycle and starts it on first use. A
+      # server we start ourselves is, from bd's point of view, "another
+      # project's dolt server" already holding port 3308 -- and bd refuses
+      # rather than attaching to it. Let bd start its own.
 
       - name: Set up amplifier-work-tracker
         run: |
