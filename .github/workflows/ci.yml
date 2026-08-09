@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # Single source of truth for the pinned bd release. Bump this one line to
+  # move the floor -- keep it in sync with
+  # src/amplifier_work_tracker/adapter.py's MIN_VERSION / MAX_TESTED
+  # constants when you do.
+  BD_VERSION: "1.1.2"
+  DOLT_VERSION: "2.2.3"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Cache bd/dolt downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/amplifier-work-tracker-ci-downloads
+          key: bd-${{ env.BD_VERSION }}-dolt-${{ env.DOLT_VERSION }}-${{ runner.os }}
+
+      - name: Install dolt (pinned)
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.cache/amplifier-work-tracker-ci-downloads
+          cd ~/.cache/amplifier-work-tracker-ci-downloads
+          if [ ! -x "./dolt-${DOLT_VERSION}/dolt" ]; then
+            curl -fsSL -o dolt.tar.gz \
+              "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/dolt-linux-amd64.tar.gz"
+            mkdir -p "dolt-${DOLT_VERSION}"
+            tar -xzf dolt.tar.gz -C "dolt-${DOLT_VERSION}" --strip-components=1
+          fi
+          sudo install -m 0755 "dolt-${DOLT_VERSION}/bin/dolt" /usr/local/bin/dolt
+          dolt version
+
+      - name: Install bd (pinned)
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.cache/amplifier-work-tracker-ci-downloads
+          cd ~/.cache/amplifier-work-tracker-ci-downloads
+          asset="beads_${BD_VERSION}_linux_amd64.tar.gz"
+          if [ ! -f "$asset" ]; then
+            curl -fsSL -o "$asset" \
+              "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/${asset}"
+          fi
+          mkdir -p "bd-${BD_VERSION}"
+          tar -xzf "$asset" -C "bd-${BD_VERSION}"
+          sudo install -m 0755 "bd-${BD_VERSION}/bd" /usr/local/bin/bd
+          bd --version
+
+      - name: Start the shared dolt server
+        run: |
+          set -euo pipefail
+          nohup dolt sql-server -H 127.0.0.1 -P 3308 > /tmp/dolt-server.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if (echo > /dev/tcp/127.0.0.1/3308) 2>/dev/null; then
+              echo "dolt sql-server is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "dolt sql-server did not come up in time"
+          cat /tmp/dolt-server.log
+          exit 1
+
+      - name: Set up amplifier-work-tracker
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python -e ".[dev]"
+
+      - name: Lint + format check (ruff)
+        run: .venv/bin/ruff check . && .venv/bin/ruff format --check .
+
+      - name: Type check (pyright)
+        run: .venv/bin/pyright src tests
+
+      - name: Tier 1 -- unit tests
+        run: .venv/bin/python -m pytest tests/unit -v
+
+      - name: Tier 2 -- integration tests
+        run: .venv/bin/python -m pytest -m integration tests/integration -v
+
+      - name: Tier 3 -- CLI surface tests
+        run: .venv/bin/python -m pytest -m cli tests/cli -v
+
+      - name: Dolt server log (always, for debugging)
+        if: always()
+        run: cat /tmp/dolt-server.log || true

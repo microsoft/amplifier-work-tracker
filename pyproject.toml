@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "amplifier-work-tracker"
+version = "0.1.0"
+description = "Multi-agent work coordination for parallel coding agents, built on Beads (bd)."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/microsoft/amplifier-work-tracker"
+Repository = "https://github.com/microsoft/amplifier-work-tracker"
+
+[project.scripts]
+amplifier-work-tracker = "amplifier_work_tracker.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "pyright>=1.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/amplifier_work_tracker"]
+
+# ---------------------------------------------------------------------------
+# pytest -- three independently-selectable tiers.
+#
+#   tier 1 (unit)        tests/unit/         no marker, no bd, no network
+#   tier 2 (integration) tests/integration/  @pytest.mark.integration
+#   tier 3 (cli)         tests/cli/          @pytest.mark.cli
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: real bd + shared dolt server required (tier 2)",
+    "cli: full amplifier-work-tracker CLI-surface tests, requires the real bd binary (tier 3)",
+]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyright]
+include = ["src", "tests"]
+exclude = [".venv", "**/__pycache__", "modules"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+
+# modules/ is excluded from the root config above because each module under
+# modules/ is its own installable package with its own pyproject.toml (see
+# modules/tool-work-tracker/pyproject.toml), and pyright resolves each one
+# independently via its own [tool.pyright] extraPaths. Run pyright inside a
+# given module directory (or point pyright at it directly) to check it.

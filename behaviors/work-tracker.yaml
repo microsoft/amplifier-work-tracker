@@ -1,0 +1,28 @@
+bundle:
+  name: work-tracker-behavior
+  version: 0.1.0
+  description: >-
+    Adds the tool-work-tracker module (atomic claim + PID-bound custody, fenced
+    resolve, discovered-work filing), two agents, two skills, and a thin
+    always-on awareness context covering the silent-failure hazards.
+
+tools:
+  # Relative sources resolve against THIS FILE's directory (behaviors/), not the
+  # repo root. "../modules/..." is correct; "./modules/..." silently resolves to
+  # behaviors/modules/ and the module never loads.
+  - module: tool-work-tracker
+    source: ../modules/tool-work-tracker
+  - module: tool-skills
+    source: git+https://github.com/microsoft/amplifier-bundle-skills@main#subdirectory=modules/tool-skills
+    config:
+      skills:
+        - "@work-tracker:skills"
+
+agents:
+  include:
+    - work-tracker:work-executor
+    - work-tracker:feedback-triage
+
+context:
+  include:
+    - work-tracker:context/awareness.md

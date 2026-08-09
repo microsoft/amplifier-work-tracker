@@ -1,0 +1,86 @@
+// The work-tracker bundle: an Amplifier add-on that lets AI agents track, triage, and work through a shared queue of tasks.
+
+digraph work_tracker {
+    rankdir=LR
+    fontname="Helvetica"
+    fontsize=12
+    label="Work Tracker v0.1.0\nA shared task queue that AI agents can read, triage, and work through"
+    labelloc=t
+    labeljust=c
+    nodesep=0.6
+    ranksep=0.7
+    bgcolor="white"
+    source_hash="bd6ab569bc1cb032cdfe732af16c9d74e5d6cfa3a01b99a16537dcb4a732fc9c"
+
+    node [fontname="Helvetica", fontsize=11, style="filled,rounded"]
+    edge [fontname="Helvetica", fontsize=9]
+
+    root_work_tracker [label="Work Tracker (main entry point) v0.1.0\n0 tools · 0 agents\n~1320 tok aggregate", shape=box, fillcolor="#80cbc4", style="filled,rounded,bold", penwidth=2]
+
+    subgraph cluster_behaviors {
+        label="Capability Packages (what this repo adds)"
+        style="filled"
+        fillcolor="#f9f9f9"
+        color="#999999"
+
+        beh_work_tracker_behavior [label="Task Tracking Capability\n2 tools · 1 ctx\n~1855 tok", shape=box, fillcolor="#e0f2f1", style="filled,rounded"]
+    }
+
+    subgraph cluster_agents {
+        label="Specialist Assistants"
+        style="filled"
+        fillcolor="#f9f9f9"
+        color="#999999"
+
+        agt_feedback_triage [label="Feedback Sorter\nturns raw feedback into tasks\n~626 tok desc", shape=box, fillcolor="#c8e6c9", style="filled,rounded"]
+        agt_work_executor [label="Task Doer\npicks up tasks and completes them\n~493 tok desc", shape=box, fillcolor="#c8e6c9", style="filled,rounded"]
+    }
+
+    subgraph cluster_modules {
+        label="Software Components (the actual code)"
+        style="filled"
+        fillcolor="#f9f9f9"
+        color="#999999"
+
+        mod_tool_work_tracker [label="Task Queue Toolkit\ncreate, list, update, close tasks\n4 tool · ~241 tok", shape=box, fillcolor="#bbdefb", style="filled,rounded"]
+    }
+
+    subgraph cluster_context {
+        label="Background Notes (always-on guidance)"
+        style="filled"
+        fillcolor="#f9f9f9"
+        color="#999999"
+
+        ctx_awareness_md [label="How to use the task queue\n(awareness.md)\n~505 tok", shape=box, fillcolor="#e1bee7", style="filled,rounded"]
+    }
+
+    subgraph cluster_legend {
+        label="Legend — what each color means"
+        style="filled"
+        fillcolor="white"
+        color="#cccccc"
+        fontsize=9
+
+        leg_root [label="main entry point", shape=box, fillcolor="#80cbc4", style="filled,rounded,bold", fontsize=9]
+        leg_behavior [label="capability package", shape=box, fillcolor="#e0f2f1", style="filled,rounded", fontsize=9]
+        leg_agent [label="specialist assistant", shape=box, fillcolor="#c8e6c9", style="filled,rounded", fontsize=9]
+        leg_module [label="software component", shape=box, fillcolor="#bbdefb", style="filled,rounded", fontsize=9]
+        leg_provider [label="AI model source", shape=box, fillcolor="#e0e0e0", style="filled,rounded", fontsize=9]
+        leg_context [label="background notes", shape=box, fillcolor="#e1bee7", style="filled,rounded", fontsize=9]
+        leg_standalone [label="ready-to-run variant", shape=box, fillcolor="#80cbc4", style="filled,rounded", fontsize=9]
+        leg_experiment [label="experimental", shape=box, fillcolor="#e1bee7", style="filled,rounded", fontsize=9]
+        leg_ext_cost [label="borrowed, adds cost", shape=box, fillcolor="#80cbc4", style="dashed", color="red", penwidth=2, fontsize=9]
+        leg_ext_muted [label="borrowed, no cost", shape=box, fillcolor="#f5f5f5", style="dashed", fontsize=9]
+    }
+
+    disclaimer [label="Sizes are rough estimates of how much reading material\neach piece adds (~4 characters per token)\nSolid border = lives in this repo (counted)\nDashed + red = borrowed from elsewhere, adds cost (not counted)\nDashed + muted = borrowed, no added cost\nNot shown: costs from sub-tasks or anything decided at run time", shape=note, fillcolor="#eceff1", style="filled", fontsize=9]
+
+    ext_githttps___github_com_microsoft_amplifier_foundation_main [label="Amplifier Foundation\nshared building blocks, borrowed from another repo\n(external, cost)", shape=box, fillcolor="#80cbc4", style="dashed", color="red", penwidth=2]
+
+    root_work_tracker -> ext_githttps___github_com_microsoft_amplifier_foundation_main [style=dashed]
+    root_work_tracker -> beh_work_tracker_behavior [label="composes"]
+    beh_work_tracker_behavior -> agt_work_executor [label="owns"]
+    beh_work_tracker_behavior -> agt_feedback_triage [label="owns"]
+    beh_work_tracker_behavior -> mod_tool_work_tracker [label="uses", penwidth=0.8]
+    beh_work_tracker_behavior -> ctx_awareness_md [style=dotted, color=purple]
+}
