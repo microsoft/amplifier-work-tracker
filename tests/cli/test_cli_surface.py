@@ -125,7 +125,11 @@ def test_claim_then_resolve_then_notify_full_cli_flow(
     tests/integration, which exercises the library) -- claim, resolve, and
     notify must each actually run and exit 0 on a real item."""
     bd = workspace.project(shared_project_name)
-    report_id = bd.create("cli-flow report", tags=[A.LANE_INTAKE, unique_lane])
+    # The report must NOT share the lane we claim from. Intake and work are
+    # different lanes by design; tagging both with `unique_lane` made the
+    # report claimable, and `claim` then returned whichever sorted first --
+    # green locally, red in CI. Give the report its own intake lane.
+    report_id = bd.create("cli-flow report", tags=[A.LANE_INTAKE, f"{unique_lane}-intake"])
     issue_id = bd.create(
         "cli-flow issue", tags=[A.LANE_WORK, unique_lane], discovered_from=[report_id]
     )
