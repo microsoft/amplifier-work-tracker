@@ -56,6 +56,12 @@ include = ["src", "tests"]
 exclude = [".venv", "**/__pycache__", "modules"]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
+# Point pyright at the project venv explicitly. Without this it analyses with
+# its own default environment and cannot resolve dev-only imports such as
+# pytest -- which passes locally (where a venv is usually already active) and
+# fails in CI. Naming the venv here makes the two environments agree.
+venvPath = "."
+venv = ".venv"
 
 # modules/ is excluded from the root config above because each module under
 # modules/ is its own installable package with its own pyproject.toml (see
