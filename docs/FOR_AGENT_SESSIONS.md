@@ -145,3 +145,22 @@ amplifier-work-tracker notify --project <p>   # carry resolutions back to report
 `reap` never touches a claim whose custody is fresh. `notify` exists because resolution does
 **not** propagate on its own — measured: closing an item left every linked report untouched.
 Without it on a timer, the return path silently never fires.
+
+---
+
+## Maintainer note: branch protection
+
+`main` protection is defined in [`.github/branch-protection-ruleset.json`](../.github/branch-protection-ruleset.json).
+Apply it with repo-admin rights:
+
+```bash
+gh api -X POST repos/microsoft/amplifier-work-tracker/rulesets \
+  --input .github/branch-protection-ruleset.json
+```
+
+It deliberately sets `required_approving_review_count: 0` rather than 1-with-a-bypass.
+Bypass actors bypass the *entire* ruleset including required status checks, so a bypass
+would also exempt the bypasser from CI. With 0, the gate — PR required, CI green, linear
+history, no force-push — applies to everyone including maintainers, and a solo maintainer
+can still merge their own PR without admin rights. Raise the count to 1 when a second
+maintainer exists.
