@@ -229,6 +229,20 @@ class AssumptionViolated(BeadsError):
     """The installed Beads no longer behaves the way we depend on."""
 
 
+class FencedError(BeadsError):
+    """This holder is no longer the current owner -- reclaimed by `reap`,
+    or taken over by another session -- as opposed to a generic operational
+    failure (a `bd`/dolt command failing, a readback mismatch). Callers that
+    track local claim/custody state (see
+    `amplifier_module_tool_work_tracker.WorkTrackerSession`) must treat this
+    specifically as "release local state, the item is no longer ours" --
+    and must NOT do the same for a plain `BeadsError`, where bd still
+    considers us the holder and the operation may simply be retried.
+    Raised only from `Beads.resolve` and `Beads.renew_custody`'s fence
+    checks; every other Beads failure stays a plain `BeadsError`.
+    """
+
+
 @dataclass
 class Item:
     """One unit of work or one user report, in OUR vocabulary."""
@@ -460,13 +474,13 @@ class Beads:
             cust = current.meta.get(C.CUSTODY_KEY) if isinstance(current.meta, dict) else None
             if isinstance(cust, dict) and cust.get("holder"):
                 if current.holder != who or cust.get("holder") != who:
-                    raise BeadsError(
+                    raise FencedError(
                         f"refusing to close {item_id}: current holder is "
                         f"{current.holder!r} (custody holder {cust.get('holder')!r}), "
                         f"not {who!r}. Your claim was reclaimed while you were away."
                     )
             elif current.status == "held" and current.holder and current.holder != who:
-                raise BeadsError(
+                raise FencedError(
                     f"refusing to close {item_id}: it is held by {current.holder!r}, "
                     f"not {who!r}. Your claim was reclaimed while you were away."
                 )
@@ -579,14 +593,14 @@ class Beads:
                 f"-- call take_custody first"
             )
         if current.get("holder") != holder or int(current.get("generation", -1)) != generation:
-            raise BeadsError(
+            raise FencedError(
                 f"refusing to renew custody on {item_id}: current holder is "
                 f"{current.get('holder')!r} generation {current.get('generation')}, "
                 f"caller is {holder!r} generation {generation}. Your custody "
                 f"was taken over while you were away."
             )
         if it.holder != holder:
-            raise BeadsError(
+            raise FencedError(
                 f"refusing to renew custody on {item_id}: bd assignee is "
                 f"{it.holder!r}, not {holder!r} -- claim was reassigned"
             )
@@ -635,7 +649,10 @@ class Workspace:
     def project(self, name: str, actor: str | None = None) -> Beads:
         d = self.path(name) / ".beads"
         if not d.is_dir():
-            raise BeadsError(f"project {name!r} not found at {d}. Create it first.")
+            raise BeadsError(
+                f"project {name!r} not found at {d}. Create it first: "
+                f"amplifier-work-tracker new {name}"
+            )
         return Beads(d, actor=actor)
 
     def create(self, name: str) -> Path:

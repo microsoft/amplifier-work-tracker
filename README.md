@@ -53,9 +53,10 @@ amplifier-work-tracker notify --project my-project
 amplifier-work-tracker doctor                      # verify the installed bd still behaves as we assume
 ```
 
-See [`docs/AGENT_PROTOCOL.md`](docs/AGENT_PROTOCOL.md) for the full coding-agent loop and its hard
-rules, and [`docs/DESIGN.md`](docs/DESIGN.md) for the complete design, including every measured
-number below.
+Compose the bundle (`git+https://github.com/microsoft/amplifier-work-tracker@main`) and load the
+`claiming-work-safely` skill (or delegate to `work-tracker:work-executor`) for the full agent-facing
+claim/custody loop and its hard rules, and see [`docs/DESIGN.md`](docs/DESIGN.md) for the complete
+design, including every measured number below.
 
 ## How it works
 
@@ -111,20 +112,8 @@ retraction, in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Contributing
 
-> [!NOTE]
-> This project is not currently accepting external contributions, but we're actively working toward opening this up. We value community input and look forward to collaborating in the future. For now, feel free to fork and experiment!
-
-Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit [Contributor License Agreements](https://cla.opensource.microsoft.com).
-
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md), which also documents the `main`
+branch protection ruleset and why it's configured the way it is.
 
 ## Trademarks
 

@@ -73,11 +73,11 @@ embedded writers produced **1 winner and 19 hard lock failures**
 and 19 clean, retryable conflicts instead. Server mode is not optional for
 any topology with more than one active writer.
 
-## Schedule `reap` and `notify` — they do not run themselves
+## `reap` and `notify` — they do not run themselves
 
 **Resolution does not propagate to reporters automatically.** Measured
-directly: closing an issue left every linked report untouched. Someone must
-run:
+directly: closing an issue left every linked report untouched. Something
+must run:
 
 ```bash
 amplifier-work-tracker reap --project <p>     # release stale custody back to the queue
@@ -86,10 +86,16 @@ amplifier-work-tracker notify --project <p>   # flip resolved reports, with the 
 
 Neither of these is a tool an agent session calls — they operate across
 the whole project's queue, not on behalf of one session's held item (see
-the bundle's operator CLI surface). Put both on a timer (cron, systemd
-timer, or equivalent) per project. Without `reap` running, dead agents wedge
-work forever. Without `notify` running, users never learn their report was
-fixed, and the entire reason to build this system stops applying.
+the bundle's operator CLI surface). **If the background service is
+installed** (`work_tracker_install`, or `amplifier-work-tracker service
+install`), both already run automatically as in-process sweeps inside it --
+see `reap_loop`/`notify_loop` in `src/amplifier_work_tracker/supervisor.py`,
+started by `cli.cmd_serve`. Only schedule these two commands manually
+(cron, systemd timer, or equivalent) if you are running
+`amplifier-work-tracker serve` yourself without the installed service.
+Without `reap` running somewhere, dead agents wedge work forever. Without
+`notify` running somewhere, users never learn their report was fixed, and
+the entire reason to build this system stops applying.
 
 ## Known silent sharp edges
 

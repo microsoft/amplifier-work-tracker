@@ -22,7 +22,7 @@ yours. This was measured directly and it double-claims under contention:
 | `bd update <id> --claim` | 1.1.2 | shared-server | 8 | **2** |
 | `bd ready --claim` (what `work_claim` uses) | 1.1.2 | shared-server | 6 | **0** |
 
-A double-claim is silent: 2–5 agents each get a success signal and believe
+A double-claim is silent: 2–3 agents each get a success signal and believe
 they hold the same item. Only one actually does. The others proceed to work
 on an issue they do not hold — no error, no undo. `work_claim` uses the
 single atomic path exclusively; there is no tool, CLI flag, or code path
@@ -86,12 +86,30 @@ reclaimed (stale, or a takeover), **you no longer hold the item.** Do not:
   the exact hazard this system exists to prevent.
 - Retry the same call expecting a different result.
 
+A silent close here would destroy their work AND tell a real user their
+issue was fixed when it was not — that is the actual failure this refusal
+exists to prevent, not just a technicality.
+
 Do:
 
 - Stop immediately.
 - Report exactly what you had completed and the state you left the work in
   (files changed, tests run, anything not yet committed).
 - Let a human or the next claimer decide how to proceed.
+
+> **KNOWN ISSUE (as of 2026-08-10, fixed in this same change):** on the
+> refusal path above, `WorkTrackerSession` used to clear its held-item state
+> only on success. A reap/takeover refusal left the session believing it
+> still held the reclaimed item — so `work_claim`/`work_declare`/`work_resolve`
+> for ANY item then refused for the rest of that process's life, with no
+> tool call able to clear it. If you are running a build older than this
+> fix, the guidance above still applies (stop, report, do not retry) but
+> recovery additionally requires a fresh process. This fix (see
+> `WorkTrackerSession.resolve`/`.declare`/`._renew_loop`) clears the held
+> state on a fenced/reclaimed refusal so the SAME session can claim again
+> immediately — verified via a claim → force-reap → claim-again test
+> covering both the explicit refusal and the background renewal loop's own
+> detection.
 
 ## Empty queue
 
@@ -115,4 +133,7 @@ Every interaction with the queue goes through `work_claim`, `work_declare`,
 `amplifier-work-tracker` command. Never shell out to `bd` itself. That seam
 is the entire reason a Beads upgrade fails loudly (via `doctor`) instead of
 silently corrupting parallel work — see the `work-tracker-operations` skill
+
+If no command here expresses what you actually need, that is a finding
+worth reporting, not a reason to go around the seam.
 for what the seam covers and how to read a violation.

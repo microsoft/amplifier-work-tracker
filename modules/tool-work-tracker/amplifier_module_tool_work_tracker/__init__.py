@@ -15,9 +15,10 @@ held yet), and the CLI's `new` only creates the PROJECT, not any work inside
 it. That gap forced a real session to go around the seam entirely -- raw
 `bd create` plus a hand-guessed `bd label add <id> lane:eng` (inferring the
 lane label vocabulary from an unrelated agent description) -- exactly the
-kind of raw-`bd` escape `docs/FOR_AGENT_SESSIONS.md` rule #4 forbids in
-bold. `work_add` (and the CLI's `add`) apply the engineering lane label
-themselves; a caller never needs to know `lane:eng` exists.
+kind of raw-`bd` escape the `claiming-work-safely` skill's "never touch
+`bd` directly" rule forbids. `work_add` (and the CLI's `add`) apply the
+engineering lane label themselves; a caller never needs to know `lane:eng`
+exists.
 
 Why a tool module, and not "just shell out to the CLI in bash":
 `amplifier-work-tracker custody` binds its liveness signal to a PID, and
@@ -128,14 +129,33 @@ class WorkTrackerSession:
                     generation=held.generation,
                     pid=os.getpid(),
                 )
-                held.generation = rec["generation"]
             except A.BeadsError as e:
-                # Fenced out: someone else now holds this item (a reap, or a
-                # takeover). Stop renewing -- work_status/work_resolve report
-                # the loss rather than silently keep trying forever.
-                held.lost_reason = str(e)
-                held.stop.set()
+                # Any renew failure ends this loop for good -- no retry on
+                # the next interval, by design: a single failed renew already
+                # means the signal wasn't refreshed, and the custody TTL will
+                # do the rest regardless.
+                #
+                # A.FencedError specifically means bd no longer considers us
+                # the holder (reaped while idle, or taken over) -- in that
+                # case this session's OWN belief that it holds the item must
+                # be dropped too. Leaving self._held set here was the
+                # self-poisoning bug: work_claim/work_declare/work_resolve
+                # for ANY item refused forever, for the rest of this
+                # process's life, with no tool call able to clear it -- the
+                # ordinary "held an item long enough to be reaped, did
+                # nothing else" path this bundle exists to survive. A plain
+                # (non-fenced) BeadsError -- e.g. a transient bd/dolt command
+                # failure -- does NOT clear self._held: bd still considers us
+                # the holder, so work_resolve can still succeed via its own
+                # live fence check even though background renewal stopped.
+                with self._lock:
+                    held.lost_reason = str(e)
+                    held.stop.set()
+                    if isinstance(e, A.FencedError) and self._held is held:
+                        self._held = None
                 return
+            with self._lock:
+                held.generation = rec["generation"]
 
     # ------------------------------------------------------------ tools
 
@@ -221,6 +241,15 @@ class WorkTrackerSession:
                     declared_state=state,
                 )
                 held.generation = rec["generation"]
+            except A.FencedError as e:
+                # Reclaimed/reassigned while we were away -- clear local
+                # state and stop custody so this session can claim again.
+                # See `claim`'s "already holding" refusal and the
+                # reap-recovery tests: leaving self._held set here is the
+                # session-poisoning bug this fix closes.
+                held.stop.set()
+                self._held = None
+                return ToolResult(success=False, output=str(e))
             except A.BeadsError as e:
                 return ToolResult(success=False, output=str(e))
             return ToolResult(success=True, output={"id": held.item_id, "declared_state": state})
@@ -239,6 +268,15 @@ class WorkTrackerSession:
             try:
                 bd = self._project(held.project)
                 item = bd.resolve(item_id, reason, actor=held.actor)
+            except A.FencedError as e:
+                # Reclaimed/reassigned while we were away -- clear local
+                # state and stop custody so this session can claim again.
+                # See `claim`'s "already holding" refusal and the
+                # reap-recovery tests: leaving self._held set here is the
+                # session-poisoning bug this fix closes.
+                held.stop.set()
+                self._held = None
+                return ToolResult(success=False, output=str(e))
             except A.BeadsError as e:
                 return ToolResult(success=False, output=str(e))
             held.stop.set()

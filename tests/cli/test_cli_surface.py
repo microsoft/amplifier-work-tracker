@@ -147,9 +147,10 @@ def test_add_creates_a_claimable_item_without_needing_lane_vocabulary(
 def test_claim_on_empty_queue_exits_3_and_prints_no_error(
     run_cli, shared_project_name, unique_actor, unique_lane
 ):
-    """Exit code 3 on an empty queue is documented as a NORMAL outcome
-    (AGENT_PROTOCOL.md rule #4), not an error -- must not be confused with
-    a real failure, and must not print error-looking text."""
+    """Exit code 3 on an empty queue is documented as a NORMAL outcome (see
+    the `claiming-work-safely` skill / `awareness.md`), not an error -- must
+    not be confused with a real failure, and must not print error-looking
+    text."""
     result = run_cli(
         ["claim", "--project", shared_project_name, "--actor", unique_actor, "--lane", unique_lane]
     )

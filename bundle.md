@@ -41,6 +41,10 @@ up the moment more than one agent works a queue at once, and each one is
 
 ## What's available in this session
 
+Kept in sync with `mount()`'s tool list in
+`modules/tool-work-tracker/amplifier_module_tool_work_tracker/` -- audit
+this table whenever that module's tools change.
+
 | Mechanism | Name | Purpose |
 |---|---|---|
 | Tool | `work_claim` | Atomically claim + start PID-bound custody, in one call |
@@ -48,34 +52,53 @@ up the moment more than one agent works a queue at once, and each one is
 | Tool | `work_resolve` | Fenced close of the currently held item |
 | Tool | `work_status` | Read-only: projects, queue depths, what this session holds |
 | Tool | `work_file` | File newly discovered work, linked `discovered-from` the held item |
+| Tool | `work_add` | File a new engineering-lane item directly, no held item required -- the sanctioned way to seed a project's FIRST item(s) |
+| Tool | `work_tracker_status` | Read-only: is the background service (shared dolt server + reap/notify sweeps) installed and healthy on this machine |
+| Tool | `work_tracker_install` | Install and start the background service -- the only tool here that changes system state |
 | Agent | `work-tracker:work-executor` | Claims and works engineering-lane items to resolution |
-| Agent | `work-tracker:feedback-triage` | Turns raw user reports into properly-specified engineering issues |
 | Skill | `claiming-work-safely` | The claim/custody procedure, freshness model, and post-reap recovery |
 | Skill | `work-tracker-operations` | Reading `doctor`, the seam, version floor, and scheduling reap/notify |
+
+**No default feedback-triage agent.** `agents/feedback-triage.md` exists in
+this repo but is deliberately NOT composed into this bundle by default: its
+entire job is processing `lane:intake` reports, and no tool in this
+bundle's default composition can read them -- every mounted `work_*` tool
+works the engineering lane (`lane:eng`) only, and the agent's own Hard
+Rules forbid both raw `bd` and CLI shell-out. Composing it today would give
+you an agent with no legal call it could make. Compose
+`work-tracker:feedback-triage` yourself once you have (or build) a tool
+that exposes intake-lane items -- see `docs/DESIGN.md` section 3 for the
+triage design this agent implements.
 
 ## Operator CLI surface — not agent tools
 
 `new`, `instances`, `reap`, `notify`, and `doctor` are **operator-facing CLI
-commands and cron/timer jobs**, not tools an agent session calls:
+commands**, not tools an agent session calls:
 
 ```bash
 amplifier-work-tracker new <project>          # create a project (once)
 amplifier-work-tracker instances               # list projects and queue depth
-amplifier-work-tracker reap --project <p>      # run on a timer -- releases stale custody
-amplifier-work-tracker notify --project <p>    # run on a timer -- propagates resolutions to reporters
+amplifier-work-tracker reap --project <p>      # releases stale custody back to the queue
+amplifier-work-tracker notify --project <p>    # propagates resolutions to reporters
 amplifier-work-tracker doctor                  # run after any bd upgrade, and in CI
 ```
 
 Resolution does **not** propagate to reporters on its own, and stale custody
-does **not** release itself — both require `notify` and `reap` to actually run
-on a schedule. Neither belongs in an agent's tool surface: they operate across
-the whole queue, not on behalf of one session's held item.
+does **not** release itself — both require `reap` and `notify` to actually
+run. **If the background service is installed** (`work_tracker_install`, or
+`amplifier-work-tracker service install`), both already run automatically as
+in-process sweeps inside it -- see `src/amplifier_work_tracker/supervisor.py`'s
+`reap_loop`/`notify_loop`. Only schedule `reap`/`notify` manually (cron,
+systemd timer) if you are running `amplifier-work-tracker serve` yourself
+without the installed service. Neither belongs in an agent's tool surface
+either way: they operate across the whole queue, not on behalf of one
+session's held item.
 
 ## Configuration
 
 | Environment variable | Default | Meaning |
 |---|---|---|
-| `AMPLIFIER_WORK_TRACKER_ROOT` | `~/.amplifier-work-tracker` | Workspace root holding all named projects |
+| `AMPLIFIER_WORK_TRACKER_ROOT` | `~/.amplifier-work-tracker` | Workspace root holding all named projects -- **must be the same path for every session sharing a queue**; a session pointed at a different root sees an empty queue and correctly (but silently) reports "no work" |
 | `AMPLIFIER_WORK_TRACKER_CUSTODY_TTL_SECONDS` | `900` (15 min) | No renewal within this window → custody goes stale → reclaimable |
 | `AMPLIFIER_WORK_TRACKER_ESCALATION_HOURS` | `24` | Ceiling on a *fresh* `awaiting_human` hold before it becomes reclaim-eligible regardless |
 | `AMPLIFIER_WORK_TRACKER_RENEW_INTERVAL_SECONDS` | `120` | How often custody renews |
