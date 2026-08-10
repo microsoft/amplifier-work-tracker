@@ -129,7 +129,9 @@ def classify_state(root: Path) -> tuple[WorkTrackerState, str]:
             f"survives reboot and gets the reap/notify sweeps -- installing does NOT stop or "
             f"replace it; the supervisor refuses to double-serve instead of colliding with it. "
             f"Do not stop this process -- it may be holding live claims from other sessions "
-            f"(`lsof -i :{SV.DEFAULT_DOLT_PORT}` to see what it is, if you want to know).",
+            f"(`ss -ltn | grep :{SV.DEFAULT_DOLT_PORT}` to see what's listening, if you want to "
+            f"know -- chosen over other port-listing tools because it is present on minimal "
+            f"containers where they often are not).",
         )
     if not info.installed:
         return "not_installed", "call work_tracker_install to set up the background service"

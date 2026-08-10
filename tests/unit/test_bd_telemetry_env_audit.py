@@ -116,9 +116,11 @@ def test_every_bd_subprocess_call_routes_through_the_telemetry_env_helper():
         violations += _violations_in_file(path)
     assert not violations, (
         "bd subprocess call(s) found whose env= does not route through "
-        "adapter._bd_env / Beads._env -- BD_TELEMETRY_DISABLE would not "
-        "reach them, risking a hang on bd's first-use consent prompt in "
-        "any tty-less (agent) session: " + ", ".join(violations)
+        "adapter._bd_env / Beads._env -- BD_NON_INTERACTIVE (the verified, "
+        "real non-interactive switch -- see _bd_env's docstring for why "
+        "BD_TELEMETRY_DISABLE was replaced, it does not exist in the bd "
+        "binary) would not reach them, risking a hang on bd's first-use "
+        "consent prompt in any tty-less (agent) session: " + ", ".join(violations)
     )
 
 

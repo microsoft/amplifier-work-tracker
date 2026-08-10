@@ -263,7 +263,11 @@ class WorkTrackerSession:
                     }
                 )
             except A.BeadsError as e:
-                projects.append({"project": name, "status": f"ERROR: {e}"[:120]})
+                # A.truncate_status caps this without severing the actionable
+                # hint mid-word -- a bare `[:120]` slice used to leave e.g.
+                # "...or 'bd in" instead of "...or 'bd init' to create a
+                # new database". See adapter.truncate_status's docstring.
+                projects.append({"project": name, "status": A.truncate_status(f"ERROR: {e}")})
         with self._lock:
             held = self._held
             holding = (

@@ -380,7 +380,8 @@ def ensure_port_available(host: str, port: int, pid_file: Path, *, force: bool =
         f"refusing to start: {reason}. If this is bd's own lazily-started shared server (or a "
         f"human-started one), stop it before installing/starting this service -- this supervisor "
         f"is designed to own and monitor the dolt server on this port, not silently share or kill "
-        f"it. Check what's running: lsof -i :{port}"
+        f"it. Check what's listening: ss -ltn | grep :{port}  (chosen over other port-listing "
+        f"tools because it is present on minimal containers where they often are not)"
     )
 
 

@@ -199,7 +199,10 @@ def cmd_instances(a):
                 }
             )
         except A.BeadsError as e:
-            rows.append({"project": n, "status": f"ERROR: {e}"[:70]})
+            # A.truncate_status -- see its docstring: a bare slice cap
+            # severs the actionable hint mid-word (same bug as the
+            # work_status tool's per-project error; fixed in one place).
+            rows.append({"project": n, "status": A.truncate_status(f"ERROR: {e}")})
     if a.json:
         print(json.dumps(rows, indent=2))
         return

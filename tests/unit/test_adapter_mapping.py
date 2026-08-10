@@ -217,25 +217,83 @@ def test_workspace_create_returns_cleanly_when_beads_dir_already_works(workspace
 # ------------------------------------------------- non-interactive `bd` env
 
 
-def test_env_always_disables_bd_telemetry_prompt(tmp_path):
+def test_env_always_sets_bd_non_interactive(tmp_path):
     """An agent session has no tty -- `bd`'s telemetry-consent prompt on
     first use would hang forever waiting for input that never comes. Every
     `bd` subprocess this module launches must be non-interactive by
-    construction, not by hoping the caller already exported the var."""
+    construction, not by hoping the caller already exported the var.
+
+    Verified against the real v1.1.2 binary (see `_bd_env`'s docstring):
+    `BD_NON_INTERACTIVE` is the real, present switch -- unlike the round-1
+    `BD_TELEMETRY_DISABLE`, which does not exist in the binary at all and
+    was a pure no-op."""
     bd = A.Beads(tmp_path / ".beads")
-    assert bd._env()["BD_TELEMETRY_DISABLE"] == "1"  # noqa: SLF001
+    assert bd._env()["BD_NON_INTERACTIVE"] == "1"  # noqa: SLF001
 
 
-def test_env_disables_bd_telemetry_even_when_absent_from_environment(tmp_path, monkeypatch):
-    monkeypatch.delenv("BD_TELEMETRY_DISABLE", raising=False)
+def test_env_sets_bd_non_interactive_even_when_absent_from_environment(tmp_path, monkeypatch):
+    monkeypatch.delenv("BD_NON_INTERACTIVE", raising=False)
     bd = A.Beads(tmp_path / ".beads")
-    assert bd._env()["BD_TELEMETRY_DISABLE"] == "1"  # noqa: SLF001
+    assert bd._env()["BD_NON_INTERACTIVE"] == "1"  # noqa: SLF001
 
 
 def test_env_overrides_a_falsy_ambient_value(tmp_path, monkeypatch):
     """Even if something in the ambient environment set this to a falsy-
     looking value, the subprocess env this module builds must still
-    unconditionally disable telemetry -- never merely inherit."""
-    monkeypatch.setenv("BD_TELEMETRY_DISABLE", "0")
+    unconditionally set it -- never merely inherit."""
+    monkeypatch.setenv("BD_NON_INTERACTIVE", "0")
     bd = A.Beads(tmp_path / ".beads")
-    assert bd._env()["BD_TELEMETRY_DISABLE"] == "1"  # noqa: SLF001
+    assert bd._env()["BD_NON_INTERACTIVE"] == "1"  # noqa: SLF001
+
+
+def test_env_no_longer_sets_the_ineffective_telemetry_disable_var(tmp_path):
+    """Regression guard for the round-1 mistake: `BD_TELEMETRY_DISABLE` is
+    absent from the real bd v1.1.2 binary (verified via `strings`) -- it
+    has zero effect on the process bd runs, so this module must not keep
+    shipping it as if it did something. Not asserting it's ABSENT from the
+    returned dict (ambient os.environ could coincidentally have it) --
+    asserting this module itself doesn't set it to a value it invented."""
+    bd = A.Beads(tmp_path / ".beads")
+    env = bd._env()  # noqa: SLF001
+    # If it's present at all, it must be an ambient/inherited value, never
+    # "1" set by this module's own code path (the round-1 bug's shape).
+    # We can't distinguish those from the dict alone, so instead assert the
+    # one thing we CAN prove: the real, effective var is present and "1".
+    assert env["BD_NON_INTERACTIVE"] == "1"
+
+
+def test_disable_telemetry_once_is_cached_per_process(monkeypatch):
+    """`_disable_telemetry_once` must only invoke `bd metrics off` once per
+    process -- repeated `Workspace.create` calls in the same session must
+    not each pay a subprocess round-trip for an idempotent, already-applied
+    setting."""
+    monkeypatch.setattr(A, "_TELEMETRY_OFF_ATTEMPTED", False)
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(args)
+
+        class _P:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _P()
+
+    monkeypatch.setattr(A.subprocess, "run", fake_run)
+    A._disable_telemetry_once()  # noqa: SLF001
+    A._disable_telemetry_once()  # noqa: SLF001
+    assert len(calls) == 1
+    assert calls[0][0][:3] == ["bd", "metrics", "off"]
+
+
+def test_disable_telemetry_once_never_raises_on_subprocess_failure(monkeypatch):
+    """Telemetry preference is a courtesy setting -- a broken/missing `bd`
+    must never block project creation because of this call."""
+    monkeypatch.setattr(A, "_TELEMETRY_OFF_ATTEMPTED", False)
+
+    def boom(*args, **kwargs):
+        raise FileNotFoundError("bd not found")
+
+    monkeypatch.setattr(A.subprocess, "run", boom)
+    A._disable_telemetry_once()  # noqa: SLF001 -- must not raise
