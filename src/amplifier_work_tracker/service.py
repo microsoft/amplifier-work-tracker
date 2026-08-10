@@ -43,6 +43,7 @@ actually needs to survive into the unit.
 
 from __future__ import annotations
 
+import glob
 import os
 import shlex
 import shutil
@@ -191,6 +192,58 @@ def _resolve_bin_tokens() -> list[str]:
     return [sys.executable, "-m", "amplifier_work_tracker.cli"]
 
 
+# The one directory layout `uv tool install` actually uses:
+# ~/.local/share/uv/tools/<tool-name>/bin/<console-script>. A console script
+# that isn't the primary entry point of the tool it was installed alongside
+# (e.g. bundled in via `--with`) can land here without ever getting a
+# top-level PATH shim.
+_UV_TOOLS_BIN_GLOB = str(
+    Path.home() / ".local" / "share" / "uv" / "tools" / "*" / "bin" / SERVICE_NAME
+)
+
+
+def resolve_console_script() -> tuple[str | None, str | None]:
+    """Is the `amplifier-work-tracker` console script itself reachable by
+    name on PATH? This is deliberately NOT about `bd`/`dolt` -- those are
+    prerequisites this package depends on (see `prereqs.py`). This is about
+    our OWN CLI.
+
+    `uv tool install` can leave a SECONDARY console script installed but
+    unlinked: present on disk, invisible to `shutil.which`, when it lands
+    inside another tool's own venv (e.g. bundled in via `--with`) rather
+    than getting its own top-level PATH shim. Measured cost of not
+    detecting this in a DTU run: a session that got `command not found`
+    for `amplifier-work-tracker doctor`, then spent 6 tool calls (`ps`,
+    `find`, `which`) hunting for the binary by hand, and along the way
+    reported a spurious `not_installed` state because it never found the
+    binary it needed to ask.
+
+    Returns `(resolved_path, fix)`. Both are `None` when the script is
+    already on PATH (nothing to report -- this is the common case and
+    callers should treat it as "no issue"). When off PATH but found via
+    the one `uv tool install` layout, returns its absolute path plus the
+    exact remediation (a stable `~/.local/bin` symlink -- the same
+    resolution `_resolve_bin_tokens` already prefers -- or a direct PATH
+    export), never a bare "not found" that sends the caller hunting.
+    """
+    if shutil.which(SERVICE_NAME):
+        return None, None
+    matches = sorted(p for p in glob.glob(_UV_TOOLS_BIN_GLOB) if os.access(p, os.X_OK))
+    if not matches:
+        return None, None
+    resolved = matches[0]
+    target = Path.home() / ".local" / "bin" / SERVICE_NAME
+    fix = (
+        f"'{SERVICE_NAME}' is not on PATH, but IS installed at {resolved} -- most "
+        f"likely `uv tool install` put it inside another tool's own venv (e.g. bundled "
+        f"in via --with) instead of giving it its own top-level PATH shim. Fix: "
+        f"ln -s {resolved} {target}  (create ~/.local/bin first if it doesn't exist, "
+        f"and make sure that directory is on PATH), or add its directory directly: "
+        f'export PATH="{Path(resolved).parent}:$PATH"'
+    )
+    return resolved, fix
+
+
 def _serve_argv_tail(
     root: Path,
     *,
@@ -251,27 +304,78 @@ def _systemd_unit_content(root: Path, *, dolt_host: str | None, dolt_port: int |
     return _SYSTEMD_UNIT_TEMPLATE.format(exec_start=exec_start, safe_path=safe_path)
 
 
+def _systemd_call(args: list[str], *, check: bool) -> subprocess.CompletedProcess:
+    """Every non-interactive systemctl invocation in this module goes
+    through here: `capture_output=True` so nothing -- e.g. a
+    session-bus-less container's `Failed to connect to bus: No medium
+    found` -- prints directly to the caller's terminal outside of any
+    tool result. `_systemd_status`/`_systemd_logs` are the deliberate
+    exception (they exist specifically to stream/print for a human at a
+    terminal) and do NOT go through this helper."""
+    return subprocess.run(args, capture_output=True, text=True, check=check)
+
+
+def _observe(label: str, result: subprocess.CompletedProcess) -> str:
+    """One line describing what a rollback step actually did -- OBSERVED
+    from the real subprocess result, never asserted. Used to build
+    `rollback_detail` so a caller (`work_tracker_install`) can report what
+    happened instead of a hardcoded claim that may not be true."""
+    if result.returncode == 0:
+        return f"{label}: ok"
+    detail = (result.stderr or result.stdout or "").strip()[:150]
+    return f"{label}: exit {result.returncode}" + (f" ({detail})" if detail else "")
+
+
+def _systemd_rollback_unit_file() -> str:
+    """Best-effort rollback after a failed install: disable, remove the
+    unit file THIS call wrote, daemon-reload. Returns a human-readable,
+    OBSERVED report of each step -- never a hardcoded assertion that
+    nothing was left behind."""
+    steps = [
+        _observe(
+            "disable", _systemd_call(["systemctl", "--user", "disable", SERVICE_NAME], check=False)
+        )
+    ]
+    existed = _SYSTEMD_UNIT_PATH.exists()
+    try:
+        _SYSTEMD_UNIT_PATH.unlink(missing_ok=True)
+        steps.append(
+            f"remove unit file: ok ({_SYSTEMD_UNIT_PATH})"
+            if existed
+            else f"remove unit file: nothing to remove ({_SYSTEMD_UNIT_PATH} did not exist)"
+        )
+    except OSError as e:
+        steps.append(f"remove unit file: FAILED ({e})")
+    steps.append(
+        _observe(
+            "daemon-reload", _systemd_call(["systemctl", "--user", "daemon-reload"], check=False)
+        )
+    )
+    return "; ".join(steps)
+
+
 def _systemd_install(root: Path, *, dolt_host: str | None, dolt_port: int | None) -> None:
     unit_content = _systemd_unit_content(root, dolt_host=dolt_host, dolt_port=dolt_port)
 
     _SYSTEMD_UNIT_DIR.mkdir(parents=True, exist_ok=True)
     _SYSTEMD_UNIT_PATH.write_text(unit_content, encoding="utf-8")
     try:
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-        subprocess.run(["systemctl", "--user", "enable", "--now", SERVICE_NAME], check=True)
+        _systemd_call(["systemctl", "--user", "daemon-reload"], check=True)
+        _systemd_call(["systemctl", "--user", "enable", "--now", SERVICE_NAME], check=True)
         # `enable --now` is a no-op on an already-running unit, so a
         # re-install (new --root, new dolt host/port) would silently keep
         # serving the STALE arguments without this. `restart` also starts a
         # stopped unit, so it is safe on both first install and re-install.
-        subprocess.run(["systemctl", "--user", "restart", SERVICE_NAME], check=True)
-    except subprocess.CalledProcessError:
+        _systemd_call(["systemctl", "--user", "restart", SERVICE_NAME], check=True)
+    except subprocess.CalledProcessError as e:
         # Transactional: a failure at any systemctl step below the unit file
         # write must not leave that file (or an enabled-but-broken unit)
         # behind -- see `service_install`'s rollback contract. Best-effort,
         # never raising a SECOND exception that would mask the original.
-        subprocess.run(["systemctl", "--user", "disable", SERVICE_NAME], check=False)
-        _SYSTEMD_UNIT_PATH.unlink(missing_ok=True)
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+        # `rollback_detail` carries what ACTUALLY happened at each rollback
+        # step -- attached to the exception rather than asserted by a
+        # caller -- see `WorkTrackerInstallTool.execute`.
+        e.rollback_detail = _systemd_rollback_unit_file()  # type: ignore[attr-defined]
         raise
 
 
@@ -279,23 +383,23 @@ def _systemd_uninstall() -> None:
     # stop/disable are intentionally NOT check=True -- uninstalling an
     # already-stopped or never-enabled unit is a normal, successful
     # uninstall, not an error.
-    subprocess.run(["systemctl", "--user", "stop", SERVICE_NAME], check=False)
-    subprocess.run(["systemctl", "--user", "disable", SERVICE_NAME], check=False)
+    _systemd_call(["systemctl", "--user", "stop", SERVICE_NAME], check=False)
+    _systemd_call(["systemctl", "--user", "disable", SERVICE_NAME], check=False)
     _SYSTEMD_UNIT_PATH.unlink(missing_ok=True)
-    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+    _systemd_call(["systemctl", "--user", "daemon-reload"], check=False)
 
 
 def _systemd_start() -> None:
-    subprocess.run(["systemctl", "--user", "start", SERVICE_NAME], check=True)
+    _systemd_call(["systemctl", "--user", "start", SERVICE_NAME], check=True)
 
 
 def _systemd_stop() -> None:
     # Not check=True -- stopping an already-stopped service is a normal no-op.
-    subprocess.run(["systemctl", "--user", "stop", SERVICE_NAME], check=False)
+    _systemd_call(["systemctl", "--user", "stop", SERVICE_NAME], check=False)
 
 
 def _systemd_restart() -> None:
-    subprocess.run(["systemctl", "--user", "restart", SERVICE_NAME], check=True)
+    _systemd_call(["systemctl", "--user", "restart", SERVICE_NAME], check=True)
 
 
 def _systemd_status() -> None:
@@ -454,11 +558,24 @@ def _launchd_install(root: Path, *, dolt_host: str | None, dolt_port: int | None
     _launchd_bootout_and_wait(uid)
     try:
         _launchd_bootstrap(uid)
-    except RuntimeError:
+    except RuntimeError as e:
         # Transactional, matching _systemd_install: a bootstrap failure must
         # not leave a written-but-never-loaded plist behind -- see
-        # `service_install`'s rollback contract.
-        _LAUNCHD_PLIST_PATH.unlink(missing_ok=True)
+        # `service_install`'s rollback contract. `rollback_detail` records
+        # what was OBSERVED (plist present and removed vs. already gone vs.
+        # removal itself failing) -- never a hardcoded assertion that
+        # nothing was left behind. See `WorkTrackerInstallTool.execute`.
+        existed = _LAUNCHD_PLIST_PATH.exists()
+        try:
+            _LAUNCHD_PLIST_PATH.unlink(missing_ok=True)
+            detail = (
+                f"remove plist: ok ({_LAUNCHD_PLIST_PATH})"
+                if existed
+                else f"remove plist: nothing to remove ({_LAUNCHD_PLIST_PATH} did not exist)"
+            )
+        except OSError as unlink_err:
+            detail = f"remove plist: FAILED ({unlink_err})"
+        e.rollback_detail = detail  # type: ignore[attr-defined]
         raise
 
 

@@ -101,24 +101,29 @@ fi
 
 mkdir -p ~/.local/bin
 
-# bd
+# bd -- a fresh mktemp -d scratch dir per binary, never cleaned up here
+# (the OS's own tmp reaper handles that). Deliberately NOT `rm -rf
+# /tmp/...`: that literal text trips Amplifier's own bash safety profile
+# ("Command denied for safety: Prevents root filesystem deletion") because
+# the pattern match is textual (`rm -rf /...`), not path-aware -- it can't
+# tell "/tmp/foo" isn't "/". Measured cost of getting this wrong: 4 wasted
+# tool calls in a DTU run where an agent had to hand-split this exact
+# pipeline to work around the block.
 BD_ASSET="beads_${BD_VERSION}_${OS}_${ARCH}.tar.gz"
-curl -fsSL -o "/tmp/${BD_ASSET}" \
+BD_TMP="$(mktemp -d)"
+curl -fsSL -o "${BD_TMP}/${BD_ASSET}" \
   "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/${BD_ASSET}"
-mkdir -p "/tmp/bd-${BD_VERSION}"
-tar -xzf "/tmp/${BD_ASSET}" -C "/tmp/bd-${BD_VERSION}"
-install -m 0755 "/tmp/bd-${BD_VERSION}/bd" ~/.local/bin/bd
-rm -rf "/tmp/${BD_ASSET}" "/tmp/bd-${BD_VERSION}"
+tar -xzf "${BD_TMP}/${BD_ASSET}" -C "${BD_TMP}"
+install -m 0755 "${BD_TMP}/bd" ~/.local/bin/bd
 bd --version
 
 # dolt (tarball nests one level -- --strip-components=1)
 DOLT_ASSET="dolt-${OS}-${ARCH}.tar.gz"
-curl -fsSL -o "/tmp/${DOLT_ASSET}" \
+DOLT_TMP="$(mktemp -d)"
+curl -fsSL -o "${DOLT_TMP}/${DOLT_ASSET}" \
   "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/${DOLT_ASSET}"
-mkdir -p "/tmp/dolt-${DOLT_VERSION}"
-tar -xzf "/tmp/${DOLT_ASSET}" -C "/tmp/dolt-${DOLT_VERSION}" --strip-components=1
-install -m 0755 "/tmp/dolt-${DOLT_VERSION}/bin/dolt" ~/.local/bin/dolt
-rm -rf "/tmp/${DOLT_ASSET}" "/tmp/dolt-${DOLT_VERSION}"
+tar -xzf "${DOLT_TMP}/${DOLT_ASSET}" -C "${DOLT_TMP}" --strip-components=1
+install -m 0755 "${DOLT_TMP}/bin/dolt" ~/.local/bin/dolt
 dolt version
 
 export PATH="$HOME/.local/bin:$PATH"   # this shell only -- add to your rc file to persist

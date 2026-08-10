@@ -131,8 +131,24 @@ def bd_install_command() -> str:
 
     Mirrors ci.yml's "Install bd (pinned)" step (same release repo, same
     `beads_<ver>_<os>_<arch>.tar.gz` asset pattern, same extract-then-install
-    shape) with one deliberate difference: `~/.local/bin` + no sudo, since
-    this runs on someone's machine, not a CI runner this workflow owns.
+    shape) with two deliberate differences from CI: `~/.local/bin` + no
+    sudo, since this runs on someone's machine, not a CI runner this
+    workflow owns; and a `mktemp -d` scratch directory with NO cleanup
+    step, rather than CI's `rm -rf /tmp/...`.
+
+    That second difference is load-bearing, not cosmetic: a command
+    containing the literal text `rm -rf /tmp/...` trips Amplifier's own
+    default bash safety profile (`BlockPattern("rm -rf /", ...,
+    check_type="command")` matches "rm -rf /" as a substring at a command
+    position -- it does not parse whether the path is actually root, just
+    whether the text after `rm -rf ` starts with `/`). An agent asked to
+    run the command this function used to emit would get "Command denied
+    for safety: Prevents root filesystem deletion" and then have to
+    hand-split the pipeline itself -- measured cost: 4 wasted calls in a
+    DTU run. Using `mktemp -d` and simply never deleting it (the OS's own
+    tmp reaper handles that, same as any other `mktemp -d` scratch dir)
+    sidesteps the false positive entirely rather than trying to word
+    around it.
 
     Raises `RuntimeError` (never returns a command) if this OS/arch has no
     known published asset -- e.g. beads does not publish a darwin_amd64
@@ -149,11 +165,11 @@ def bd_install_command() -> str:
     asset = f"beads_{version}_{os_name}_{arch}.tar.gz"
     url = f"{_BEADS_RELEASES}/download/v{version}/{asset}"
     return (
-        f"mkdir -p ~/.local/bin /tmp/bd-{version} && "
-        f"curl -fsSL -o /tmp/{asset} '{url}' && "
-        f"tar -xzf /tmp/{asset} -C /tmp/bd-{version} && "
-        f"install -m 0755 /tmp/bd-{version}/bd ~/.local/bin/bd && "
-        f"rm -rf /tmp/{asset} /tmp/bd-{version} && "
+        f"mkdir -p ~/.local/bin && "
+        f'T="$(mktemp -d)" && '
+        f"curl -fsSL -o \"$T/{asset}\" '{url}' && "
+        f'tar -xzf "$T/{asset}" -C "$T" && '
+        f'install -m 0755 "$T/bd" ~/.local/bin/bd && '
         f"bd --version"
     )
 
@@ -164,19 +180,22 @@ def dolt_install_command() -> str:
     Mirrors ci.yml's "Install dolt (pinned)" step (same release repo, same
     `dolt-<os>-<arch>.tar.gz` asset pattern with `--strip-components=1`,
     since dolt's tarball nests everything under one top-level directory
-    unlike bd's flat layout) with the same sudo-free `~/.local/bin`
-    adaptation as `bd_install_command`.
+    unlike bd's flat layout) with the same sudo-free `~/.local/bin` +
+    no-cleanup-`rm`-`mktemp -d` adaptation as `bd_install_command` -- see
+    that function's docstring for why the cleanup step was removed rather
+    than merely reworded (it isn't cosmetic: the literal text
+    `rm -rf /tmp/...` trips Amplifier's own bash safety profile).
     """
     os_name, arch = _os_arch()
     version = DOLT_INSTALL_VERSION
     asset = f"dolt-{os_name}-{arch}.tar.gz"
     url = f"{_DOLT_RELEASES}/download/v{version}/{asset}"
     return (
-        f"mkdir -p ~/.local/bin /tmp/dolt-{version} && "
-        f"curl -fsSL -o /tmp/{asset} '{url}' && "
-        f"tar -xzf /tmp/{asset} -C /tmp/dolt-{version} --strip-components=1 && "
-        f"install -m 0755 /tmp/dolt-{version}/bin/dolt ~/.local/bin/dolt && "
-        f"rm -rf /tmp/{asset} /tmp/dolt-{version} && "
+        f"mkdir -p ~/.local/bin && "
+        f'T="$(mktemp -d)" && '
+        f"curl -fsSL -o \"$T/{asset}\" '{url}' && "
+        f'tar -xzf "$T/{asset}" -C "$T" --strip-components=1 && '
+        f'install -m 0755 "$T/bin/dolt" ~/.local/bin/dolt && '
         f"dolt version"
     )
 

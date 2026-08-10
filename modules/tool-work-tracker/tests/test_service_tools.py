@@ -25,6 +25,7 @@ from dataclasses import dataclass
 import pytest
 from amplifier_module_tool_work_tracker.service_tools import (
     WorkTrackerInstallTool,
+    WorkTrackerStatusTool,
     classify_state,
 )
 
@@ -70,6 +71,103 @@ def test_classify_state_reports_bd_too_old_via_forged_version(tmp_path, monkeypa
     state, fix = classify_state(tmp_path / "root")
     assert state == "bd_too_old"
     assert "0.9.0" in fix
+
+
+@pytest.mark.asyncio
+async def test_status_tool_surfaces_console_script_fix_when_off_path(tmp_path, monkeypatch):
+    """`work_tracker_status` must report OUR OWN CLI being off-PATH (a
+    separate concern from `state`/`fix`, which are about bd/dolt/the
+    service) -- this is the field a session should check before ever
+    shelling out to `amplifier-work-tracker` by name, instead of
+    discovering `command not found` and burning 6 tool calls hunting for
+    the binary."""
+    monkeypatch.setattr(
+        S,
+        "resolve_console_script",
+        lambda: ("/fake/path/amplifier-work-tracker", "ln -s /fake/path ~/.local/bin/..."),
+    )
+    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(tmp_path / "root"))
+
+    tool = WorkTrackerStatusTool(config=None)
+    result = await tool.execute({})
+
+    assert result.success is True
+    output = result.output
+    assert isinstance(output, dict)
+    assert output["console_script_path"] == "/fake/path/amplifier-work-tracker"
+    assert "ln -s" in output["console_script_fix"]
+
+
+@pytest.mark.asyncio
+async def test_status_tool_omits_console_script_fields_when_on_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, "resolve_console_script", lambda: (None, None))
+    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(tmp_path / "root"))
+
+    tool = WorkTrackerStatusTool(config=None)
+    result = await tool.execute({})
+
+    output = result.output
+    assert isinstance(output, dict)
+    assert "console_script_path" not in output
+    assert "console_script_fix" not in output
+
+
+@pytest.mark.asyncio
+async def test_install_tool_reports_observed_rollback_detail_on_service_install_failure(
+    tmp_path, monkeypatch
+):
+    """The old message hardcoded "No partial install was left behind"
+    regardless of whether that was true. This proves the tool now reports
+    whatever `service_install` actually observed instead."""
+    _bypass_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        S, "describe_service", lambda: _FakeServiceInfo(installed=False, active=None)
+    )
+    monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: False)
+
+    def fake_service_install(root):
+        err = RuntimeError("systemctl enable failed")
+        err.rollback_detail = "disable: ok; remove unit file: ok; daemon-reload: exit 1 (no bus)"  # type: ignore[attr-defined]
+        raise err
+
+    monkeypatch.setattr(S, "service_install", fake_service_install)
+    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(tmp_path / "root"))
+
+    tool = WorkTrackerInstallTool(config=None)
+    result = await tool.execute({})
+
+    assert result.success is False
+    output = str(result.output)
+    assert "No partial install was left behind" not in output
+    assert "daemon-reload: exit 1 (no bus)" in output
+
+
+@pytest.mark.asyncio
+async def test_install_tool_admits_unknown_rollback_when_no_detail_was_observed(
+    tmp_path, monkeypatch
+):
+    """If the underlying failure carries no `rollback_detail` at all (an
+    exception this code didn't anticipate), the message must say the
+    outcome is unknown -- never assert a specific, unobserved claim."""
+    _bypass_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        S, "describe_service", lambda: _FakeServiceInfo(installed=False, active=None)
+    )
+    monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: False)
+
+    def fake_service_install(root):
+        raise RuntimeError("something unanticipated")
+
+    monkeypatch.setattr(S, "service_install", fake_service_install)
+    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(tmp_path / "root"))
+
+    tool = WorkTrackerInstallTool(config=None)
+    result = await tool.execute({})
+
+    assert result.success is False
+    output = str(result.output)
+    assert "No partial install was left behind" not in output
+    assert "unknown" in output.lower()
 
 
 @pytest.mark.asyncio

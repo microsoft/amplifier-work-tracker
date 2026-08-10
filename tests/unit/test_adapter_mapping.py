@@ -168,6 +168,52 @@ def test_workspace_create_rejects_uppercase_name_before_touching_disk(tmp_path):
     assert not (tmp_path / "projects" / "BadName").exists()
 
 
+# --------------------------------------- residue must never report success
+
+
+def test_workspace_create_refuses_to_report_success_on_dead_residue(tmp_path):
+    """A directory named `.beads` existing is not evidence of anything -- a
+    previous `bd init` that crashed, was killed, or hit a full disk can
+    leave `.beads/` behind with no usable database inside it. The OLD
+    behaviour (`if (d / ".beads").is_dir(): return d`) returned success on
+    this residue without ever proving the database answers, so every
+    subsequent `create()` call was a silent no-op that reported "verified
+    writable." This test creates exactly that residue by hand -- an empty
+    `.beads/` directory, no real bd project underneath it -- and asserts
+    `create()` refuses rather than reporting success."""
+    ws = A.Workspace(tmp_path)
+    name = "probedirty"
+    d = ws.path(name)
+    (d / ".beads").mkdir(parents=True)  # residue: exists, but dead -- no
+    # database, no config, nothing bd itself ever wrote.
+
+    try:
+        ws.create(name)
+        raise AssertionError(
+            "create() reported success on dead .beads residue -- exactly the "
+            "silent-partial-success shape this project exists to prevent"
+        )
+    except A.BeadsError as e:
+        assert "residue" in str(e) or "does not answer" in str(e), (
+            f"expected the error to name the residue, got: {e}"
+        )
+    # And the residue itself is left alone for a human/agent to inspect or
+    # remove -- this call observes and reports, it does not clean up.
+    assert (d / ".beads").is_dir()
+
+
+def test_workspace_create_returns_cleanly_when_beads_dir_already_works(workspace, project_factory):
+    """The other half of the fix: an EXISTING, WORKING project must still
+    short-circuit and return without erroring or re-running `bd init` --
+    the liveness probe must not turn a legitimate no-op into a failure.
+    Uses a real `bd`-backed project (via `project_factory`), not residue,
+    so this only passes if the liveness probe genuinely succeeds against a
+    live database."""
+    name, _bd = project_factory("existingok")
+    result = workspace.create(name)  # second call: .beads/ already exists and works
+    assert result == workspace.path(name)
+
+
 # ------------------------------------------------- non-interactive `bd` env
 
 

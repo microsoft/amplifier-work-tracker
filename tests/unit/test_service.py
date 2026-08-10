@@ -143,6 +143,65 @@ def test_resolve_bin_tokens_prefers_console_script_when_present(monkeypatch, tmp
     assert S._resolve_bin_tokens() == [str(script)]
 
 
+# ---------------------------------------------------------------------------
+# resolve_console_script -- detecting OUR OWN CLI missing from PATH (not
+# bd/dolt, see prereqs.py), the state that cost a DTU session 6 tool calls.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_console_script_reports_nothing_when_on_path(monkeypatch):
+    monkeypatch.setattr(S.shutil, "which", lambda name: "/usr/bin/" + name)
+    path, fix = S.resolve_console_script()
+    assert path is None
+    assert fix is None
+
+
+def test_resolve_console_script_finds_unlinked_uv_tool_install(monkeypatch, tmp_path):
+    """The exact shape observed in the DTU: `amplifier-work-tracker` present
+    on disk inside another uv tool's own venv bin/ directory, but not on
+    PATH -- must be found and reported with the exact remediation, not a
+    bare "not found" that sends the caller hunting with ps/find/which."""
+    monkeypatch.setattr(S.shutil, "which", lambda name: None)
+    fake_home = tmp_path / "home"
+    tool_bin = fake_home / ".local" / "share" / "uv" / "tools" / "amplifier" / "bin"
+    tool_bin.mkdir(parents=True)
+    script = tool_bin / S.SERVICE_NAME
+    script.write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setattr(S.Path, "home", classmethod(lambda cls: fake_home))
+    monkeypatch.setattr(
+        S,
+        "_UV_TOOLS_BIN_GLOB",
+        str(fake_home / ".local" / "share" / "uv" / "tools" / "*" / "bin" / S.SERVICE_NAME),
+    )
+
+    path, fix = S.resolve_console_script()
+
+    assert path == str(script)
+    assert fix is not None
+    assert str(script) in fix
+    assert "ln -s" in fix or "PATH" in fix
+
+
+def test_resolve_console_script_reports_nothing_when_truly_absent(monkeypatch, tmp_path):
+    """Off PATH AND not found in the uv-tools layout either -- this
+    function reports nothing (not its job to say "not installed at all";
+    that's `work_tracker_status`'s overall `state`)."""
+    monkeypatch.setattr(S.shutil, "which", lambda name: None)
+    fake_home = tmp_path / "home-empty"
+    fake_home.mkdir()
+    monkeypatch.setattr(S.Path, "home", classmethod(lambda cls: fake_home))
+    monkeypatch.setattr(
+        S,
+        "_UV_TOOLS_BIN_GLOB",
+        str(fake_home / ".local" / "share" / "uv" / "tools" / "*" / "bin" / S.SERVICE_NAME),
+    )
+
+    path, fix = S.resolve_console_script()
+    assert path is None
+    assert fix is None
+
+
 def test_resolve_bin_tokens_falls_back_to_module_invocation_as_separate_tokens(
     monkeypatch, tmp_path
 ):
@@ -248,6 +307,59 @@ def test_systemd_install_rolls_back_unit_file_when_systemctl_fails(monkeypatch, 
     # reference doesn't linger in systemd's own state either.
     assert ["systemctl", "--user", "disable", S.SERVICE_NAME] in calls
     assert ["systemctl", "--user", "daemon-reload"] in calls
+
+
+def test_systemd_install_attaches_observed_rollback_detail_on_success(monkeypatch, tmp_path):
+    """The rollback report must describe what ACTUALLY happened -- never a
+    hardcoded "nothing was left behind" that could be a lie. When every
+    rollback step succeeds, `rollback_detail` says so per-step."""
+    unit_dir = tmp_path / "systemd-unit-dir"
+    unit_path = unit_dir / f"{S.SERVICE_NAME}.service"
+    monkeypatch.setattr(S, "_SYSTEMD_UNIT_DIR", unit_dir)
+    monkeypatch.setattr(S, "_SYSTEMD_UNIT_PATH", unit_path)
+
+    def fake_run(cmd, *args, **kwargs):
+        if cmd[:3] == ["systemctl", "--user", "enable"]:
+            raise subprocess.CalledProcessError(1, cmd, output="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(S.subprocess, "run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        S._systemd_install(tmp_path / "root", dolt_host=None, dolt_port=None)
+
+    detail = excinfo.value.rollback_detail  # type: ignore[attr-defined]
+    assert "disable: ok" in detail
+    assert "remove unit file: ok" in detail
+    assert "daemon-reload: ok" in detail
+
+
+def test_systemd_install_rollback_detail_reports_a_failed_rollback_step_honestly(
+    monkeypatch, tmp_path
+):
+    """If the rollback's OWN disable/daemon-reload call fails, the detail
+    must say so -- this is the exact case the old hardcoded "No partial
+    install was left behind" message would have lied about."""
+    unit_dir = tmp_path / "systemd-unit-dir"
+    unit_path = unit_dir / f"{S.SERVICE_NAME}.service"
+    monkeypatch.setattr(S, "_SYSTEMD_UNIT_DIR", unit_dir)
+    monkeypatch.setattr(S, "_SYSTEMD_UNIT_PATH", unit_path)
+
+    def fake_run(cmd, *args, **kwargs):
+        if cmd[:3] == ["systemctl", "--user", "enable"]:
+            raise subprocess.CalledProcessError(1, cmd, output="", stderr="")
+        if cmd[:3] == ["systemctl", "--user", "disable"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="Failed to connect to bus")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(S.subprocess, "run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        S._systemd_install(tmp_path / "root", dolt_host=None, dolt_port=None)
+
+    detail = excinfo.value.rollback_detail  # type: ignore[attr-defined]
+    assert "disable: exit 1" in detail
+    assert "Failed to connect to bus" in detail
 
 
 def test_service_install_propagates_the_failure_after_rollback(monkeypatch, tmp_path):

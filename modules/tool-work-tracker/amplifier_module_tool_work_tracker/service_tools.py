@@ -197,6 +197,17 @@ class WorkTrackerStatusTool:
         output: dict[str, Any] = {"state": state, "root": str(root)}
         if fix:
             output["fix"] = fix
+        # Separate from `state`/`fix` above: this is about OUR OWN CLI, not
+        # bd/dolt or the background service. A session that only calls this
+        # tool (never shells out to `amplifier-work-tracker` by name) would
+        # never notice the console script is unreachable -- but a session
+        # that reads this field before trying `amplifier-work-tracker
+        # doctor`/`status` at a shell gets the resolved path and the exact
+        # fix instead of a `command not found` and a multi-call hunt.
+        console_script_path, console_script_fix = await asyncio.to_thread(S.resolve_console_script)
+        if console_script_fix:
+            output["console_script_path"] = console_script_path
+            output["console_script_fix"] = console_script_fix
         return ToolResult(success=True, output=output)
 
 
@@ -268,9 +279,23 @@ class WorkTrackerInstallTool:
             # status 1.") reads like an unhandled crash and gives no hint
             # this might mean "no systemd --user session in this
             # container/environment." Wrap it with what was attempted and an
-            # actionable next step; `service_install` has already rolled
-            # back anything it wrote (see service.py's transactional
-            # contract), so there is no partial state left to describe.
+            # actionable next step.
+            #
+            # `rollback_detail`, when `service_install` set it (see
+            # service.py's `_systemd_install`/`_launchd_install`), reports
+            # what rollback ACTUALLY did -- observed per-step results, never
+            # an asserted claim. Never hardcode "nothing was left behind":
+            # that was a lie whenever rollback itself failed a step (e.g.
+            # the unit file couldn't be removed), and this code has no way
+            # to know that without asking what actually happened.
+            rollback_detail = getattr(e, "rollback_detail", None)
+            rollback_report = (
+                f"Rollback attempted: {rollback_detail}"
+                if rollback_detail
+                else "Rollback outcome unknown -- this failure did not come with an observed "
+                "rollback report; check `amplifier-work-tracker service status` / "
+                "`systemctl --user status amplifier-work-tracker` for any residue."
+            )
             return ToolResult(
                 success=False,
                 output=(
@@ -278,9 +303,9 @@ class WorkTrackerInstallTool:
                     f"systemd/launchd itself isn't functioning here (e.g. a container without a "
                     f"running --user systemd instance, or without `systemctl`/`launchctl` able to "
                     f"reach a session bus) rather than anything wrong with amplifier-work-tracker "
-                    f"itself. No partial install was left behind. If this platform can't run a "
-                    f"background service, run `amplifier-work-tracker serve --root {root}` "
-                    f"directly in a persistent terminal/tmux session instead."
+                    f"itself. {rollback_report} If this platform can't run a background service, "
+                    f"run `amplifier-work-tracker serve --root {root}` directly in a persistent "
+                    f"terminal/tmux session instead."
                 ),
             )
         reachable = await _wait_for_dolt_reachable(SV.DEFAULT_DOLT_HOST, SV.DEFAULT_DOLT_PORT)

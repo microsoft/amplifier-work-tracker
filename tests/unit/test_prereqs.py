@@ -107,6 +107,28 @@ def test_bd_install_command_linux_amd64(monkeypatch):
     assert "sudo" not in cmd
 
 
+def test_bd_install_command_never_contains_rm(monkeypatch):
+    """`rm -rf /tmp/...` trips Amplifier's own bash safety profile (the
+    literal substring `rm -rf /` matches at a command position regardless
+    of whether the path is actually root) -- an agent asked to run the
+    command this function emits must never hit "Command denied for
+    safety." Uses `mktemp -d` and simply never cleans up instead."""
+    monkeypatch.setattr(P.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(P.platform, "machine", lambda: "x86_64")
+    cmd = P.bd_install_command()
+    assert "rm " not in cmd
+    assert "rm-" not in cmd
+    assert "mktemp -d" in cmd
+
+
+def test_dolt_install_command_never_contains_rm(monkeypatch):
+    monkeypatch.setattr(P.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(P.platform, "machine", lambda: "x86_64")
+    cmd = P.dolt_install_command()
+    assert "rm " not in cmd
+    assert "mktemp -d" in cmd
+
+
 def test_bd_install_command_linux_arm64(monkeypatch):
     monkeypatch.setattr(P.platform, "system", lambda: "Linux")
     monkeypatch.setattr(P.platform, "machine", lambda: "aarch64")
