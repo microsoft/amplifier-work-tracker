@@ -3,14 +3,20 @@
 The scenario these exist for: a user installs ONLY the work-tracker behavior
 bundle, then generically asks a session "use work-tracker for this task."
 From a completely fresh machine (no service installed, no dolt server
-running, maybe not even bd on PATH yet), the session needs a way to figure
+running, not even `bd`/`dolt` on PATH yet), the session needs a way to figure
 out what's missing and fix it -- without guessing, and without silently
 doing something invasive on the user's behalf.
 
 Modeled on muxplex's `muxplex_status` tool pattern (structured state +
 the exact fix command for each state), extended with this project's own
-service-install state:
+service-install state. Checked in dependency order -- see `prereqs.check`'s
+docstring -- because there is no point classifying service/port state when
+there is no `bd`/`dolt` binary to run anything with in the first place:
 
+  - bd_missing             -- `bd` is not on PATH at all
+  - bd_too_old             -- `bd` is on PATH but below `adapter.MIN_VERSION`
+                               (or its version could not be read at all)
+  - dolt_missing           -- `dolt` is not on PATH at all
   - not_installed          -- no service, no dolt server reachable
   - installed_not_running  -- service exists but isn't active (or is active
                                but dolt hasn't come up yet)
@@ -25,7 +31,8 @@ never invoked as a side effect of `work_tracker_status` or any other tool --
 both reference projects (amplifier-browser-bridge, muxplex) deliberately
 refuse ambient side effects for exactly this class of action (installing a
 persistent background service). The LLM must decide to call it, once,
-explicitly.
+explicitly. It refuses loudly (never attempts, never guesses) when a
+prerequisite binary is missing -- see `WorkTrackerInstallTool.execute`.
 """
 
 from __future__ import annotations
@@ -37,12 +44,27 @@ from typing import Any, Literal
 from amplifier_core import ToolResult
 
 from amplifier_work_tracker import adapter as A
+from amplifier_work_tracker import prereqs as P
 from amplifier_work_tracker import service as S
 from amplifier_work_tracker import supervisor as SV
 
 WorkTrackerState = Literal[
-    "not_installed", "installed_not_running", "running_healthy", "foreign_server_on_port"
+    "bd_missing",
+    "bd_too_old",
+    "dolt_missing",
+    "not_installed",
+    "installed_not_running",
+    "running_healthy",
+    "foreign_server_on_port",
 ]
+
+# States where the fix is "install a missing/too-old binary yourself" --
+# work_tracker_install must refuse rather than attempt a service install
+# that would only fail confusingly later (e.g. `dolt sql-server` spawned
+# from a PATH that has no `dolt` on it).
+_PREREQ_STATES: frozenset[WorkTrackerState] = frozenset(
+    {"bd_missing", "bd_too_old", "dolt_missing"}
+)
 
 _INSTALL_WAIT_TIMEOUT_S = 15.0
 _INSTALL_WAIT_POLL_S = 0.5
@@ -56,13 +78,24 @@ def _resolve_root(config: dict[str, Any] | None) -> Path:
 
 def classify_state(root: Path) -> tuple[WorkTrackerState, str]:
     """The whole state machine, and nothing else decides it. Pure given its
-    three inputs (`service.describe_service()`'s installed/active,
+    inputs (`prereqs.check()`'s bd/dolt presence and version,
+    `service.describe_service()`'s installed/active,
     `supervisor.port_holder_responds()`) -- kept as a small, directly
     testable function separate from the async tool plumbing around it.
+
+    Dependency-ordered: `prereqs.check()` runs FIRST, and if it reports a
+    missing/too-old binary, the service/port checks below never run at all
+    -- mirroring `cli.py`'s `cmd_doctor` (`_check_dolt_reachable` is
+    `skipped` once `service.installed` already failed) rather than piling
+    unrelated red on top of the one real root cause.
 
     Returns (state, fix_command) -- `fix_command` is empty only for
     `running_healthy`, where there is nothing to fix.
     """
+    prereq = P.check()
+    if prereq is not None:
+        return prereq.state, prereq.fix
+
     info = S.describe_service()
     port_reachable = SV.port_holder_responds(SV.DEFAULT_DOLT_HOST, SV.DEFAULT_DOLT_PORT)
 
@@ -165,7 +198,18 @@ class WorkTrackerInstallTool:
 
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         root = _resolve_root(self._config)
-        state, _ = await asyncio.to_thread(classify_state, root)
+        state, fix = await asyncio.to_thread(classify_state, root)
+        if state in _PREREQ_STATES:
+            # Refuse loudly rather than attempt a service install that would
+            # only fail confusingly downstream (e.g. a unit whose ExecStart
+            # spawns `dolt sql-server` from a PATH that has no `dolt` on it).
+            # Never auto-download the missing binary ourselves -- see this
+            # module's docstring and prereqs.py's: report + exact command,
+            # let the agent or human run it.
+            return ToolResult(
+                success=False,
+                output=f"refusing to install: {fix}",
+            )
         if state == "foreign_server_on_port":
             return ToolResult(
                 success=False,
