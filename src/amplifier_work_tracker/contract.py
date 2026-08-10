@@ -81,8 +81,9 @@ def check_version() -> Result:
 
 def check_claim_subcommand(p: Probe) -> Result:
     """`ready --claim` must exist, and must reject an explicit assignee."""
-    env = dict(os.environ)
-    env["BEADS_DIR"] = str(p.ws.path(p.name) / ".beads")
+    # Non-interactive by construction -- see `adapter._bd_env`'s docstring:
+    # every `bd` call site in this package must build its env through it.
+    env = A._bd_env({"BEADS_DIR": str(p.ws.path(p.name) / ".beads")})
     r = subprocess.run(
         ["bd", "ready", "--help"], capture_output=True, text=True, env=env, check=False
     )
@@ -124,9 +125,7 @@ def check_claim_atomic(p: Probe, workers: int = 12, trials: int = 5) -> Result:
         p.bd.create(f"atomic probe {t}", tags=[lane], priority=1)
 
         def one(n: int):
-            env = dict(os.environ)
-            env["BEADS_DIR"] = beads_dir
-            env["BEADS_ACTOR"] = f"probe{n}"
+            env = A._bd_env({"BEADS_DIR": beads_dir, "BEADS_ACTOR": f"probe{n}"})
             r = None
             for attempt in range(8):
                 r = subprocess.run(
@@ -277,15 +276,14 @@ def check_name_rules(p: Probe) -> Result:
             cwd=d,
             capture_output=True,
             text=True,
+            env=A._bd_env(),
             check=False,
         )
-        env = dict(os.environ)
-        env["BEADS_DIR"] = str(d / ".beads")
         use = subprocess.run(
             ["bd", "list", "--json"],
             capture_output=True,
             text=True,
-            env=env,
+            env=A._bd_env({"BEADS_DIR": str(d / ".beads")}),
             check=False,
         )
         broken = "invalid database name" in ((use.stdout or "") + (use.stderr or ""))

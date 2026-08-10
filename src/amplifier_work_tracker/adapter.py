@@ -96,6 +96,131 @@ _MAX_RETRIES = 8
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,30}$")
 
 
+def _bd_env(extra: dict | None = None) -> dict:
+    """Base environment for EVERY subprocess invocation of `bd`, anywhere in
+    this package -- not just calls routed through `Beads._run`.
+
+    ASSUMPTION (unwritten, but load-bearing): `bd`'s first-use telemetry
+    consent prompt reads from stdin and blocks forever when there is no tty
+    -- true of every agent session. A single call site that forgets this
+    env var is a hang, not a degraded experience. Round 1 of this fix
+    covered `Beads._run` (via `Beads._env`) and missed the bare `bd init`
+    subprocess in `Workspace.create` -- proof that "remember to set it at
+    each call site" does not hold up. Every function in this module that
+    shells out to `bd` must build its env through this one function, so the
+    guarantee holds by construction rather than by discipline.
+
+    Round 2 correction -- verify the mechanism, not just the discipline:
+    round 1 set `BD_TELEMETRY_DISABLE=1`, which reads like a real bd
+    control but is NOT ONE. Empirically confirmed against the installed
+    v1.1.2 binary (`strings $(which bd) | grep TELEMETRY` and a live `bd
+    init --shared-server` run with a fresh config): `BD_TELEMETRY_DISABLE`,
+    `BD_TELEMETRY`, `BEADS_TELEMETRY`, `BD_TELEMETRY_ENABLED`,
+    `DO_NOT_TRACK`, and `BD_NO_TELEMETRY` are all ABSENT from the binary --
+    setting any of them is a pure no-op. Setting only `BD_TELEMETRY_DISABLE`
+    against a fresh config and `--shared-server` reproduces the real hang:
+    `bd` still prints its interactive telemetry-consent notice and blocks
+    on stdin. `BD_NON_INTERACTIVE` IS present in the binary and IS what the
+    contract test / a real DTU session used to get past this successfully
+    (`export BD_NON_INTERACTIVE=1 && bd init ...`) -- verified: with this
+    var set and stdin closed, `bd init` completes with no prompt and no
+    hang, every time.
+
+    IMPORTANT: `BD_NON_INTERACTIVE` alone does NOT decline telemetry --
+    it only prevents the interactive prompt from blocking. Verified: after
+    `bd init` under `BD_NON_INTERACTIVE=1`, `~/.config/bd/config.yaml`
+    still shows `metrics: {disabled: false}`. Actually declining telemetry
+    is a separate, verified mechanism -- see `_disable_telemetry_once`.
+    """
+    e = dict(os.environ)
+    e["BD_NON_INTERACTIVE"] = "1"
+    if extra:
+        e.update(extra)
+    return e
+
+
+_TELEMETRY_OFF_ATTEMPTED = False
+
+
+def _disable_telemetry_once() -> None:
+    """Actually decline bd's anonymous telemetry -- once per process,
+    best-effort, never raising.
+
+    `_bd_env`'s `BD_NON_INTERACTIVE=1` only prevents the first-use
+    telemetry-consent prompt from blocking; it does NOT turn telemetry off
+    (verified -- see `_bd_env`'s docstring). The real, verified mechanism
+    is `bd metrics off`: it writes `metrics.disabled: true` to bd's GLOBAL
+    config (`~/.config/bd/config.yaml`), needs no project/`.beads` context
+    to run, is idempotent, and -- verified empirically -- once run, a
+    later `bd init` in a brand-new project prints no telemetry notice at
+    all and leaves `disabled: true` in place. Calling this before the
+    first `bd init` this process ever performs is what makes "telemetry
+    must not be enabled" actually true, not just "the prompt didn't hang."
+
+    Never raises: telemetry preference is a courtesy setting, not
+    something that should block project creation if `bd` is missing,
+    broken, or this is a read-only environment. A failure here is silently
+    swallowed -- worst case, telemetry stays at bd's own default.
+    """
+    global _TELEMETRY_OFF_ATTEMPTED
+    if _TELEMETRY_OFF_ATTEMPTED:
+        return
+    _TELEMETRY_OFF_ATTEMPTED = True
+    try:
+        subprocess.run(
+            ["bd", "metrics", "off"],
+            capture_output=True,
+            text=True,
+            env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+            check=False,
+            timeout=10,
+        )
+    except Exception:  # noqa: BLE001 -- best-effort courtesy setting, never fatal
+        pass
+
+
+def _bd_init_server_args() -> list[str]:
+    """Which `bd init` server flags `Workspace.create` should pass: ATTACH to
+    an already-healthy shared dolt server if one is responding on the
+    conventional host:port, or fall back to `--shared-server` (bd spawns and
+    owns its own) when nothing is there yet.
+
+    Why this exists: `--shared-server` has no "attach if one is already
+    running" mode of its own -- it unconditionally tries to SPAWN a dolt
+    server at the fixed `~/.beads/shared-server` location. When our own
+    supervisor (see supervisor.py) already started that exact server --
+    which is the entire point of `amplifier-work-tracker service
+    install`/`serve` -- a second `bd init --shared-server` collides.
+    Measured in a DTU run: `bd init failed: ... cannot start dolt server on
+    port 3308: port 3308 is busy but cannot identify the process` -- three
+    of eight tool failures in that run were this exact collision, and the
+    only escape the agent found was a hand-written raw `bd init --server
+    --server-port 3308 --external --role maintainer` (`--server` mode DOES
+    accept an already-running, externally-managed server; `--shared-server`
+    does not). This function supplies that escape by construction instead of
+    forcing every caller to rediscover it by hand.
+
+    `--server --server-host <host> --server-port <port> --external` targets
+    the EXACT SAME conventional location/port `--shared-server` would have
+    used (see supervisor.DEFAULT_DOLT_HOST/DEFAULT_DOLT_PORT) -- this is
+    "the same shared server, attached instead of respawned," not a second,
+    incompatible one. `--role maintainer` is not passed explicitly: bd's own
+    non-interactive mode already defaults to it (see `_bd_env`'s
+    `BD_NON_INTERACTIVE=1`), so duplicating it here would just be a second
+    place for that default to drift from bd's.
+
+    Deferred import of `supervisor` here (not at module level): supervisor
+    already imports this module (`adapter`), so an unconditional top-level
+    `from . import supervisor` here would be circular.
+    """
+    from . import supervisor as SV  # local: see docstring -- avoids a circular import
+
+    host, port = SV.DEFAULT_DOLT_HOST, SV.DEFAULT_DOLT_PORT
+    if SV.port_holder_responds(host, port):
+        return ["--server", "--server-host", host, "--server-port", str(port), "--external"]
+    return ["--shared-server"]
+
+
 class BeadsError(Exception):
     """A Beads operation failed. Never caught to degrade -- only to report."""
 
@@ -143,6 +268,36 @@ def _retryable(blob: str) -> bool:
     return any(t.lower() in low for t in _RETRYABLE)
 
 
+STATUS_ERROR_MAX = 300  # see `truncate_status` -- was 120/70 at two call sites, severing hints
+
+
+def truncate_status(text: str, limit: int = STATUS_ERROR_MAX) -> str:
+    """Truncate a diagnostic status string for display, never mid-word.
+
+    One home for this so the multiple per-project status surfaces (the
+    `work_status` tool's per-project error, the `instances` CLI's per-project
+    error) don't each reinvent -- and mis-invent -- the same truncation.
+    Measured bug this replaces: a bare `text[:120]` (and, separately,
+    `text[:70]`) sliced mid-word, severing the actionable half of the
+    message -- e.g. "...or 'bd in" instead of "...or 'bd init' to create a
+    new database". The cap itself is also raised (120/70 -> 300): these are
+    diagnostic hints meant to be acted on, not a log line competing for
+    terminal width.
+
+    Cuts at the last whitespace boundary at or before `limit` and appends an
+    explicit `...[truncated]` marker so it's obvious to a reader (human or
+    agent) that more text existed, rather than looking like a complete,
+    oddly-worded message. Falls back to a hard cut at `limit` only if no
+    whitespace boundary exists in range (e.g. one very long unbroken token).
+    """
+    if len(text) <= limit:
+        return text
+    cut = text.rfind(" ", 0, limit)
+    if cut <= 0:
+        cut = limit
+    return text[:cut] + " ...[truncated]"
+
+
 class Beads:
     """A handle on one Beads project. Construct via Workspace.project()."""
 
@@ -153,8 +308,10 @@ class Beads:
     # ---------------------------------------------------------------- plumbing
 
     def _env(self, actor: str | None = None) -> dict:
-        e = dict(os.environ)
-        e["BEADS_DIR"] = str(self._dir)
+        # Telemetry-disable is handled by `_bd_env` -- unconditionally, not
+        # merely inherited -- so every `bd` call site in this module (this
+        # one included) gets it the same way. See `_bd_env`'s docstring.
+        e = _bd_env({"BEADS_DIR": str(self._dir)})
         a = actor or self._actor
         if a:
             e["BEADS_ACTOR"] = a
@@ -495,10 +652,39 @@ class Workspace:
                 f"reports successful creation and then fails every later command."
             )
         d = self.path(name)
-        if (d / ".beads").is_dir():
-            return d
-        d.mkdir(parents=True, exist_ok=True)
+        beads_dir = d / ".beads"
         lock = d / ".create.lock"
+        if beads_dir.is_dir():
+            if lock.exists():
+                raise BeadsError(f"project {name!r} is already being created (lock: {lock})")
+            try:
+                # A directory existing is not evidence of anything. A failed
+                # `bd init` (crashed process, killed session, disk full)
+                # leaves `.beads/` behind with no usable database inside it.
+                # Without this probe, every later `create(name)` would see
+                # "already exists", return immediately, and report success
+                # on residue -- exactly the silent-partial-success shape
+                # this whole project exists to prevent, in our own code.
+                self.project(name).list()
+                return d
+            except BeadsError as e:
+                # Deliberately phrased as `cd <dir> && rm -r <name>`, never a
+                # bare `rm -rf <abs-path>` -- the literal text `rm -rf /`
+                # trips Amplifier's own bash safety profile as a SUBSTRING
+                # match regardless of whether the path is actually root
+                # (measured cost in a DTU run: 2 wasted tool calls). See
+                # prereqs.py's install-command docstrings for the same fix
+                # applied to a different emitted command.
+                raise BeadsError(
+                    f"project {name!r} has stale residue at {beads_dir}: the directory "
+                    f"exists but the database does not answer ({e}). A previous create "
+                    f"attempt likely failed partway through. Remove it and retry: "
+                    f"`cd {d} && rm -r .beads` (keeps anything else in {d}), or "
+                    f"`cd {d.parent} && rm -r {d.name}` to remove the whole project "
+                    f"directory if it holds nothing else you need. This call refuses to "
+                    f"silently treat dead residue as a successful project."
+                ) from e
+        d.mkdir(parents=True, exist_ok=True)
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             os.write(fd, str(os.getpid()).encode())
@@ -514,11 +700,13 @@ class Workspace:
                     capture_output=True,
                     check=False,
                 )
+            _disable_telemetry_once()  # see docstring -- BD_NON_INTERACTIVE alone does not do this
             p = subprocess.run(
-                ["bd", "init", "--prefix", name, "--shared-server"],
+                ["bd", "init", "--prefix", name, *_bd_init_server_args()],
                 cwd=d,
                 capture_output=True,
                 text=True,
+                env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
                 check=False,
             )
             if p.returncode != 0:
@@ -555,14 +743,26 @@ def capabilities() -> dict[str, bool]:
             "gate",
             "dep",
         ):
-            r = subprocess.run(["bd", cmd, "--help"], capture_output=True, text=True, check=False)
+            r = subprocess.run(
+                ["bd", cmd, "--help"],
+                capture_output=True,
+                text=True,
+                env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+                check=False,
+            )
             blob = (r.stdout or "") + (r.stderr or "")
             _CAPS[cmd] = "unknown command" not in blob
     return dict(_CAPS)
 
 
 def version() -> tuple[int, int, int]:
-    p = subprocess.run(["bd", "--version"], capture_output=True, text=True, check=False)
+    p = subprocess.run(
+        ["bd", "--version"],
+        capture_output=True,
+        text=True,
+        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+        check=False,
+    )
     m = re.search(r"(\d+)\.(\d+)\.(\d+)", p.stdout or "")
     if not m:
         raise BeadsError(f"cannot read bd version: {(p.stdout or p.stderr)[:120]}")

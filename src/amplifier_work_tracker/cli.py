@@ -24,6 +24,8 @@ from typing import NoReturn
 from . import adapter as A
 from . import contract
 from . import custody as C
+from . import service as S
+from . import supervisor as SV
 
 POLL_TICK_SECONDS = 5
 
@@ -47,9 +49,74 @@ def _guard():
 # ------------------------------------------------------------------ commands
 
 
+def _check_service_installed() -> contract.Result:
+    """Is the background service installed, and if so, active?
+
+    Informational (`ok`) when never installed at all -- running
+    `amplifier-work-tracker serve` by hand, or not needing it yet, are both
+    normal. Only "installed but NOT active" is a `fail`: that state means an
+    operator asked for this to survive reboot and it currently isn't running.
+    """
+    info = S.describe_service()
+    if not info.supported:
+        return contract.Result(
+            "service.installed",
+            True,
+            f"service management unavailable on this platform: {info.detail}",
+        )
+    if not info.installed:
+        return contract.Result(
+            "service.installed",
+            True,
+            "not installed -- run `amplifier-work-tracker service install` so the shared dolt "
+            "server and reap/notify sweeps survive logout and reboot",
+        )
+    if info.active:
+        return contract.Result("service.installed", True, f"{info.detail}")
+    return contract.Result(
+        "service.installed",
+        False,
+        f"{info.detail} -- start it with `amplifier-work-tracker service start`, or see "
+        f"`amplifier-work-tracker service logs` for why it isn't running",
+    )
+
+
+def _check_dolt_reachable(service_check: contract.Result) -> contract.Result:
+    """Is the shared dolt server actually accepting connections on
+    SV.DEFAULT_DOLT_HOST:DEFAULT_DOLT_PORT?
+
+    Dependency-ordered on `service.installed`: if that check already failed
+    (installed but not running), this is `skipped` rather than piling on a
+    second red line for the same root cause -- a stopped service obviously
+    means dolt isn't reachable either.
+    """
+    if not service_check.ok:
+        return contract.Result("dolt.reachable", True, "skipped (service.installed already failed)")
+    reachable = SV.port_holder_responds(SV.DEFAULT_DOLT_HOST, SV.DEFAULT_DOLT_PORT)
+    if reachable:
+        return contract.Result(
+            "dolt.reachable",
+            True,
+            f"dolt sql-server responds on {SV.DEFAULT_DOLT_HOST}:{SV.DEFAULT_DOLT_PORT}",
+        )
+    return contract.Result(
+        "dolt.reachable",
+        False,
+        f"nothing responds on {SV.DEFAULT_DOLT_HOST}:{SV.DEFAULT_DOLT_PORT} -- "
+        f"`bd` commands against a shared-server project will fail until the dolt server is "
+        f"running (`amplifier-work-tracker service install`, or `bd` will lazily start its own "
+        f"on first use)",
+    )
+
+
 def cmd_doctor(a):
-    """Prove the installed Beads still behaves the way we depend on."""
+    """Prove the installed Beads still behaves the way we depend on, and that
+    our own service/dolt-reachability are in a state parallel agents can
+    trust."""
     results = contract.run_all(quick=a.quick)
+    service_check = _check_service_installed()
+    results.append(service_check)
+    results.append(_check_dolt_reachable(service_check))
     width = max(len(r.id) for r in results)
     failed = 0
     for r in results:
@@ -77,6 +144,37 @@ def cmd_new(a):
     print(f"created project '{a.name}' at {path} (verified writable)")
 
 
+def cmd_add(a):
+    """File a new engineering-lane work item directly -- the sanctioned path
+    for seeding a project's FIRST item(s), or adding more later.
+
+    Deliberately the CLI/operator counterpart to `work_add` (the agent-facing
+    tool): before this existed, nothing here could create the first item in
+    a brand-new project without already holding one (`work_file` requires a
+    held item; `new` only creates the PROJECT). The only way around that gap
+    was raw `bd create` plus a hand-guessed `bd label add <id> lane:eng` --
+    exactly the seam-leaking workaround this command exists to make
+    unnecessary. Applies the engineering lane label itself; the caller never
+    needs to know `lane:eng` exists.
+    """
+    _guard()
+    try:
+        new_id = (
+            _ws(a)
+            .project(a.project)
+            .create(
+                a.title,
+                kind="task",
+                tags=[A.LANE_WORK],
+                description=a.description,
+                acceptance=a.acceptance,
+            )
+        )
+    except A.BeadsError as e:
+        die(str(e))
+    print(json.dumps({"added": new_id, "project": a.project, "lane": A.LANE_WORK}, indent=2))
+
+
 def cmd_instances(a):
     _guard()
     ws = _ws(a)
@@ -101,7 +199,10 @@ def cmd_instances(a):
                 }
             )
         except A.BeadsError as e:
-            rows.append({"project": n, "status": f"ERROR: {e}"[:70]})
+            # A.truncate_status -- see its docstring: a bare slice cap
+            # severs the actionable hint mid-word (same bug as the
+            # work_status tool's per-project error; fixed in one place).
+            rows.append({"project": n, "status": A.truncate_status(f"ERROR: {e}")})
     if a.json:
         print(json.dumps(rows, indent=2))
         return
@@ -291,30 +392,151 @@ def cmd_notify(a):
     print(json.dumps({"flipped": flipped, "count": len(flipped)}, indent=2))
 
 
+def _root_parent_parser() -> argparse.ArgumentParser:
+    """`--root` as a parent parser, composed into EVERY subcommand below via
+    `parents=[...]`.
+
+    This is load-bearing, not cosmetic: the systemd/launchd unit `service
+    install` writes must bake the resolved workspace root in as an explicit
+    `serve --root <abs>` ExecStart ARGUMENT, never an `Environment=` line --
+    service managers do not reliably propagate the installing shell's
+    environment (see service.py's module docstring). Giving every subcommand
+    its own real `--root` flag (rather than only a top-level one, or only the
+    env var) is what makes that argument meaningful and consistent everywhere
+    `--root` might need to be passed explicitly, not just under `serve`.
+    """
+    parent = argparse.ArgumentParser(add_help=False)
+    parent.add_argument(
+        "--root", default=None, help="workspace root (default: $AMPLIFIER_WORK_TRACKER_ROOT)"
+    )
+    return parent
+
+
+def cmd_serve(a):
+    """Run the supervisor in the foreground: dolt sql-server child + reap/notify sweeps.
+
+    This is the systemd/launchd ExecStart target (see service.py) -- it is
+    also perfectly runnable directly in a terminal for local testing or on a
+    platform with no service manager at all.
+    """
+    root = A.Workspace(getattr(a, "root", None)).root
+    return SV.serve(
+        root,
+        host=a.dolt_host,
+        port=a.dolt_port,
+        reap_interval=a.reap_interval,
+        notify_interval=a.notify_interval,
+        dolt_restart_backoff=a.dolt_restart_backoff,
+    )
+
+
+def cmd_service_install(a):
+    try:
+        info = S.service_install(
+            A.Workspace(getattr(a, "root", None)).root, dolt_host=a.dolt_host, dolt_port=a.dolt_port
+        )
+    except S.ServiceUnsupportedError as e:
+        die(str(e))
+    print(f"Installed and started the {S.SERVICE_NAME} service ({info.platform}).")
+    print(f"  Unit: {info.unit_path}")
+    print("Check it: amplifier-work-tracker service status")
+    print("Logs:     amplifier-work-tracker service logs")
+
+
+def cmd_service_uninstall(a):
+    try:
+        S.service_uninstall()
+    except S.ServiceUnsupportedError as e:
+        die(str(e))
+    print(f"Removed the {S.SERVICE_NAME} service (data directories were left untouched).")
+
+
+def cmd_service_start(a):
+    try:
+        S.service_start()
+    except S.ServiceUnsupportedError as e:
+        die(str(e))
+    print(f"Started the {S.SERVICE_NAME} service.")
+
+
+def cmd_service_stop(a):
+    try:
+        S.service_stop()
+    except S.ServiceUnsupportedError as e:
+        die(str(e))
+    print(f"Stopped the {S.SERVICE_NAME} service.")
+
+
+def cmd_service_restart(a):
+    try:
+        S.service_restart()
+    except S.ServiceUnsupportedError as e:
+        die(str(e))
+    print(f"Restarted the {S.SERVICE_NAME} service.")
+
+
+def cmd_service_status(a):
+    info = S.describe_service()
+    print(f"platform: {info.platform}")
+    print(f"installed: {info.installed}")
+    print(f"active: {info.active}")
+    print(f"detail: {info.detail}")
+    if not info.installed:
+        return
+    print()
+    try:
+        S.service_status()
+    except S.ServiceUnsupportedError as e:
+        die(str(e))
+
+
+def cmd_service_logs(a):
+    try:
+        S.service_logs()
+    except S.ServiceUnsupportedError as e:
+        die(str(e))
+
+
 def main():
+    root_parent = _root_parent_parser()
     ap = argparse.ArgumentParser(
         prog="amplifier-work-tracker",
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--root", help="workspace root (default: $AMPLIFIER_WORK_TRACKER_ROOT)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("doctor", help="verify our assumptions against the live bd")
+    p = sub.add_parser(
+        "doctor", help="verify our assumptions against the live bd", parents=[root_parent]
+    )
     p.add_argument(
         "--quick", action="store_true", help="skip the concurrency check (fast, but proves less)"
     )
     p.set_defaults(fn=cmd_doctor)
 
-    p = sub.add_parser("new", help="create a named project")
+    p = sub.add_parser("new", help="create a named project", parents=[root_parent])
     p.add_argument("name")
     p.set_defaults(fn=cmd_new)
 
-    p = sub.add_parser("instances", help="list projects")
+    p = sub.add_parser(
+        "add",
+        help=(
+            "file a new engineering-lane work item directly (the sanctioned way to seed a "
+            "project's first item(s), or add more later -- applies the lane label itself)"
+        ),
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("title", help="short title for the new item")
+    p.add_argument("--description", default=None, help="what needs to be done")
+    p.add_argument("--acceptance", default=None, help="Given/When/Then acceptance criteria")
+    p.set_defaults(fn=cmd_add)
+
+    p = sub.add_parser("instances", help="list projects", parents=[root_parent])
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_instances)
 
-    p = sub.add_parser("claim", help="safely claim one ready item")
+    p = sub.add_parser("claim", help="safely claim one ready item", parents=[root_parent])
     p.add_argument("--project", required=True)
     p.add_argument("--actor", required=True)
     p.add_argument("--lane", default=A.LANE_WORK)
@@ -326,6 +548,7 @@ def main():
             "establish custody of a claimed item and renew it on a timer; "
             "exits the moment the watched --pid disappears"
         ),
+        parents=[root_parent],
     )
     p.add_argument("--project", required=True)
     p.add_argument("--actor", required=True)
@@ -348,6 +571,7 @@ def main():
             "release items whose custody has gone stale or hit the escalation "
             "ceiling back to the queue"
         ),
+        parents=[root_parent],
     )
     p.add_argument("--project", required=True)
     p.add_argument(
@@ -364,16 +588,77 @@ def main():
     )
     p.set_defaults(fn=cmd_reap)
 
-    p = sub.add_parser("resolve", help="close an item with a user-readable reason")
+    p = sub.add_parser(
+        "resolve", help="close an item with a user-readable reason", parents=[root_parent]
+    )
     p.add_argument("--project", required=True)
     p.add_argument("--id", required=True)
     p.add_argument("--reason", required=True)
     p.add_argument("--actor", default="agent")
     p.set_defaults(fn=cmd_resolve)
 
-    p = sub.add_parser("notify", help="propagate resolved work back to reporters")
+    p = sub.add_parser(
+        "notify", help="propagate resolved work back to reporters", parents=[root_parent]
+    )
     p.add_argument("--project", required=True)
     p.set_defaults(fn=cmd_notify)
+
+    p = sub.add_parser(
+        "serve",
+        help="run the supervisor in the foreground (dolt child + reap/notify sweep loops)",
+        parents=[root_parent],
+    )
+    p.add_argument("--dolt-host", default=SV.DEFAULT_DOLT_HOST)
+    p.add_argument("--dolt-port", type=int, default=SV.DEFAULT_DOLT_PORT)
+    p.add_argument(
+        "--reap-interval",
+        type=float,
+        default=float(SV.DEFAULT_REAP_INTERVAL_SECONDS),
+        help=f"seconds between reap sweeps (default {SV.DEFAULT_REAP_INTERVAL_SECONDS})",
+    )
+    p.add_argument(
+        "--notify-interval",
+        type=float,
+        default=float(SV.DEFAULT_NOTIFY_INTERVAL_SECONDS),
+        help=f"seconds between notify sweeps (default {SV.DEFAULT_NOTIFY_INTERVAL_SECONDS})",
+    )
+    p.add_argument(
+        "--dolt-restart-backoff",
+        type=float,
+        default=SV.DEFAULT_DOLT_RESTART_BACKOFF_SECONDS,
+        help="seconds to wait before restarting a crashed dolt child",
+    )
+    p.set_defaults(fn=cmd_serve)
+
+    svc = sub.add_parser(
+        "service", help="install/manage amplifier-work-tracker as a background OS service"
+    )
+    svc_sub = svc.add_subparsers(dest="service_cmd", required=True)
+
+    p = svc_sub.add_parser(
+        "install", help="install (or re-install) and start the service", parents=[root_parent]
+    )
+    p.add_argument("--dolt-host", default=None)
+    p.add_argument("--dolt-port", type=int, default=None)
+    p.set_defaults(fn=cmd_service_install)
+
+    p = svc_sub.add_parser("uninstall", help="stop and remove the service (data is left untouched)")
+    p.set_defaults(fn=cmd_service_uninstall)
+
+    p = svc_sub.add_parser("start", help="start the installed service")
+    p.set_defaults(fn=cmd_service_start)
+
+    p = svc_sub.add_parser("stop", help="stop the service without uninstalling it")
+    p.set_defaults(fn=cmd_service_stop)
+
+    p = svc_sub.add_parser("restart", help="restart the service")
+    p.set_defaults(fn=cmd_service_restart)
+
+    p = svc_sub.add_parser("status", help="show whether the service is installed and running")
+    p.set_defaults(fn=cmd_service_status)
+
+    p = svc_sub.add_parser("logs", help="stream or print the service's logs")
+    p.set_defaults(fn=cmd_service_logs)
 
     a = ap.parse_args()
     try:
