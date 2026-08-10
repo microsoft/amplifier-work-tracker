@@ -38,6 +38,8 @@ from amplifier_core import ToolResult
 from amplifier_work_tracker import adapter as A
 from amplifier_work_tracker import custody as C
 
+from .service_tools import WorkTrackerInstallTool, WorkTrackerStatusTool
+
 _MIN_RENEW_INTERVAL_SECONDS = 5
 
 
@@ -494,6 +496,8 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
         WorkResolveTool(session),
         WorkStatusTool(session),
         WorkFileTool(session),
+        WorkTrackerStatusTool(config),
+        WorkTrackerInstallTool(config),
     ]
     for tool in tools:
         await coordinator.mount("tools", tool, name=tool.name)
