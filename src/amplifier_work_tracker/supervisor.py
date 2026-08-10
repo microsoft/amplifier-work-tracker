@@ -180,8 +180,8 @@ async def reap_loop(
 
     A sweep that raises is caught and logged (`logger.exception`) rather than
     allowed to kill this task. A silently-dead reaper is the exact failure
-    this whole feature exists to fix (see docs/FOR_AGENT_SESSIONS.md) --
-    letting an exception propagate out of this loop would recreate it.
+    this whole feature exists to fix -- letting an exception propagate out
+    of this loop would recreate it.
     """
     while not stop_event.is_set():
         try:

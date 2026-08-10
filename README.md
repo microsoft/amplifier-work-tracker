@@ -37,25 +37,28 @@ Three problems show up the moment more than one agent works a queue at once:
 
 ## Quick start
 
+Not on PyPI yet -- install straight from the repo:
+
 ```bash
-pip install amplifier-work-tracker
+pip install git+https://github.com/microsoft/amplifier-work-tracker@main
 # or, from a checkout:
 pip install -e ".[dev]"
 
-amplifier-work-tracker new my-project              # create a project
+amplifier-work-tracker doctor                      # verify the installed bd/dolt behave as we assume
+amplifier-work-tracker new my-project              # create a project (once)
+amplifier-work-tracker service install             # start the shared dolt server + reap/notify sweeps
 amplifier-work-tracker instances                   # list projects and their queue state
-amplifier-work-tracker claim --project my-project --actor agent-1
-amplifier-work-tracker custody --project my-project --actor agent-1 --id <id> &
-# ... do the work ...
-amplifier-work-tracker resolve --project my-project --id <id> --actor agent-1 \
-    --reason "Fixed: root-caused and shipped"
-amplifier-work-tracker notify --project my-project
-amplifier-work-tracker doctor                      # verify the installed bd still behaves as we assume
 ```
 
-See [`docs/AGENT_PROTOCOL.md`](docs/AGENT_PROTOCOL.md) for the full coding-agent loop and its hard
-rules, and [`docs/DESIGN.md`](docs/DESIGN.md) for the complete design, including every measured
-number below.
+That's the operator side: install, stand up a project, start the background service that keeps
+custody and notifications alive, and confirm the queue is there.
+
+**Agents don't run these commands to do the work.** Compose the bundle
+(`git+https://github.com/microsoft/amplifier-work-tracker@main`) and load the
+`claiming-work-safely` skill (or delegate to `work-tracker:work-executor`) for the claim/custody/
+resolve loop and its hard rules -- see the bundle's tool table (`work_claim`, `work_resolve`,
+`work_status`, ...) rather than the raw CLI verbs below. Full design in
+[`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## How it works
 
@@ -84,23 +87,11 @@ broke, scoped to `adapter.py`.
 
 **Claim only through the single atomic operation, `bd ready --claim`. Never the two-step
 `bd ready` -> pick -> `bd update --claim` path** -- it is the obvious way to write a claim, and it
-double-claims silently under contention. `amplifier_work_tracker.adapter.Beads.claim_next` calls
-`bd ready --claim` exclusively; the unsafe primitive is not exposed anywhere above the seam.
-
-This isn't a theoretical concern -- it was measured directly:
-
-| Command | Version | Topology | Trials | Double-claims |
-|---|---|---|---|---|
-| `bd update <id> --claim` | 1.0.0 | shared-server | 6 | **5** |
-| `bd update <id> --claim` | 1.0.0 | dedicated | 6 | **3** |
-| `bd update <id> --claim` | 1.1.2 | shared-server | 8 | **2** |
-| **`bd ready --claim`** | **1.1.2** | **shared-server** | **6** | **0** |
-
-A "double-claim" is the silent kind: 2-3 agents each get **exit 0** and believe they own the bead,
-while only one is actually the assignee. The others proceed to work on an issue they do not hold --
-no error, no undo. An earlier, single-trial measurement claimed the claim primitive was
-unconditionally atomic; repeated trials retracted that. Full verification log, including the
-retraction, in [`docs/DESIGN.md`](docs/DESIGN.md).
+double-claims silently under contention (2-3 agents each get **exit 0** and believe they own the
+same bead, no error, no undo). `amplifier_work_tracker.adapter.Beads.claim_next` calls
+`bd ready --claim` exclusively; the unsafe primitive is not exposed anywhere above the seam. See
+[`docs/DESIGN.md`](docs/DESIGN.md) for the measured evidence -- including the retraction of an
+earlier single-trial "it's atomic" finding.
 
 ## Requirements
 
@@ -111,20 +102,8 @@ retraction, in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Contributing
 
-> [!NOTE]
-> This project is not currently accepting external contributions, but we're actively working toward opening this up. We value community input and look forward to collaborating in the future. For now, feel free to fork and experiment!
-
-Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit [Contributor License Agreements](https://cla.opensource.microsoft.com).
-
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md), which also documents the `main`
+branch protection ruleset and why it's configured the way it is.
 
 ## Trademarks
 
