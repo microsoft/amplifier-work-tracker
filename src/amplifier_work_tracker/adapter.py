@@ -155,6 +155,15 @@ class Beads:
     def _env(self, actor: str | None = None) -> dict:
         e = dict(os.environ)
         e["BEADS_DIR"] = str(self._dir)
+        # Every `bd` invocation from this module MUST be non-interactive.
+        # An agent session has no tty -- `bd`'s own telemetry-consent prompt
+        # (asked on first use) hangs forever waiting on input that will
+        # never come. Set unconditionally (never merely inherited from the
+        # caller's environment) so this can never regress if some ambient
+        # environment happens to lack the var -- a session finding and
+        # exporting BD_TELEMETRY_DISABLE=1 by hand is exactly the gap this
+        # closes, not something we should ever depend on a caller doing.
+        e["BD_TELEMETRY_DISABLE"] = "1"
         a = actor or self._actor
         if a:
             e["BEADS_ACTOR"] = a

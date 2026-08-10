@@ -169,21 +169,6 @@ def _have_systemctl() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_bin() -> str:
-    """The `amplifier-work-tracker` executable to invoke from a systemd unit.
-
-    Prefers the executable on PATH (what `uv tool install` / `pip install`
-    puts on it); falls back to an explicit `<python> -m
-    amplifier_work_tracker.cli` invocation. Returned as a single string --
-    safe for systemd's ExecStart, which does its own whitespace splitting
-    (unlike launchd, see `_resolve_bin_tokens`).
-    """
-    which = shutil.which(SERVICE_NAME)
-    if which:
-        return which
-    return f"{sys.executable} -m amplifier_work_tracker.cli"
-
-
 def _resolve_bin_tokens() -> list[str]:
     """The `amplifier-work-tracker` executable as separate argv tokens, for launchd.
 
@@ -238,21 +223,56 @@ def _resolve_root(root: str | Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _systemd_install(root: Path, *, dolt_host: str | None, dolt_port: int | None) -> None:
-    exec_argv = [_resolve_bin(), *_serve_argv_tail(root, dolt_host=dolt_host, dolt_port=dolt_port)]
+def _systemd_unit_content(root: Path, *, dolt_host: str | None, dolt_port: int | None) -> str:
+    """Render the systemd unit's text, and nothing else -- pure and directly
+    testable (e.g. with `systemd-analyze verify` against the rendered text)
+    without touching a real systemd or writing to `_SYSTEMD_UNIT_PATH`.
+
+    Uses `_resolve_bin_tokens()` -- the SAME token-list resolver launchd's
+    `_launchd_install` uses -- rather than a systemd-only string resolver.
+    Every element of `exec_argv` is therefore a single, independently
+    exec-able token (an absolute path, `-m`, or a dotted module name -- never
+    a token containing embedded whitespace of its own). `shlex.join` then
+    quotes ONLY tokens that need it (e.g. a path containing a space),
+    never accidentally folding multiple tokens into one quoted blob. Before
+    this, the module-fallback token (`f"{sys.executable} -m ...cli"`, a
+    single string already containing spaces) was passed as ONE list element,
+    so `shlex.join` quoted the whole thing and systemd treated it as a
+    single, nonexistent executable path -- see this module's docstring and
+    `tests/unit/test_service.py`'s `systemd-analyze verify` regression tests
+    for both resolution paths.
+    """
+    exec_argv = [
+        *_resolve_bin_tokens(),
+        *_serve_argv_tail(root, dolt_host=dolt_host, dolt_port=dolt_port),
+    ]
     exec_start = shlex.join(exec_argv)
     safe_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
-    unit_content = _SYSTEMD_UNIT_TEMPLATE.format(exec_start=exec_start, safe_path=safe_path)
+    return _SYSTEMD_UNIT_TEMPLATE.format(exec_start=exec_start, safe_path=safe_path)
+
+
+def _systemd_install(root: Path, *, dolt_host: str | None, dolt_port: int | None) -> None:
+    unit_content = _systemd_unit_content(root, dolt_host=dolt_host, dolt_port=dolt_port)
 
     _SYSTEMD_UNIT_DIR.mkdir(parents=True, exist_ok=True)
     _SYSTEMD_UNIT_PATH.write_text(unit_content, encoding="utf-8")
-    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-    subprocess.run(["systemctl", "--user", "enable", "--now", SERVICE_NAME], check=True)
-    # `enable --now` is a no-op on an already-running unit, so a re-install
-    # (new --root, new dolt host/port) would silently keep serving the STALE
-    # arguments without this. `restart` also starts a stopped unit, so it is
-    # safe on both first install and re-install.
-    subprocess.run(["systemctl", "--user", "restart", SERVICE_NAME], check=True)
+    try:
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+        subprocess.run(["systemctl", "--user", "enable", "--now", SERVICE_NAME], check=True)
+        # `enable --now` is a no-op on an already-running unit, so a
+        # re-install (new --root, new dolt host/port) would silently keep
+        # serving the STALE arguments without this. `restart` also starts a
+        # stopped unit, so it is safe on both first install and re-install.
+        subprocess.run(["systemctl", "--user", "restart", SERVICE_NAME], check=True)
+    except subprocess.CalledProcessError:
+        # Transactional: a failure at any systemctl step below the unit file
+        # write must not leave that file (or an enabled-but-broken unit)
+        # behind -- see `service_install`'s rollback contract. Best-effort,
+        # never raising a SECOND exception that would mask the original.
+        subprocess.run(["systemctl", "--user", "disable", SERVICE_NAME], check=False)
+        _SYSTEMD_UNIT_PATH.unlink(missing_ok=True)
+        subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+        raise
 
 
 def _systemd_uninstall() -> None:
@@ -262,7 +282,7 @@ def _systemd_uninstall() -> None:
     subprocess.run(["systemctl", "--user", "stop", SERVICE_NAME], check=False)
     subprocess.run(["systemctl", "--user", "disable", SERVICE_NAME], check=False)
     _SYSTEMD_UNIT_PATH.unlink(missing_ok=True)
-    subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
 
 
 def _systemd_start() -> None:
@@ -432,7 +452,14 @@ def _launchd_install(root: Path, *, dolt_host: str | None, dolt_port: int | None
     # plist's arguments (e.g. an updated --root) to actually apply on
     # re-install, not just on first install.
     _launchd_bootout_and_wait(uid)
-    _launchd_bootstrap(uid)
+    try:
+        _launchd_bootstrap(uid)
+    except RuntimeError:
+        # Transactional, matching _systemd_install: a bootstrap failure must
+        # not leave a written-but-never-loaded plist behind -- see
+        # `service_install`'s rollback contract.
+        _LAUNCHD_PLIST_PATH.unlink(missing_ok=True)
+        raise
 
 
 def _launchd_uninstall() -> None:
@@ -518,6 +545,13 @@ def service_install(
 
     Safe to re-run -- e.g. to change --root, re-run with the new path to
     rebake and restart the unit against it.
+
+    Transactional: if `systemctl`/`launchctl` fails partway through (unit
+    written but never enabled/loaded), the unit file written by THIS call is
+    removed before the exception propagates -- a caller that catches the
+    raised error never has to separately clean up a half-installed unit.
+    Only what this call itself created is rolled back; a unit from a prior,
+    successful install is never touched by a later call's failure.
     """
     resolved_root = _resolve_root(root)
 

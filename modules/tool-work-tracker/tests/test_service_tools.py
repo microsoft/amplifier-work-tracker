@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import shutil
 import stat
+from dataclasses import dataclass
 
 import pytest
 from amplifier_module_tool_work_tracker.service_tools import (
@@ -106,3 +107,85 @@ async def test_install_tool_refuses_loudly_when_dolt_missing(tmp_path, monkeypat
     output = str(result.output)
     assert "refusing to install" in output
     assert "dolt is not on PATH" in output
+
+
+# ---------------------------------------------------------------------------
+# running_unmanaged -- a healthy-but-unmanaged dolt must never be classified
+# (or advised) as something to kill.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _FakeServiceInfo:
+    installed: bool
+    active: bool | None
+    supported: bool = True
+    platform: str = "linux"
+    unit_path: object = None
+    detail: str = ""
+
+
+def _bypass_prereqs(monkeypatch) -> None:
+    """Prereqs are proven fine and out of scope for these tests -- bypass
+    `prereqs.check()` directly rather than faking a whole bd/dolt PATH."""
+    import amplifier_work_tracker.prereqs as P
+
+    monkeypatch.setattr(P, "check", lambda: None)
+
+
+def test_classify_state_reports_running_unmanaged_not_foreign_when_port_is_healthy(
+    tmp_path, monkeypatch
+):
+    """The literal regression this fix targets: a healthy dolt on our port
+    that this service didn't start must classify as `running_unmanaged`
+    (adopt-friendly), never the old `foreign_server_on_port` (kill-advising)
+    state."""
+    _bypass_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        S, "describe_service", lambda: _FakeServiceInfo(installed=False, active=None)
+    )
+    monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: True)
+
+    state, fix = classify_state(tmp_path / "root")
+
+    assert state == "running_unmanaged"
+    assert "stop it" not in fix.lower()
+    assert "kill" not in fix.lower()
+    assert "usable" in fix.lower() or "working" in fix.lower() or "healthy" in fix.lower()
+
+
+def test_classify_state_running_unmanaged_advises_adoption_not_shutdown(tmp_path, monkeypatch):
+    _bypass_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        S, "describe_service", lambda: _FakeServiceInfo(installed=False, active=None)
+    )
+    monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: True)
+
+    _, fix = classify_state(tmp_path / "root")
+    assert "work_tracker_install" in fix
+    assert (
+        "use it directly" in fix.lower() or "usable as-is" in fix.lower() or "use it" in fix.lower()
+    )
+
+
+@pytest.mark.asyncio
+async def test_install_tool_refuses_running_unmanaged_without_advising_to_kill_it(
+    tmp_path, monkeypatch
+):
+    """`work_tracker_install` must still refuse (installing on top of an
+    already-bound port would crash-loop), but its OWN message must not tell
+    the caller to stop/kill a working server either."""
+    _bypass_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        S, "describe_service", lambda: _FakeServiceInfo(installed=False, active=None)
+    )
+    monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: True)
+    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(tmp_path / "root"))
+
+    tool = WorkTrackerInstallTool(config=None)
+    result = await tool.execute({})
+
+    assert result.success is False
+    output = str(result.output).lower()
+    assert "works as-is" in output or "already healthy" in output
+    assert "just to install" not in output or "do not stop it just to install" in output

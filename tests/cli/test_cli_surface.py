@@ -34,7 +34,7 @@ from .. import _util
 pytestmark = pytest.mark.cli
 
 # Keep in sync with cli.py's `sub.add_parser(...)` calls.
-SUBCOMMANDS = ["doctor", "new", "instances", "claim", "custody", "reap", "resolve", "notify"]
+SUBCOMMANDS = ["doctor", "new", "add", "instances", "claim", "custody", "reap", "resolve", "notify"]
 
 
 # --------------------------------------------------------- existence checks
@@ -102,6 +102,46 @@ def test_instances_json_is_well_formed(run_cli, shared_project_name):
     rows = json.loads(result.stdout)
     assert isinstance(rows, list)
     assert any(r["project"] == shared_project_name for r in rows)
+
+
+def test_add_creates_a_claimable_item_without_needing_lane_vocabulary(
+    run_cli, shared_project_name, unique_actor
+):
+    """The literal acceptance criterion from the task: `add` creates a
+    claimable item end-to-end -- add -> claim returns it. The caller never
+    names `lane:eng` anywhere in this test."""
+    add_result = run_cli(
+        [
+            "add",
+            "--project",
+            shared_project_name,
+            "Add health check endpoint",
+            "--description",
+            "Implement a /health endpoint",
+            "--acceptance",
+            "GET /health returns 200",
+        ]
+    )
+    assert add_result.returncode == 0, add_result.stderr
+    added = json.loads(add_result.stdout)
+    assert added["added"]
+    assert added["project"] == shared_project_name
+    _util.assert_no_silent_failure(add_result)
+
+    claim_result = run_cli(
+        [
+            "claim",
+            "--project",
+            shared_project_name,
+            "--actor",
+            unique_actor,
+            "--lane",
+            added["lane"],
+        ]
+    )
+    assert claim_result.returncode == 0, claim_result.stderr
+    claimed = json.loads(claim_result.stdout)
+    assert claimed["claimed"] == added["added"]
 
 
 def test_claim_on_empty_queue_exits_3_and_prints_no_error(

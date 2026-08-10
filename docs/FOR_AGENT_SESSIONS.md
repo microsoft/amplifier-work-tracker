@@ -26,6 +26,27 @@ upstream change reaches you as a loud failure instead of as silently corrupted p
 
 **Requires `bd` >= 1.1.2 and `dolt` on PATH.** Below 1.1.2 the atomic claim operation *does not
 exist*, leaving only a path that double-claims. `doctor` refuses rather than letting you proceed.
+If either binary is missing, `doctor` (and the bundle's `work_tracker_status` tool) name the exact
+gap — **do not `web_search` for install instructions.** Run this instead (auto-detects OS/arch,
+mirrors `.github/workflows/ci.yml`'s pinned install steps):
+
+```bash
+set -euo pipefail
+BD_VERSION="1.1.2"; DOLT_VERSION="2.2.3"   # keep in sync with adapter.py / prereqs.py
+case "$(uname -s)" in Linux) OS=linux ;; Darwin) OS=darwin ;; *) echo "unsupported OS" >&2; exit 1 ;; esac
+case "$(uname -m)" in x86_64|amd64) ARCH=amd64 ;; arm64|aarch64) ARCH=arm64 ;; *) echo "unsupported arch" >&2; exit 1 ;; esac
+mkdir -p ~/.local/bin
+curl -fsSL -o /tmp/bd.tar.gz "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/beads_${BD_VERSION}_${OS}_${ARCH}.tar.gz"
+mkdir -p /tmp/bd && tar -xzf /tmp/bd.tar.gz -C /tmp/bd && install -m 0755 /tmp/bd/bd ~/.local/bin/bd
+curl -fsSL -o /tmp/dolt.tar.gz "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/dolt-${OS}-${ARCH}.tar.gz"
+mkdir -p /tmp/dolt && tar -xzf /tmp/dolt.tar.gz -C /tmp/dolt --strip-components=1 && install -m 0755 /tmp/dolt/bin/dolt ~/.local/bin/dolt
+export PATH="$HOME/.local/bin:$PATH"
+bd --version && dolt version
+```
+
+(`beads` has no `darwin_amd64` release today — only `linux_amd64`, `linux_arm64`,
+`darwin_arm64`. The `work-tracker-setup` skill's decision tree and `prereqs.py` are the
+authoritative, always-current source if this snippet and reality ever diverge.)
 
 ## The loop
 
@@ -114,17 +135,28 @@ Stop and report: what you completed, what state you left the working tree or bra
 the item was reclaimed. Someone else may be part-way through it right now — a silent close would
 destroy their work and tell a real user their issue was fixed when it was not.
 
-## Filing what you find
+## Filing new work
 
-A new problem discovered mid-fix gets linked to the item you hold, non-blocking so it will not
-wedge your current work:
+Two different situations, two different commands — never `bd create` by hand for either:
+
+- **You're holding an item and found something new mid-fix.** Use `work_file` (the
+  `WorkFileTool`) — it links `discovered-from` the item you hold and is non-blocking, so it will
+  not wedge your current work. It requires you to already hold an item.
+- **You need to seed a project's FIRST item(s) — nothing held yet, nothing in the queue.**
+  `work_file` refuses in this case (there is nothing to link from). Use `work_add` instead — the
+  agent-facing tool, or `amplifier-work-tracker add` on the CLI — which needs no held item and
+  applies the engineering lane label itself:
 
 ```bash
-amplifier-work-tracker claim --help   # see the current filing flags
+amplifier-work-tracker add --project <project> "Add health check endpoint" \
+  --description "Implement a /health endpoint that returns 200 OK" \
+  --acceptance "GET /health returns 200 with a JSON body"
 ```
 
-Do not shell out to the storage layer to create it — that is invisible to the contract suite and
-breaks silently the next time the storage layer changes.
+The item lands immediately claimable via `claim`/`work_claim`. Do not shell out to the storage
+layer to create it (`bd create` + a hand-guessed label) — that is invisible to the contract suite,
+breaks silently the next time the storage layer changes, and is exactly the raw-`bd` escape rule
+#4 above forbids.
 
 ## Going deeper
 

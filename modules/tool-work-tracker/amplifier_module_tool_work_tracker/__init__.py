@@ -1,10 +1,23 @@
 """Amplifier tool module for amplifier-work-tracker.
 
-Exposes `work_claim`, `work_declare`, `work_resolve`, `work_status`, and
-`work_file` as agent-callable tools, backed directly by
+Exposes `work_claim`, `work_declare`, `work_resolve`, `work_status`,
+`work_file`, and `work_add` as agent-callable tools, backed directly by
 `amplifier_work_tracker.adapter` / `amplifier_work_tracker.custody`. This
 module contains no Beads knowledge of its own and shells out to nothing --
 all domain logic lives in the `amplifier_work_tracker` package it imports.
+
+`work_add` is the sanctioned path for filing a project's FIRST work item (or
+any later one) with no held item required -- unlike `work_file`, which
+requires this session to already be holding something and links
+discovered-from it. Before `work_add` existed, there was no tool-level way
+to seed a brand-new project's queue at all: `work_file` refused (nothing
+held yet), and the CLI's `new` only creates the PROJECT, not any work inside
+it. That gap forced a real session to go around the seam entirely -- raw
+`bd create` plus a hand-guessed `bd label add <id> lane:eng` (inferring the
+lane label vocabulary from an unrelated agent description) -- exactly the
+kind of raw-`bd` escape `docs/FOR_AGENT_SESSIONS.md` rule #4 forbids in
+bold. `work_add` (and the CLI's `add`) apply the engineering lane label
+themselves; a caller never needs to know `lane:eng` exists.
 
 Why a tool module, and not "just shell out to the CLI in bash":
 `amplifier-work-tracker custody` binds its liveness signal to a PID, and
@@ -298,6 +311,35 @@ class WorkTrackerSession:
                 success=True, output={"filed": new_id, "discovered_from": held.item_id}
             )
 
+    async def add(
+        self,
+        project: str,
+        title: str,
+        *,
+        description: str | None = None,
+        acceptance: str | None = None,
+    ) -> ToolResult:
+        """File a new engineering-lane item directly -- no held item
+        required. THE sanctioned path for seeding a project's first item(s)
+        (see this module's docstring for why that gap otherwise forces a
+        raw-`bd` escape). Applies A.LANE_WORK itself; callers never need to
+        know the label vocabulary."""
+        try:
+            bd = self._project(project)
+            new_id = bd.create(
+                title,
+                kind="task",
+                tags=[A.LANE_WORK],
+                description=description,
+                acceptance=acceptance,
+                actor=self._actor,
+            )
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        return ToolResult(
+            success=True, output={"added": new_id, "project": project, "lane": A.LANE_WORK}
+        )
+
 
 # --------------------------------------------------------------------------
 # Tool classes -- one per work_* tool, all sharing one WorkTrackerSession.
@@ -482,8 +524,57 @@ class WorkFileTool:
         )
 
 
+class WorkAddTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_add"
+
+    @property
+    def description(self) -> str:
+        return (
+            "File a new engineering-lane work item directly into a project's queue -- the "
+            "sanctioned way to seed the FIRST item(s) in a brand-new project, or add more work "
+            "later. Unlike work_file (which requires holding an item and links it "
+            "discovered-from that item), work_add needs no held item at all. Use this when a "
+            "user asks you to add/file/create a task or work item that isn't already in the "
+            "queue -- never fall back to a raw storage-layer CLI to do this. Applies the "
+            "engineering lane label itself; you never need to know the label vocabulary (e.g. "
+            "'lane:eng') exists. The new item becomes claimable via work_claim immediately."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Named project to add the item to."},
+                "title": {"type": "string", "description": "Short title for the new item."},
+                "description": {
+                    "type": "string",
+                    "description": "What needs to be done.",
+                },
+                "acceptance": {
+                    "type": "string",
+                    "description": "Given/When/Then acceptance criteria, if known.",
+                },
+            },
+            "required": ["project", "title"],
+        }
+
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.add(
+            input["project"],
+            input["title"],
+            description=input.get("description"),
+            acceptance=input.get("acceptance"),
+        )
+
+
 async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Mount all five work_* tools, sharing one WorkTrackerSession.
+    """Mount all six work_* tools, sharing one WorkTrackerSession.
 
     IRON LAW: every tool below is registered via `coordinator.mount()`.
     Skipping any of them (or returning without mounting) fails
@@ -496,6 +587,7 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
         WorkResolveTool(session),
         WorkStatusTool(session),
         WorkFileTool(session),
+        WorkAddTool(session),
         WorkTrackerStatusTool(config),
         WorkTrackerInstallTool(config),
     ]

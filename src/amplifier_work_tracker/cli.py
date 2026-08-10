@@ -144,6 +144,37 @@ def cmd_new(a):
     print(f"created project '{a.name}' at {path} (verified writable)")
 
 
+def cmd_add(a):
+    """File a new engineering-lane work item directly -- the sanctioned path
+    for seeding a project's FIRST item(s), or adding more later.
+
+    Deliberately the CLI/operator counterpart to `work_add` (the agent-facing
+    tool): before this existed, nothing here could create the first item in
+    a brand-new project without already holding one (`work_file` requires a
+    held item; `new` only creates the PROJECT). The only way around that gap
+    was raw `bd create` plus a hand-guessed `bd label add <id> lane:eng` --
+    exactly the seam-leaking workaround this command exists to make
+    unnecessary. Applies the engineering lane label itself; the caller never
+    needs to know `lane:eng` exists.
+    """
+    _guard()
+    try:
+        new_id = (
+            _ws(a)
+            .project(a.project)
+            .create(
+                a.title,
+                kind="task",
+                tags=[A.LANE_WORK],
+                description=a.description,
+                acceptance=a.acceptance,
+            )
+        )
+    except A.BeadsError as e:
+        die(str(e))
+    print(json.dumps({"added": new_id, "project": a.project, "lane": A.LANE_WORK}, indent=2))
+
+
 def cmd_instances(a):
     _guard()
     ws = _ws(a)
@@ -483,6 +514,20 @@ def main():
     p = sub.add_parser("new", help="create a named project", parents=[root_parent])
     p.add_argument("name")
     p.set_defaults(fn=cmd_new)
+
+    p = sub.add_parser(
+        "add",
+        help=(
+            "file a new engineering-lane work item directly (the sanctioned way to seed a "
+            "project's first item(s), or add more later -- applies the lane label itself)"
+        ),
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("title", help="short title for the new item")
+    p.add_argument("--description", default=None, help="what needs to be done")
+    p.add_argument("--acceptance", default=None, help="Given/When/Then acceptance criteria")
+    p.set_defaults(fn=cmd_add)
 
     p = sub.add_parser("instances", help="list projects", parents=[root_parent])
     p.add_argument("--json", action="store_true")

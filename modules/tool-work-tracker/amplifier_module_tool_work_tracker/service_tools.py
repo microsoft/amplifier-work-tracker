@@ -21,10 +21,19 @@ there is no `bd`/`dolt` binary to run anything with in the first place:
   - installed_not_running  -- service exists but isn't active (or is active
                                but dolt hasn't come up yet)
   - running_healthy        -- service active AND dolt actually reachable
-  - foreign_server_on_port -- something IS answering on the dolt port, but
-                               not via our service -- see supervisor.py's
-                               `classify_port_holders` for why this is kept
-                               distinct rather than folded into "healthy"
+  - running_unmanaged      -- something IS answering on the dolt port, but
+                               not via our service -- and it IS a healthy,
+                               usable dolt server (bd's shared-server
+                               topology is one server per host:port,
+                               regardless of who started it -- a human, an
+                               earlier `bd`-lazy-autostart, or a completely
+                               separate session). This is a WORKING server,
+                               not an intruder: the fix is "use it as-is, or
+                               install to bring it under supervision" --
+                               never "stop it." See supervisor.py's
+                               `classify_port_holders` for the same
+                               responds/owned-by-us discrimination applied
+                               at `serve` startup time.
 
 `work_tracker_install` is the ONLY thing that changes system state, and it is
 never invoked as a side effect of `work_tracker_status` or any other tool --
@@ -55,7 +64,7 @@ WorkTrackerState = Literal[
     "not_installed",
     "installed_not_running",
     "running_healthy",
-    "foreign_server_on_port",
+    "running_unmanaged",
 ]
 
 # States where the fix is "install a missing/too-old binary yourself" --
@@ -100,11 +109,27 @@ def classify_state(root: Path) -> tuple[WorkTrackerState, str]:
     port_reachable = SV.port_holder_responds(SV.DEFAULT_DOLT_HOST, SV.DEFAULT_DOLT_PORT)
 
     if port_reachable and not (info.installed and info.active):
+        # A real, actively-responding dolt IS a usable shared server --
+        # bd's shared-server topology is one server per host:port,
+        # regardless of who started it (a human, an earlier `bd`-lazy
+        # autostart, or a completely separate session). Advising "stop it"
+        # here would steer a caller into killing a functioning queue that
+        # may hold live claims -- see this module's docstring and
+        # supervisor.classify_port_holders, whose refuse_ours/refuse_foreign
+        # split this mirrors: a healthy responder is never something to
+        # kill, only something this service either uses as-is or declines
+        # to double-serve.
         return (
-            "foreign_server_on_port",
-            f"something is already answering on {SV.DEFAULT_DOLT_HOST}:{SV.DEFAULT_DOLT_PORT} "
-            f"but not via this service -- inspect it first (`lsof -i :{SV.DEFAULT_DOLT_PORT}`), "
-            f"stop it if it's safe to, then run work_tracker_install",
+            "running_unmanaged",
+            f"a dolt server is already healthy and reachable on "
+            f"{SV.DEFAULT_DOLT_HOST}:{SV.DEFAULT_DOLT_PORT}, it just isn't managed by this "
+            f"service yet -- this is a WORKING server, not a problem to fix. You can use it "
+            f"directly right now (work_claim/work_status/the CLI will all work against it), or "
+            f"call work_tracker_install to bring it under this service's supervision so it "
+            f"survives reboot and gets the reap/notify sweeps -- installing does NOT stop or "
+            f"replace it; the supervisor refuses to double-serve instead of colliding with it. "
+            f"Do not stop this process -- it may be holding live claims from other sessions "
+            f"(`lsof -i :{SV.DEFAULT_DOLT_PORT}` to see what it is, if you want to know).",
         )
     if not info.installed:
         return "not_installed", "call work_tracker_install to set up the background service"
@@ -152,11 +177,14 @@ class WorkTrackerStatusTool:
         return (
             "Read-only: is the amplifier-work-tracker background service (shared dolt server + "
             "reap/notify sweeps) installed and healthy on THIS machine? Returns one of "
-            "'not_installed', 'installed_not_running', 'running_healthy', or "
-            "'foreign_server_on_port', plus the exact fix command for that state. Call this "
-            "FIRST the first time you use work-tracker in a session -- work_claim/work_status "
-            "and the amplifier-work-tracker CLI both need a reachable dolt server, and this is "
-            "how you find out whether one exists before assuming it does."
+            "'bd_missing', 'bd_too_old', 'dolt_missing', 'not_installed', "
+            "'installed_not_running', 'running_healthy', or 'running_unmanaged', plus the exact "
+            "fix command for every state except 'running_healthy'/'running_unmanaged' (both "
+            "already work; nothing to fix). 'running_unmanaged' means a dolt server is already "
+            "healthy and reachable but not managed by this service -- it is USABLE as-is, never "
+            "something to stop. Call this FIRST the first time you use work-tracker in a session "
+            "-- work_claim/work_status and the amplifier-work-tracker CLI both need a reachable "
+            "dolt server, and this is how you find out whether one exists before assuming it does."
         )
 
     @property
@@ -210,19 +238,51 @@ class WorkTrackerInstallTool:
                 success=False,
                 output=f"refusing to install: {fix}",
             )
-        if state == "foreign_server_on_port":
+        if state == "running_unmanaged":
+            # Refuses to INSTALL (a fresh unit would immediately crash-loop
+            # against the already-bound port -- see supervisor.py's
+            # refuse_foreign), but the advice is adoption, never "kill it":
+            # this is a working server, and the classification above already
+            # says so.
             return ToolResult(
                 success=False,
                 output=(
-                    f"refusing to install: something else is already answering on "
-                    f"{SV.DEFAULT_DOLT_HOST}:{SV.DEFAULT_DOLT_PORT} that this service did not "
-                    f"start. Stop it first (check `lsof -i :{SV.DEFAULT_DOLT_PORT}`), then retry."
+                    f"not installing: a dolt server is already healthy and reachable on "
+                    f"{SV.DEFAULT_DOLT_HOST}:{SV.DEFAULT_DOLT_PORT} -- it works as-is, so there "
+                    f"is nothing broken to fix here. Use it directly (work_claim/work_status/the "
+                    f"CLI all work against it right now), or if you want it to survive reboot and "
+                    f"get the reap/notify sweeps, stop whatever is running it yourself first, "
+                    f"THEN call work_tracker_install -- installing on top of a server already "
+                    f"bound to this port would only crash-loop, not adopt it. Do not stop it "
+                    f"just to install; only do so if you actually want the switch to the "
+                    f"supervised service."
                 ),
             )
         try:
             info = await asyncio.to_thread(S.service_install, root)
         except S.ServiceUnsupportedError as e:
             return ToolResult(success=False, output=f"could not install: {e}")
+        except Exception as e:  # noqa: BLE001 -- see module docstring: never a raw traceback string
+            # A raw `str(CalledProcessError(...))` (e.g. "Command
+            # ['systemctl', '--user', 'daemon-reload'] returned non-zero exit
+            # status 1.") reads like an unhandled crash and gives no hint
+            # this might mean "no systemd --user session in this
+            # container/environment." Wrap it with what was attempted and an
+            # actionable next step; `service_install` has already rolled
+            # back anything it wrote (see service.py's transactional
+            # contract), so there is no partial state left to describe.
+            return ToolResult(
+                success=False,
+                output=(
+                    f"could not install the background service: {e}. This usually means "
+                    f"systemd/launchd itself isn't functioning here (e.g. a container without a "
+                    f"running --user systemd instance, or without `systemctl`/`launchctl` able to "
+                    f"reach a session bus) rather than anything wrong with amplifier-work-tracker "
+                    f"itself. No partial install was left behind. If this platform can't run a "
+                    f"background service, run `amplifier-work-tracker serve --root {root}` "
+                    f"directly in a persistent terminal/tmux session instead."
+                ),
+            )
         reachable = await _wait_for_dolt_reachable(SV.DEFAULT_DOLT_HOST, SV.DEFAULT_DOLT_PORT)
         if not reachable:
             return ToolResult(

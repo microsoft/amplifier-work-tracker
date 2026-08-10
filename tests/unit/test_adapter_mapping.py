@@ -166,3 +166,30 @@ def test_workspace_create_rejects_uppercase_name_before_touching_disk(tmp_path):
     except A.BeadsError:
         pass
     assert not (tmp_path / "projects" / "BadName").exists()
+
+
+# ------------------------------------------------- non-interactive `bd` env
+
+
+def test_env_always_disables_bd_telemetry_prompt(tmp_path):
+    """An agent session has no tty -- `bd`'s telemetry-consent prompt on
+    first use would hang forever waiting for input that never comes. Every
+    `bd` subprocess this module launches must be non-interactive by
+    construction, not by hoping the caller already exported the var."""
+    bd = A.Beads(tmp_path / ".beads")
+    assert bd._env()["BD_TELEMETRY_DISABLE"] == "1"  # noqa: SLF001
+
+
+def test_env_disables_bd_telemetry_even_when_absent_from_environment(tmp_path, monkeypatch):
+    monkeypatch.delenv("BD_TELEMETRY_DISABLE", raising=False)
+    bd = A.Beads(tmp_path / ".beads")
+    assert bd._env()["BD_TELEMETRY_DISABLE"] == "1"  # noqa: SLF001
+
+
+def test_env_overrides_a_falsy_ambient_value(tmp_path, monkeypatch):
+    """Even if something in the ambient environment set this to a falsy-
+    looking value, the subprocess env this module builds must still
+    unconditionally disable telemetry -- never merely inherit."""
+    monkeypatch.setenv("BD_TELEMETRY_DISABLE", "0")
+    bd = A.Beads(tmp_path / ".beads")
+    assert bd._env()["BD_TELEMETRY_DISABLE"] == "1"  # noqa: SLF001
