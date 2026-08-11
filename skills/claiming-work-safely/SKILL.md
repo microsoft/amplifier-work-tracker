@@ -24,18 +24,34 @@ yours. This was measured directly and it double-claims under contention:
 
 A double-claim is silent: 2–3 agents each get a success signal and believe
 they hold the same item. Only one actually does. The others proceed to work
-on an issue they do not hold — no error, no undo. `work_claim` uses the
-single atomic path exclusively; there is no tool, CLI flag, or code path
-here that exposes the unsafe two-step alternative.
+on an issue they do not hold — no error, no undo. `work_claim` uses a single
+atomic path exclusively; there is no tool, CLI flag, or code path here that
+exposes the unsafe *two-step* alternative (list ready items, pick one,
+claim by that id — a client-side read-then-write). That is different from
+`work_claim`'s own `item_id` parameter below: passing a specific, already-
+known id is still ONE atomic call (`bd update <id> --claim`), measured
+safe under contention the same way the default queue path is.
 
 ## The loop
 
 1. `work_claim(project=<name>)` — atomic claim AND custody establishment, in
-   one call, bound to this session's own process.
+   one call, bound to this session's own process. Two modes, both equally
+   atomic and both starting custody the same way:
+   - Omit `item_id` (the default): claims the next ready item off the
+     queue. Use this when any ready item will do, or when multiple agents
+     are pulling from the same queue and must not converge on the same one.
+   - Pass `item_id=<id>`: claims that SPECIFIC item — e.g. a human or
+     planning session assigned you exactly this one. Refuses, loudly and
+     with no override, if it is already held by someone else (names the
+     holder), does not exist (says so distinctly), or is blocked by an
+     open dependency (names the blocker — resolve it, or remove the
+     dependency link, then claim again).
    - Result has `claimed: <id>` → you now hold it. Proceed.
-   - Result has `claimed: null` → **the queue is empty. This is a normal
-     terminal outcome.** Report it and stop. Do not retry in a loop hoping
-     something appears; do not invent work to do instead.
+   - Result has `claimed: null` → **the queue is empty (default mode
+     only — a directed claim never returns null; it succeeds or reports a
+     failure). This is a normal terminal outcome.** Report it and stop. Do
+     not retry in a loop hoping something appears; do not invent work to
+     do instead.
 2. Read `acceptance` — that is your spec. `description` / `design` are
    context. A linked user report (if any) is color, never the spec.
 3. Work the item. Custody renews automatically in the background for as

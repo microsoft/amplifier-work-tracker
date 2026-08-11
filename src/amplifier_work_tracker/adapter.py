@@ -44,6 +44,9 @@ MAX_TESTED = (1, 1, 2)  # Highest version our contract suite has passed on.
 
 ASSUMPTIONS = {
     "claim.atomic": "Concurrent `ready --claim` yields at most one winner per item",
+    "claim.directed_atomic": (
+        "Concurrent `update <id> --claim` on the SAME item yields at most one winner"
+    ),
     "claim.subcommand": "`ready --claim` exists and does not accept --assignee",
     "claim.actor_env": "Claim identity comes from the BEADS_ACTOR environment variable",
     "link.nonblocking": "A `discovered-from` link does not block the linked item",
@@ -277,6 +280,27 @@ class Item:
         return cls(**{k: v for k, v in out.items() if k in cls.__dataclass_fields__}, raw=d)
 
 
+def _active_blockers(item: Item) -> list[dict]:
+    """Which of `item`'s forward dependencies are still-open `blocks`-type
+    links -- i.e. actually blocking `claim_item`.
+
+    Read straight from the raw `show` payload's `dependencies` field, which
+    IS present without `--include-dependents` (that flag only gates the
+    REVERSE direction -- ASSUMPTION show.dependents). A raw bd status of
+    anything other than `closed` counts as active: a blocker that is
+    itself `blocked` or `deferred` still blocks; only a resolved (closed)
+    one clears the way.
+    """
+    deps = item.raw.get("dependencies") or []
+    return [
+        d
+        for d in deps
+        if isinstance(d, dict)
+        and d.get("dependency_type") == "blocks"
+        and d.get("status") != "closed"
+    ]
+
+
 def _retryable(blob: str) -> bool:
     low = blob.lower()
     return any(t.lower() in low for t in _RETRYABLE)
@@ -417,6 +441,63 @@ class Beads:
         items = data if isinstance(data, list) else ([data] if data else [])
         items = [i for i in items if isinstance(i, dict) and i.get("id")]
         return Item.from_beads(items[0]) if items else None
+
+    def claim_item(self, item_id: str, *, actor: str) -> Item:
+        """Directed claim: atomically claim a SPECIFIC item by id.
+
+        Not a lesser claim than `claim_next` -- same atomic primitive
+        (`bd update --claim`, ASSUMPTION claim.directed_atomic), same
+        caller-side responsibility to start custody afterward. The
+        difference is only which item: a human or planning session naming
+        one directly, versus pulling the next off the queue.
+
+        Three distinct outcomes, deliberately never conflated:
+          - success: this actor is now the holder (status in_progress).
+          - already held by someone else: raises, naming the real holder --
+            by surfacing bd's own message (it already says exactly this)
+            rather than inventing a different one.
+          - item does not exist: raises, phrased with "not found" so it
+            reads distinctly from "someone else has it" at a glance.
+
+        Blocker-aware refusal is OURS, not bd's. Measured empirically
+        against bd 1.1.2: `bd update <id> --claim` claims a blocked item
+        exactly as readily as a free one -- unlike `bd ready --claim`,
+        which is blocker-aware by construction (its own --help: "open
+        issues with no active blockers"). Claiming work whose prerequisite
+        isn't done produces wasted or conflicting work, so we check first
+        and refuse before ever calling bd's --claim, naming the blocker(s)
+        bd's own `show` already told us about. No override flag: if a
+        named blocker doesn't actually apply, resolve it or remove the
+        dependency link, then claim again.
+        """
+        try:
+            current = self.get(item_id)
+        except BeadsError as e:
+            raise BeadsError(f"cannot claim {item_id}: item not found ({e})") from e
+
+        blockers = _active_blockers(current)
+        if blockers:
+            names = ", ".join(f"{b['id']} ({b.get('status', 'unknown')})" for b in blockers)
+            raise BeadsError(
+                f"refusing to claim {item_id}: blocked by open dependency/dependencies "
+                f"{names}. Resolve the blocker(s), or remove the dependency link, then "
+                f"claim again -- directed claims never bypass blockers."
+            )
+
+        p = self._run(["update", item_id, "--claim", "--json"], actor=actor)
+        if p.returncode != 0:
+            msg = (p.stderr or p.stdout or "").strip()
+            raise BeadsError(f"claim {item_id} as {actor!r} failed: {msg[:300]}")
+        out = (p.stdout or "").strip()
+        try:
+            data = json.loads(out) if out else None
+        except json.JSONDecodeError as e:
+            raise BeadsError(f"claim {item_id}: bd returned non-JSON: {out[:200]}") from e
+        items = data if isinstance(data, list) else ([data] if data else [])
+        items = [i for i in items if isinstance(i, dict) and i.get("id")]
+        if not items:
+            raise BeadsError(f"claim {item_id}: bd reported success but returned no item")
+        return Item.from_beads(items[0])
 
     def get(self, item_id: str, *, with_links: bool = False) -> Item:
         args = ["show", item_id]

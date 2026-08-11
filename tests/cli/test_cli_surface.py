@@ -159,6 +159,80 @@ def test_claim_on_empty_queue_exits_3_and_prints_no_error(
     assert result.stderr == ""
 
 
+def test_claim_dash_dash_id_directs_a_claim_to_a_specific_item(
+    run_cli, workspace, shared_project_name, unique_actor, unique_lane
+):
+    """The CLI counterpart to the directed-claim adapter tests: `claim
+    --id` must claim the NAMED item, not whatever would have sorted first
+    in the queue."""
+    bd = workspace.project(shared_project_name)
+    decoy_id = bd.create("cli directed-claim decoy", tags=[unique_lane], priority=1)
+    target_id = bd.create("cli directed-claim target", tags=[unique_lane], priority=1)
+
+    result = run_cli(
+        [
+            "claim",
+            "--project",
+            shared_project_name,
+            "--actor",
+            unique_actor,
+            "--id",
+            target_id,
+        ]
+    )
+    assert result.returncode == 0, result.stderr
+    claimed = json.loads(result.stdout)
+    assert claimed["claimed"] == target_id
+    _util.assert_no_silent_failure(result)
+
+    # The decoy must be untouched.
+    decoy_back = bd.get(decoy_id)
+    assert decoy_back.status == "open"
+
+
+def test_claim_dash_dash_id_on_an_already_held_item_exits_nonzero_naming_the_holder(
+    run_cli, workspace, shared_project_name, unique_lane
+):
+    bd = workspace.project(shared_project_name)
+    item_id = bd.create("cli directed-claim already-held probe", tags=[unique_lane], priority=1)
+    holder = f"cli-holder-{unique_lane[5:]}"
+    bd.claim_item(item_id, actor=holder)
+
+    result = run_cli(
+        [
+            "claim",
+            "--project",
+            shared_project_name,
+            "--actor",
+            f"cli-loser-{unique_lane[5:]}",
+            "--id",
+            item_id,
+        ]
+    )
+    assert result.returncode != 0
+    assert holder in result.stderr
+    _util.assert_no_silent_failure(result)
+
+
+def test_claim_dash_dash_id_on_nonexistent_id_exits_nonzero_with_distinct_error(
+    run_cli, shared_project_name, unique_actor
+):
+    result = run_cli(
+        [
+            "claim",
+            "--project",
+            shared_project_name,
+            "--actor",
+            unique_actor,
+            "--id",
+            "definitely-not-a-real-id-98765",
+        ]
+    )
+    assert result.returncode != 0
+    assert "not found" in result.stderr
+    _util.assert_no_silent_failure(result)
+
+
 def test_claim_then_resolve_then_notify_full_cli_flow(
     run_cli, workspace, shared_project_name, unique_actor, unique_lane
 ):

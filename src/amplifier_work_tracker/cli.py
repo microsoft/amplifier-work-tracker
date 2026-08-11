@@ -215,9 +215,19 @@ def cmd_instances(a):
 
 
 def cmd_claim(a):
+    """Claim work: the default queue-based claim, or -- with `--id` -- a
+    directed claim of one specific item. Both are single atomic bd calls
+    (`bd ready --claim` / `bd update <id> --claim`); a directed claim
+    refuses loudly (no override) if the item is already held, missing, or
+    blocked by an open dependency -- see `adapter.Beads.claim_item`.
+    """
     _guard()
     try:
-        item = _ws(a).project(a.project).claim_next(lane=a.lane, actor=a.actor)
+        bd = _ws(a).project(a.project)
+        if a.id:
+            item = bd.claim_item(a.id, actor=a.actor)
+        else:
+            item = bd.claim_next(lane=a.lane, actor=a.actor)
     except A.BeadsError as e:
         die(str(e))
     if item is None:
@@ -536,10 +546,22 @@ def main():
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_instances)
 
-    p = sub.add_parser("claim", help="safely claim one ready item", parents=[root_parent])
+    p = sub.add_parser(
+        "claim",
+        help="safely claim one ready item, or a specific item by --id",
+        parents=[root_parent],
+    )
     p.add_argument("--project", required=True)
     p.add_argument("--actor", required=True)
     p.add_argument("--lane", default=A.LANE_WORK)
+    p.add_argument(
+        "--id",
+        default=None,
+        help=(
+            "claim this SPECIFIC item by id instead of the next queued one; "
+            "refuses if already held, missing, or blocked by an open dependency"
+        ),
+    )
     p.set_defaults(fn=cmd_claim)
 
     p = sub.add_parser(

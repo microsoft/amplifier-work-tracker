@@ -118,6 +118,52 @@ def test_retryable_false_for_unrelated_errors():
     assert A._retryable("") is False
 
 
+# ------------------------------------------------------- directed claim
+
+
+def _item_with_deps(deps: list[dict]) -> A.Item:
+    return A.Item.from_beads({"id": "x-1", "status": "open", "dependencies": deps})
+
+
+def test_active_blockers_empty_when_no_dependencies():
+    assert A._active_blockers(_item_with_deps([])) == []
+
+
+def test_active_blockers_ignores_non_blocks_dependency_types():
+    """A `discovered-from` link (or any non-`blocks` type) must never be
+    treated as a blocker -- only `dependency_type == "blocks"` counts."""
+    deps = [{"id": "y-1", "status": "open", "dependency_type": "discovered-from"}]
+    assert A._active_blockers(_item_with_deps(deps)) == []
+
+
+def test_active_blockers_ignores_closed_blocker():
+    """A `blocks` dependency whose blocker has been closed no longer blocks."""
+    deps = [{"id": "y-1", "status": "closed", "dependency_type": "blocks"}]
+    assert A._active_blockers(_item_with_deps(deps)) == []
+
+
+def test_active_blockers_reports_open_blocks_dependency():
+    deps = [{"id": "y-1", "status": "open", "dependency_type": "blocks"}]
+    result = A._active_blockers(_item_with_deps(deps))
+    assert [d["id"] for d in result] == ["y-1"]
+
+
+def test_active_blockers_treats_blocked_and_deferred_blockers_as_still_active():
+    """A blocker that is itself `blocked` or `deferred` (not `closed`) must
+    still count as an active blocker -- only `closed` clears the way."""
+    deps = [
+        {"id": "y-1", "status": "blocked", "dependency_type": "blocks"},
+        {"id": "y-2", "status": "deferred", "dependency_type": "blocks"},
+    ]
+    result = A._active_blockers(_item_with_deps(deps))
+    assert {d["id"] for d in result} == {"y-1", "y-2"}
+
+
+def test_active_blockers_handles_missing_dependencies_key():
+    item = A.Item.from_beads({"id": "x-1", "status": "open"})
+    assert A._active_blockers(item) == []
+
+
 # ------------------------------------------------------------ project names
 
 
