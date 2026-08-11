@@ -25,15 +25,16 @@ installed `bd` binary, in a disposable probe project. Run it:
 - Before trusting a fresh environment to run parallel agents at all.
 
 ```bash
-amplifier-work-tracker doctor          # full run, including the adversarial concurrency check
-amplifier-work-tracker doctor --quick  # skips claim.atomic -- faster, proves less
+amplifier-work-tracker doctor          # full run, including both adversarial concurrency checks
+amplifier-work-tracker doctor --quick  # skips claim.atomic + claim.directed_atomic -- faster, proves less
 ```
 
-**`--quick` skips the one check that matters most.** `claim.atomic` spawns
-real concurrent processes and counts winners — a static/read-only inspection
-would have passed on a build that was measured double-claiming 5 times out
-of 6. Only use `--quick` for a fast sanity check between full runs, never as
-a substitute for one before trusting parallel agents.
+**`--quick` skips the two checks that matter most.** `claim.atomic` and
+`claim.directed_atomic` each spawn real concurrent processes and count
+winners — a static/read-only inspection would have passed on a build that
+was measured double-claiming 5 times out of 6. Only use `--quick` for a
+fast sanity check between full runs, never as a substitute for one before
+trusting parallel agents.
 
 ### Reading a violation
 

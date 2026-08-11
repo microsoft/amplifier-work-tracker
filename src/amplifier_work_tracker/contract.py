@@ -170,6 +170,72 @@ def check_claim_atomic(p: Probe, workers: int = 12, trials: int = 5) -> Result:
     )
 
 
+def check_claim_directed_atomic(p: Probe, workers: int = 12, trials: int = 5) -> Result:
+    """Directed-claim counterpart to `check_claim_atomic`: `bd update <id>
+    --claim` against the SAME item, from many concurrent processes, must
+    yield exactly one winner. Losers must fail loudly (non-zero exit)
+    rather than a second party silently believing it also holds the item.
+
+    This is the check that pins the empirical finding this feature was
+    built on: `bd update <id> --claim` (the directed-claim primitive) is,
+    itself, a real compare-and-swap on bd 1.1.2 -- unlike the two-step
+    `bd ready` -> pick -> `bd update --claim` race `claim_next` exists to
+    avoid. Same command, very different safety property depending on
+    whether the id was chosen by many racing readers or supplied directly.
+    """
+    assert p.bd
+    beads_dir = str(p.ws.path(p.name) / ".beads")
+    lane = "lane:directed_contract"
+    bad = []
+    for t in range(trials):
+        item_id = p.bd.create(f"directed atomic probe {t}", tags=[lane], priority=1)
+
+        def one(n: int, item_id: str = item_id):
+            env = A._bd_env({"BEADS_DIR": beads_dir, "BEADS_ACTOR": f"dprobe{n}"})
+            r = None
+            for attempt in range(8):
+                r = subprocess.run(
+                    ["bd", "update", item_id, "--claim", "--json"],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    check=False,
+                )
+                blob = (r.stdout or "") + (r.stderr or "")
+                if any(s.lower() in blob.lower() for s in A._RETRYABLE):
+                    time.sleep(0.1 * (2**attempt))
+                    continue
+                break
+            if r is None or r.returncode != 0:
+                return None
+            try:
+                data = json.loads((r.stdout or "").strip() or "null")
+            except json.JSONDecodeError:
+                return None
+            items = data if isinstance(data, list) else ([data] if data else [])
+            ids = [i.get("id") for i in items if isinstance(i, dict) and i.get("id")]
+            return ids[0] if ids else None
+
+        with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+            got = [f.result() for f in [ex.submit(one, n) for n in range(workers)]]
+        winners = [g for g in got if g]
+        if len(winners) != 1:
+            bad.append(f"trial {t}: {len(winners)} winners for {item_id} (expected exactly 1)")
+    if bad:
+        return Result(
+            "claim.directed_atomic",
+            False,
+            f"{len(bad)}/{trials} trials did not yield exactly one winner -- "
+            f"directed claims WILL double-claim under contention. " + "; ".join(bad[:2]),
+        )
+    return Result(
+        "claim.directed_atomic",
+        True,
+        f"{trials} trials x {workers} concurrent directed claimers on the SAME "
+        f"item, exactly one winner each time",
+    )
+
+
 def check_link_nonblocking(p: Probe) -> Result:
     """A `discovered-from` link must not block the item that carries it."""
     assert p.bd
@@ -518,6 +584,7 @@ CHECKS = [
     ("resolve.fenced", check_resolve_fenced),
     ("claim.subcommand", check_claim_subcommand),
     ("claim.atomic", check_claim_atomic),
+    ("claim.directed_atomic", check_claim_directed_atomic),
     ("link.nonblocking", check_link_nonblocking),
     ("list.includes_closed", check_list_includes_closed),
     ("show.dependents", check_show_dependents),
@@ -535,9 +602,15 @@ def run_all(quick: bool = False) -> list[Result]:
     results = [check_version()]
     if not results[0].ok:
         return results
+    # The adversarial concurrency checks -- real concurrent processes, several
+    # trials each. `--quick` skips both: they are the two slowest checks by a
+    # wide margin (many subprocess round-trips per trial), and skipping only
+    # one of them (the original `claim.atomic`) left `--quick` nearly as slow
+    # as a full run once `claim.directed_atomic` was added alongside it.
+    _SLOW_CONCURRENCY_CHECKS = {"claim.atomic", "claim.directed_atomic"}
     with Probe() as p:
         for name, fn in CHECKS:
-            if quick and name == "claim.atomic":
+            if quick and name in _SLOW_CONCURRENCY_CHECKS:
                 results.append(
                     Result(
                         name,

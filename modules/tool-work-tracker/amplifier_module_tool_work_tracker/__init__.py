@@ -34,8 +34,16 @@ accidentally bind custody to.
 
 `work_claim` is deliberately the ONLY way to take an item: it performs the
 atomic claim and starts custody in one indivisible call. There is no
-separate "start custody" tool and no claim-by-id tool -- both would reopen
-the double-claim and mis-bound-PID hazards this module exists to close.
+separate "start custody" tool -- that would reopen the mis-bound-PID hazard
+this module exists to close. It DOES support two claim modes, both routed
+through the same atomic-claim-then-custody path: the default queue claim
+(next ready item), and a directed claim by item_id (a specific item, e.g.
+one a human or planning session named). Both are single atomic bd calls --
+`bd ready --claim` for the queue path, `bd update <id> --claim` for the
+directed path -- never the two-step "list, pick, then claim" race that
+double-claims under contention. See `amplifier_work_tracker.adapter.Beads
+.claim_item` for why a directed claim is safe (measured atomicity) and what
+it refuses (already-held, not-found, blocked-by-open-dependency).
 """
 
 from __future__ import annotations
@@ -159,7 +167,20 @@ class WorkTrackerSession:
 
     # ------------------------------------------------------------ tools
 
-    async def claim(self, project: str) -> ToolResult:
+    async def claim(self, project: str, *, item_id: str | None = None) -> ToolResult:
+        """Claim work and establish custody in one indivisible call.
+
+        Two modes, both atomic, both starting custody identically -- a
+        directed claim is not a lesser claim:
+          - `item_id` omitted (default): next ready item off the queue
+            (`bd ready --claim`).
+          - `item_id` given: that SPECIFIC item (`bd update <id> --claim`,
+            see `adapter.Beads.claim_item`). Refuses (raises via
+            A.BeadsError, surfaced below as a failed ToolResult) if it is
+            already held by someone else, does not exist, or is blocked by
+            an open dependency -- no override; resolve the blocker or
+            claim again.
+        """
         with self._lock:
             if self._held is not None:
                 return ToolResult(
@@ -172,7 +193,10 @@ class WorkTrackerSession:
                 )
             try:
                 bd = self._project(project)
-                item = bd.claim_next(lane=A.LANE_WORK, actor=self._actor)
+                if item_id:
+                    item = bd.claim_item(item_id, actor=self._actor)
+                else:
+                    item = bd.claim_next(lane=A.LANE_WORK, actor=self._actor)
             except A.BeadsError as e:
                 return ToolResult(success=False, output=str(e))
             if item is None:
@@ -399,13 +423,21 @@ class WorkClaimTool:
     @property
     def description(self) -> str:
         return (
-            "Atomically claim the next ready work item from a project's queue AND "
-            "establish PID-bound custody in one indivisible call. There is no "
-            "separate 'start custody' step and no claim-by-id path -- calling this "
-            "tool IS both the claim and the custody start, bound to this session's "
-            "own process. Returns the item's acceptance criteria (your spec) and "
-            "description/design for color, or {claimed: null} if the queue is "
-            "empty -- which is a normal terminal outcome, not an error."
+            "Atomically claim work AND establish PID-bound custody in one "
+            "indivisible call. There is no separate 'start custody' step -- "
+            "calling this tool IS both the claim and the custody start, bound "
+            "to this session's own process. Two modes, both equally atomic: "
+            "omit item_id for the default (next ready item off a project's "
+            "queue -- prevents multiple agents converging on the same top "
+            "item); pass item_id to claim a SPECIFIC item instead (e.g. one a "
+            "human or planning session assigned directly). A directed claim "
+            "refuses -- loudly, with no override -- if the item is already "
+            "held by someone else (names the holder), does not exist, or is "
+            "blocked by an open dependency (names the blocker). Returns the "
+            "item's acceptance criteria (your spec) and description/design "
+            "for color, or {claimed: null} if the queue is empty -- which is "
+            "a normal terminal outcome, not an error (queue mode only; a "
+            "directed claim either succeeds or raises, it never returns null)."
         )
 
     @property
@@ -414,12 +446,21 @@ class WorkClaimTool:
             "type": "object",
             "properties": {
                 "project": {"type": "string", "description": "Named project to claim from."},
+                "item_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional. Claim this SPECIFIC item by id instead of the "
+                        "next queued one. Refuses if already held by someone "
+                        "else, not found, or blocked by an open dependency -- "
+                        "no override flag."
+                    ),
+                },
             },
             "required": ["project"],
         }
 
     async def execute(self, input: dict[str, Any]) -> ToolResult:
-        return await self._session.claim(input["project"])
+        return await self._session.claim(input["project"], item_id=input.get("item_id"))
 
 
 class WorkDeclareTool:
