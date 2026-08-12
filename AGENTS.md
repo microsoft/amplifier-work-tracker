@@ -26,9 +26,10 @@ Nothing above the seam should ever need to change for a Beads upgrade.
 ## `doctor` is the gate, not a suggestion
 
 Run `amplifier-work-tracker doctor` after any `bd` upgrade and before
-trusting parallel agents against a queue. It must report **18/18
+trusting parallel agents against a queue. It must report **19/19
 assumptions hold**; anything less means Beads' behavior moved out from
-under an assumption we depend on.
+under an assumption we depend on (or, for `sweeps.alive`, that the
+reap/notify sweep loops have stopped completing sweeps).
 
 ## Test scope
 
@@ -40,7 +41,7 @@ CI run does not cover it; run it directly if you touch that module.
 
 ## What "done" looks like
 
-Full suite green, `doctor` 17/17, `ruff check` / `ruff format --check` /
+Full suite green, `doctor` 19/19, `ruff check` / `ruff format --check` /
 `pyright` clean. For any change to the bundle's zero-state install path
 (service bootstrap, `work_tracker_install`, prereqs), the acceptance gate is
 a fresh Digital Twin Universe run from a genuinely empty machine (no `bd`,

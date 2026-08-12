@@ -24,6 +24,7 @@ from typing import NoReturn
 from . import adapter as A
 from . import contract
 from . import custody as C
+from . import heartbeat as HB
 from . import service as S
 from . import supervisor as SV
 
@@ -109,6 +110,46 @@ def _check_dolt_reachable(service_check: contract.Result) -> contract.Result:
     )
 
 
+def _check_sweeps_alive(root) -> contract.Result:
+    """Are the reap/notify sweep loops actually COMPLETING sweeps -- not
+    merely is the unit `active`? See `amplifier_work_tracker.heartbeat`'s
+    module docstring for the exact ambiguity `systemctl is-active` (and our
+    own exception-only sweep logging) cannot resolve: silence in the journal
+    means both "healthy" and "silently dead," and they are indistinguishable
+    from outside the process without this.
+
+    Same dependency-ordering convention as `_check_dolt_reachable`: skipped
+    (never failed) whenever the service isn't installed and running at all
+    -- that covers both the normal "not using the background service yet"
+    case (a dev box, or a session driving the CLI directly) and a state
+    `service.installed` has already reported as a failure. Piling a second
+    red line on the same root cause would not add information.
+    """
+    info = S.describe_service()
+    if not info.supported or not info.installed:
+        return contract.Result(
+            "sweeps.alive",
+            True,
+            "skipped (service not installed) -- sweep heartbeats only exist once "
+            "`amplifier-work-tracker service install` (or a foregrounded `serve`) is running",
+        )
+    if not info.active:
+        return contract.Result("sweeps.alive", True, "skipped (service.installed already failed)")
+    path = HB.heartbeat_path(root)
+    checks = [
+        (HB.REAP, SV.DEFAULT_REAP_INTERVAL_SECONDS),
+        (HB.NOTIFY, SV.DEFAULT_NOTIFY_INTERVAL_SECONDS),
+    ]
+    details = []
+    all_ok = True
+    for loop, interval in checks:
+        record = HB.read_loop_heartbeat(path, loop)
+        ok, detail = HB.evaluate_freshness(record, loop=loop, interval=interval)
+        details.append(detail)
+        all_ok = all_ok and ok
+    return contract.Result("sweeps.alive", all_ok, "; ".join(details))
+
+
 def cmd_doctor(a):
     """Prove the installed Beads still behaves the way we depend on, and that
     our own service/dolt-reachability are in a state parallel agents can
@@ -117,6 +158,7 @@ def cmd_doctor(a):
     service_check = _check_service_installed()
     results.append(service_check)
     results.append(_check_dolt_reachable(service_check))
+    results.append(_check_sweeps_alive(_ws(a).root))
     width = max(len(r.id) for r in results)
     failed = 0
     for r in results:
