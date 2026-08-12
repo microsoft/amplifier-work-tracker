@@ -34,7 +34,18 @@ from .. import _util
 pytestmark = pytest.mark.cli
 
 # Keep in sync with cli.py's `sub.add_parser(...)` calls.
-SUBCOMMANDS = ["doctor", "new", "add", "instances", "claim", "custody", "reap", "resolve", "notify"]
+SUBCOMMANDS = [
+    "doctor",
+    "new",
+    "remove",
+    "add",
+    "instances",
+    "claim",
+    "custody",
+    "reap",
+    "resolve",
+    "notify",
+]
 
 
 # --------------------------------------------------------- existence checks
@@ -85,6 +96,108 @@ def test_new_is_idempotent_on_a_valid_name(run_cli, unique_project_name):
     assert second.returncode == 0, second.stderr
     _util.assert_no_silent_failure(first)
     _util.assert_no_silent_failure(second)
+
+
+def test_new_reports_created_not_adopted_for_a_genuinely_fresh_project(
+    run_cli, unique_project_name
+):
+    result = run_cli(["new", unique_project_name])
+    assert result.returncode == 0, result.stderr
+    assert "created project" in result.stdout
+    assert "ADOPTED" not in result.stdout
+    _util.assert_no_silent_failure(result)
+
+
+def test_new_reports_adoption_loudly_when_directory_gone_but_database_survives(
+    run_cli, workspace, unique_project_name
+):
+    """CLI-level regression test for the resurrection bug: once the local
+    directory is gone but the shared-server database survives, `new` must
+    say ADOPTED (never bare "created") and name how many items came with
+    it."""
+    import shutil
+
+    name = unique_project_name
+    first = run_cli(["new", name])
+    assert first.returncode == 0, first.stderr
+    bd = workspace.project(name)
+    bd.create("cli adoption probe item", tags=["lane:cli_adoption_probe"], priority=1)
+    shutil.rmtree(workspace.path(name), ignore_errors=True)
+
+    second = run_cli(["new", name])
+    assert second.returncode == 0, second.stderr
+    assert "ADOPTED" in second.stdout
+    assert "created project" not in second.stdout
+    assert "1 existing item" in second.stdout
+    _util.assert_no_silent_failure(second)
+
+    run_cli(["remove", name, "--yes"])
+
+
+def test_remove_without_yes_exits_nonzero(run_cli, workspace, unique_project_name):
+    name = unique_project_name
+    created = run_cli(["new", name])
+    assert created.returncode == 0, created.stderr
+
+    result = run_cli(["remove", name])
+    assert result.returncode != 0
+    assert "--yes" in result.stderr
+    _util.assert_no_silent_failure(result)
+
+    # Nothing was touched by the refused attempt.
+    assert workspace.path(name).exists()
+    run_cli(["remove", name, "--yes"])
+
+
+def test_remove_with_yes_drops_both_directory_and_database(run_cli, workspace, unique_project_name):
+    """`.beads` and the database are ours to drop; the directory itself
+    survives because `bd init` leaves its own tool-integration scaffolding
+    (`.git`, `AGENTS.md`, ...) behind -- see the adapter-level test of the
+    same name for the full explanation. This is the CLI-surface proof of
+    the same contract."""
+    name = unique_project_name
+    created = run_cli(["new", name])
+    assert created.returncode == 0, created.stderr
+
+    result = run_cli(["remove", name, "--yes"])
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    assert body["beads_removed"] is True
+    assert body["database_removed"] is True
+    assert not (workspace.path(name) / ".beads").exists()
+    assert body["leftover"], "bd's own scaffolding (.git etc) is expected to remain"
+    _util.assert_no_silent_failure(result)
+
+    import shutil
+
+    shutil.rmtree(workspace.path(name), ignore_errors=True)
+
+
+def test_remove_refuses_via_cli_while_an_item_is_held(
+    run_cli, workspace, unique_project_name, unique_actor
+):
+    name = unique_project_name
+    created = run_cli(["new", name])
+    assert created.returncode == 0, created.stderr
+    bd = workspace.project(name)
+    item_id = bd.create("cli removal-refusal probe", tags=["lane:cli_removal_refusal"], priority=1)
+    bd.claim_item(item_id, actor=unique_actor)
+
+    result = run_cli(["remove", name, "--yes"])
+    assert result.returncode != 0
+    assert item_id in result.stderr
+    assert "HELD" in result.stderr
+    _util.assert_no_silent_failure(result)
+
+    bd.release(item_id)
+    run_cli(["remove", name, "--yes"])
+
+
+def test_remove_of_nonexistent_project_gives_distinct_error(run_cli, unique_project_name):
+    result = run_cli(["remove", unique_project_name, "--yes"])
+    assert result.returncode != 0
+    assert "not found" in result.stderr
+    _util.assert_no_silent_failure(result)
 
 
 def test_instances_on_a_fresh_empty_root_exits_zero(run_cli, tmp_path):

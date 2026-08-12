@@ -579,6 +579,75 @@ def check_custody_fenced(p: Probe) -> Result:
     )
 
 
+def check_project_removal(p: Probe) -> Result:
+    """`Workspace.remove` must make BOTH the `.beads` directory and the
+    shared-server database actually disappear, and a subsequent
+    `Workspace.create` of the same name must come back genuinely empty --
+    not a silent resurrection of the just-removed data.
+
+    This is the assumption that pins the exact bug measured on a live box:
+    no removal command existed, an operator `rm -rf`'d a project directory
+    by hand, orphaning its database, and a later `new` of the same name
+    silently reattached to it and reported "created" -- with someone
+    else's items in it. If a future `bd`/dolt change makes `DROP DATABASE`
+    (see `A.drop_database`) stop actually dropping data, or makes
+    `bd init` behave differently against a pre-existing database, this
+    check fails loudly rather than the corruption reappearing silently.
+
+    Uses `p.ws` (the same Workspace/root the rest of the contract suite
+    already proved reachable) with its own uniquely-named probe project,
+    so it never interferes with -- or depends on run order relative to --
+    any other check.
+    """
+    name = f"{p.name}rm"
+    try:
+        p.ws.create(name)
+    except A.BeadsError as e:
+        return Result("project.removal", False, f"could not set up removal probe project: {e}")
+    p.ws.project(name).create("removal probe item", tags=["lane:removal_probe"], priority=1)
+
+    try:
+        report = p.ws.remove(name, force=True)
+    except A.BeadsError as e:
+        return Result("project.removal", False, f"remove() failed on a removable project: {e}")
+    if not report.database_removed:
+        return Result(
+            "project.removal",
+            False,
+            "remove() did not report the database as removed on a project that had one",
+        )
+    if A.database_exists(name):
+        return Result(
+            "project.removal",
+            False,
+            f"database {name!r} still answers on the shared server after remove() -- "
+            f"removal is not actually dropping it",
+        )
+
+    try:
+        p.ws.create(name)
+        items = p.ws.project(name).list(include_resolved=True)
+    except A.BeadsError as e:
+        return Result("project.removal", False, f"re-create after removal failed: {e}")
+    if items:
+        return Result(
+            "project.removal",
+            False,
+            f"re-created project {name!r} came back with {len(items)} item(s) -- "
+            f"removal left the database behind and create() silently adopted it",
+        )
+
+    try:
+        p.ws.remove(name, force=True)
+    except A.BeadsError:
+        pass  # best-effort final cleanup; the assumption itself already passed or failed above
+    return Result(
+        "project.removal",
+        True,
+        "remove() drops both the directory and database; re-create afterward is genuinely empty",
+    )
+
+
 CHECKS = [
     ("capabilities", check_capabilities),
     ("resolve.fenced", check_resolve_fenced),
@@ -595,6 +664,7 @@ CHECKS = [
     ("custody.stale_reclaimed", check_custody_stale_reclaimed),
     ("custody.idle_not_exempt", check_custody_idle_not_exempt),
     ("custody.fenced", check_custody_fenced),
+    ("project.removal", check_project_removal),
 ]
 
 

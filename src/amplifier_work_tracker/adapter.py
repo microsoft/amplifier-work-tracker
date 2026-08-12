@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -222,6 +223,91 @@ def _bd_init_server_args() -> list[str]:
     if SV.port_holder_responds(host, port):
         return ["--server", "--server-host", host, "--server-port", str(port), "--external"]
     return ["--shared-server"]
+
+
+def _dolt_conn_args() -> list[str]:
+    """Global `dolt` CLI flags to reach the shared server directly over SQL,
+    bypassing any per-project `.beads` directory entirely.
+
+    This is the ONLY way to make a project's shared-server database actually
+    disappear: `bd` has no command for it. Verified empirically against the
+    installed bd 1.1.2 binary before writing this -- `bd delete` removes
+    *issues*, not databases, and `bd dolt` only manages server lifecycle and
+    config, never drops one. `dolt sql --host <host> --port <port>` (global
+    flags, placed BEFORE the `sql` subcommand -- `dolt sql --host` itself
+    errors `unknown option`) connects to the ALREADY-RUNNING shared server
+    exactly like `bd` itself does, rather than opening a second, unrelated
+    local repo. Deferred import of `supervisor`, same reason as
+    `_bd_init_server_args`: avoids a circular import (supervisor imports
+    this module already).
+    """
+    from . import supervisor as SV
+
+    return ["--host", SV.DEFAULT_DOLT_HOST, "--port", str(SV.DEFAULT_DOLT_PORT), "--no-tls"]
+
+
+def _dolt_sql(query: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["dolt", *_dolt_conn_args(), "sql", "-q", query, "-r", "csv"],
+        capture_output=True,
+        text=True,
+        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+        check=False,
+    )
+
+
+def database_exists(name: str) -> bool:
+    """Does a database named `name` exist on the shared dolt server --
+    independent of whether ANY project directory / `.beads` dir exists for
+    it locally.
+
+    Read via `information_schema.SCHEMATA` rather than parsing `show
+    databases` table output (a name substring could otherwise false-match
+    another database), and via the direct network SQL path rather than a
+    project-scoped `bd` call -- this must work even when
+    `Workspace.path(name)/.beads` is missing entirely, which is exactly the
+    orphaned-database case this function exists to detect (see
+    `Workspace.remove` and the `new`/adoption-honesty fix in `Workspace.create`).
+
+    `name` is not interpolated into anything that could be mistaken for SQL
+    outside a string literal, and every caller has already passed `name`
+    through `NAME_RE` (`^[a-z][a-z0-9_]{1,30}$`) before reaching here, so it
+    cannot contain a quote, backtick, or other SQL-relevant character.
+    """
+    p = _dolt_sql(f"SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='{name}'")
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not check whether database {name!r} exists on the shared dolt "
+            f"server: {(p.stderr or p.stdout).strip()[:300]}"
+        )
+    rows = [ln for ln in (p.stdout or "").splitlines() if ln.strip()][1:]  # drop CSV header
+    return name in rows
+
+
+def drop_database(name: str) -> bool:
+    """Drop `name`'s database from the shared dolt server via a direct SQL
+    connection (`bd` has no command for this -- see `_dolt_conn_args`).
+
+    Returns True if a database existed and was dropped, False if it did not
+    exist at all (not an error -- e.g. called on a project whose database
+    was already removed by a previous, partially-completed attempt). Any
+    OTHER failure raises rather than being swallowed as a false "nothing to
+    drop": a caller relying on this to make data actually disappear must
+    never see a silent no-op reported as success.
+    """
+    p = subprocess.run(
+        ["dolt", *_dolt_conn_args(), "sql", "-q", f"DROP DATABASE `{name}`"],
+        capture_output=True,
+        text=True,
+        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+        check=False,
+    )
+    blob = (p.stdout or "") + (p.stderr or "")
+    if p.returncode == 0:
+        return True
+    if "database not found" in blob.lower():
+        return False
+    raise BeadsError(f"drop_database {name!r} failed: {blob.strip()[:300]}")
 
 
 class BeadsError(Exception):
@@ -706,6 +792,21 @@ class Beads:
         return updated
 
 
+@dataclass
+class RemovalReport:
+    """What `Workspace.remove` actually did, in both locations a project
+    can live -- see `Workspace.remove`'s docstring for the full contract."""
+
+    name: str
+    directory: Path
+    had_beads_dir: bool
+    had_database: bool
+    beads_removed: bool
+    database_removed: bool
+    directory_removed: bool
+    leftover: list[str] = field(default_factory=list)
+
+
 class Workspace:
     """Many named projects, one shared server.
 
@@ -813,6 +914,115 @@ class Workspace:
             return d
         finally:
             lock.unlink(missing_ok=True)
+
+    def remove(self, name: str, *, force: bool = False) -> RemovalReport:
+        """Remove a project: its local `.beads` directory AND its
+        shared-server database. This is the counterpart `create` never had
+        -- measured cost of that gap on a live box: an operator had to
+        `rm -rf` a project directory by hand, orphaning its database, and a
+        later `create` of the same name silently resurrected the old data
+        (see the `adopted` field on `create`'s caller, `cmd_new`).
+
+        Two independent locations, handled honestly:
+          - a project can have a `.beads` directory with no matching
+            database (should not normally happen, but reported rather than
+            assumed away)
+          - a project can have a database with NO `.beads` directory --
+            exactly the orphan this command exists to reach. When this is
+            the case, this call re-attaches just long enough to check for
+            HELD items honestly (reusing the exact same "does an existing
+            database answer" path `create` uses), then removes everything
+            it created to do so -- a refusal leaves the same state this
+            call found, not a half-attached directory.
+
+        Refuses (no override) if any item is currently HELD: an agent may
+        be actively working it, and this is the safety property that
+        matters most for a destructive, irreversible operation. Refuses
+        entirely unless `force=True` (the CLI's `--yes`) -- a second,
+        independent gate on top of the caller's own confirmation prompt.
+
+        Never blindly deletes the whole project directory: only `.beads`
+        (ours) is removed from a directory that existed before this call.
+        Anything else in it (`.git`, source, notes a human put there) is
+        left in place and reported via `RemovalReport.leftover` so a human
+        can decide what to do with it -- deleting someone's git repo
+        because they wanted to drop a work queue would be unforgivable.
+        """
+        if not force:
+            raise BeadsError(
+                f"refusing to remove project {name!r} without explicit confirmation "
+                f"-- pass force=True (CLI: --yes). This is destructive and irreversible."
+            )
+        if not NAME_RE.match(name):
+            raise BeadsError(f"invalid project name {name!r}: must match {NAME_RE.pattern}")
+
+        d = self.path(name)
+        beads_dir = d / ".beads"
+        had_beads_dir = beads_dir.is_dir()
+        had_database = database_exists(name)
+
+        if not had_beads_dir and not had_database:
+            raise BeadsError(
+                f"project {name!r} not found: no {beads_dir} directory and no "
+                f"database named {name!r} on the shared dolt server. Nothing to remove."
+            )
+
+        # Orphan case: the database outlived its directory. Re-attach (the
+        # same path `create` uses to discover an existing database) just
+        # long enough to check for HELD items -- never drop a database we
+        # have not looked inside. `d` did not exist before this call, so
+        # everything under it is ours to remove afterward either way.
+        reattached_scratch = not had_beads_dir and had_database
+        if reattached_scratch:
+            self.create(name)
+
+        held: list[Item] = []
+        if beads_dir.is_dir():
+            items = self.project(name).list(include_resolved=False)
+            held = [i for i in items if i.status == "held"]
+
+        if held:
+            if reattached_scratch:
+                # Leave the same state this call found: no directory.
+                shutil.rmtree(d, ignore_errors=True)
+            names = ", ".join(f"{i.id} (held by {i.holder!r})" for i in held)
+            raise BeadsError(
+                f"refusing to remove project {name!r}: {len(held)} item(s) currently "
+                f"HELD -- {names}. An agent may be actively working this queue. "
+                f"Resolve or reap the item(s) first, then remove again."
+            )
+
+        database_removed = drop_database(name) if had_database else False
+
+        beads_removed = False
+        directory_removed = False
+        leftover: list[str] = []
+        if reattached_scratch:
+            # Entirely our own scaffold, created moments ago -- safe to
+            # remove wholesale, unlike a directory that pre-dates this call.
+            shutil.rmtree(d, ignore_errors=True)
+            beads_removed = True
+            directory_removed = True
+        elif had_beads_dir:
+            shutil.rmtree(beads_dir, ignore_errors=True)
+            beads_removed = True
+            remaining = sorted(p.name for p in d.iterdir()) if d.is_dir() else []
+            if remaining:
+                leftover = remaining
+            else:
+                d.rmdir()
+                directory_removed = True
+
+        return RemovalReport(
+            name=name,
+            directory=d,
+            had_beads_dir=had_beads_dir,
+            had_database=had_database,
+            beads_removed=beads_removed,
+            database_removed=database_removed,
+            directory_removed=directory_removed,
+            leftover=leftover,
+        )
 
 
 _CAPS: dict[str, bool] | None = None

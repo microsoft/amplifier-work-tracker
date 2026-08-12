@@ -26,10 +26,12 @@ Nothing above the seam should ever need to change for a Beads upgrade.
 ## `doctor` is the gate, not a suggestion
 
 Run `amplifier-work-tracker doctor` after any `bd` upgrade and before
-trusting parallel agents against a queue. It must report **19/19
+trusting parallel agents against a queue. It must report **20/20
 assumptions hold**; anything less means Beads' behavior moved out from
 under an assumption we depend on (or, for `sweeps.alive`, that the
-reap/notify sweep loops have stopped completing sweeps).
+reap/notify sweep loops have stopped completing sweeps, or, for
+`project.removal`, that `remove`/`new` no longer honestly handle a
+database that outlives its project directory).
 
 ## Test scope
 
