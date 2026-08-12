@@ -178,12 +178,84 @@ def cmd_doctor(a):
 
 
 def cmd_new(a):
+    """Create a project -- or, if a database of the same name already
+    exists on the shared server with no matching local directory, ATTACH
+    to it and say so loudly.
+
+    Measured bug this replaces: `Workspace.create` legitimately needs to
+    attach to an already-existing, already-healthy database (recovering
+    after an accidental directory deletion is a real, sanctioned path --
+    see `Workspace.remove`'s docstring for why a directory and a database
+    can end up out of sync). But the CLI printed the exact same "created
+    ... (verified writable)" message either way, so an operator had no way
+    to tell "brand new, empty project" from "reused someone else's queue,
+    N items and all" -- silently resurrected data reported as a fresh
+    success. The check happens BEFORE `create()` runs (not after) so a
+    concurrent drop can't hide the adoption; worst case is a report of
+    'adopted' for a database that got dropped a moment later, which is a
+    race in the reporting only, never in what was actually done.
+    """
     _guard()
+    ws = _ws(a)
+    already_local = (ws.path(a.name) / ".beads").is_dir()
+    pre_existing_db = False if already_local else A.database_exists(a.name)
     try:
-        path = _ws(a).create(a.name)
+        path = ws.create(a.name)
     except A.BeadsError as e:
         die(str(e))
+    if pre_existing_db:
+        try:
+            count = len(ws.project(a.name).list(include_resolved=True))
+            count_note = f"{count} existing item(s)"
+        except A.BeadsError as e:
+            count_note = f"item count unavailable ({e})"
+        print(
+            f"ADOPTED existing project '{a.name}' at {path} -- a database of this name "
+            f"already existed on the shared server with no local directory ({count_note}). "
+            f"This is NOT a fresh project; if that is unexpected, inspect it before using it."
+        )
+        return
     print(f"created project '{a.name}' at {path} (verified writable)")
+
+
+def cmd_remove(a):
+    """Remove a project: its local `.beads` directory AND its shared-server
+    database. Operator-only -- deliberately NOT exposed as an agent tool
+    (see `modules/tool-work-tracker`); an agent must never be able to
+    delete a work queue.
+
+    Refuses without `--yes` (a second, independent gate on top of
+    `Workspace.remove`'s own `force` requirement), refuses if any item is
+    currently HELD, and never touches anything in the project directory
+    other than `.beads` -- see `Workspace.remove`'s docstring for the full
+    contract, including how it handles a database whose directory is
+    already gone.
+    """
+    _guard()
+    if not a.yes:
+        die(
+            f"refusing to remove project {a.name!r} without --yes -- "
+            f"this is destructive and irreversible"
+        )
+    try:
+        report = _ws(a).remove(a.name, force=True)
+    except A.BeadsError as e:
+        die(str(e))
+    print(
+        json.dumps(
+            {
+                "removed": report.name,
+                "directory": str(report.directory),
+                "had_beads_dir": report.had_beads_dir,
+                "had_database": report.had_database,
+                "beads_removed": report.beads_removed,
+                "database_removed": report.database_removed,
+                "directory_removed": report.directory_removed,
+                "leftover": report.leftover,
+            },
+            indent=2,
+        )
+    )
 
 
 def cmd_add(a):
@@ -569,6 +641,22 @@ def main():
     p = sub.add_parser("new", help="create a named project", parents=[root_parent])
     p.add_argument("name")
     p.set_defaults(fn=cmd_new)
+
+    p = sub.add_parser(
+        "remove",
+        help=(
+            "remove a project: its .beads directory AND its shared-server database "
+            "(refuses if any item is HELD; irreversible; requires --yes)"
+        ),
+        parents=[root_parent],
+    )
+    p.add_argument("name")
+    p.add_argument(
+        "--yes",
+        action="store_true",
+        help="required confirmation -- this is destructive and irreversible",
+    )
+    p.set_defaults(fn=cmd_remove)
 
     p = sub.add_parser(
         "add",

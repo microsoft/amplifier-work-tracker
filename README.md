@@ -48,6 +48,7 @@ amplifier-work-tracker doctor                      # verify the installed bd/dol
 amplifier-work-tracker new my-project              # create a project (once)
 amplifier-work-tracker service install             # start the shared dolt server + reap/notify sweeps
 amplifier-work-tracker instances                   # list projects and their queue state
+amplifier-work-tracker remove my-project --yes     # permanently remove a project (refuses if anything is HELD)
 ```
 
 That's the operator side: install, stand up a project, start the background service that keeps
