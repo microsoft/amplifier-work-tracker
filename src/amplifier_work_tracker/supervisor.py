@@ -54,6 +54,7 @@ from typing import Any, Literal
 
 from . import adapter as A
 from . import custody as C
+from . import heartbeat as HB
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,7 @@ async def reap_loop(
     stop_event: asyncio.Event,
     ttl_seconds: int | None = None,
     escalation_hours: float | None = None,
+    heartbeat_path: Path | None = None,
 ) -> None:
     """Trivial wrapper: sleep, sweep, repeat -- until `stop_event` fires.
 
@@ -182,7 +184,15 @@ async def reap_loop(
     allowed to kill this task. A silently-dead reaper is the exact failure
     this whole feature exists to fix -- letting an exception propagate out
     of this loop would recreate it.
+
+    Writes a heartbeat (see `amplifier_work_tracker.heartbeat`): once at
+    startup, before the first sweep, and again after every sweep that
+    completes without raising. This is what lets `doctor`'s `sweeps.alive`
+    check distinguish "quietly healthy" from "silently dead," which the
+    exception-only logging above cannot do by itself.
     """
+    hb_path = heartbeat_path if heartbeat_path is not None else HB.heartbeat_path(ws.root)
+    HB.record_loop_started(hb_path, HB.REAP, pid=os.getpid())
     while not stop_event.is_set():
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval)
@@ -194,12 +204,22 @@ async def reap_loop(
             await asyncio.to_thread(
                 reap_sweep, ws, ttl_seconds=ttl_seconds, escalation_hours=escalation_hours
             )
+            HB.record_sweep_completed(hb_path, HB.REAP, pid=os.getpid())
         except Exception:  # noqa: BLE001 -- see docstring
             logger.exception("reap sweep crashed -- continuing on the next interval")
 
 
-async def notify_loop(ws: A.Workspace, *, interval: float, stop_event: asyncio.Event) -> None:
-    """Trivial wrapper around `notify_sweep` -- see `reap_loop`'s docstring."""
+async def notify_loop(
+    ws: A.Workspace,
+    *,
+    interval: float,
+    stop_event: asyncio.Event,
+    heartbeat_path: Path | None = None,
+) -> None:
+    """Trivial wrapper around `notify_sweep` -- see `reap_loop`'s docstring,
+    including the heartbeat writes."""
+    hb_path = heartbeat_path if heartbeat_path is not None else HB.heartbeat_path(ws.root)
+    HB.record_loop_started(hb_path, HB.NOTIFY, pid=os.getpid())
     while not stop_event.is_set():
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval)
@@ -209,6 +229,7 @@ async def notify_loop(ws: A.Workspace, *, interval: float, stop_event: asyncio.E
             return
         try:
             await asyncio.to_thread(notify_sweep, ws)
+            HB.record_sweep_completed(hb_path, HB.NOTIFY, pid=os.getpid())
         except Exception:  # noqa: BLE001 -- see docstring
             logger.exception("notify sweep crashed -- continuing on the next interval")
 

@@ -11,10 +11,12 @@ real `bd` binary, mirroring the forged-clock style already used by
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
 from amplifier_work_tracker import custody as C
+from amplifier_work_tracker import heartbeat as HB
 from amplifier_work_tracker import supervisor as SV
 
 # --------------------------------------------------------- classify_port_holders
@@ -307,3 +309,94 @@ def test_notify_sweep_isolates_a_broken_project_from_the_others():
     results = SV.notify_sweep(ws)  # type: ignore[arg-type]
     assert "error" in results["broken"]
     assert results["good"]["count"] == 1
+
+
+# ------------------------------------------------------- reap_loop/notify_loop
+#
+# Real asyncio, but never a real 300s-scale interval -- these use very short
+# intervals (fractions of a second) purely to let the loop body actually run
+# a couple of iterations within a fast test, never to simulate production
+# timing. Proves the loop wiring itself (not just heartbeat.py in isolation)
+# calls record_loop_started/record_sweep_completed at the right moments.
+
+
+def test_reap_loop_records_start_before_its_first_sweep_completes(tmp_path):
+    ws = _FakeWorkspace({})
+    stop_event = asyncio.Event()
+    hb_path = HB.heartbeat_path(tmp_path)
+
+    async def run():
+        task = asyncio.create_task(
+            SV.reap_loop(ws, interval=100, stop_event=stop_event, heartbeat_path=hb_path)  # type: ignore[arg-type]
+        )
+        await asyncio.sleep(0)  # let the coroutine run up to its first await
+        rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
+        assert rec is not None
+        assert rec["last_completed"] is None
+        stop_event.set()
+        await task
+
+    asyncio.run(run())
+
+
+def test_reap_loop_records_completion_after_a_sweep(tmp_path):
+    ws = _FakeWorkspace({})
+    stop_event = asyncio.Event()
+    hb_path = HB.heartbeat_path(tmp_path)
+
+    async def run():
+        task = asyncio.create_task(
+            SV.reap_loop(ws, interval=0.01, stop_event=stop_event, heartbeat_path=hb_path)  # type: ignore[arg-type]
+        )
+        await asyncio.sleep(0.1)  # several intervals' worth
+        stop_event.set()
+        await task
+
+    asyncio.run(run())
+    rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
+    assert rec is not None
+    assert rec["last_completed"] is not None
+
+
+def test_notify_loop_records_completion_after_a_sweep(tmp_path):
+    ws = _FakeWorkspace({})
+    stop_event = asyncio.Event()
+    hb_path = HB.heartbeat_path(tmp_path)
+
+    async def run():
+        task = asyncio.create_task(
+            SV.notify_loop(ws, interval=0.01, stop_event=stop_event, heartbeat_path=hb_path)  # type: ignore[arg-type]
+        )
+        await asyncio.sleep(0.1)
+        stop_event.set()
+        await task
+
+    asyncio.run(run())
+    rec = HB.read_loop_heartbeat(hb_path, HB.NOTIFY)
+    assert rec is not None
+    assert rec["last_completed"] is not None
+
+
+def test_reap_and_notify_loops_use_independent_heartbeat_records(tmp_path):
+    """Run both loops against the SAME heartbeat file concurrently -- proves
+    they don't clobber each other's record (each writes only its own key)."""
+    ws = _FakeWorkspace({})
+    stop_event = asyncio.Event()
+    hb_path = HB.heartbeat_path(tmp_path)
+
+    async def run():
+        reap_task = asyncio.create_task(
+            SV.reap_loop(ws, interval=0.01, stop_event=stop_event, heartbeat_path=hb_path)  # type: ignore[arg-type]
+        )
+        notify_task = asyncio.create_task(
+            SV.notify_loop(ws, interval=0.01, stop_event=stop_event, heartbeat_path=hb_path)  # type: ignore[arg-type]
+        )
+        await asyncio.sleep(0.1)
+        stop_event.set()
+        await asyncio.gather(reap_task, notify_task)
+
+    asyncio.run(run())
+    reap_rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
+    notify_rec = HB.read_loop_heartbeat(hb_path, HB.NOTIFY)
+    assert reap_rec is not None and reap_rec["last_completed"] is not None
+    assert notify_rec is not None and notify_rec["last_completed"] is not None
