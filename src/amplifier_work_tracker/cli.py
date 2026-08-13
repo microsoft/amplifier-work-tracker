@@ -328,6 +328,59 @@ def cmd_instances(a):
         )
 
 
+def cmd_list(a):
+    """Read-only per-item listing: id, title, status, holder, resolution --
+    the operator/CLI counterpart to the `work_list` agent tool. See
+    `adapter.Beads.list_bounded` for the shared capping/truncation logic;
+    this command is a thin wrapper, exactly like `work_add`/`add`.
+    """
+    _guard()
+    try:
+        result = _ws(a).project(a.project).list_bounded(status=a.status, limit=a.limit)
+    except A.BeadsError as e:
+        die(str(e))
+    rows = [
+        {
+            "id": i.id,
+            "title": i.title,
+            "status": i.status,
+            "holder": i.holder,
+            "resolution": i.resolution,
+        }
+        for i in result.items
+    ]
+    if a.json:
+        print(
+            json.dumps(
+                {
+                    "project": a.project,
+                    "items": rows,
+                    "returned_count": result.returned_count,
+                    "total_count": result.total_count,
+                    "truncated": result.truncated,
+                    "limit": result.limit,
+                },
+                indent=2,
+            )
+        )
+        return
+    if not rows:
+        print(
+            f"no items in project {a.project!r}"
+            + (f" with status={a.status!r}" if a.status else "")
+        )
+        return
+    width_id = max(len(r["id"]) for r in rows)
+    print(f"{'ID':<{width_id}}  {'STATUS':<10} {'HOLDER':<20} TITLE")
+    for r in rows:
+        print(f"{r['id']:<{width_id}}  {r['status']:<10} {(r['holder'] or ''):<20} {r['title']}")
+    if result.truncated:
+        print(
+            f"\n(showing {result.returned_count} of {result.total_count} matching items -- "
+            f"pass --limit to see more, up to {A.LIST_MAX_LIMIT})"
+        )
+
+
 def cmd_claim(a):
     """Claim work: the default queue-based claim, or -- with `--id` -- a
     directed claim of one specific item. Both are single atomic bd calls
@@ -675,6 +728,30 @@ def main():
     p = sub.add_parser("instances", help="list projects", parents=[root_parent])
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_instances)
+
+    p = sub.add_parser(
+        "list",
+        help=(
+            "read-only per-item listing for one project -- id, title, status, holder, "
+            "and (for closed items) resolution; never claims or mutates anything"
+        ),
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument(
+        "--status",
+        default=None,
+        choices=A.STATUSES,
+        help="filter to items with exactly this status (default: all statuses)",
+    )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help=f"max items to return (default {A.LIST_DEFAULT_LIMIT}, max {A.LIST_MAX_LIMIT})",
+    )
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_list)
 
     p = sub.add_parser(
         "claim",

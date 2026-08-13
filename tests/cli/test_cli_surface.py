@@ -40,6 +40,7 @@ SUBCOMMANDS = [
     "remove",
     "add",
     "instances",
+    "list",
     "claim",
     "custody",
     "reap",
@@ -215,6 +216,130 @@ def test_instances_json_is_well_formed(run_cli, shared_project_name):
     rows = json.loads(result.stdout)
     assert isinstance(rows, list)
     assert any(r["project"] == shared_project_name for r in rows)
+
+
+def test_list_shows_mixed_states_with_id_title_status_holder_resolution(
+    run_cli, workspace, shared_project_name, unique_lane, unique_actor
+):
+    """The literal acceptance criterion: one project with some ready, some
+    held, some closed items -- `list --json` must show id/title/status/
+    holder for all of them, and holder must actually be populated for the
+    held item (the field `work_status` conspicuously lacks)."""
+    bd = workspace.project(shared_project_name)
+    open_id = bd.create("cli-list open", tags=[unique_lane], priority=1)
+    held_id = bd.create("cli-list held", tags=[unique_lane], priority=1)
+    closed_id = bd.create("cli-list closed", tags=[unique_lane], priority=1)
+    bd.claim_item(held_id, actor=unique_actor)
+    bd.resolve(closed_id, "cli-list resolution text", actor="cli-list-resolver")
+
+    result = run_cli(["list", "--project", shared_project_name, "--json"])
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    by_id = {row["id"]: row for row in body["items"]}
+
+    assert by_id[open_id]["status"] == "open"
+    assert by_id[open_id]["holder"] is None
+
+    assert by_id[held_id]["status"] == "held"
+    assert by_id[held_id]["holder"] == unique_actor
+
+    assert by_id[closed_id]["status"] == "resolved"
+    assert by_id[closed_id]["resolution"] == "cli-list resolution text"
+    _util.assert_no_silent_failure(result)
+
+    bd.resolve(held_id, "test cleanup", actor=unique_actor)
+
+
+def test_list_status_filter_returns_only_matching_status(
+    run_cli, workspace, shared_project_name, unique_lane
+):
+    bd = workspace.project(shared_project_name)
+    open_id = bd.create("cli-list-filter open", tags=[unique_lane], priority=1)
+    held_id = bd.create("cli-list-filter held", tags=[unique_lane], priority=1)
+    bd.claim_item(held_id, actor="cli-list-filter-actor")
+
+    result = run_cli(["list", "--project", shared_project_name, "--status", "held", "--json"])
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    ids = {row["id"] for row in body["items"]}
+    assert held_id in ids
+    assert open_id not in ids
+    for row in body["items"]:
+        assert row["status"] == "held"
+    _util.assert_no_silent_failure(result)
+
+    bd.resolve(held_id, "test cleanup", actor="cli-list-filter-actor")
+
+
+def test_list_rejects_unknown_status_via_argparse_choices(run_cli, shared_project_name):
+    result = run_cli(["list", "--project", shared_project_name, "--status", "bogus"])
+    assert result.returncode != 0
+    assert "invalid choice" in result.stderr
+
+
+def test_list_never_mutates_project_state(
+    run_cli, workspace, shared_project_name, unique_lane, unique_actor
+):
+    """Calling `list` must never claim, mutate, or touch custody -- full
+    project state before and after must be identical."""
+    bd = workspace.project(shared_project_name)
+    bd.create("cli-list no-mutation open", tags=[unique_lane], priority=1)
+    held_id = bd.create("cli-list no-mutation held", tags=[unique_lane], priority=1)
+    bd.claim_item(held_id, actor=unique_actor)
+
+    def snapshot():
+        items = bd.list(include_resolved=True)
+        return {i.id: (i.status, i.holder, i.resolution) for i in items}
+
+    before = snapshot()
+    result = run_cli(["list", "--project", shared_project_name, "--json"])
+    assert result.returncode == 0, result.stderr
+    result2 = run_cli(["list", "--project", shared_project_name, "--status", "held", "--json"])
+    assert result2.returncode == 0, result2.stderr
+    after = snapshot()
+
+    assert before == after
+    bd.resolve(held_id, "test cleanup", actor=unique_actor)
+
+
+def test_list_on_a_project_with_no_matching_items_exits_zero_with_empty_list(
+    run_cli, shared_project_name, unique_lane
+):
+    """An unused lane guarantees zero items for THIS status filter, without
+    needing a brand-new project -- proving the empty case is a normal,
+    non-error outcome, not a crash."""
+    result = run_cli(["list", "--project", shared_project_name, "--status", "deferred", "--json"])
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    assert body["items"] == []
+    assert body["total_count"] == 0
+    assert body["truncated"] is False
+    _util.assert_no_silent_failure(result)
+
+
+def test_list_on_nonexistent_project_gives_distinct_error(run_cli, unique_project_name):
+    result = run_cli(["list", "--project", unique_project_name, "--json"])
+    assert result.returncode != 0
+    assert "not found" in result.stderr
+    _util.assert_no_silent_failure(result)
+
+
+def test_list_truncates_and_reports_it_explicitly(
+    run_cli, workspace, shared_project_name, unique_lane
+):
+    bd = workspace.project(shared_project_name)
+    for n in range(4):
+        bd.create(f"cli-list truncation probe {n}", tags=[unique_lane], priority=1)
+
+    result = run_cli(
+        ["list", "--project", shared_project_name, "--status", "open", "--limit", "2", "--json"]
+    )
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    assert body["returned_count"] == 2
+    assert body["total_count"] >= 4
+    assert body["truncated"] is True
+    _util.assert_no_silent_failure(result)
 
 
 def test_add_creates_a_claimable_item_without_needing_lane_vocabulary(

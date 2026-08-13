@@ -343,3 +343,85 @@ def test_disable_telemetry_once_never_raises_on_subprocess_failure(monkeypatch):
 
     monkeypatch.setattr(A.subprocess, "run", boom)
     A._disable_telemetry_once()  # noqa: SLF001 -- must not raise
+
+
+# --------------------------------------------------------- work_list status
+
+
+def test_statuses_public_tuple_covers_every_domain_status():
+    assert set(A.STATUSES) == {"open", "held", "resolved", "blocked", "deferred"}
+
+
+def test_status_reverse_map_is_the_exact_inverse_of_the_forward_map():
+    for beads_status, our_status in A._STATUS_MAP.items():  # noqa: SLF001
+        assert A._STATUS_MAP_REVERSE[our_status] == beads_status  # noqa: SLF001
+
+
+def test_list_rejects_unknown_status_before_any_subprocess_call(tmp_path, monkeypatch):
+    """Validation of `status` must happen before any `bd` subprocess is
+    launched -- a caller passing a typo'd status should get an immediate,
+    clear error, never a wasted round-trip or a confusing bd-side failure."""
+
+    def boom(*args, **kwargs):
+        raise AssertionError("subprocess.run should never be reached for an invalid status")
+
+    monkeypatch.setattr(A.subprocess, "run", boom)
+    bd = A.Beads(tmp_path / ".beads")
+    try:
+        bd.list(status="nonexistent-status")
+        raise AssertionError("expected BeadsError for an unknown status")
+    except A.BeadsError as e:
+        assert "unknown status" in str(e)
+        for s in A.STATUSES:
+            assert s in str(e)
+
+
+def test_list_bounded_clamps_requested_limit_above_the_max(tmp_path, monkeypatch):
+    """A caller asking for more than LIST_MAX_LIMIT must be silently clamped
+    to the max (never a hard error -- a huge limit is not invalid input),
+    but the clamp itself must be visible via `requested_limit` vs `limit`."""
+    bd = A.Beads(tmp_path / ".beads")
+    monkeypatch.setattr(bd, "list", lambda **kwargs: [])
+    result = bd.list_bounded(limit=10_000)
+    assert result.requested_limit == 10_000
+    assert result.limit == A.LIST_MAX_LIMIT
+
+
+def test_list_bounded_clamps_a_nonpositive_requested_limit_to_one(tmp_path, monkeypatch):
+    bd = A.Beads(tmp_path / ".beads")
+    monkeypatch.setattr(bd, "list", lambda **kwargs: [])
+    result = bd.list_bounded(limit=0)
+    assert result.limit == 1
+    result_negative = bd.list_bounded(limit=-5)
+    assert result_negative.limit == 1
+
+
+def test_list_bounded_uses_default_limit_when_omitted(tmp_path, monkeypatch):
+    bd = A.Beads(tmp_path / ".beads")
+    monkeypatch.setattr(bd, "list", lambda **kwargs: [])
+    result = bd.list_bounded()
+    assert result.limit == A.LIST_DEFAULT_LIMIT
+    assert result.requested_limit is None
+
+
+def test_list_bounded_reports_truncation_honestly(tmp_path, monkeypatch):
+    """Truncation must be computed from the TRUE total (an unbounded fetch),
+    never inferred from the capped page alone."""
+    items = [A.Item.from_beads({"id": f"x-{i}", "status": "open"}) for i in range(10)]
+    bd = A.Beads(tmp_path / ".beads")
+    monkeypatch.setattr(bd, "list", lambda **kwargs: items)
+    result = bd.list_bounded(limit=3)
+    assert result.total_count == 10
+    assert result.returned_count == 3
+    assert result.truncated is True
+    assert [i.id for i in result.items] == ["x-0", "x-1", "x-2"]
+
+
+def test_list_bounded_reports_no_truncation_when_everything_fits(tmp_path, monkeypatch):
+    items = [A.Item.from_beads({"id": f"x-{i}", "status": "open"}) for i in range(3)]
+    bd = A.Beads(tmp_path / ".beads")
+    monkeypatch.setattr(bd, "list", lambda **kwargs: items)
+    result = bd.list_bounded(limit=50)
+    assert result.total_count == 3
+    assert result.returned_count == 3
+    assert result.truncated is False
