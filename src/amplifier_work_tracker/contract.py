@@ -275,6 +275,33 @@ def check_list_includes_closed(p: Probe) -> Result:
     return Result("list.includes_closed", True, "all-flag required and working")
 
 
+def check_list_status_filter_includes_closed(p: Probe) -> Result:
+    """`Beads.list_bounded` (and `list(status=...)`) depends on an explicit
+    `--status` filter showing closed items WITHOUT also needing `--all` --
+    verified empirically against bd 1.1.2 (`bd list --status closed --json`
+    returns the closed item with no `--all` present). If a future bd
+    reverts to requiring `--all` alongside `--status`, `work_list`/the CLI's
+    `list` subcommand would silently under-report resolved items -- this
+    check exists so that regression fails loudly here instead.
+    """
+    assert p.bd
+    i = p.bd.create("probe status-filter closed", tags=["lane:probe_status_filter"])
+    p.bd.resolve(i, "probe resolution for status filter")
+    via_status = [x.id for x in p.bd.list(lane="lane:probe_status_filter", status="resolved")]
+    if i not in via_status:
+        return Result(
+            "list.status_filter_includes_closed",
+            False,
+            "`bd list --status closed` (no --all) did not include a closed item -- "
+            "work_list's status='resolved' filter would silently return nothing",
+        )
+    return Result(
+        "list.status_filter_includes_closed",
+        True,
+        "an explicit --status filter shows closed items without --all",
+    )
+
+
 def check_show_dependents(p: Probe) -> Result:
     """Reverse traversal is how a reporter learns their report was fixed."""
     assert p.bd
@@ -656,6 +683,7 @@ CHECKS = [
     ("claim.directed_atomic", check_claim_directed_atomic),
     ("link.nonblocking", check_link_nonblocking),
     ("list.includes_closed", check_list_includes_closed),
+    ("list.status_filter_includes_closed", check_list_status_filter_includes_closed),
     ("show.dependents", check_show_dependents),
     ("resolution.readable", check_resolution_readable),
     ("metadata.roundtrip", check_metadata_roundtrip),

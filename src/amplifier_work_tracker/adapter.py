@@ -52,6 +52,9 @@ ASSUMPTIONS = {
     "claim.actor_env": "Claim identity comes from the BEADS_ACTOR environment variable",
     "link.nonblocking": "A `discovered-from` link does not block the linked item",
     "list.includes_closed": "Listing with the all-flag includes closed items",
+    "list.status_filter_includes_closed": (
+        "Filtering `list` by an explicit --status shows closed items without needing --all"
+    ),
     "show.dependents": "Reverse links require an explicit include-dependents flag",
     "resolution.readable": "An item's resolution text is readable after it is closed",
     "metadata.roundtrip": "Arbitrary JSON metadata survives a write/read cycle",
@@ -87,6 +90,22 @@ _STATUS_MAP = {
     "blocked": "blocked",
     "deferred": "deferred",
 }
+
+# Reverse of the above -- our vocabulary back to Beads' `--status` values, for
+# filtering `list()`. A bijection (every value in _STATUS_MAP is distinct), so
+# this is exact, not an approximation.
+_STATUS_MAP_REVERSE = {ours: theirs for theirs, ours in _STATUS_MAP.items()}
+
+# Public -- the valid `status` values for `list()`/`list_bounded()`, for
+# callers (the CLI's `--status` choices, the `work_list` tool's input schema)
+# that need the vocabulary without reaching into the private reverse map.
+STATUSES = tuple(sorted(_STATUS_MAP_REVERSE))
+
+# Bounds for `Beads.list_bounded` -- shared by the CLI and the agent tool so
+# neither reinvents (or silently disagrees on) the default/max. See its
+# docstring: the cap is always reported explicitly, never silent.
+LIST_DEFAULT_LIMIT = 50
+LIST_MAX_LIMIT = 500
 
 LANE_INTAKE = "lane:intake"
 LANE_WORK = "lane:eng"
@@ -422,6 +441,20 @@ def truncate_status(text: str, limit: int = STATUS_ERROR_MAX) -> str:
     return text[:cut] + " ...[truncated]"
 
 
+@dataclass
+class ListResult:
+    """What `Beads.list_bounded` actually returned, and how it relates to
+    the true total -- see that method's docstring for why `truncated` is a
+    measured fact, not an inference from bd's own default page size."""
+
+    items: list[Item]
+    total_count: int
+    returned_count: int
+    truncated: bool
+    limit: int
+    requested_limit: int | None
+
+
 class Beads:
     """A handle on one Beads project. Construct via Workspace.project()."""
 
@@ -604,16 +637,82 @@ class Beads:
         ]
         return it
 
-    def list(self, *, lane: str | None = None, include_resolved: bool = False) -> list[Item]:
+    def list(
+        self,
+        *,
+        lane: str | None = None,
+        include_resolved: bool = False,
+        status: str | None = None,
+        limit: int | None = None,
+    ) -> list[Item]:
+        """List items, optionally filtered by lane and/or OUR domain status
+        ("open", "held", "resolved", "blocked", "deferred"), optionally capped.
+
+        `status`, when given, takes priority over `include_resolved`: passing
+        an explicit `--status` to bd shows closed items without needing
+        `--all` at all (ASSUMPTION list.status_filter_includes_closed,
+        verified empirically against bd 1.1.2 -- `bd list --status closed
+        --json` returns closed items with no `--all` present). This means a
+        caller asking for `status="resolved"` sees resolved items regardless
+        of `include_resolved`.
+
+        `limit`, when given, is passed straight through as bd's own
+        `--limit`/`-n` (0 means unlimited to bd). `None` leaves bd's own
+        default (50) in place -- unchanged behavior for every existing
+        caller that never specified `limit`. Callers that need the TRUE
+        total count (not just bd's own default-capped view) should pass
+        `limit=0` explicitly -- see `list_bounded`, which does exactly that.
+        """
         args = ["list"]
-        if include_resolved:
+        if status is not None:
+            raw = _STATUS_MAP_REVERSE.get(status)
+            if raw is None:
+                raise BeadsError(
+                    f"unknown status {status!r}: must be one of {sorted(_STATUS_MAP_REVERSE)}"
+                )
+            args += ["--status", raw]
+        elif include_resolved:
             # ASSUMPTION list.includes_closed -- without this a resolved report
             # vanishes exactly when its answer is ready.
             args += ["--all"]
         if lane:
             args += ["--label", lane]
+        if limit is not None:
+            args += ["--limit", str(limit)]
         data = self._json(args) or []
         return [Item.from_beads(d) for d in data if isinstance(d, dict)]
+
+    def list_bounded(self, *, status: str | None = None, limit: int | None = None) -> ListResult:
+        """Read-only, explicitly-capped item listing for human/agent
+        consumption -- the shared implementation behind both the CLI's
+        `list` subcommand and the `work_list` tool, so neither reinvents
+        (or silently disagrees on) the capping policy.
+
+        Always fetches the FULL matching set first (`limit=0` -- bd's own
+        "unlimited") to learn the true total, THEN caps in Python. This is
+        what makes `truncated` a fact rather than a guess: a caller that
+        only ever saw bd's own default-50-item page would have no way to
+        know whether 50 was the true total or a silent truncation.
+
+        `limit=None` uses `LIST_DEFAULT_LIMIT`; any requested limit is
+        clamped to `[1, LIST_MAX_LIMIT]` -- silently for the lower bound (a
+        request for 0 or negative items is nonsensical, not meaningful
+        input worth reporting on), but ALWAYS reported via
+        `ListResult.requested_limit` vs `ListResult.limit` when the upper
+        bound clamps, so a caller asking for more than the max learns that
+        distinctly from asking for exactly 500 -- a cap must never be silent.
+        """
+        effective = LIST_DEFAULT_LIMIT if limit is None else max(1, min(limit, LIST_MAX_LIMIT))
+        items = self.list(status=status, include_resolved=(status is None), limit=0)
+        capped = items[:effective]
+        return ListResult(
+            items=capped,
+            total_count=len(items),
+            returned_count=len(capped),
+            truncated=len(capped) < len(items),
+            limit=effective,
+            requested_limit=limit,
+        )
 
     def resolve(self, item_id: str, reason: str, *, actor: str | None = None) -> Item:
         """Close an item and VERIFY the write landed. Exit code is not proof.

@@ -1,10 +1,20 @@
 """Amplifier tool module for amplifier-work-tracker.
 
 Exposes `work_claim`, `work_declare`, `work_resolve`, `work_status`,
-`work_file`, and `work_add` as agent-callable tools, backed directly by
-`amplifier_work_tracker.adapter` / `amplifier_work_tracker.custody`. This
-module contains no Beads knowledge of its own and shells out to nothing --
+`work_file`, `work_add`, and `work_list` as agent-callable tools, backed
+directly by `amplifier_work_tracker.adapter` / `amplifier_work_tracker.custody`.
+This module contains no Beads knowledge of its own and shells out to nothing --
 all domain logic lives in the `amplifier_work_tracker` package it imports.
+
+`work_list` is the read-only per-item view `work_status` deliberately does
+not provide (that tool reports project-level counts only). It exists because
+a real three-agent contention test surfaced a genuine gap: every agent could
+see `{held: 0, ready: 0}` after the queue drained, but none of them had a
+sanctioned way to see WHICH items existed, WHO held each one, or what
+resolution a closed item ended up with -- forcing a raw `bd list --all
+--json` shell-out to verify the run, exactly the kind of seam-leaking escape
+this bundle exists to make unnecessary. Strictly read-only: it never claims,
+mutates, or touches custody -- see `WorkTrackerSession.list_items`.
 
 `work_add` is the sanctioned path for filing a project's FIRST work item (or
 any later one) with no held item required -- unlike `work_file`, which
@@ -343,6 +353,47 @@ class WorkTrackerSession:
             )
         return ToolResult(success=True, output={"projects": projects, "holding": holding})
 
+    async def list_items(
+        self,
+        project: str,
+        *,
+        status: str | None = None,
+        limit: int | None = None,
+    ) -> ToolResult:
+        """Read-only per-item listing -- id, title, status, holder, and
+        (for closed items) resolution. Never claims, mutates, or touches
+        custody: this method does not read or write `self._held`/`self._lock`
+        at all, unlike every other tool method above. See
+        `adapter.Beads.list_bounded` for the capping/truncation contract --
+        `truncated`/`total_count` are always honest, never a silent cap.
+        """
+        try:
+            bd = self._project(project)
+            result = bd.list_bounded(status=status, limit=limit)
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        rows = [
+            {
+                "id": i.id,
+                "title": i.title,
+                "status": i.status,
+                "holder": i.holder,
+                "resolution": i.resolution,
+            }
+            for i in result.items
+        ]
+        return ToolResult(
+            success=True,
+            output={
+                "project": project,
+                "items": rows,
+                "returned_count": result.returned_count,
+                "total_count": result.total_count,
+                "truncated": result.truncated,
+                "limit": result.limit,
+            },
+        )
+
     async def file(
         self,
         title: str,
@@ -656,8 +707,62 @@ class WorkAddTool:
         )
 
 
+class WorkListTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_list"
+
+    @property
+    def description(self) -> str:
+        return (
+            "List items in a project (read-only) -- id, title, status, holder, and (for "
+            "closed items) resolution. Filterable by status; defaults to every status, "
+            f"capped at {A.LIST_DEFAULT_LIMIT} (max {A.LIST_MAX_LIMIT} via limit) -- the "
+            "response always reports total_count/returned_count/truncated so a cap is never "
+            "silent. Strictly read-only: never claims, mutates, or touches custody. Use this "
+            "to see who holds an item, or what happened to items you didn't claim (closed "
+            "items and their resolution are visible here, not just open ones) -- never shell "
+            "out to a raw storage-layer CLI to answer this."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Named project to list items from."},
+                "status": {
+                    "type": "string",
+                    "enum": list(A.STATUSES),
+                    "description": (
+                        "Optional. Filter to items with exactly this status. Omit to see every "
+                        "status."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": (
+                        f"Optional. Max items to return (default {A.LIST_DEFAULT_LIMIT}, "
+                        f"clamped to {A.LIST_MAX_LIMIT})."
+                    ),
+                },
+            },
+            "required": ["project"],
+        }
+
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.list_items(
+            input["project"],
+            status=input.get("status"),
+            limit=input.get("limit"),
+        )
+
+
 async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Mount all six work_* tools, sharing one WorkTrackerSession.
+    """Mount all seven work_* tools, sharing one WorkTrackerSession.
 
     IRON LAW: every tool below is registered via `coordinator.mount()`.
     Skipping any of them (or returning without mounting) fails
@@ -671,6 +776,7 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
         WorkStatusTool(session),
         WorkFileTool(session),
         WorkAddTool(session),
+        WorkListTool(session),
         WorkTrackerStatusTool(config),
         WorkTrackerInstallTool(config),
     ]
