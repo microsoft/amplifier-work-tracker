@@ -44,6 +44,46 @@ for the per-tier targets. **`modules/tool-work-tracker/tests/` is a separate
 package with its own suite and is NOT exercised by root CI** -- a green root
 CI run does not cover it; run it directly if you touch that module.
 
+## A project lives in two places -- clean up both
+
+Creating a project creates a directory *and* a database on the shared dolt
+server. A `tmp_path` root only cleans up the first one. Skipping the second
+was measured on a live box at **163 databases for 5 real projects**: 157 of
+them residue, 47 from `doctor` runs alone. dolt holds every database open,
+so the bill arrives continuously -- dropping the residue took that server
+from 1.15 GB RSS / 313 MB on disk to 0.12 GB / 18 MB.
+
+Unique names (see `tests/conftest.py`) are what keep concurrent runs from
+colliding. They are not cleanup. So:
+
+- **Any fixture that creates a project must drop it again.** Root suite:
+  `drop_project` in `tests/conftest.py`. Module suite: the shared `project`
+  fixture in `modules/tool-work-tracker/tests/conftest.py` (set
+  `PROJECT_PREFIX` in your test module to name it).
+- **Teardown belongs in the fixture, not at the end of the test body** --
+  the end of a test body does not run when the test fails, and a failing
+  test is exactly when residue gets left behind.
+- Removal goes through `adapter.drop_database` / `Workspace.remove`, never
+  raw SQL. Teardown uses the former because `remove` refuses (correctly)
+  while an item is HELD, and several tests deliberately hold one.
+- `tests/integration/test_no_database_residue.py` pins this, and the
+  session-scoped `assert_no_leaked_projects` fixture fails the run if any
+  project a fixture handed out is still there at the end.
+
+For residue an older run already left on a server:
+
+```bash
+python scripts/sweep_test_residue.py                 # dry run: names every database, drops none
+python scripts/sweep_test_residue.py --confirmed     # actually drop them
+python scripts/sweep_test_residue.py --patterns      # what counts as residue
+```
+
+It only matches fixture-minted names (a prefix from this repo's suites plus
+a machine-generated suffix), reports everything else as PROTECTED, and
+refuses any database that still has HELD items. It is deliberately not
+wired into CI, `doctor`, or any install path -- a destructive command that
+runs itself is how you lose data you meant to keep.
+
 ## What "done" looks like
 
 Full suite green, `doctor` 22/22, `ruff check` / `ruff format --check` /
