@@ -1671,9 +1671,19 @@ class ProjectSummary:
 
     `status` is `"ok"` when the counts above were computed successfully, or
     a truncated `"ERROR: ..."` string (see `truncate_status`) when the
-    project's database could not be read at all -- in which case `total`/
-    `ready`/`held`/`intake` are `None`, not zero, so a caller can never
-    mistake "could not read" for "read as empty."
+    project's database could not be read at all -- in which case every
+    field below is `None`/empty, not zero, so a caller can never mistake
+    "could not read" for "read as empty."
+
+    `blocked`, `held_by`, and `last_activity` exist so a dashboard can show
+    signals that actually VARY with real data instead of a constant that
+    never changes (a design-review finding: a badge that always reads the
+    same value carries no information -- see webapp.py's dashboard route
+    for how these are used). `held_by` is the sorted, deduplicated list of
+    current holders -- who to go ask, not just how many. `last_activity` is
+    the most recent `updated_at` across every item (our own domain concept;
+    not a Beads field itself), so a genuinely idle project reads differently
+    from one with agents actively moving through it right now.
     """
 
     name: str
@@ -1682,6 +1692,9 @@ class ProjectSummary:
     ready: int | None = None
     held: int | None = None
     intake: int | None = None
+    blocked: int | None = None
+    held_by: list[str] = field(default_factory=list)
+    last_activity: str | None = None
 
 
 def project_summary(ws: Workspace, name: str) -> ProjectSummary:
@@ -1695,13 +1708,18 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
         items = ws.project(name).list(include_resolved=True)
     except BeadsError as e:
         return ProjectSummary(name=name, status=truncate_status(f"ERROR: {e}"))
+    held_items = [i for i in items if i.status == "held"]
+    updated_ats = [ts for i in items if (ts := i.raw.get("updated_at"))]
     return ProjectSummary(
         name=name,
         status="ok",
         total=len(items),
         ready=sum(1 for i in items if i.status == "open" and LANE_WORK in i.tags),
-        held=sum(1 for i in items if i.status == "held"),
+        held=len(held_items),
         intake=sum(1 for i in items if i.status == "open" and LANE_INTAKE in i.tags),
+        blocked=sum(1 for i in items if i.status == "blocked"),
+        held_by=sorted({i.holder for i in held_items if i.holder}),
+        last_activity=max(updated_ats) if updated_ats else None,
     )
 
 

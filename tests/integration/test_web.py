@@ -132,7 +132,11 @@ def test_full_write_flow_create_add_claim_resolve_remove(client, unique_project_
         data={"title": "do the thing", "description": "desc", "acceptance": "given/when/then"},
     )
     assert r.status_code == 303
-    assert r.headers["location"].startswith(f"/projects/{name}?msg=added%20")
+    # Adding an item lands you on that item's own detail page (where its
+    # description/acceptance criteria actually live), not back on the bare
+    # listing -- see webapp.py's module docstring.
+    assert r.headers["location"].startswith(f"/projects/{name}/items/{name}-")
+    assert "msg=added" in r.headers["location"]
 
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
@@ -169,7 +173,11 @@ def test_full_write_flow_create_add_claim_resolve_remove(client, unique_project_
 
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
-    assert "not found" in r.text.lower() or "no items" in r.text.lower()
+    assert "doesn't exist" in r.text.lower()
+    # The friendly copy must never leak the local filesystem path or the
+    # CLI-only instruction that the raw adapter exception carries.
+    assert ".beads" not in r.text
+    assert "amplifier-work-tracker new" not in r.text
 
 
 def test_remove_refuses_when_item_is_held_and_project_survives(
@@ -226,3 +234,145 @@ def test_claim_with_no_ready_work_reports_error(client, project_factory, unique_
     )
     assert r.status_code == 303
     assert "error=" in r.headers["location"]
+
+
+# ----------------------------------------------------------- item detail
+
+
+def test_item_detail_shows_description_and_acceptance_criteria(client, project_factory):
+    _login(client)
+    name, bd = project_factory("detailproj")
+    item_id = bd.create(
+        "read the docs",
+        tags=[A.LANE_WORK],
+        description="a very specific description body",
+        acceptance="given/when/then criteria text",
+    )
+    r = client.get(f"/projects/{name}/items/{item_id}")
+    assert r.status_code == 200
+    assert "a very specific description body" in r.text
+    assert "given/when/then criteria text" in r.text
+
+
+def test_item_detail_reachable_from_project_listing(client, project_factory):
+    """The headline finding: every item id/title in the project table must
+    be a real link to its own detail page -- not inert text."""
+    _login(client)
+    name, bd = project_factory("linkproj")
+    item_id = bd.create("clickable row", tags=[A.LANE_WORK])
+    r = client.get(f"/projects/{name}")
+    assert r.status_code == 200
+    assert f'href="/projects/{name}/items/{item_id}"' in r.text
+
+
+def test_item_detail_open_item_shows_claim_not_resolve(client, project_factory):
+    _login(client)
+    name, bd = project_factory("openitemproj")
+    item_id = bd.create("unclaimed item", tags=[A.LANE_WORK])
+    r = client.get(f"/projects/{name}/items/{item_id}")
+    assert r.status_code == 200
+    assert "Claim this item" in r.text
+    assert "Resolve" not in r.text
+
+
+def test_item_detail_held_item_shows_resolve_not_claim(client, project_factory, unique_actor):
+    _login(client)
+    name, bd = project_factory("helditemproj")
+    bd.create("about to be held", tags=[A.LANE_WORK])
+    item = bd.claim_next(lane=A.LANE_WORK, actor=unique_actor)
+    r = client.get(f"/projects/{name}/items/{item.id}")
+    assert r.status_code == 200
+    assert "Resolve" in r.text
+    assert "Claim this item" not in r.text
+    assert unique_actor in r.text  # "held by <actor>" chip
+
+
+def test_item_detail_resolved_item_shows_resolution_and_no_action_controls(
+    client, project_factory, unique_actor
+):
+    _login(client)
+    name, bd = project_factory("resolveditemproj")
+    bd.create("will be resolved", tags=[A.LANE_WORK])
+    item = bd.claim_next(lane=A.LANE_WORK, actor=unique_actor)
+    long_resolution = "x" * 950  # exercise a long resolution body, not just a short one
+    bd.resolve(item.id, long_resolution, actor=unique_actor)
+
+    r = client.get(f"/projects/{name}/items/{item.id}")
+    assert r.status_code == 200
+    assert long_resolution in r.text
+    assert "Claim this item" not in r.text
+    # No resolve control either -- absent, not merely disabled, once resolved.
+    assert "<textarea" not in r.text
+    assert 'name="reason"' not in r.text
+
+
+def test_item_detail_nonexistent_item_shows_friendly_error(client, shared_project_name):
+    _login(client)
+    r = client.get(f"/projects/{shared_project_name}/items/does-not-exist-123")
+    assert r.status_code == 200
+    assert "doesn't exist" in r.text.lower()
+    assert ".beads" not in r.text
+
+
+def test_directed_claim_redirects_to_item_detail_page(client, project_factory, unique_actor):
+    _login(client)
+    name, bd = project_factory("claimredirectproj")
+    item_id = bd.create("directed claim redirect probe", tags=[A.LANE_WORK])
+
+    r = client.post(
+        f"/projects/{name}/claim",
+        data={"mode": "id", "actor": unique_actor, "item_id": item_id},
+    )
+    assert r.status_code == 303
+    assert r.headers["location"].startswith(f"/projects/{name}/items/{item_id}")
+
+
+# --------------------------------------------------- honest dashboard signals
+
+
+def test_dashboard_shows_held_by_chip_for_a_held_item(client, project_factory, unique_actor):
+    _login(client)
+    name, bd = project_factory("dashboardheldproj")
+    bd.create("held for dashboard signal", tags=[A.LANE_WORK])
+    bd.claim_next(lane=A.LANE_WORK, actor=unique_actor)
+
+    r = client.get("/")
+    assert r.status_code == 200
+    assert unique_actor in r.text
+
+
+def test_dashboard_never_shows_a_static_health_ok_badge(client, shared_project_name):
+    """The redesign's whole point: no column that can only ever read one
+    value (see webapp.py's module docstring)."""
+    _login(client)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "badge-ok" not in r.text
+    assert ">ok<" not in r.text
+
+
+# ------------------------------------------------------------- empty states
+
+
+def test_project_view_empty_filter_state_names_the_filter_and_offers_clear(client, project_factory):
+    _login(client)
+    name, bd = project_factory("emptyfilterproj")
+    bd.create("only an open item", tags=[A.LANE_WORK])
+
+    r = client.get(f"/projects/{name}", params={"status": "blocked"})
+    assert r.status_code == 200
+    assert "No items match" in r.text
+    assert "blocked" in r.text
+    assert f'href="/projects/{name}"' in r.text  # clear-filter link
+
+
+def test_add_item_error_on_nonexistent_project_does_not_leak_path_or_cli(client):
+    _login(client)
+    r = client.post(
+        "/projects/this-project-does-not-exist-anywhere/items",
+        data={"title": "orphaned item"},
+    )
+    assert r.status_code == 303
+    assert "error=" in r.headers["location"]
+    assert ".beads" not in r.headers["location"]
+    assert "amplifier-work-tracker" not in r.headers["location"]
