@@ -1661,6 +1661,50 @@ class Workspace:
         )
 
 
+@dataclass
+class ProjectSummary:
+    """One project's item counts, in OUR vocabulary -- the shared computation
+    behind the CLI's `instances` command and the web dashboard (see
+    `webapp.py`), so neither reinvents (or silently disagrees on) what
+    "ready"/"held"/"intake" mean. Same rationale as `list_bounded`: one home
+    for logic two callers both need.
+
+    `status` is `"ok"` when the counts above were computed successfully, or
+    a truncated `"ERROR: ..."` string (see `truncate_status`) when the
+    project's database could not be read at all -- in which case `total`/
+    `ready`/`held`/`intake` are `None`, not zero, so a caller can never
+    mistake "could not read" for "read as empty."
+    """
+
+    name: str
+    status: str
+    total: int | None = None
+    ready: int | None = None
+    held: int | None = None
+    intake: int | None = None
+
+
+def project_summary(ws: Workspace, name: str) -> ProjectSummary:
+    """Compute one project's `ProjectSummary` against the live `bd` project.
+
+    Never raises -- a project whose database cannot be read reports
+    `status="ERROR: ..."` (truncated) with the count fields left `None`,
+    exactly like `cli.cmd_instances`'s prior per-project error handling.
+    """
+    try:
+        items = ws.project(name).list(include_resolved=True)
+    except BeadsError as e:
+        return ProjectSummary(name=name, status=truncate_status(f"ERROR: {e}"))
+    return ProjectSummary(
+        name=name,
+        status="ok",
+        total=len(items),
+        ready=sum(1 for i in items if i.status == "open" and LANE_WORK in i.tags),
+        held=sum(1 for i in items if i.status == "held"),
+        intake=sum(1 for i in items if i.status == "open" and LANE_INTAKE in i.tags),
+    )
+
+
 _CAPS: dict[str, bool] | None = None
 
 

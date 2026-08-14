@@ -9,7 +9,7 @@ PYTEST  := $(PY) -m pytest
 # speed; falls back to nothing fancier than a normal editable install.
 venv:
 	uv venv $(VENV) --python $(PYTHON)
-	uv pip install --python $(PY) -e ".[dev]"
+	uv pip install --python $(PY) -e ".[dev,web]"
 
 ## Tier 1 -- unit: pure logic, no bd, no network. Target: whole tier < 5s.
 test-unit:
