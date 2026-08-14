@@ -21,6 +21,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -46,20 +47,71 @@ def _probe_name() -> str:
 
 
 class Probe:
-    """A disposable project used only to interrogate the live binary."""
+    """A disposable project used only to interrogate the live binary.
+
+    "Disposable" means BOTH halves of a project, not just the local one.
+    A project lives in two independent places -- a directory under
+    `self.root`, and a database on the shared dolt server -- and removing
+    only the first is what made every `doctor` run leak a permanent
+    `contract<ts><pid>` database. Measured on a live box: 47 orphaned
+    `contract*` databases from doctor runs alone, in a server holding 5
+    real projects. dolt keeps every database open, so the cost is paid
+    continuously in RSS, not just in disk.
+
+    Databases a *check* derives from this probe's name (rather than
+    creating through `self.ws`) must be handed to `register_database` so
+    they are dropped here too -- see `check_project_removal`, whose own
+    best-effort cleanup was measured leaking 4 `<name>rm` databases.
+    """
 
     def __init__(self):
         self.root = Path(tempfile.mkdtemp(prefix="awtcontract_"))
         self.ws = A.Workspace(self.root)
         self.name = _probe_name()
         self.bd: A.Beads | None = None
+        # Databases to drop on exit, in creation order. The probe's own
+        # database is registered by `__enter__` only after `create`
+        # succeeds -- a `create` that failed partway may still have left a
+        # database behind, which is exactly why `drop_database` treats
+        # "not found" as a no-op rather than an error.
+        self._databases: list[str] = []
+        self.leaked: list[str] = []
+
+    def register_database(self, name: str) -> None:
+        """Also drop `name` when this probe exits (idempotent)."""
+        if name not in self._databases:
+            self._databases.append(name)
 
     def __enter__(self):
+        self.register_database(self.name)
         self.ws.create(self.name)
         self.bd = self.ws.project(self.name)
         return self
 
     def __exit__(self, *exc):
+        """Drop every database this probe is responsible for, then the
+        temp directory.
+
+        A failure here is reported loudly on stderr, naming each database
+        that survived and how to remove it -- never swallowed. It is
+        deliberately not raised: `__exit__` raising would replace a real
+        `doctor` verdict (or a real test failure) with a teardown
+        traceback, which is a worse failure mode than a named leak the
+        operator can act on. `self.leaked` carries the same list for any
+        caller that wants to assert on it.
+        """
+        for name in self._databases:
+            try:
+                A.drop_database(name)
+            except A.BeadsError as e:  # noqa: PERF203 - per-database, so one failure cannot hide the rest
+                self.leaked.append(name)
+                print(
+                    f"WARNING: contract probe could not drop its database {name!r}: {e}\n"
+                    f"         It is now orphaned on the shared dolt server, which holds "
+                    f"every database open. Remove it with: "
+                    f"python scripts/sweep_test_residue.py --confirmed",
+                    file=sys.stderr,
+                )
         shutil.rmtree(self.root, ignore_errors=True)
         return False
 
@@ -627,6 +679,11 @@ def check_project_removal(p: Probe) -> Result:
     any other check.
     """
     name = f"{p.name}rm"
+    # Registered BEFORE the first create: from here on this database is the
+    # probe's to drop no matter which branch below returns, including the
+    # best-effort final cleanup failing (measured leaking 4 `<name>rm`
+    # databases on a live box) or a check raising partway through.
+    p.register_database(name)
     try:
         p.ws.create(name)
     except A.BeadsError as e:
