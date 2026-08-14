@@ -65,6 +65,8 @@ from __future__ import annotations
 
 import html
 import logging
+import math
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -237,6 +239,44 @@ def _now_utc_str() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+# GitHub's own noreply commit-identity format: `<numeric-id>+<username>@users.
+# noreply.github.com` -- e.g. the Amplifier co-author trailer every automated
+# commit/item carries. The ONE pattern actually observed leaking verbatim
+# into "Reported by"/holder cells (see module docstring, cycle 2). Anything
+# else (a real actor name, an agent session id like "agent-spark-1-106784")
+# passes through unchanged -- there is nothing to humanize about those.
+_GH_NOREPLY_RE = re.compile(
+    r"^\d+\+([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)@users\.noreply\.github\.com$"
+)
+
+
+def _humanize_identity(raw: str | None) -> str:
+    """Reduce a raw actor/holder/owner identity string to a compact,
+    human-scannable label. Only ever shortens a recognized machine-generated
+    format; never invents or guesses at a name for an ordinary identity."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    m = _GH_NOREPLY_RE.match(text)
+    return m.group(1) if m else text
+
+
+def _identity_html(raw: str | None) -> str:
+    """`<span title="raw value">humanized label</span>` -- same idiom as
+    `_abs_and_rel` for timestamps: the readable form is what's shown, the
+    exact raw string is always one hover away, and nothing is silently
+    dropped. Returns "" for an empty/missing identity so callers can use it
+    directly in a boolean context (`if item.holder: ... _identity_html(...)`)
+    exactly like they previously used `_esc` alone."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    humanized = _humanize_identity(text)
+    if humanized == text:
+        return _esc(text)
+    return f'<span title="{_esc(text)}">{_esc(humanized)}</span>'
+
+
 _STATUS_LABELS = {
     "open": "open",
     "held": "held",
@@ -263,6 +303,10 @@ _STYLE = """
     color-scheme: light dark;
     --ink: #1a2027; --ink-muted: #4b5563; --border: #d3d9e0;
     --surface: #f6f7f9; --accent: #2451b8; --accent-ink: #16326e;
+    /* Single source of truth for table cell padding -- shared by the
+       `th, td` rule below AND `td.link-cell`'s stretched-link trick, so
+       the two can never silently drift out of sync with each other. */
+    --cell-pad-y: 0.4rem; --cell-pad-x: 0.6rem;
   }
   * { box-sizing: border-box; }
   body {
@@ -298,11 +342,23 @@ _STYLE = """
   .crumb-row { margin: 0 0 0.75rem; font-size: 0.9rem; }
   table { border-collapse: collapse; width: 100%; margin: 0.75rem 0 1rem; }
   th, td {
-    border: 1px solid var(--border); padding: 0.5rem 0.6rem; text-align: left;
-    font-size: 0.92rem; vertical-align: top;
+    border: 1px solid var(--border); padding: var(--cell-pad-y) var(--cell-pad-x);
+    text-align: left; font-size: 0.92rem; vertical-align: middle; line-height: 1.3;
   }
   th { background: var(--surface); font-weight: 600; }
+  th.num, td.num { text-align: right; }
   tr:nth-child(even) { background: rgba(0,0,0,0.02); }
+  /* Stretched-link cells (fix #6): the anchor takes over the FULL padding
+     box of its own td via a negative margin equal to the cell's own
+     padding, then re-applies that same padding to itself -- net visual
+     result is identical spacing, but the entire cell (not just the text)
+     is now clickable/hoverable. Sharing --cell-pad-* with the `th, td`
+     rule above is what keeps this from silently drifting out of sync with
+     it if the row-density padding ever changes again. */
+  td.link-cell { padding: 0; }
+  td.link-cell > a.nav-link {
+    display: block; margin: 0; padding: var(--cell-pad-y) var(--cell-pad-x);
+  }
   .item-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
   .badge {
     display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.78rem;
@@ -378,6 +434,10 @@ _STYLE = """
     background: var(--surface); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.9em;
   }
   .links-list { margin: 0.2rem 0 1rem; padding-left: 1.2rem; font-size: 0.9rem; }
+  .pagination {
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
+    gap: 0.5rem 1rem; margin: -0.25rem 0 1.25rem; font-size: 0.88rem;
+  }
 </style>
 """
 
@@ -443,6 +503,52 @@ def _not_found_body(request: Request, *, heading: str, back_href: str, back_labe
         "is mistyped.</p>"
         "</div>"
         f'<p><a class="nav-link" href="{_esc(back_href)}">&laquo; {_esc(back_label)}</a></p>'
+    )
+
+
+def _pagination_html(
+    name: str, status: str | None, page: int, total_pages: int, result: A.ListResult
+) -> str:
+    """Real reachability control for a project's item table: with more than
+    one page's worth of items, every one of them -- however many there are
+    -- is reachable by clicking Next, not just the first `LIST_DEFAULT_LIMIT`
+    (see module docstring, cycle 2: 129 of 179 items in a real project were
+    previously unreachable through the UI at all). Absent entirely when
+    everything already fits on one page -- nothing to paginate is not a
+    degraded version of this control, it's the correct empty case.
+
+    Deliberately plain `<a href>` navigation, no client-side JS: consistent
+    with the rest of this module (see its docstring) and, unlike the
+    default-limit copy this replaces, never mentions a CLI flag -- there is
+    no `--limit` a browser user could pass.
+    """
+    if total_pages <= 1:
+        return ""
+
+    def _href(p: int) -> str:
+        q = f"page={p}"
+        if status:
+            q += f"&status={quote(status)}"
+        return f"/projects/{_esc(name)}?{q}"
+
+    prev = (
+        f'<a class="nav-link" href="{_href(page - 1)}">&laquo; Previous</a>'
+        if page > 1
+        else '<span class="muted">&laquo; Previous</span>'
+    )
+    nxt = (
+        f'<a class="nav-link" href="{_href(page + 1)}">Next &raquo;</a>'
+        if page < total_pages
+        else '<span class="muted">Next &raquo;</span>'
+    )
+    start_n = result.offset + 1 if result.returned_count else 0
+    end_n = result.offset + result.returned_count
+    return (
+        '<div class="pagination">'
+        f'<span class="muted">Items {start_n}&ndash;{end_n} of {result.total_count} '
+        f"&middot; page {page} of {total_pages}</span>"
+        f'<span class="pagination-links">{prev} &middot; {nxt}</span>'
+        "</div>"
     )
 
 
@@ -538,7 +644,9 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
                 held_cell = (
                     (
                         f'<span class="stat-num attn">{s.held}</span> '
-                        + "".join(f'<span class="chip">{_esc(h)}</span>' for h in s.held_by)
+                        + "".join(
+                            f'<span class="chip">{_identity_html(h)}</span>' for h in s.held_by
+                        )
                     )
                     if s.held
                     else '<span class="stat-num zero">0</span>'
@@ -550,10 +658,10 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
                 )
                 ready_cls = "stat-num" if s.ready else "stat-num zero"
                 cells = (
-                    f'<td><span class="{ready_cls}">{s.ready}</span> '
+                    f'<td class="num"><span class="{ready_cls}">{s.ready}</span> '
                     f'<span class="muted">/ {s.total} total</span></td>'
-                    f"<td>{held_cell}</td>"
-                    f"<td>{blocked_cell}</td>"
+                    f'<td class="num">{held_cell}</td>'
+                    f'<td class="num">{blocked_cell}</td>'
                     f"<td>{_abs_and_rel(s.last_activity)}</td>"
                 )
             else:
@@ -562,12 +670,14 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
                     f'<span class="muted">{_esc(s.status)}</span></td><td>--</td>'
                 )
             rows += (
-                f'<tr><td><a class="nav-link" href="/projects/{_esc(name)}">{_esc(name)}</a></td>'
+                f'<tr><td class="link-cell">'
+                f'<a class="nav-link" href="/projects/{_esc(name)}">{_esc(name)}</a></td>'
                 f"{cells}</tr>"
             )
         table = (
-            "<table><thead><tr><th>Project</th><th>Ready</th>"
-            "<th>Held</th><th>Blocked</th><th>Last activity</th></tr></thead>"
+            '<table><thead><tr><th>Project</th><th class="num">Ready</th>'
+            '<th class="num">Held</th><th class="num">Blocked</th>'
+            "<th>Last activity</th></tr></thead>"
             f"<tbody>{rows}</tbody></table>"
             if names
             else (
@@ -609,6 +719,10 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
     async def project_view(request: Request, name: str):  # type: ignore[no-untyped-def]
         status = request.query_params.get("status") or None
         try:
+            page = max(1, int(request.query_params.get("page", "1")))
+        except ValueError:
+            page = 1
+        try:
             bd = workspace.project(name)
         except A.BeadsError:
             return _page(
@@ -618,8 +732,18 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
                     request, heading=name, back_href="/", back_label="back to dashboard"
                 ),
             )
+        page_size = A.LIST_DEFAULT_LIMIT
         try:
-            result = bd.list_bounded(status=status, limit=None)
+            result = bd.list_bounded(status=status, offset=(page - 1) * page_size)
+            total_pages = (
+                max(1, math.ceil(result.total_count / page_size)) if result.total_count else 1
+            )
+            if page > total_pages:
+                # A stale/hand-edited `?page=` past the real last page --
+                # land on the actual last page instead of a confusingly
+                # empty one whose own URL claims there should be more.
+                page = total_pages
+                result = bd.list_bounded(status=status, offset=(page - 1) * page_size)
         except A.BeadsError as e:
             return _page(
                 request,
@@ -647,13 +771,14 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         def _item_row(i: A.Item) -> str:
             item_href = f"/projects/{_esc(name)}/items/{_esc(i.id)}"
             if i.holder:
-                holder_cell = f'<span class="chip">{_esc(i.holder)}</span>'
+                holder_cell = f'<span class="chip">{_identity_html(i.holder)}</span>'
             else:
                 holder_cell = '<span class="muted">&mdash;</span>'
             return (
-                f'<tr><td class="item-id"><a class="nav-link" href="{item_href}">'
+                f'<tr><td class="item-id link-cell"><a class="nav-link" href="{item_href}">'
                 f"{_esc(i.id)}</a></td>"
-                f'<td><a class="nav-link" href="{item_href}">{_esc(i.title)}</a></td>'
+                f'<td class="link-cell"><a class="nav-link" href="{item_href}">'
+                f"{_esc(i.title)}</a></td>"
                 f"<td>{_status_badge(i.status)}</td>"
                 f"<td>{holder_cell}</td>"
                 f"<td>{_abs_and_rel(i.raw.get('updated_at'))}</td>"
@@ -661,12 +786,7 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             )
 
         rows = "".join(_item_row(i) for i in result.items)
-        truncated_note = (
-            f'<p class="muted">showing {result.returned_count} of {result.total_count} '
-            f"(pass a smaller filter or raise --limit up to {A.LIST_MAX_LIMIT})</p>"
-            if result.truncated
-            else ""
-        )
+        pagination_html = _pagination_html(name, status, page, total_pages, result)
         if result.items:
             table = (
                 "<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Holder</th>"
@@ -694,7 +814,7 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
           </select>
         </form>
         {table}
-        {truncated_note}
+        {pagination_html}
 
         <fieldset>
           <legend>Add item</legend>
@@ -895,14 +1015,18 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             else '<span class="muted">No acceptance criteria provided.</span>'
         )
 
+        # `v` values below are ALREADY html-safe (either `_esc(...)`-escaped
+        # plain text, or `_identity_html`'s own escaped span) -- the join
+        # below must NOT run them through `_esc` again, or the "Reported
+        # by" span markup would render as literal text instead of a tag.
         meta_items = [
-            ("Kind", item.kind or "--"),
-            ("Priority", str(item.priority) if item.priority is not None else "--"),
+            ("Kind", _esc(item.kind or "--")),
+            ("Priority", _esc(str(item.priority) if item.priority is not None else "--")),
         ]
         owner = item.raw.get("owner")
         if owner:
-            meta_items.append(("Reported by", str(owner)))
-        meta_grid = "".join(f"<dt>{_esc(k)}</dt><dd>{_esc(v)}</dd>" for k, v in meta_items)
+            meta_items.append(("Reported by", _identity_html(str(owner))))
+        meta_grid = "".join(f"<dt>{_esc(k)}</dt><dd>{v}</dd>" for k, v in meta_items)
 
         body = f"""
         {_crumbs(("/", "All projects"), (f"/projects/{_esc(name)}", name))}
@@ -910,7 +1034,11 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         <div class="item-header">
           <span class="item-id muted">{_esc(item.id)}</span>
           {_status_badge(item.status)}
-          {f'<span class="chip">held by {_esc(item.holder)}</span>' if item.holder else ""}
+          {
+            f'<span class="chip">held by {_identity_html(item.holder)}</span>'
+            if item.holder
+            else ""
+        }
         </div>
         <h1>{_esc(item.title)}</h1>
         <dl class="meta-grid">

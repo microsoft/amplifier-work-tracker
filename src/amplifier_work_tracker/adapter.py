@@ -703,7 +703,15 @@ def _clean_bd_error(blob: str | None, *, limit: int = STATUS_ERROR_MAX) -> str:
 class ListResult:
     """What `Beads.list_bounded` actually returned, and how it relates to
     the true total -- see that method's docstring for why `truncated` is a
-    measured fact, not an inference from bd's own default page size."""
+    measured fact, not an inference from bd's own default page size.
+
+    `offset` is the (clamped-to-nonnegative) window start this result was
+    sliced from -- `0` for every existing caller that never passed one, so
+    this field's addition changes nothing for the CLI's `list` subcommand
+    or the `work_list` tool. It exists so a caller doing real pagination
+    (the web UI's project item table) can compute "is there a previous
+    page" (`offset > 0`) without reinventing the window math this class
+    already tracks."""
 
     items: list[Item]
     total_count: int
@@ -711,6 +719,7 @@ class ListResult:
     truncated: bool
     limit: int
     requested_limit: int | None
+    offset: int = 0
 
 
 def project_activity(items: list[Item]) -> dict:
@@ -1052,17 +1061,19 @@ class Beads:
         data = self._json(args) or []
         return [Item.from_beads(d) for d in data if isinstance(d, dict)]
 
-    def list_bounded(self, *, status: str | None = None, limit: int | None = None) -> ListResult:
+    def list_bounded(
+        self, *, status: str | None = None, limit: int | None = None, offset: int = 0
+    ) -> ListResult:
         """Read-only, explicitly-capped item listing for human/agent
         consumption -- the shared implementation behind both the CLI's
         `list` subcommand and the `work_list` tool, so neither reinvents
         (or silently disagrees on) the capping policy.
 
         Always fetches the FULL matching set first (`limit=0` -- bd's own
-        "unlimited") to learn the true total, THEN caps in Python. This is
-        what makes `truncated` a fact rather than a guess: a caller that
-        only ever saw bd's own default-50-item page would have no way to
-        know whether 50 was the true total or a silent truncation.
+        "unlimited") to learn the true total, THEN windows/caps in Python.
+        This is what makes `truncated` a fact rather than a guess: a caller
+        that only ever saw bd's own default-50-item page would have no way
+        to know whether 50 was the true total or a silent truncation.
 
         `limit=None` uses `LIST_DEFAULT_LIMIT`; any requested limit is
         clamped to `[1, LIST_MAX_LIMIT]` -- silently for the lower bound (a
@@ -1071,17 +1082,30 @@ class Beads:
         `ListResult.requested_limit` vs `ListResult.limit` when the upper
         bound clamps, so a caller asking for more than the max learns that
         distinctly from asking for exactly 500 -- a cap must never be silent.
+
+        `offset` (default 0, clamped to nonnegative) shifts the returned
+        window without changing the page size -- real pagination, not a
+        second cap. This is additive: every existing caller that never
+        passed `offset` sees byte-identical behavior (window starts at 0,
+        exactly as before). It exists because a project with more items
+        than one page's worth was previously only reachable up to
+        `LIST_DEFAULT_LIMIT`/`LIST_MAX_LIMIT` items -- there was no way to
+        ask for the NEXT window at all, only a bigger one. See the web
+        UI's project-listing route for the actual pagination controls this
+        makes possible.
         """
         effective = LIST_DEFAULT_LIMIT if limit is None else max(1, min(limit, LIST_MAX_LIMIT))
+        start = max(0, offset)
         items = self.list(status=status, include_resolved=(status is None), limit=0)
-        capped = items[:effective]
+        capped = items[start : start + effective]
         return ListResult(
             items=capped,
             total_count=len(items),
             returned_count=len(capped),
-            truncated=len(capped) < len(items),
+            truncated=(start + len(capped)) < len(items),
             limit=effective,
             requested_limit=limit,
+            offset=start,
         )
 
     def resolve(self, item_id: str, reason: str, *, actor: str | None = None) -> Item:

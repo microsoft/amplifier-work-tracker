@@ -376,3 +376,161 @@ def test_add_item_error_on_nonexistent_project_does_not_leak_path_or_cli(client)
     assert "error=" in r.headers["location"]
     assert ".beads" not in r.headers["location"]
     assert "amplifier-work-tracker" not in r.headers["location"]
+
+
+# ----------------------------------------------- cycle 2: pagination/reachability
+
+
+def test_project_view_pagination_reachability_and_no_cli_flag_leak(
+    client, project_factory, unique_lane
+):
+    """Cycle 2 fix #1: a project with more than one page's worth of items
+    must be FULLY reachable by clicking -- and the copy that used to say
+    "raise --limit" (a CLI flag a browser user has no way to pass) must be
+    gone. One project, exercised in two phases, to keep the (real, slow)
+    project bootstrap cost down to a single call.
+    """
+    _login(client)
+    name, bd = project_factory("paginateproj")
+
+    # Phase 1 -- well under one page. The pagination control must be
+    # entirely ABSENT: "nothing to paginate" is the correct empty case,
+    # not a degraded/disabled version of the control.
+    few_ids = [bd.create(f"small batch {n}", tags=[unique_lane]) for n in range(3)]
+    r0 = client.get(f"/projects/{name}")
+    assert r0.status_code == 200
+    assert 'class="pagination"' not in r0.text
+    for i in few_ids:
+        assert f'href="/projects/{name}/items/{i}"' in r0.text
+
+    # Phase 2 -- push past one page's worth of items.
+    page_size = A.LIST_DEFAULT_LIMIT
+    more_ids = [bd.create(f"page probe {n:03d}", tags=[unique_lane]) for n in range(page_size)]
+    all_ids = few_ids + more_ids  # page_size + 3 -- guaranteed more than one page
+
+    r1 = client.get(f"/projects/{name}")
+    assert r1.status_code == 200
+    page1_text = r1.text
+    next_href = f"/projects/{name}?page=2"
+    assert f'href="{next_href}"' in page1_text
+    assert "--limit" not in page1_text  # no CLI flag anywhere in the web copy
+
+    # Item cells are real stretched-link cells (fix #6), not text-width-only.
+    assert 'class="item-id link-cell"' in page1_text
+
+    missing_from_page1 = [i for i in all_ids if f"/items/{i}" not in page1_text]
+    assert missing_from_page1, "expected at least one item to be unreachable on page 1 alone"
+
+    # Reachable by clicking Next -- not by guessing/typing a per-item URL.
+    r2 = client.get(next_href)
+    assert r2.status_code == 200
+    assert "--limit" not in r2.text
+    for i in missing_from_page1:
+        assert f'href="/projects/{name}/items/{i}"' in r2.text
+    assert f'href="/projects/{name}?page=1"' in r2.text  # Previous goes back
+
+    # A stale/hand-typed page far beyond the real last page lands on the
+    # real last page instead of a confusingly empty one.
+    r3 = client.get(f"/projects/{name}", params={"page": "999"})
+    assert r3.status_code == 200
+    assert "No items yet" not in r3.text
+    for i in missing_from_page1:
+        assert f'href="/projects/{name}/items/{i}"' in r3.text
+
+    # The status filter survives across a page link.
+    r4 = client.get(f"/projects/{name}", params={"status": "open"})
+    assert r4.status_code == 200
+    assert f'href="/projects/{name}?page=2&status=open"' in r4.text
+
+
+# ------------------------------------------------- cycle 2: numeric alignment
+
+
+def test_dashboard_ready_held_blocked_columns_are_right_aligned(client, shared_project_name):
+    _login(client)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert '<th class="num">Ready</th>' in r.text
+    assert '<th class="num">Held</th>' in r.text
+    assert '<th class="num">Blocked</th>' in r.text
+
+
+def test_dashboard_project_name_cell_is_a_stretched_link(client, shared_project_name):
+    """Cycle 2 fix #6: the whole cell is clickable, not just the text."""
+    _login(client)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert '<td class="link-cell">' in r.text
+
+
+# ------------------------------------------------- cycle 2: identity display
+
+
+def test_item_detail_humanizes_the_reported_by_identity_end_to_end(client, shared_bd):
+    """`owner` is bd's own concept (the git identity of whoever's `bd create`
+    call made the item -- NOT the `--actor`/`BEADS_ACTOR` audit-trail value;
+    that one lands in the raw `created_by` field instead, which this UI
+    doesn't render). On this real, shared installation `owner` is always
+    the Amplifier co-author trailer address -- exactly the verbatim string
+    the cycle-2 bug report named. This is an end-to-end check against that
+    real, naturally-occurring value; see `test_humanize_identity_*` in
+    `tests/unit` for the pure-function passthrough/no-op guarantees that
+    don't depend on what bd happens to set `owner` to in this environment.
+    """
+    _login(client)
+    item_id = shared_bd.create("reported-by probe (real owner identity)", tags=[A.LANE_WORK])
+    name = shared_bd._dir.parent.name  # noqa: SLF001 -- test-only introspection
+    r = client.get(f"/projects/{name}/items/{item_id}")
+    assert r.status_code == 200
+    item = shared_bd.get(item_id)
+    owner = item.raw.get("owner")
+    assert owner, "expected this bd installation to set an `owner` on every created item"
+    from amplifier_work_tracker.webapp import _humanize_identity  # noqa: PLC0415
+
+    humanized = _humanize_identity(owner)
+    assert f"REPORTED BY {owner}" not in r.text.upper().replace("\n", " ")
+    assert humanized in r.text
+    assert owner in r.text  # the exact raw value is still present (a tooltip)
+    assert f">{owner}<" not in r.text  # but never as the visible label text
+
+
+# -------------------------------------------- cycle 2: destructive-path guard
+
+
+def test_remove_confirmation_page_is_real_and_get_is_side_effect_free(client, project_factory):
+    """The Danger Zone link must land on a real confirmation page requiring
+    the typed project name -- never delete on a bare GET."""
+    _login(client)
+    name, bd = project_factory("removeguardproj")
+    bd.create("still here after GET", tags=[A.LANE_WORK])
+
+    r = client.get(f"/projects/{name}/remove")
+    assert r.status_code == 200
+    assert "type the project name" in r.text.lower()
+    assert f'value="{name}"' not in r.text  # not pre-filled -- must be typed to confirm
+
+    r2 = client.get(f"/projects/{name}")
+    assert r2.status_code == 200
+    assert "still here after GET" in r2.text  # GET never removed anything
+
+
+def test_remove_held_refusal_is_rendered_as_visible_text_on_the_confirm_page(
+    client, project_factory, unique_actor
+):
+    """The HELD-items refusal from `Workspace.remove` must actually reach
+    the browser as readable text on the page the redirect lands on -- not
+    just an opaque `error=` flag on the redirect URL."""
+    _login(client)
+    name, bd = project_factory("heldguardproj")
+    bd.create("guard probe", tags=[A.LANE_WORK])
+    bd.claim_next(lane=A.LANE_WORK, actor=unique_actor)
+
+    r = client.post(f"/projects/{name}/remove", data={"confirm_name": name})
+    assert r.status_code == 303
+    assert "remove" in r.headers["location"]
+    assert "error=" in r.headers["location"]
+
+    r2 = client.get(r.headers["location"])
+    assert r2.status_code == 200
+    assert "held" in r2.text.lower()
+    assert unique_actor in r2.text  # names the actual holder, per Workspace.remove

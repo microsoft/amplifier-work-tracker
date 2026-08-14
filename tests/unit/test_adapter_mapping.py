@@ -538,3 +538,51 @@ def test_get_readonly_delegates_to_get_and_returns_the_item_unmodified(tmp_path,
     monkeypatch.setattr(bd, "get", lambda item_id, **kwargs: item)
     got = bd.get_readonly("thisproj-1")
     assert got is item
+
+
+# --------------------------------------------------------- offset (pagination)
+
+
+def test_list_bounded_offset_defaults_to_zero_and_matches_prior_behavior(tmp_path, monkeypatch):
+    """Every existing caller that never passed `offset` must see byte-identical
+    behavior -- the window starts at 0, exactly as before this field existed."""
+    items = [A.Item.from_beads({"id": f"x-{i}", "status": "open"}) for i in range(10)]
+    bd = A.Beads(tmp_path / ".beads")
+    monkeypatch.setattr(bd, "list", lambda **kwargs: items)
+    result = bd.list_bounded(limit=3)
+    assert result.offset == 0
+    assert [i.id for i in result.items] == ["x-0", "x-1", "x-2"]
+
+
+def test_list_bounded_offset_shifts_the_returned_window(tmp_path, monkeypatch):
+    """A real second page: same page size, later items -- not a bigger cap."""
+    items = [A.Item.from_beads({"id": f"x-{i}", "status": "open"}) for i in range(10)]
+    bd = A.Beads(tmp_path / ".beads")
+    monkeypatch.setattr(bd, "list", lambda **kwargs: items)
+    result = bd.list_bounded(limit=3, offset=3)
+    assert result.offset == 3
+    assert [i.id for i in result.items] == ["x-3", "x-4", "x-5"]
+    assert result.total_count == 10
+    assert result.truncated is True  # 6 of 10 seen so far (offset 3 + 3 returned)
+
+
+def test_list_bounded_offset_past_the_end_reports_no_truncation(tmp_path, monkeypatch):
+    """The LAST page must honestly report `truncated=False` -- there is
+    nothing further beyond it, even though earlier pages exist."""
+    items = [A.Item.from_beads({"id": f"x-{i}", "status": "open"}) for i in range(10)]
+    bd = A.Beads(tmp_path / ".beads")
+    monkeypatch.setattr(bd, "list", lambda **kwargs: items)
+    result = bd.list_bounded(limit=3, offset=9)
+    assert result.offset == 9
+    assert [i.id for i in result.items] == ["x-9"]
+    assert result.returned_count == 1
+    assert result.truncated is False
+
+
+def test_list_bounded_negative_offset_clamps_to_zero(tmp_path, monkeypatch):
+    items = [A.Item.from_beads({"id": f"x-{i}", "status": "open"}) for i in range(5)]
+    bd = A.Beads(tmp_path / ".beads")
+    monkeypatch.setattr(bd, "list", lambda **kwargs: items)
+    result = bd.list_bounded(limit=2, offset=-100)
+    assert result.offset == 0
+    assert [i.id for i in result.items] == ["x-0", "x-1"]
