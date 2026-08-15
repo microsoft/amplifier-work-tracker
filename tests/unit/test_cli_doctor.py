@@ -109,3 +109,83 @@ def test_installed_and_active_no_heartbeat_file_at_all_fails(monkeypatch, tmp_pa
     monkeypatch.setattr(S, "describe_service", lambda: _Info(installed=True, active=True))
     result = cli._check_sweeps_alive(tmp_path)
     assert result.ok is False
+
+
+# ---------------------------------------------------------------- restart_policy
+#
+# Regression pin for the 2026-08-14 outage: `_check_restart_policy` reads the
+# INSTALLED unit's own Restart= line -- the doctor-level wiring around it,
+# same dependency-ordering convention as `_check_sweeps_alive` above (skip,
+# don't fail, whenever a prerequisite state isn't there to check).
+
+
+def _unit_with(tmp_path, restart_line: str | None):
+    unit_path = tmp_path / "amplifier-work-tracker.service"
+    body = "[Unit]\nDescription=x\n\n[Service]\nExecStart=/x\n"
+    if restart_line is not None:
+        body += f"{restart_line}\n"
+    unit_path.write_text(body, encoding="utf-8")
+    return unit_path
+
+
+def test_restart_policy_skipped_when_service_not_installed(monkeypatch, tmp_path):
+    monkeypatch.setattr(S, "describe_service", lambda: _Info(installed=False, active=None))
+    service_check = cli.contract.Result("service.installed", True, "not installed")
+    result = cli._check_restart_policy(service_check)
+    assert result.ok is True
+    assert "skipped" in result.detail
+
+
+def test_restart_policy_skipped_when_platform_unsupported(monkeypatch):
+    monkeypatch.setattr(
+        S, "describe_service", lambda: _Info(supported=False, installed=False, active=None)
+    )
+    service_check = cli.contract.Result("service.installed", True, "n/a")
+    result = cli._check_restart_policy(service_check)
+    assert result.ok is True
+
+
+def test_restart_policy_skipped_on_non_linux_platform_with_no_unit_file(monkeypatch, tmp_path):
+    info = _Info(installed=True, active=True, platform="darwin")
+    info.unit_path = None
+    monkeypatch.setattr(S, "describe_service", lambda: info)
+    service_check = cli.contract.Result("service.installed", True, "ok")
+    result = cli._check_restart_policy(service_check)
+    assert result.ok is True
+    assert "skipped" in result.detail
+
+
+def test_restart_policy_passes_when_unit_has_restart_always(monkeypatch, tmp_path):
+    unit_path = _unit_with(tmp_path, "Restart=always")
+    info = _Info(installed=True, active=True, platform="linux")
+    info.unit_path = unit_path
+    monkeypatch.setattr(S, "describe_service", lambda: info)
+    service_check = cli.contract.Result("service.installed", True, "ok")
+    result = cli._check_restart_policy(service_check)
+    assert result.ok is True
+    assert result.id == "service.restart_policy"
+
+
+def test_restart_policy_fails_when_unit_still_has_restart_on_failure(monkeypatch, tmp_path):
+    """The exact regression this pins: the OLD policy, still on disk because
+    the fixed package was never re-installed."""
+    unit_path = _unit_with(tmp_path, "Restart=on-failure")
+    info = _Info(installed=True, active=True, platform="linux")
+    info.unit_path = unit_path
+    monkeypatch.setattr(S, "describe_service", lambda: info)
+    service_check = cli.contract.Result("service.installed", True, "ok")
+    result = cli._check_restart_policy(service_check)
+    assert result.ok is False
+    assert "on-failure" in result.detail
+    assert "service install" in result.detail
+
+
+def test_restart_policy_fails_when_unit_has_no_restart_line_at_all(monkeypatch, tmp_path):
+    unit_path = _unit_with(tmp_path, None)
+    info = _Info(installed=True, active=True, platform="linux")
+    info.unit_path = unit_path
+    monkeypatch.setattr(S, "describe_service", lambda: info)
+    service_check = cli.contract.Result("service.installed", True, "ok")
+    result = cli._check_restart_policy(service_check)
+    assert result.ok is False
+    assert "no Restart=" in result.detail

@@ -69,6 +69,21 @@ DEFAULT_NOTIFY_INTERVAL_SECONDS = int(
 )
 DEFAULT_DOLT_RESTART_BACKOFF_SECONDS = 2.0
 
+# Measured outage, 2026-08-14 17:14: dolt sql-server was SIGKILLed 8 times in
+# ~30 seconds, and `dolt_supervisor_loop` restarted it every time -- forever,
+# silently. Nothing ever told anyone the child was dying in a tight loop; the
+# supervisor just kept trying at `DEFAULT_DOLT_RESTART_BACKOFF_SECONDS`
+# intervals. A budget bounds that: once the child has exited unexpectedly
+# `DEFAULT_DOLT_RESTART_BUDGET_COUNT` times within
+# `DEFAULT_DOLT_RESTART_BUDGET_WINDOW_SECONDS`, the loop gives up LOUDLY (see
+# `DoltSupervisionExhaustedError`) instead of spinning forever quietly.
+# 5-in-60s is well inside the shape of the measured incident (8 in ~30s) --
+# it fires fast enough to stop hammering a genuinely broken dolt, but not so
+# tight that a couple of ordinary restarts (e.g. two real crashes an hour
+# apart) ever trips it.
+DEFAULT_DOLT_RESTART_BUDGET_COUNT = 5
+DEFAULT_DOLT_RESTART_BUDGET_WINDOW_SECONDS = 60.0
+
 _PORT_PROBE_TIMEOUT_S = 2.0
 _PORT_HOLDER_KILL_WAIT_S = 1.0
 
@@ -416,6 +431,46 @@ def spawn_dolt(host: str, port: int, data_dir: Path) -> subprocess.Popen:
     return subprocess.Popen(["dolt", "sql-server", "-H", host, "-P", str(port)], cwd=str(data_dir))
 
 
+def _record_exit_and_over_budget(
+    recent_exits: list[float], *, now: float, budget_count: int, window: float
+) -> bool:
+    """Record one unexpected-exit timestamp and report whether the trailing
+    window now holds `budget_count` or more of them.
+
+    Pure and exhaustively testable -- a plain list, a plain float clock
+    reading, two plain numeric thresholds, no asyncio and no real clock --
+    mirroring this module's existing `classify_port_holders` convention of
+    keeping a decision free of I/O so it can be tested directly rather than
+    only indirectly through a real, timed async loop. Mutates `recent_exits`
+    in place: appends `now`, then drops any entry older than `window`
+    seconds behind it, so the budget "resets" simply by enough real time
+    passing between failures -- there is no separate explicit reset on
+    success, because a successful run never calls this at all.
+    """
+    recent_exits.append(now)
+    recent_exits[:] = [t for t in recent_exits if now - t <= window]
+    return len(recent_exits) >= budget_count
+
+
+class DoltSupervisionExhaustedError(RuntimeError):
+    """Raised by `dolt_supervisor_loop` when the dolt child has exited
+    unexpectedly `restart_budget_count` times within
+    `restart_budget_window` seconds -- see the module-level
+    `DEFAULT_DOLT_RESTART_BUDGET_COUNT`/`_WINDOW_SECONDS` docstring for why
+    this budget exists.
+
+    This is the deeper bug behind the 2026-08-14 outage, one layer below
+    "the unit needs Restart=always": a supervisor that gives up trying to
+    keep dolt alive must say so LOUDLY and exit non-zero -- never fall
+    through to a tidy, silent return that looks, from the outside (and to
+    systemd), identical to an operator's own clean `systemctl stop`. A
+    fallback that hides a failure behind a clean exit is exactly the
+    anti-pattern this project forbids (see AGENTS.md / project
+    IMPLEMENTATION_PHILOSOPHY). Letting this propagate out of `_async_serve`
+    is what makes `serve()` return 1 instead of 0.
+    """
+
+
 async def dolt_supervisor_loop(
     *,
     host: str,
@@ -425,6 +480,8 @@ async def dolt_supervisor_loop(
     stop_event: asyncio.Event,
     state: dict[str, subprocess.Popen | None],
     restart_backoff: float = DEFAULT_DOLT_RESTART_BACKOFF_SECONDS,
+    restart_budget_count: int = DEFAULT_DOLT_RESTART_BUDGET_COUNT,
+    restart_budget_window: float = DEFAULT_DOLT_RESTART_BUDGET_WINDOW_SECONDS,
 ) -> None:
     """Own, spawn, and restart the dolt sql-server child for as long as this
     supervisor runs.
@@ -437,10 +494,20 @@ async def dolt_supervisor_loop(
     caller (see `_async_serve`'s signal handler) and this loop simply stops
     restarting it.
 
+    If the child exits unexpectedly `restart_budget_count` times within a
+    trailing `restart_budget_window`-second window, this loop stops trying
+    and raises `DoltSupervisionExhaustedError` instead of restarting again --
+    see that exception's docstring for why silently spinning forever is
+    itself the bug. The window is a simple trailing list of monotonic
+    timestamps, trimmed on every exit; it is reset implicitly by time simply
+    passing (old exits age out), never explicitly reset by a success, since
+    a *successful* run doesn't record an exit at all.
+
     `state["proc"]` is kept up to date with the current child so an external
     signal handler can terminate it promptly on shutdown without this loop
     needing to know anything about signals.
     """
+    recent_exits: list[float] = []
     while not stop_event.is_set():
         ensure_port_available(host, port, pid_file)
         proc = spawn_dolt(host, port, data_dir)
@@ -460,6 +527,22 @@ async def dolt_supervisor_loop(
             returncode,
             restart_backoff,
         )
+        over_budget = _record_exit_and_over_budget(
+            recent_exits,
+            now=time.monotonic(),
+            budget_count=restart_budget_count,
+            window=restart_budget_window,
+        )
+        if over_budget:
+            raise DoltSupervisionExhaustedError(
+                f"dolt sql-server exited unexpectedly {len(recent_exits)} times within "
+                f"{restart_budget_window:.0f}s (budget: {restart_budget_count} exits) -- "
+                f"giving up rather than restarting it forever in a silent tight loop. "
+                f"The service manager will restart the WHOLE supervisor per its own "
+                f"Restart= policy (see service.py); if this keeps recurring, the underlying "
+                f"dolt failure needs investigation directly (disk space, a corrupt data "
+                f"dir at {data_dir}, or something else already listening on {host}:{port})."
+            )
         await asyncio.sleep(restart_backoff)
 
 
@@ -495,6 +578,8 @@ async def _async_serve(
     reap_interval: float,
     notify_interval: float,
     dolt_restart_backoff: float,
+    dolt_restart_budget_count: int = DEFAULT_DOLT_RESTART_BUDGET_COUNT,
+    dolt_restart_budget_window: float = DEFAULT_DOLT_RESTART_BUDGET_WINDOW_SECONDS,
 ) -> int:
     ws = A.Workspace(root)
     data_dir = default_dolt_dir()
@@ -526,6 +611,8 @@ async def _async_serve(
             stop_event=stop_event,
             state=state,
             restart_backoff=dolt_restart_backoff,
+            restart_budget_count=dolt_restart_budget_count,
+            restart_budget_window=dolt_restart_budget_window,
         )
     )
     reap_task = asyncio.create_task(reap_loop(ws, interval=reap_interval, stop_event=stop_event))
@@ -533,7 +620,22 @@ async def _async_serve(
         notify_loop(ws, interval=notify_interval, stop_event=stop_event)
     )
 
-    await asyncio.gather(dolt_task, reap_task, notify_task)
+    try:
+        await asyncio.gather(dolt_task, reap_task, notify_task)
+    except DoltSupervisionExhaustedError as e:
+        # The deeper bug this closes: giving up on dolt must be LOUD and
+        # non-zero, never a tidy shutdown indistinguishable from an
+        # operator's own `systemctl stop` -- see that exception's docstring.
+        # `asyncio.gather` (without `return_exceptions=True`) re-raises the
+        # first task exception immediately but does NOT itself cancel the
+        # still-running tasks -- do that explicitly so the process can exit
+        # promptly instead of leaving reap/notify running as orphans.
+        logger.error("supervisor giving up: %s", e)
+        stop_event.set()
+        for t in (reap_task, notify_task):
+            t.cancel()
+        await asyncio.gather(reap_task, notify_task, return_exceptions=True)
+        raise
     return 0
 
 
@@ -545,10 +647,18 @@ def serve(
     reap_interval: float = DEFAULT_REAP_INTERVAL_SECONDS,
     notify_interval: float = DEFAULT_NOTIFY_INTERVAL_SECONDS,
     dolt_restart_backoff: float = DEFAULT_DOLT_RESTART_BACKOFF_SECONDS,
+    dolt_restart_budget_count: int = DEFAULT_DOLT_RESTART_BUDGET_COUNT,
+    dolt_restart_budget_window: float = DEFAULT_DOLT_RESTART_BUDGET_WINDOW_SECONDS,
 ) -> int:
     """Synchronous entry point for `amplifier-work-tracker serve` -- what
     cli.py's `cmd_serve` calls, and what the systemd/launchd unit's
-    ExecStart ultimately runs."""
+    ExecStart ultimately runs.
+
+    Returns 1 (never a bare, silent 0) both for a port conflict AND for
+    `DoltSupervisionExhaustedError` -- the supervisor giving up on dolt is a
+    real failure and must be reported as one at the process-exit level, not
+    swallowed into a tidy-looking shutdown. See that exception's docstring.
+    """
     _configure_logging()
     try:
         return asyncio.run(
@@ -559,9 +669,14 @@ def serve(
                 reap_interval=reap_interval,
                 notify_interval=notify_interval,
                 dolt_restart_backoff=dolt_restart_backoff,
+                dolt_restart_budget_count=dolt_restart_budget_count,
+                dolt_restart_budget_window=dolt_restart_budget_window,
             )
         )
     except PortConflictError as e:
+        print(f"amplifier-work-tracker serve: {e}", file=sys.stderr)
+        return 1
+    except DoltSupervisionExhaustedError as e:
         print(f"amplifier-work-tracker serve: {e}", file=sys.stderr)
         return 1
 
@@ -569,8 +684,12 @@ def serve(
 __all__ = [
     "DEFAULT_DOLT_HOST",
     "DEFAULT_DOLT_PORT",
+    "DEFAULT_DOLT_RESTART_BACKOFF_SECONDS",
+    "DEFAULT_DOLT_RESTART_BUDGET_COUNT",
+    "DEFAULT_DOLT_RESTART_BUDGET_WINDOW_SECONDS",
     "DEFAULT_NOTIFY_INTERVAL_SECONDS",
     "DEFAULT_REAP_INTERVAL_SECONDS",
+    "DoltSupervisionExhaustedError",
     "PortAction",
     "PortConflictError",
     "classify_port_holders",

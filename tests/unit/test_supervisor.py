@@ -15,6 +15,8 @@ import asyncio
 import time
 from typing import Any
 
+import pytest
+
 from amplifier_work_tracker import custody as C
 from amplifier_work_tracker import heartbeat as HB
 from amplifier_work_tracker import supervisor as SV
@@ -159,6 +161,137 @@ def test_read_owned_pid_reads_back_written_value(tmp_path):
     p = tmp_path / "pid"
     p.write_text("4242\n", encoding="utf-8")
     assert SV.read_owned_pid(p) == 4242
+
+
+# --------------------------------------------- _record_exit_and_over_budget
+#
+# Pure decision logic (see the function's own docstring for why it's split
+# out this way) -- no asyncio, no real clock, exhaustively testable, mirror
+# of this module's own `classify_port_holders` convention.
+
+
+def test_budget_not_exceeded_below_the_count():
+    recent: list[float] = []
+    for t in (0.0, 1.0):
+        over = SV._record_exit_and_over_budget(recent, now=t, budget_count=3, window=60.0)
+    assert over is False
+    assert len(recent) == 2
+
+
+def test_budget_exceeded_at_the_count_within_the_window():
+    recent: list[float] = []
+    over = False
+    for t in (0.0, 1.0, 2.0):
+        over = SV._record_exit_and_over_budget(recent, now=t, budget_count=3, window=60.0)
+    assert over is True
+    assert len(recent) == 3
+
+
+def test_budget_never_exceeded_when_exits_are_spaced_beyond_the_window():
+    """The exact 'resets by time simply passing' behaviour: three exits, each
+    further apart than the window, must never accumulate -- only ever one
+    entry survives the trim by the time the next is recorded."""
+    recent: list[float] = []
+    results = [
+        SV._record_exit_and_over_budget(recent, now=t, budget_count=3, window=60.0)
+        for t in (0.0, 100.0, 200.0)
+    ]
+    assert results == [False, False, False]
+    assert len(recent) == 1
+
+
+def test_budget_trims_old_entries_before_counting():
+    """Two old exits (aged out) plus one new one must count as ONE against
+    the budget, not three -- the trim must run before the length check."""
+    recent = [0.0, 1.0]
+    over = SV._record_exit_and_over_budget(recent, now=1000.0, budget_count=2, window=60.0)
+    assert over is False
+    assert recent == [1000.0]
+
+
+# --------------------------------------------------------- dolt_supervisor_loop
+#
+# Real asyncio (matching the reap_loop/notify_loop tests below), but `dolt`
+# itself is faked -- never a real subprocess -- via a `spawn_dolt` double
+# that returns a plain object with a `.pid` and a synchronous `.wait()`.
+
+
+class _FakeDoltProc:
+    def __init__(self, pid: int, returncode: int):
+        self.pid = pid
+        self.returncode = returncode
+
+    def wait(self) -> int:
+        return self.returncode
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+
+def test_dolt_supervisor_loop_gives_up_loudly_after_budget_exhausted(monkeypatch, tmp_path):
+    """Regression pin for the 2026-08-14 outage's deeper bug: a dolt child
+    that keeps dying in a tight loop must eventually raise, loudly, rather
+    than being restarted forever in silence."""
+    monkeypatch.setattr(SV, "ensure_port_available", lambda *a, **k: None)
+    calls = {"n": 0}
+
+    def fake_spawn(host, port, data_dir):
+        calls["n"] += 1
+        return _FakeDoltProc(pid=1000 + calls["n"], returncode=-9)  # SIGKILL, per the incident
+
+    monkeypatch.setattr(SV, "spawn_dolt", fake_spawn)
+    stop_event = asyncio.Event()
+    state: dict[str, Any] = {"proc": None}
+
+    async def run():
+        await SV.dolt_supervisor_loop(
+            host="127.0.0.1",
+            port=1,
+            data_dir=tmp_path,
+            pid_file=tmp_path / "dolt.pid",
+            stop_event=stop_event,
+            state=state,
+            restart_backoff=0.0,
+            restart_budget_count=3,
+            restart_budget_window=60.0,
+        )
+
+    with pytest.raises(SV.DoltSupervisionExhaustedError) as excinfo:
+        asyncio.run(run())
+    assert calls["n"] == 3
+    assert "3" in str(excinfo.value)
+    assert state["proc"] is None  # cleaned up, not left dangling on the way out
+
+
+def test_dolt_supervisor_loop_stops_cleanly_without_raising_when_stop_requested(
+    monkeypatch, tmp_path
+):
+    """A dolt exit that happens to coincide with a real shutdown request must
+    NOT be treated as 'unexpected' -- no exception, clean return."""
+    monkeypatch.setattr(SV, "ensure_port_available", lambda *a, **k: None)
+    stop_event = asyncio.Event()
+    state: dict[str, Any] = {"proc": None}
+
+    def fake_spawn(host, port, data_dir):
+        stop_event.set()  # simulate: shutdown requested while dolt is running
+        return _FakeDoltProc(pid=1234, returncode=0)
+
+    monkeypatch.setattr(SV, "spawn_dolt", fake_spawn)
+
+    async def run():
+        await SV.dolt_supervisor_loop(
+            host="127.0.0.1",
+            port=1,
+            data_dir=tmp_path,
+            pid_file=tmp_path / "dolt.pid",
+            stop_event=stop_event,
+            state=state,
+            restart_backoff=0.0,
+            restart_budget_count=1,
+            restart_budget_window=60.0,
+        )
+
+    asyncio.run(run())  # must not raise
 
 
 # ------------------------------------------------------------- reap/notify sweeps

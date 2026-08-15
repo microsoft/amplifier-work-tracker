@@ -81,6 +81,27 @@ def test_systemd_unit_template_has_no_environment_line_for_root():
             assert "root" not in line.lower()
 
 
+def test_systemd_unit_template_uses_restart_always_not_on_failure():
+    """Regression pin for the 2026-08-14 outage: `Restart=on-failure` never
+    restarts a clean (status 0) exit, which is exactly what the
+    supervisor's own SIGTERM/SIGINT handler produces on an unintended
+    termination signal -- see service.py's module docstring and
+    supervisor.py's `DoltSupervisionExhaustedError`. `Restart=always`
+    restarts unconditionally; `test_real_systemd_unit_*` below prove this
+    against a REAL unit, not just this string assertion."""
+    rendered = S._SYSTEMD_UNIT_TEMPLATE.format(
+        exec_start="/x/amplifier-work-tracker serve", safe_path="/usr/bin:/bin"
+    )
+    restart_lines = [line for line in rendered.splitlines() if line.startswith("Restart=")]
+    assert restart_lines == ["Restart=always"], (
+        f"expected exactly one 'Restart=always' line, got: {restart_lines!r}"
+    )
+    # Explanatory comments in the unit legitimately mention "on-failure" in
+    # prose (explaining what this replaces) -- the load-bearing assertion is
+    # that no *directive* line is `Restart=on-failure`, checked above.
+    assert "Restart=on-failure" not in rendered
+
+
 def test_windows_is_reported_as_unsupported_not_raised(monkeypatch):
     monkeypatch.setattr(S.sys, "platform", "win32")
     info = S.describe_service()
