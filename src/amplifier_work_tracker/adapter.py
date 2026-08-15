@@ -56,6 +56,7 @@ ASSUMPTIONS = {
         "Filtering `list` by an explicit --status shows closed items without needing --all"
     ),
     "show.dependents": "Reverse links require an explicit include-dependents flag",
+    "read.no_mutation": "`bd show` never mutates the item it reads, no matter how many times",
     "resolution.readable": "An item's resolution text is readable after it is closed",
     "metadata.roundtrip": "Arbitrary JSON metadata survives a write/read cycle",
     "project.name_rules": "Project names with dots produce an unusable database",
@@ -384,6 +385,35 @@ class Item:
         out["id"] = d.get("id", "")
         return cls(**{k: v for k, v in out.items() if k in cls.__dataclass_fields__}, raw=d)
 
+    def summary(self, *, full: bool = False) -> dict:
+        """The read-only view of this item shared by every list/read
+        surface -- `Beads.list_bounded`'s lean rows (`work_list`/the CLI's
+        `list`) and a single directed read (`work_list`'s `item_id`, the
+        CLI's `list --id`) alike, so the two never drift into slightly
+        different shapes.
+
+        `full=False` (the default, and every existing list caller's
+        behavior, unchanged) keeps the payload lean -- id/title/status/
+        holder/resolution only. `full=True` adds the same body fields
+        `work_claim`/the CLI's `claim` already hand back on a successful
+        claim (acceptance/description/design) -- a directed READ should be
+        able to show everything a claim would have told you, without
+        taking the item. See `Beads.get_readonly` for the read primitive
+        this is paired with.
+        """
+        row: dict = {
+            "id": self.id,
+            "title": self.title,
+            "status": self.status,
+            "holder": self.holder,
+            "resolution": self.resolution,
+        }
+        if full:
+            row["acceptance"] = self.acceptance
+            row["description"] = self.description
+            row["design"] = self.design
+        return row
+
 
 def _active_blockers(item: Item) -> list[dict]:
     """Which of `item`'s forward dependencies are still-open `blocks`-type
@@ -636,6 +666,54 @@ class Beads:
             for x in (d.get("dependents") or [])
         ]
         return it
+
+    @property
+    def project_name(self) -> str:
+        """This project's name, inferred from its `.beads` directory's
+        parent (`Workspace.path(name) / ".beads"` -- see `Workspace.project`).
+        Used only to shape a READ-path error message (`get_readonly`); never
+        passed to `bd` itself, and never a substitute for the real identity
+        that lives in `self._dir`.
+        """
+        return self._dir.parent.name
+
+    def get_readonly(self, item_id: str) -> Item:
+        """Read one item's full record -- WITHOUT claiming, mutating, or
+        touching custody. This is `bd show` and nothing else: no `--claim`,
+        no `--update`, no assignee change, no custody metadata write. See
+        ASSUMPTION/check `read.no_mutation` in `amplifier_work_tracker.contract`
+        for the live proof that repeated reads leave status/holder/metadata
+        untouched.
+
+        Exists because `work_claim`/`bd update --claim` was, until now, the
+        ONLY path that returned an item's `description`/`acceptance`/`design`
+        -- forcing an agent that merely wants to understand what an item is
+        asking for to first take ownership of it. See this project's
+        `context/awareness.md` and the `claiming-work-safely` skill for the
+        agent-facing framing of that gap.
+
+        Distinguishes two failure shapes bd's own error text does not (both
+        read as the IDENTICAL "no issues found matching the provided IDs"):
+          - `item_id` does not even carry this project's own id prefix
+            (Beads mints ids as `<project>-<slug>`, e.g. `cortex-wbcp`) --
+            e.g. a `cortex-*` id looked up against `wiki_weaver`. Reported as
+            a wrong-project mismatch, since that is overwhelmingly the more
+            likely mistake, and bd's identical wording for both cases would
+            otherwise hide an easy-to-make error.
+          - `item_id` DOES carry this project's prefix but truly does not
+            exist here.
+        """
+        try:
+            return self.get(item_id)
+        except BeadsError as e:
+            prefix = f"{self.project_name}-"
+            if not item_id.startswith(prefix):
+                raise BeadsError(
+                    f"item {item_id!r} does not look like it belongs to project "
+                    f"{self.project_name!r} (its ids start with {prefix!r}) -- "
+                    f"check the project name and the id, then try again"
+                ) from e
+            raise BeadsError(f"item {item_id!r} not found in project {self.project_name!r}") from e
 
     def list(
         self,

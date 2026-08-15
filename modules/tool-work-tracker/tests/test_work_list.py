@@ -178,3 +178,132 @@ async def test_list_truncates_and_reports_it_explicitly(project):
     assert output["returned_count"] == 2
     assert output["total_count"] >= 4
     assert output["truncated"] is True
+
+
+# ------------------------------------------------- item_id: directed read
+
+
+@pytest.mark.asyncio
+async def test_list_default_rows_are_lean_no_body_fields(project):
+    """The gap being closed here must not regress the default (no
+    item_id) shape: no acceptance/description/design in a plain listing,
+    not even as an explicit null."""
+    add_session = WorkTrackerSession({"actor": _unique("adder")})
+    added = await add_session.add(
+        project,
+        "leanness probe",
+        description="a description that should not appear in the default list",
+        acceptance="acceptance text that should not appear in the default list",
+    )
+    item_id = added.output["added"]  # type: ignore[index]
+
+    list_session = WorkTrackerSession({"actor": _unique("lister")})
+    result = await list_session.list_items(project)
+    output: dict[str, Any] = result.output  # type: ignore[assignment]
+    row = next(r for r in output["items"] if r["id"] == item_id)
+    assert "acceptance" not in row
+    assert "description" not in row
+    assert "design" not in row
+
+
+@pytest.mark.asyncio
+async def test_list_with_item_id_reads_full_body_without_claiming(project):
+    """The literal gap this feature closes: an agent must be able to read
+    an item's acceptance/description/design WITHOUT taking custody of it
+    -- until now work_claim was the only tool that returned this body."""
+    add_session = WorkTrackerSession({"actor": _unique("adder")})
+    added = await add_session.add(
+        project,
+        "directed-read probe",
+        description="the real description text",
+        acceptance="Given a probe, When read, Then the body is visible",
+    )
+    item_id = added.output["added"]  # type: ignore[index]
+
+    list_session = WorkTrackerSession({"actor": _unique("lister")})
+    assert list_session._held is None  # noqa: SLF001
+    result = await list_session.list_items(project, item_id=item_id)
+    assert result.success is True
+    output: dict[str, Any] = result.output  # type: ignore[assignment]
+    assert output["returned_count"] == 1
+    assert output["total_count"] == 1
+    assert output["truncated"] is False
+    row = output["items"][0]
+    assert row["id"] == item_id
+    assert row["status"] == "open"
+    assert row["holder"] is None
+    assert row["description"] == "the real description text"
+    assert row["acceptance"] == "Given a probe, When read, Then the body is visible"
+
+    # Never claimed by the read -- no held item, item still open/unheld.
+    assert list_session._held is None  # noqa: SLF001
+
+    bd = A.Workspace(list_session._ws.root).project(project)  # noqa: SLF001
+    back = bd.get(item_id)
+    assert back.status == "open"
+    assert back.holder is None
+
+
+@pytest.mark.asyncio
+async def test_list_with_item_id_ignores_status_and_limit(project):
+    add_session = WorkTrackerSession({"actor": _unique("adder")})
+    added = await add_session.add(project, "directed-read ignores-filters probe")
+    item_id = added.output["added"]  # type: ignore[index]
+
+    list_session = WorkTrackerSession({"actor": _unique("lister")})
+    result = await list_session.list_items(project, item_id=item_id, status="resolved", limit=1)
+    assert result.success is True
+    output: dict[str, Any] = result.output  # type: ignore[assignment]
+    assert output["items"][0]["id"] == item_id
+
+
+@pytest.mark.asyncio
+async def test_list_with_item_id_on_nonexistent_item_fails_with_distinct_error(project):
+    list_session = WorkTrackerSession({"actor": _unique("lister")})
+    result = await list_session.list_items(project, item_id=f"{project}-doesnotexist999")
+    assert result.success is False
+    assert "not found in project" in str(result.output)
+
+
+@pytest.mark.asyncio
+async def test_list_with_item_id_from_a_different_project_gives_distinct_wrong_project_error(
+    project,
+):
+    """A VALID id, just belonging to a different project -- must read
+    distinctly from a plain not-found (bd's own error text is identical
+    for both). Uses the same `AMPLIFIER_WORK_TRACKER_ROOT` the `project`
+    fixture already pointed at an isolated tmp root for this test."""
+    other_project = _unique("otherwlp")
+    ws = A.Workspace()  # reads AMPLIFIER_WORK_TRACKER_ROOT, set by the `project` fixture
+    ws.create(other_project)
+    try:
+        other_bd = ws.project(other_project)
+        other_item_id = other_bd.create("wrong-project source item", tags=[A.LANE_WORK], priority=1)
+
+        list_session = WorkTrackerSession({"actor": _unique("lister")})
+        result = await list_session.list_items(project, item_id=other_item_id)
+        assert result.success is False
+        assert "does not look like it belongs to project" in str(result.output)
+    finally:
+        A.drop_database(other_project)
+        shutil.rmtree(ws.path(other_project), ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_list_with_item_id_never_mutates_the_item(project):
+    add_session = WorkTrackerSession({"actor": _unique("adder")})
+    added = await add_session.add(project, "directed-read no-mutation probe")
+    item_id = added.output["added"]  # type: ignore[index]
+
+    bd = A.Workspace(add_session._ws.root).project(project)  # noqa: SLF001
+
+    def snapshot():
+        i = bd.get(item_id)
+        return (i.status, i.holder, i.meta)
+
+    before = snapshot()
+    list_session = WorkTrackerSession({"actor": _unique("lister")})
+    for _ in range(3):
+        await list_session.list_items(project, item_id=item_id)
+    after = snapshot()
+    assert before == after

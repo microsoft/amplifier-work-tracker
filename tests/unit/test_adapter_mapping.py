@@ -425,3 +425,110 @@ def test_list_bounded_reports_no_truncation_when_everything_fits(tmp_path, monke
     assert result.total_count == 3
     assert result.returned_count == 3
     assert result.truncated is False
+
+
+# ------------------------------------------------------------- Item.summary
+
+
+def _full_item() -> A.Item:
+    return A.Item.from_beads(
+        {
+            "id": "proj-abc1",
+            "title": "a title",
+            "status": "in_progress",
+            "assignee": "someone",
+            "close_reason": "fixed it",
+            "acceptance_criteria": "Given/When/Then",
+            "description": "the description",
+            "design": "the design notes",
+        }
+    )
+
+
+def test_summary_default_is_lean_and_omits_body_fields():
+    """The default (list) shape -- unchanged from before this feature --
+    must never carry acceptance/description/design at all, not even as
+    null keys, so a bulk listing payload stays small by construction."""
+    row = _full_item().summary()
+    assert row == {
+        "id": "proj-abc1",
+        "title": "a title",
+        "status": "held",
+        "holder": "someone",
+        "resolution": "fixed it",
+    }
+    assert "acceptance" not in row
+    assert "description" not in row
+    assert "design" not in row
+
+
+def test_summary_full_adds_the_same_body_fields_claim_returns():
+    row = _full_item().summary(full=True)
+    assert row["acceptance"] == "Given/When/Then"
+    assert row["description"] == "the description"
+    assert row["design"] == "the design notes"
+    # Still carries every lean field too -- full is a superset, not a
+    # replacement.
+    assert row["id"] == "proj-abc1"
+    assert row["status"] == "held"
+    assert row["holder"] == "someone"
+    assert row["resolution"] == "fixed it"
+
+
+def test_summary_full_on_an_item_with_no_body_reports_none_not_missing():
+    row = A.Item.from_beads({"id": "x-1", "status": "open"}).summary(full=True)
+    assert row["acceptance"] is None
+    assert row["description"] is None
+    assert row["design"] is None
+
+
+# --------------------------------------------------------- Beads.get_readonly
+
+
+def test_get_readonly_project_name_is_inferred_from_the_beads_dir_parent(tmp_path):
+    bd = A.Beads(tmp_path / "projects" / "demoproj" / ".beads")
+    assert bd.project_name == "demoproj"  # noqa: SLF001 - project_name is public
+
+
+def test_get_readonly_wrong_project_prefix_raises_distinct_error(tmp_path, monkeypatch):
+    """An id that doesn't even carry this project's own prefix must be
+    reported as a likely wrong-project mistake -- distinctly from a
+    genuine not-found -- without ever reaching a subprocess (`bd show`'s
+    own error text is identical for both cases, which is exactly why this
+    project-level check exists)."""
+    bd = A.Beads(tmp_path / "projects" / "thisproj" / ".beads")
+
+    def fake_get(item_id, *, with_links=False):
+        raise A.BeadsError("`bd show other-9`: no issues found matching the provided IDs")
+
+    monkeypatch.setattr(bd, "get", fake_get)
+    try:
+        bd.get_readonly("other-9")
+        raise AssertionError("expected BeadsError for a wrong-project id")
+    except A.BeadsError as e:
+        assert "does not look like it belongs to project" in str(e)
+        assert "thisproj" in str(e)
+
+
+def test_get_readonly_correct_prefix_but_missing_raises_plain_not_found(tmp_path, monkeypatch):
+    bd = A.Beads(tmp_path / "projects" / "thisproj" / ".beads")
+
+    def fake_get(item_id, *, with_links=False):
+        raise A.BeadsError("`bd show thisproj-99`: no issues found matching the provided IDs")
+
+    monkeypatch.setattr(bd, "get", fake_get)
+    try:
+        bd.get_readonly("thisproj-99")
+        raise AssertionError("expected BeadsError for a genuinely missing item")
+    except A.BeadsError as e:
+        assert "not found in project" in str(e)
+        assert "thisproj" in str(e)
+        assert "does not look like it belongs" not in str(e)
+
+
+def test_get_readonly_delegates_to_get_and_returns_the_item_unmodified(tmp_path, monkeypatch):
+    bd = A.Beads(tmp_path / "projects" / "thisproj" / ".beads")
+    item = A.Item.from_beads({"id": "thisproj-1", "status": "open", "description": "hi"})
+    monkeypatch.setattr(bd, "get", lambda item_id, **kwargs: item)
+    got = bd.get_readonly("thisproj-1")
+    assert got is item

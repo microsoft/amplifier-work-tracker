@@ -342,6 +342,141 @@ def test_list_truncates_and_reports_it_explicitly(
     _util.assert_no_silent_failure(result)
 
 
+def test_list_dash_dash_id_reads_full_body_without_claiming(
+    run_cli, workspace, shared_project_name, unique_lane
+):
+    """The literal gap this feature closes: `list --id` must return the
+    same acceptance/description/design body `claim` returns, for a
+    specific item, WITHOUT claiming it -- and leave the item exactly as
+    open/unheld as it found it."""
+    bd = workspace.project(shared_project_name)
+    item_id = bd.create(
+        "cli directed-read probe",
+        tags=[unique_lane],
+        priority=1,
+        description="a longer description of what needs doing" * 5,
+        acceptance="Given X, When Y, Then Z",
+    )
+
+    result = run_cli(["list", "--project", shared_project_name, "--id", item_id, "--json"])
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    assert body["returned_count"] == 1
+    assert body["total_count"] == 1
+    assert body["truncated"] is False
+    row = body["items"][0]
+    assert row["id"] == item_id
+    assert row["status"] == "open"
+    assert row["holder"] is None
+    assert "Given X, When Y, Then Z" == row["acceptance"]
+    assert row["description"].startswith("a longer description")
+    _util.assert_no_silent_failure(result)
+
+    # Never claimed: still open, unheld.
+    back = bd.get(item_id)
+    assert back.status == "open"
+    assert back.holder is None
+
+
+def test_list_dash_dash_id_human_readable_output_includes_body_fields(
+    run_cli, workspace, shared_project_name, unique_lane
+):
+    bd = workspace.project(shared_project_name)
+    item_id = bd.create(
+        "cli directed-read human probe",
+        tags=[unique_lane],
+        priority=1,
+        description="human-readable description marker XYZZY",
+        acceptance="human-readable acceptance marker PLUGH",
+    )
+
+    result = run_cli(["list", "--project", shared_project_name, "--id", item_id])
+    assert result.returncode == 0, result.stderr
+    assert item_id in result.stdout
+    assert "human-readable description marker XYZZY" in result.stdout
+    assert "human-readable acceptance marker PLUGH" in result.stdout
+    _util.assert_no_silent_failure(result)
+
+
+def test_list_dash_dash_id_on_nonexistent_item_gives_distinct_error(run_cli, shared_project_name):
+    result = run_cli(
+        [
+            "list",
+            "--project",
+            shared_project_name,
+            "--id",
+            f"{shared_project_name}-doesnotexist999",
+        ]
+    )
+    assert result.returncode != 0
+    assert "not found" in result.stderr
+    _util.assert_no_silent_failure(result)
+
+
+def test_list_dash_dash_id_with_id_from_a_different_project_gives_distinct_wrong_project_error(
+    run_cli, workspace, shared_project_name, unique_project_name, unique_lane
+):
+    """A valid id, just not in THIS project -- must read distinctly from a
+    plain not-found (bd's own error text is identical for both)."""
+    other_name = unique_project_name
+    created = run_cli(["new", other_name])
+    assert created.returncode == 0, created.stderr
+    other_bd = workspace.project(other_name)
+    other_item_id = other_bd.create("wrong-project probe", tags=[unique_lane], priority=1)
+
+    result = run_cli(["list", "--project", shared_project_name, "--id", other_item_id])
+    assert result.returncode != 0
+    assert "does not look like it belongs to project" in result.stderr
+    assert shared_project_name in result.stderr
+    _util.assert_no_silent_failure(result)
+
+
+def test_list_dash_dash_id_never_mutates_the_item(
+    run_cli, workspace, shared_project_name, unique_lane
+):
+    bd = workspace.project(shared_project_name)
+    item_id = bd.create("cli directed-read no-mutation probe", tags=[unique_lane], priority=1)
+
+    def snapshot():
+        i = bd.get(item_id)
+        return (i.status, i.holder, i.meta)
+
+    before = snapshot()
+    for _ in range(3):
+        result = run_cli(["list", "--project", shared_project_name, "--id", item_id, "--json"])
+        assert result.returncode == 0, result.stderr
+    after = snapshot()
+    assert before == after
+
+
+def test_list_dash_dash_id_ignores_status_and_limit(
+    run_cli, workspace, shared_project_name, unique_lane
+):
+    """`--status`/`--limit` must not interfere with a directed `--id` read
+    -- the item is returned regardless of its actual status matching (or
+    not) whatever `--status` happens to also be passed."""
+    bd = workspace.project(shared_project_name)
+    item_id = bd.create("cli directed-read ignores-filters probe", tags=[unique_lane], priority=1)
+
+    result = run_cli(
+        [
+            "list",
+            "--project",
+            shared_project_name,
+            "--id",
+            item_id,
+            "--status",
+            "resolved",
+            "--limit",
+            "1",
+            "--json",
+        ]
+    )
+    assert result.returncode == 0, result.stderr
+    body = json.loads(result.stdout)
+    assert body["items"][0]["id"] == item_id
+
+
 def test_add_creates_a_claimable_item_without_needing_lane_vocabulary(
     run_cli, shared_project_name, unique_actor
 ):
