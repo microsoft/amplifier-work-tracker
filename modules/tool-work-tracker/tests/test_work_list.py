@@ -27,12 +27,9 @@ def _unique(prefix: str) -> str:
     return f"{prefix}{uuid.uuid4().hex[:10]}"
 
 
-@pytest.fixture
-def project(tmp_path, monkeypatch):
-    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(tmp_path / "root"))
-    name = _unique("listproj")
-    A.Workspace(tmp_path / "root").create(name)
-    return name
+#: Consumed by the shared `project` fixture in conftest.py, which creates
+#: the project AND drops its shared-server database again on teardown.
+PROJECT_PREFIX = "listproj"
 
 
 @pytest.mark.asyncio
@@ -144,13 +141,13 @@ async def test_list_never_claims_mutates_or_touches_custody(project):
 
 
 @pytest.mark.asyncio
-async def test_list_on_empty_project_returns_empty_not_an_error(tmp_path, monkeypatch):
-    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(tmp_path / "root"))
-    name = _unique("listempty")
-    A.Workspace(tmp_path / "root").create(name)
-
+async def test_list_on_empty_project_returns_empty_not_an_error(project):
+    """Uses the shared `project` fixture -- a freshly created project has no
+    items, which is exactly the state under test, and the fixture drops its
+    database again afterward (this test used to mint its own `listempty*`
+    project inline and leave the database behind forever)."""
     session = WorkTrackerSession({"actor": _unique("actor")})
-    result = await session.list_items(name)
+    result = await session.list_items(project)
     assert result.success is True
     output: dict[str, Any] = result.output  # type: ignore[assignment]
     assert output["items"] == []

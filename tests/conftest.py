@@ -10,21 +10,24 @@ Isolation model
   parallel-safe, and carry no ordering assumptions -- this also makes the
   suite safe under pytest-xdist, since each worker process mints its own
   unique names and never collides with another worker's.
-- Known, accepted trade-off: bd's shared-server topology stores each
-  project's actual Dolt database under
-  ``~/.beads/shared-server/dolt/<name>`` -- that is server-side state
-  amplifier-work-tracker does not control. Neither ``bd`` nor
-  ``amplifier_work_tracker.contract``'s own ``Probe`` (which this suite
-  reuses) has a "drop database" primitive, and adding one here would require
-  a non-stdlib MySQL/Dolt client, which the brief for this suite rules out.
-  Because every name is unique, test runs never collide with or overwrite
-  each other's server-side data -- they just leave small, uniquely-named
-  entries in the shared server, exactly the way
-  ``amplifier_work_tracker.contract``'s ``Probe`` already does today. The
-  developer-facing state this suite is responsible for keeping clean
-  (``~/.amplifier-work-tracker``, and whatever ``AMPLIFIER_WORK_TRACKER_ROOT``
-  the CLI reads) *is* fully isolated per test session via the tmp directory
-  below.
+- Server-side state is cleaned up too, not just the local directory. A
+  project lives in two independent places: a directory under the tmp root
+  above, and a database on the shared dolt server (bd's shared-server
+  topology stores it under ``~/.beads/shared-server/dolt/<name>``). This
+  file used to document dropping the second half as an accepted trade-off
+  -- correctly, at the time: there was no removal primitive. There is one
+  now (``adapter.drop_database`` / ``Workspace.remove``, added in PR #6),
+  so the trade-off is no longer accepted, because the cost was measured
+  and it is not small. On a live box: 163 databases for 5 real projects,
+  157 of them test residue. dolt holds every database open -- dropping the
+  residue took the server from 1.15 GB RSS / 313 MB on disk to 0.12 GB /
+  18 MB. Unique names stop runs colliding; they do not stop the pile
+  growing on every CI run.
+
+  Every fixture here that creates a project therefore drops it again (see
+  ``drop_project``), and ``assert_no_leaked_projects`` fails the session if
+  any created project outlives the run. Unique naming is still what makes
+  the suite parallel-safe; teardown is what makes it leave nothing behind.
 """
 
 from __future__ import annotations
@@ -77,9 +80,91 @@ def unique_name(prefix: str = "t") -> str:
     return f"{prefix}{uuid.uuid4().hex[:12]}"
 
 
+# ---------------------------------------------------------------------------
+# Teardown -- every project this suite creates is dropped again.
+# ---------------------------------------------------------------------------
+
+# Names handed out by the project-creating fixtures below, minus the ones
+# already dropped. Process-local by construction, so this stays correct
+# under pytest-xdist: each worker only ever accounts for its own names and
+# never observes (or asserts on) another worker's databases.
+_OUTSTANDING: set[str] = set()
+
+
+def drop_project(workspace: A.Workspace, name: str) -> None:
+    """Teardown counterpart to creating a project: drop its database from
+    the shared dolt server, then its local directory.
+
+    Uses ``adapter.drop_database`` -- the repo's own removal primitive, the
+    same one ``Workspace.remove`` calls -- rather than raw SQL from a test.
+    It goes to the primitive rather than to ``Workspace.remove`` on purpose:
+    ``remove`` refuses (correctly, and with no override) while any item is
+    HELD, and several tests here deliberately leave an item held to prove
+    exactly that refusal. Teardown's job is to leave nothing behind, not to
+    re-test the safety gate -- ``Workspace.remove`` is exercised properly by
+    ``tests/integration/test_project_removal.py`` and the CLI ``remove``
+    tests, which is where that belongs.
+
+    Fails loud: ``drop_database`` returns False for a database that was
+    never there (fine -- e.g. a test whose ``create`` was expected to be
+    rejected) and raises for any other failure, so a teardown that cannot
+    actually remove data never passes for one that did.
+    """
+    try:
+        A.drop_database(name)
+    finally:
+        # Dropped from the ledger even if the drop raised: the failure is
+        # already propagating loudly, and leaving the name outstanding would
+        # bury it under a second, less specific session-end error.
+        _OUTSTANDING.discard(name)
+        shutil.rmtree(workspace.path(name), ignore_errors=True)
+
+
+def _track(name: str) -> str:
+    _OUTSTANDING.add(name)
+    return name
+
+
+@pytest.fixture(scope="session", autouse=True)
+def assert_no_leaked_projects(workspace):
+    """The regression guard for this whole file: if any project a fixture
+    handed out is still on the shared dolt server when the session ends,
+    drop it and FAIL, naming every one.
+
+    Without this, a future fixture that forgets its teardown reintroduces
+    the leak silently -- which is precisely how the suite accumulated 157
+    orphaned databases on a live box before anyone noticed.
+    """
+    yield
+    leaked = sorted(_OUTSTANDING)
+    if not leaked:
+        return
+    for name in leaked:
+        with contextlib.suppress(A.BeadsError):
+            A.drop_database(name)
+        shutil.rmtree(workspace.path(name), ignore_errors=True)
+    raise AssertionError(
+        f"{len(leaked)} project(s) created by this test session were never dropped: "
+        f"{', '.join(leaked)}. They have been dropped now, but a fixture is "
+        f"missing its teardown -- every project a fixture creates must call "
+        f"`drop_project`."
+    )
+
+
 @pytest.fixture
-def unique_project_name() -> str:
-    return unique_name("proj")
+def unique_project_name(workspace):
+    """A unique project name, plus the teardown for whatever ends up
+    created under it.
+
+    Teardown lives here rather than at the end of each test body so it
+    still runs when a test fails partway -- the case that leaks. Tests are
+    free to create nothing at all under the name (several assert that
+    creation is refused); dropping a database that never existed is a
+    no-op, not an error.
+    """
+    name = _track(unique_name("proj"))
+    yield name
+    drop_project(workspace, name)
 
 
 @pytest.fixture
@@ -112,14 +197,18 @@ def workspace(workspace_root) -> A.Workspace:
 
 
 @pytest.fixture(scope="session")
-def shared_project_name(workspace) -> str:
+def shared_project_name(workspace):
     """One real bd project, created once (``bd init`` takes several seconds
     against the shared dolt server) and reused by every integration test
     that just needs *a* project to work in. Isolation between tests comes
-    from unique lane tags / ids within it, not from separate projects."""
-    name = unique_name("shared")
+    from unique lane tags / ids within it, not from separate projects.
+
+    Dropped at the end of the session -- items held by tests that never
+    released them do not block this, see ``drop_project``."""
+    name = _track(unique_name("shared"))
     workspace.create(name)
-    return name
+    yield name
+    drop_project(workspace, name)
 
 
 @pytest.fixture(scope="session")
@@ -135,12 +224,20 @@ def project_factory(workspace):
     ``amplifier-work-tracker new`` / ``instances`` themselves, which observe
     project creation directly)."""
 
+    created: list[str] = []
+
     def _make(prefix: str = "proj") -> tuple[str, A.Beads]:
-        name = unique_name(prefix)
+        name = _track(unique_name(prefix))
+        created.append(name)  # recorded BEFORE create: a create that fails
+        # partway can still leave a database behind, and that is exactly the
+        # residue teardown must reach.
         workspace.create(name)
         return name, workspace.project(name)
 
-    return _make
+    yield _make
+
+    for name in created:
+        drop_project(workspace, name)
 
 
 @pytest.fixture(scope="module")
@@ -148,7 +245,8 @@ def probe():
     """A disposable throwaway project, via ``amplifier_work_tracker.contract.Probe``
     -- reused directly here (rather than reimplemented) so integration tests
     exercise the exact same probing machinery ``amplifier-work-tracker doctor``
-    does."""
+    does. ``Probe`` drops its own database on exit, so this needs no teardown
+    of its own (and ``test_probe_leaves_no_database_behind`` proves it)."""
     with contract.Probe() as p:
         yield p
 

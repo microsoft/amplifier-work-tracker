@@ -27,12 +27,9 @@ def _unique(prefix: str) -> str:
     return f"{prefix}{uuid.uuid4().hex[:10]}"
 
 
-@pytest.fixture
-def project(tmp_path, monkeypatch):
-    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(tmp_path / "root"))
-    name = _unique("addproj")
-    A.Workspace(tmp_path / "root").create(name)
-    return name
+#: Consumed by the shared `project` fixture in conftest.py, which creates
+#: the project AND drops its shared-server database again on teardown.
+PROJECT_PREFIX = "addproj"
 
 
 @pytest.mark.asyncio
