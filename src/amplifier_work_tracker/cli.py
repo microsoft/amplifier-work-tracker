@@ -150,6 +150,85 @@ def _check_sweeps_alive(root) -> contract.Result:
     return contract.Result("sweeps.alive", all_ok, "; ".join(details))
 
 
+def _check_restart_policy(service_check: contract.Result) -> contract.Result:
+    """Does the INSTALLED systemd unit actually carry the self-healing
+    restart policy this project depends on (`Restart=always`, not
+    `on-failure`)?
+
+    This is the regression pin for the outage measured 2026-08-14 17:14:
+    dolt sql-server was SIGKILLed repeatedly, the supervisor's own
+    SIGTERM/SIGINT handler (`_request_stop` in supervisor.py) then received
+    an unrelated termination signal and exited CLEANLY (status 0), and
+    `Restart=on-failure` never restarts a clean exit -- so the whole service
+    stayed `inactive` until a human noticed. `Restart=always` restarts
+    regardless of exit status; an explicit `systemctl --user stop`/`disable`
+    is still honored by systemd regardless of that policy (verified against
+    a real unit in tests/unit/test_service.py, not merely read from docs).
+
+    If a future edit to `service.py`'s unit template ever regresses this
+    back to `on-failure` (or drops Restart= entirely), THIS check fails
+    loudly here -- instead of the regression only resurfacing as a repeat
+    outage days or months later.
+
+    Same dependency-ordering convention as `_check_dolt_reachable` /
+    `_check_sweeps_alive`: skipped (never failed) when the service isn't
+    installed at all. Also skipped on a platform with no systemd unit file
+    to inspect (macOS/launchd already uses `KeepAlive=true`, its own
+    always-restart equivalent, hardcoded in `_LAUNCHD_PLIST_TEMPLATE` --
+    there is no separate "on-failure vs always" distinction to regress
+    there, so there is nothing further for this check to pin on that
+    platform).
+    """
+    info = S.describe_service()
+    if not info.supported or not info.installed:
+        return contract.Result(
+            "service.restart_policy",
+            True,
+            "skipped (service not installed) -- nothing to check yet",
+        )
+    if info.platform != "linux" or info.unit_path is None:
+        return contract.Result(
+            "service.restart_policy",
+            True,
+            f"skipped (platform {info.platform!r} has no systemd unit file to inspect)",
+        )
+    try:
+        unit_text = info.unit_path.read_text(encoding="utf-8")
+    except OSError as e:
+        return contract.Result(
+            "service.restart_policy",
+            False,
+            f"could not read installed unit at {info.unit_path}: {e}",
+        )
+    restart_lines = [
+        line.strip() for line in unit_text.splitlines() if line.strip().startswith("Restart=")
+    ]
+    if not restart_lines:
+        return contract.Result(
+            "service.restart_policy",
+            False,
+            f"installed unit at {info.unit_path} has no Restart= line at all -- an "
+            f"unintended exit (e.g. an external SIGTERM) will leave the service down until "
+            f"a human notices; re-run `amplifier-work-tracker service install` to pick up "
+            f"the current unit template",
+        )
+    if restart_lines[-1] != "Restart=always":
+        return contract.Result(
+            "service.restart_policy",
+            False,
+            f"installed unit at {info.unit_path} has {restart_lines[-1]!r}, not "
+            f"'Restart=always' -- this is the exact policy gap that let the 2026-08-14 "
+            f"outage stay down (a clean/status-0 exit is never restarted by on-failure); "
+            f"re-run `amplifier-work-tracker service install` to pick up the current unit "
+            f"template",
+        )
+    return contract.Result(
+        "service.restart_policy",
+        True,
+        "installed unit has Restart=always -- survives a clean/unintended exit",
+    )
+
+
 def cmd_doctor(a):
     """Prove the installed Beads still behaves the way we depend on, and that
     our own service/dolt-reachability are in a state parallel agents can
@@ -159,6 +238,7 @@ def cmd_doctor(a):
     results.append(service_check)
     results.append(_check_dolt_reachable(service_check))
     results.append(_check_sweeps_alive(_ws(a).root))
+    results.append(_check_restart_policy(service_check))
     width = max(len(r.id) for r in results)
     failed = 0
     for r in results:
@@ -604,6 +684,8 @@ def cmd_serve(a):
         reap_interval=a.reap_interval,
         notify_interval=a.notify_interval,
         dolt_restart_backoff=a.dolt_restart_backoff,
+        dolt_restart_budget_count=a.dolt_restart_budget_count,
+        dolt_restart_budget_window=a.dolt_restart_budget_window,
     )
 
 
@@ -856,6 +938,24 @@ def main():
         type=float,
         default=SV.DEFAULT_DOLT_RESTART_BACKOFF_SECONDS,
         help="seconds to wait before restarting a crashed dolt child",
+    )
+    p.add_argument(
+        "--dolt-restart-budget-count",
+        type=int,
+        default=SV.DEFAULT_DOLT_RESTART_BUDGET_COUNT,
+        help=(
+            "give up on dolt (exit non-zero) after this many unexpected exits within "
+            f"--dolt-restart-budget-window (default {SV.DEFAULT_DOLT_RESTART_BUDGET_COUNT})"
+        ),
+    )
+    p.add_argument(
+        "--dolt-restart-budget-window",
+        type=float,
+        default=SV.DEFAULT_DOLT_RESTART_BUDGET_WINDOW_SECONDS,
+        help=(
+            "trailing window, in seconds, over which --dolt-restart-budget-count is measured "
+            f"(default {SV.DEFAULT_DOLT_RESTART_BUDGET_WINDOW_SECONDS:.0f})"
+        ),
     )
     p.set_defaults(fn=cmd_serve)
 

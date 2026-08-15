@@ -30,6 +30,21 @@ from them, deliberately:
   - uninstall removes the unit ONLY. It never touches the dolt data
     directory or the workspace root -- that is the work queue, and deleting
     it on uninstall would be catastrophic data loss disguised as cleanup.
+  - Restart=always, not on-failure -- measured outage, 2026-08-14: something
+    sent SIGTERM to a whole group of user services (this one included).
+    `_request_stop` in supervisor.py handles that signal and exits 0 (a
+    "clean" shutdown, by design, for genuine `systemctl stop`/`disable`
+    requests). `Restart=on-failure` never restarts a clean (status 0) exit
+    -- so the service stayed `inactive` until a human noticed and manually
+    restarted it, port 3308 dead the whole time. `Restart=always` restarts
+    unconditionally on ANY exit (clean or not), any signal, or a timeout.
+    This is still safe for a genuinely-intended stop: systemd honors an
+    explicit `systemctl --user stop` (and `disable`) regardless of the
+    configured Restart= policy -- an operator-requested stop is never
+    second-guessed. Verified empirically against a real unit in
+    tests/unit/test_service.py (`Restart=always` unit clean-exits and comes
+    back; the same unit, once explicitly stopped, stays stopped) rather
+    than assumed from the systemd docs alone.
 
 The one thing genuinely different from amplifier-browser-bridge's hub: this
 service has exactly ONE install-time input that matters -- the workspace
@@ -72,7 +87,19 @@ After=network.target
 [Service]
 Type=simple
 ExecStart={exec_start}
-Restart=on-failure
+# Restart=always, not on-failure -- see this module's docstring section
+# "Restart=always, not on-failure" for the outage this fixes. The
+# supervisor's own SIGTERM/SIGINT handler (`_request_stop` in supervisor.py)
+# exits 0 on an unintended termination signal (e.g. something SIGTERM'd a
+# whole group of user services), and `on-failure` never restarts a clean
+# (status 0) exit -- that is precisely how the 2026-08-14 outage stayed down
+# until a human noticed. `always` restarts regardless of exit status,
+# signal, or timeout. This is still safe for an OPERATOR-requested stop:
+# `systemctl --user stop` (or `disable`) is honored by systemd regardless of
+# Restart= policy -- an explicit stop request is never treated as a failure
+# to recover from. Verified empirically against a real unit (not merely
+# read from the docs) in tests/unit/test_service.py.
+Restart=always
 RestartSec=5s
 TimeoutStopSec=10
 KillMode=mixed
