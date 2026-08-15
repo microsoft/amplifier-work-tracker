@@ -274,15 +274,29 @@ def cmd_new(a):
     concurrent drop can't hide the adoption; worst case is a report of
     'adopted' for a database that got dropped a moment later, which is a
     race in the reporting only, never in what was actually done.
+
+    Also reports honestly when `create()` had to HEAL an abandoned
+    creation attempt first (see `Workspace.creation_state`/
+    `_heal_abandoned`) -- `prior_state` is read BEFORE `create()` runs, for
+    the same reason `pre_existing_db` is: so this call's own healing can
+    never hide itself in the report.
     """
     _guard()
     ws = _ws(a)
     already_local = (ws.path(a.name) / ".beads").is_dir()
     pre_existing_db = False if already_local else A.database_exists(a.name)
+    prior_state = ws.creation_state(a.name)  # None / "creating" / "abandoned", before healing
     try:
         path = ws.create(a.name)
     except A.BeadsError as e:
         die(str(e))
+    if prior_state == "abandoned":
+        print(
+            f"HEALED project '{a.name}' at {path}: a previous `new` never finished "
+            f"(interrupted mid-creation, e.g. by a timeout). The incomplete attempt was "
+            f"cleared automatically and this is now a fresh, verified-writable project."
+        )
+        return
     if pre_existing_db:
         try:
             count = len(ws.project(a.name).list(include_resolved=True))
@@ -370,6 +384,18 @@ def cmd_add(a):
 
 
 def cmd_instances(a):
+    """List every known project, honestly.
+
+    Measured outage, 2026-08-15: this command reported a project whose
+    creation had been interrupted as a blind `ok` (`TOTAL 0 READY 0 HELD 0
+    INTAKE 0  ok`) -- `list()` happened to succeed (against a fallback
+    database bd substitutes when its own project config is missing/broken),
+    so `ok` ended up meaning nothing more than "this one subprocess call
+    didn't raise." `Workspace.creation_state` is consulted FIRST, before
+    ever attempting `list()`, so a project caught mid-creation or left
+    broken by one that never finished is reported as such -- `creating` or
+    `broken` -- and `ok` is restored to actually meaning "writable."
+    """
     _guard()
     ws = _ws(a)
     names = ws.names()
@@ -378,6 +404,29 @@ def cmd_instances(a):
         return
     rows = []
     for n in names:
+        state = ws.creation_state(n)
+        if state == "creating":
+            rows.append(
+                {
+                    "project": n,
+                    "status": (
+                        "creating -- a `new` for this project is in progress elsewhere "
+                        "right now; try again once it finishes"
+                    ),
+                }
+            )
+            continue
+        if state == "abandoned":
+            rows.append(
+                {
+                    "project": n,
+                    "status": (
+                        f"broken -- a previous `new` never finished; run "
+                        f"`amplifier-work-tracker new {n}` to heal it automatically"
+                    ),
+                }
+            )
+            continue
         try:
             items = ws.project(n).list(include_resolved=True)
             rows.append(

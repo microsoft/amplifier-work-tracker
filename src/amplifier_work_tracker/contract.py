@@ -20,7 +20,6 @@ import concurrent.futures as cf
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -136,22 +135,14 @@ def check_claim_subcommand(p: Probe) -> Result:
     # Non-interactive by construction -- see `adapter._bd_env`'s docstring:
     # every `bd` call site in this package must build its env through it.
     env = A._bd_env({"BEADS_DIR": str(p.ws.path(p.name) / ".beads")})
-    r = subprocess.run(
-        ["bd", "ready", "--help"], capture_output=True, text=True, env=env, check=False
-    )
+    r = A._run_bounded(["bd", "ready", "--help"], env=env)
     if "--claim" not in (r.stdout or ""):
         return Result(
             "claim.subcommand",
             False,
             "`bd ready` has no --claim flag; the safe claim path is gone",
         )
-    r2 = subprocess.run(
-        ["bd", "ready", "--claim", "--assignee", "x", "--json"],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
+    r2 = A._run_bounded(["bd", "ready", "--claim", "--assignee", "x", "--json"], env=env)
     blob = (r2.stdout or "") + (r2.stderr or "")
     if "cannot be combined" not in blob:
         return Result(
@@ -180,13 +171,7 @@ def check_claim_atomic(p: Probe, workers: int = 12, trials: int = 5) -> Result:
             env = A._bd_env({"BEADS_DIR": beads_dir, "BEADS_ACTOR": f"probe{n}"})
             r = None
             for attempt in range(8):
-                r = subprocess.run(
-                    ["bd", "ready", "--label", lane, "--claim", "--json"],
-                    capture_output=True,
-                    text=True,
-                    env=env,
-                    check=False,
-                )
+                r = A._run_bounded(["bd", "ready", "--label", lane, "--claim", "--json"], env=env)
                 blob = (r.stdout or "") + (r.stderr or "")
                 if any(s.lower() in blob.lower() for s in A._RETRYABLE):
                     time.sleep(0.1 * (2**attempt))
@@ -246,13 +231,7 @@ def check_claim_directed_atomic(p: Probe, workers: int = 12, trials: int = 5) ->
             env = A._bd_env({"BEADS_DIR": beads_dir, "BEADS_ACTOR": f"dprobe{n}"})
             r = None
             for attempt in range(8):
-                r = subprocess.run(
-                    ["bd", "update", item_id, "--claim", "--json"],
-                    capture_output=True,
-                    text=True,
-                    env=env,
-                    check=False,
-                )
+                r = A._run_bounded(["bd", "update", item_id, "--claim", "--json"], env=env)
                 blob = (r.stdout or "") + (r.stderr or "")
                 if any(s.lower() in blob.lower() for s in A._RETRYABLE):
                     time.sleep(0.1 * (2**attempt))
@@ -459,27 +438,20 @@ def check_name_rules(p: Probe) -> Result:
     try:
         d = root / "dotted.name"
         d.mkdir(parents=True)
-        subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True, check=False)
-        subprocess.run(
+        A._run_bounded(["git", "init", "-q"], cwd=d, timeout=A._GIT_TIMEOUT_SECONDS)
+        A._run_bounded(
             ["git", "commit", "-q", "--allow-empty", "-m", "i"],
             cwd=d,
-            capture_output=True,
-            check=False,
+            timeout=A._GIT_TIMEOUT_SECONDS,
         )
-        init = subprocess.run(
+        init = A._run_bounded(
             ["bd", "init", "--prefix", "dotted.name", "--shared-server"],
             cwd=d,
-            capture_output=True,
-            text=True,
             env=A._bd_env(),
-            check=False,
+            timeout=A._BD_INIT_TIMEOUT_SECONDS,
         )
-        use = subprocess.run(
-            ["bd", "list", "--json"],
-            capture_output=True,
-            text=True,
-            env=A._bd_env({"BEADS_DIR": str(d / ".beads")}),
-            check=False,
+        use = A._run_bounded(
+            ["bd", "list", "--json"], env=A._bd_env({"BEADS_DIR": str(d / ".beads")})
         )
         broken = "invalid database name" in ((use.stdout or "") + (use.stderr or ""))
         if init.returncode == 0 and broken:
@@ -782,6 +754,118 @@ def check_project_removal(p: Probe) -> Result:
     )
 
 
+def check_create_atomic_self_heals(p: Probe) -> Result:
+    """A `create()` call that finds an ABANDONED previous attempt (a
+    `.create.lock` naming a pid that is no longer alive) must self-heal --
+    drop any residue and complete a fresh, verified-writable create in the
+    SAME call -- rather than refusing forever.
+
+    Pins the exact outage measured 2026-08-15: an external timeout killed
+    `new` mid `bd init`. The process died before its own `finally:
+    lock.unlink()` could run, so the lock outlived it, and every later
+    `new` of the same name refused, PERMANENTLY, until an operator noticed
+    and cleaned up by hand.
+
+    Fabricates the abandoned state directly -- a real `.beads` directory
+    with a lock naming pid `0` (never a live process) -- rather than
+    actually racing a real `bd init` kill: deterministic and fast, matching
+    this suite's own convention for custody's fresh-vs-stale checks
+    (`check_custody_fresh_survives`/`check_custody_stale_reclaimed` forge
+    timestamps rather than waiting for real time to pass).
+    """
+    name = f"{p.name}atomic"
+    # Registered before ANY real creation happens below: from here on this
+    # database is the probe's to drop no matter which branch returns.
+    p.register_database(name)
+    d = p.ws.path(name)
+    (d / ".beads").mkdir(parents=True, exist_ok=True)
+    (d / ".create.lock").write_text("0", encoding="utf-8")  # pid 0 -- never live here
+
+    try:
+        path = p.ws.create(name)
+    except A.BeadsError as e:
+        return Result(
+            "project.create_atomic",
+            False,
+            f"create() did not self-heal an abandoned lock -- refused instead of recovering: {e}",
+        )
+    try:
+        items = p.ws.project(name).list()
+    except A.BeadsError as e:
+        return Result(
+            "project.create_atomic",
+            False,
+            f"create() reported success after healing but the project does not "
+            f"actually answer: {e}",
+        )
+    if items:
+        return Result(
+            "project.create_atomic",
+            False,
+            f"healed project came back with {len(items)} item(s) -- expected a "
+            f"genuinely fresh, empty project",
+        )
+    return Result(
+        "project.create_atomic",
+        True,
+        f"an abandoned creation lock (dead pid) is healed automatically and create() "
+        f"completes fresh in the same call; path={path}",
+    )
+
+
+def check_creation_state_reporting(p: Probe) -> Result:
+    """`Workspace.creation_state` -- what `instances` consults BEFORE ever
+    attempting `list()`, so it never reports a mid-creation or abandoned
+    project as a blind "ok" -- must distinguish all three states: nothing
+    in progress (None), a live creation lock ("creating"), and a dead-pid
+    lock ("abandoned").
+
+    Pins the exact outage measured 2026-08-15: `instances` printed
+    `autonomous_work_pipeline  0  0  0  0  ok` for a project whose creation
+    had been interrupted -- the lock was sitting right there, unconsulted.
+    """
+    name = f"{p.name}state"
+    d = p.ws.path(name)
+    (d / ".beads").mkdir(parents=True, exist_ok=True)
+    lock = d / ".create.lock"
+
+    try:
+        state = p.ws.creation_state(name)
+        if state is not None:
+            return Result(
+                "project.creation_state_reporting",
+                False,
+                f"a `.beads` dir with no lock at all was reported as {state!r} -- "
+                f"expected None (nothing in progress)",
+            )
+
+        lock.write_text(str(os.getpid()), encoding="utf-8")  # our OWN pid -- guaranteed alive
+        state = p.ws.creation_state(name)
+        if state != "creating":
+            return Result(
+                "project.creation_state_reporting",
+                False,
+                f"a lock naming a LIVE pid was not reported as 'creating': {state!r}",
+            )
+
+        lock.write_text("0", encoding="utf-8")  # pid 0 -- never live here
+        state = p.ws.creation_state(name)
+        if state != "abandoned":
+            return Result(
+                "project.creation_state_reporting",
+                False,
+                f"a lock naming a DEAD pid was not reported as 'abandoned': {state!r}",
+            )
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    return Result(
+        "project.creation_state_reporting",
+        True,
+        "creation_state distinguishes none/creating/abandoned correctly",
+    )
+
+
 CHECKS = [
     ("capabilities", check_capabilities),
     ("resolve.fenced", check_resolve_fenced),
@@ -801,6 +885,8 @@ CHECKS = [
     ("custody.idle_not_exempt", check_custody_idle_not_exempt),
     ("custody.fenced", check_custody_fenced),
     ("project.removal", check_project_removal),
+    ("project.create_atomic", check_create_atomic_self_heals),
+    ("project.creation_state_reporting", check_creation_state_reporting),
 ]
 
 
