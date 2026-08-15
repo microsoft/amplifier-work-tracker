@@ -57,6 +57,8 @@ from amplifier_work_tracker import prereqs as P
 from amplifier_work_tracker import service as S
 from amplifier_work_tracker import supervisor as SV
 
+from ._guard import guarded
+
 WorkTrackerState = Literal[
     "bd_missing",
     "bd_too_old",
@@ -193,6 +195,7 @@ class WorkTrackerStatusTool:
     def input_schema(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
+    @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         root = _resolve_root(self._config)
         state, fix = await asyncio.to_thread(classify_state, root)
@@ -237,6 +240,7 @@ class WorkTrackerInstallTool:
     def input_schema(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
+    @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         root = _resolve_root(self._config)
         state, fix = await asyncio.to_thread(classify_state, root)

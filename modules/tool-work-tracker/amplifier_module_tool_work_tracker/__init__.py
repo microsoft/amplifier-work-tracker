@@ -79,6 +79,7 @@ from amplifier_core import ToolResult
 from amplifier_work_tracker import adapter as A
 from amplifier_work_tracker import custody as C
 
+from ._guard import guarded
 from .service_tools import WorkTrackerInstallTool, WorkTrackerStatusTool
 
 _MIN_RENEW_INTERVAL_SECONDS = 5
@@ -329,7 +330,21 @@ class WorkTrackerSession:
             )
 
     async def status(self) -> ToolResult:
+        """Read-only project roll-up. `success` is honest about whether
+        EVERY project's status was actually retrieved: a project a real
+        `A.BeadsError` occurred for still gets an entry (its error text,
+        same as before -- one broken project must never hide the healthy
+        ones), but that error must not be invisible to the outer envelope
+        too. Before this fix, a real, caught error here was buried as a
+        string inside one project's entry while the overall ToolResult
+        still reported `success=True` -- machine-invisible to any caller
+        that only checks the envelope. An empty project (zero items) is
+        NOT an error and never affects this -- that is 'the operation
+        succeeded and the answer is empty', the case this must not
+        conflate with a genuine failure.
+        """
         projects: list[dict[str, Any]] = []
+        any_project_errored = False
         for name in self._ws.names():
             try:
                 items = self._ws.project(name).list(include_resolved=True)
@@ -348,6 +363,7 @@ class WorkTrackerSession:
                 # hint mid-word -- a bare `[:120]` slice used to leave e.g.
                 # "...or 'bd in" instead of "...or 'bd init' to create a
                 # new database". See adapter.truncate_status's docstring.
+                any_project_errored = True
                 projects.append({"project": name, "status": A.truncate_status(f"ERROR: {e}")})
         with self._lock:
             held = self._held
@@ -360,7 +376,9 @@ class WorkTrackerSession:
                 if held
                 else None
             )
-        return ToolResult(success=True, output={"projects": projects, "holding": holding})
+        return ToolResult(
+            success=not any_project_errored, output={"projects": projects, "holding": holding}
+        )
 
     async def list_items(
         self,
@@ -537,6 +555,7 @@ class WorkClaimTool:
             "required": ["project"],
         }
 
+    @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         return await self._session.claim(input["project"], item_id=input.get("item_id"))
 
@@ -575,6 +594,7 @@ class WorkDeclareTool:
             "required": ["state"],
         }
 
+    @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         return await self._session.declare(input["state"])
 
@@ -612,6 +632,7 @@ class WorkResolveTool:
             "required": ["id", "reason"],
         }
 
+    @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         return await self._session.resolve(input["id"], input["reason"])
 
@@ -637,6 +658,7 @@ class WorkStatusTool:
     def input_schema(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
+    @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         return await self._session.status()
 
@@ -677,6 +699,7 @@ class WorkFileTool:
             "required": ["title"],
         }
 
+    @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         return await self._session.file(
             input["title"],
@@ -725,6 +748,7 @@ class WorkAddTool:
             "required": ["project", "title"],
         }
 
+    @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         return await self._session.add(
             input["project"],
@@ -795,6 +819,7 @@ class WorkListTool:
             "required": ["project"],
         }
 
+    @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         return await self._session.list_items(
             input["project"],
