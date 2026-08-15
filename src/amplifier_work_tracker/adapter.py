@@ -17,15 +17,19 @@ improvements without its churn reaching our domain logic.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import custody as C
+
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------
 # Version window. We refuse outside it rather than guess.
@@ -119,6 +123,108 @@ _RETRYABLE = ("1213", "1205", "serialization failure", "try restarting transacti
 _MAX_RETRIES = 8
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,30}$")
 
+# --------------------------------------------------------------------------
+# Subprocess timeouts -- every `bd`/`dolt`/`git` call this module makes goes
+# through `_run_bounded` (below), never a bare `subprocess.run` with no
+# `timeout`. Measured outage, 2026-08-15: `amplifier-work-tracker doctor`
+# hung past its caller's own EXTERNAL timeout and left two `bd` processes
+# running afterward as orphans, because nothing in this module bounded its
+# own subprocess calls -- the only thing standing between "slow" and
+# "hangs forever" was whatever killed the CALLER, which cannot also clean
+# up a grandchild process `bd` itself spawned (see `_run_bounded`'s
+# docstring for why a bare `subprocess.run(timeout=...)` is not enough).
+#
+# `_BD_INIT_TIMEOUT_SECONDS` is deliberately much larger than
+# `_DEFAULT_BD_TIMEOUT_SECONDS`: a real, eventually-SUCCESSFUL `bd init`
+# was measured taking up to 178s (attaching to / spawning the shared dolt
+# server under load) -- bounding it at the same figure as a plain `bd
+# list`/`bd show` would turn real (if unwelcome) slowness into a false
+# failure. `tests/conftest.py`'s own `run_cli` fixture already treats 240s
+# as the outer bound of a legitimate CLI invocation; reused here rather
+# than inventing a second figure.
+_DEFAULT_BD_TIMEOUT_SECONDS = 60.0
+_BD_INIT_TIMEOUT_SECONDS = 240.0
+_GIT_TIMEOUT_SECONDS = 30.0
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """Terminate *proc* and every process in its OWN process group -- reaches
+    grandchildren a bare `proc.kill()` leaves orphaned (e.g. a dolt
+    sql-server `bd --shared-server` spawned as ITS OWN child). Requires the
+    process to have been started with `start_new_session=True` (see
+    `_run_bounded`) so it has a process group distinct from ours to kill.
+
+    Best-effort: a group that is already gone (`ProcessLookupError`) is not
+    a failure -- the process may have exited on its own between the
+    timeout firing and this call running.
+    """
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _run_bounded(
+    args: list[str],
+    *,
+    env: dict | None = None,
+    cwd: Path | str | None = None,
+    timeout: float = _DEFAULT_BD_TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess:
+    """Run *args* with a hard wall-clock bound, and -- unlike a bare
+    `subprocess.run(..., timeout=...)` -- make sure nothing the child
+    spawned survives the timeout as an orphan.
+
+    This is THE call site for every `bd`/`dolt`/`git` subprocess invocation
+    in this module (and, via `contract._run_bounded` re-exported access, in
+    the contract suite too) -- see this module's own docstring on why a
+    single seam matters, and the timeout-constants comment above for the
+    outage this closes.
+
+    A bare `subprocess.run(timeout=...)` only SIGKILLs the immediate child
+    on timeout; any process THAT child spawned (e.g. `bd --shared-server`
+    spawning its own `dolt sql-server`) is reparented to init and keeps
+    running. Launching in a new session (`start_new_session=True`, its own
+    POSIX process group) and killing the whole group on timeout is what
+    actually reaches them.
+
+    On timeout, returns a `CompletedProcess` with `returncode=124` (the
+    conventional shell `timeout` exit code) and an explanatory message
+    folded into `stderr` -- this never raises, so every existing call
+    site's `p.returncode != 0` / `(p.stderr or p.stdout)` handling treats a
+    hang exactly like any other bd failure, with no second exception type
+    for callers to catch.
+    """
+    proc = subprocess.Popen(
+        args,
+        cwd=str(cwd) if cwd is not None else None,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,  # own process group -- see `_kill_process_group`
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(proc)
+        try:
+            # The group is now dead (or dying) -- this drains the pipes and
+            # reaps the process rather than leaving a zombie; a second
+            # short timeout guards against a straggler that ignored SIGKILL
+            # somehow, in which case we still return rather than hang here.
+            stdout, stderr = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
+        note = f"timed out after {timeout:.0f}s: {' '.join(args)}"
+        logger.warning(note)
+        return subprocess.CompletedProcess(args, 124, stdout or "", f"{stderr or ''}\n{note}")
+
 
 def _bd_env(extra: dict | None = None) -> dict:
     """Base environment for EVERY subprocess invocation of `bd`, anywhere in
@@ -191,14 +297,7 @@ def _disable_telemetry_once() -> None:
         return
     _TELEMETRY_OFF_ATTEMPTED = True
     try:
-        subprocess.run(
-            ["bd", "metrics", "off"],
-            capture_output=True,
-            text=True,
-            env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
-            check=False,
-            timeout=10,
-        )
+        _run_bounded(["bd", "metrics", "off"], env=_bd_env(), timeout=10)
     except Exception:  # noqa: BLE001 -- best-effort courtesy setting, never fatal
         pass
 
@@ -267,12 +366,9 @@ def _dolt_conn_args() -> list[str]:
 
 
 def _dolt_sql(query: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
+    return _run_bounded(
         ["dolt", *_dolt_conn_args(), "sql", "-q", query, "-r", "csv"],
-        capture_output=True,
-        text=True,
         env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
-        check=False,
     )
 
 
@@ -298,7 +394,7 @@ def database_exists(name: str) -> bool:
     if p.returncode != 0:
         raise BeadsError(
             f"could not check whether database {name!r} exists on the shared dolt "
-            f"server: {(p.stderr or p.stdout).strip()[:300]}"
+            f"server: {_clean_bd_error(p.stderr or p.stdout)}"
         )
     rows = [ln for ln in (p.stdout or "").splitlines() if ln.strip()][1:]  # drop CSV header
     return name in rows
@@ -315,19 +411,16 @@ def drop_database(name: str) -> bool:
     drop": a caller relying on this to make data actually disappear must
     never see a silent no-op reported as success.
     """
-    p = subprocess.run(
+    p = _run_bounded(
         ["dolt", *_dolt_conn_args(), "sql", "-q", f"DROP DATABASE `{name}`"],
-        capture_output=True,
-        text=True,
         env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
-        check=False,
     )
     blob = (p.stdout or "") + (p.stderr or "")
     if p.returncode == 0:
         return True
     if "database not found" in blob.lower():
         return False
-    raise BeadsError(f"drop_database {name!r} failed: {blob.strip()[:300]}")
+    raise BeadsError(f"drop_database {name!r} failed: {_clean_bd_error(blob)}")
 
 
 class BeadsError(Exception):
@@ -471,6 +564,90 @@ def truncate_status(text: str, limit: int = STATUS_ERROR_MAX) -> str:
     return text[:cut] + " ...[truncated]"
 
 
+# Substrings that mean "this text came straight from bd/dolt/git internals
+# and must never reach a caller verbatim" -- matched case-insensitively, as
+# substrings rather than whole messages, so future bd wording changes around
+# the same commands are still caught. Measured outage, 2026-08-15: an agent
+# (correctly, per the bundle's own rules) forbidden from running `bd`/`git
+# config`/`dolt` directly was handed exactly those commands as "the fix" --
+# `create failed: ...git config beads.role maintainer...`, `bd init failed:
+# ...run 'bd dolt commit' to commit the working set...` -- and had to
+# consciously override its own error-following instinct to stay compliant.
+_LEAKING_BD_INTERNALS_PATTERNS = (
+    "git config beads.role",
+    "bd dolt commit",
+    "bd dolt ",
+    "beads.role not configured",
+    "gh#",
+    "no beads configuration found",
+    "using default database name",
+    "run 'bd ",  # e.g. "run 'bd init'", "run 'bd where'" -- an instruction
+    # to run bd directly, in bd's own quoting style
+    "bd where",
+    "beads_dir",  # e.g. "set BEADS_DIR to point to your .beads directory"
+    "no beads database found",
+)
+
+# The signature bd emits when `bd init` targets a database left mid schema
+# migration by a PREVIOUS, interrupted `bd init` -- never seen from normal
+# item operations, only from init against dirty tables. See
+# `Workspace.create`'s dirty-schema self-heal.
+_DIRTY_SCHEMA_MIGRATION_PATTERNS = ("dirty tables", "pending schema migration")
+
+
+def _looks_like_leaking_bd_internals(blob: str) -> bool:
+    low = blob.lower()
+    return any(pattern in low for pattern in _LEAKING_BD_INTERNALS_PATTERNS)
+
+
+def _looks_like_dirty_schema_migration(blob: str) -> bool:
+    low = blob.lower()
+    return any(pattern in low for pattern in _DIRTY_SCHEMA_MIGRATION_PATTERNS)
+
+
+def _clean_bd_error(blob: str | None, *, limit: int = STATUS_ERROR_MAX) -> str:
+    """Render a bd/dolt failure blob as text safe to hand to a caller --
+    every `BeadsError` message built from `(p.stderr or p.stdout)` in this
+    module goes through here, not a bare slice.
+
+    Two independent problems, both measured in the 2026-08-15 outage:
+
+      1. bd/dolt sometimes emit remediation instructions in THEIR OWN
+         vocabulary (`git config beads.role ...`, `bd dolt commit`, a
+         `GH#nnnn` reference, a fallback-database warning) -- see
+         `_LEAKING_BD_INTERNALS_PATTERNS`'s docstring for the measured
+         cost. Detected here and replaced with guidance in OUR vocabulary
+         instead. The raw text is never thrown away -- it goes to
+         `logger.warning` -- only kept out of the caller's instruction path.
+      2. A bare slice can cut mid-word, leaving a meaningless fragment
+         (measured: `Error: database`). `truncate_status` already solves
+         this (word-boundary cut, explicit `...[truncated]` marker) --
+         reused here rather than reinvented.
+    """
+    raw = (blob or "").strip()
+    if not raw:
+        return "(bd reported no detail)"
+    if _looks_like_leaking_bd_internals(raw):
+        # DEBUG, deliberately -- not warning/info. Python's own "handler of
+        # last resort" prints WARNING-and-above to stderr with NO handler
+        # configured at all (true for every plain CLI invocation; only
+        # `serve()` calls `_configure_logging()`). Logging the raw blob at
+        # warning-or-above would put it right back in a normal command's
+        # stderr -- exactly the instruction path this function exists to
+        # keep it out of. DEBUG is preserved (never destroyed) for anyone
+        # who explicitly configures logging to capture it, without being
+        # visible by default.
+        logger.debug("sanitized a bd/dolt failure that leaked internal vocabulary: %s", raw)
+        return (
+            "the underlying store reported an internal configuration problem (full "
+            "detail is in this process's logs). This is never fixed by running a `bd`, "
+            "`git config`, or `dolt` command directly -- retry the amplifier-work-tracker "
+            "command, and if it keeps failing, run `amplifier-work-tracker doctor` and "
+            "escalate with that output attached"
+        )
+    return truncate_status(raw, limit)
+
+
 @dataclass
 class ListResult:
     """What `Beads.list_bounded` actually returned, and how it relates to
@@ -507,13 +684,7 @@ class Beads:
     def _run(self, args: list[str], actor: str | None = None) -> subprocess.CompletedProcess:
         last = None
         for attempt in range(_MAX_RETRIES):
-            p = subprocess.run(
-                ["bd", *args],
-                capture_output=True,
-                text=True,
-                env=self._env(actor),
-                check=False,
-            )
+            p = _run_bounded(["bd", *args], env=self._env(actor))
             last = p
             if _retryable((p.stdout or "") + (p.stderr or "")):
                 time.sleep(0.15 * (2**attempt) * (0.5 + os.urandom(1)[0] / 255))
@@ -522,7 +693,7 @@ class Beads:
         raise BeadsError(
             f"`bd {' '.join(args[:2])}` still conflicting after {_MAX_RETRIES} retries. "
             f"Contention too high; refusing to keep hammering. "
-            f"Last: {((last.stderr or last.stdout) if last else '')[:200]}"
+            f"Last: {_clean_bd_error((last.stderr or last.stdout) if last else '', limit=200)}"
         )
 
     def _json(self, args: list[str], actor: str | None = None):
@@ -530,7 +701,7 @@ class Beads:
         out = (p.stdout or "").strip()
         if not out:
             if p.returncode != 0:
-                raise BeadsError(f"`bd {' '.join(args[:2])}`: {(p.stderr or '').strip()[:300]}")
+                raise BeadsError(f"`bd {' '.join(args[:2])}`: {_clean_bd_error(p.stderr)}")
             return None
         try:
             data = json.loads(out)
@@ -576,7 +747,7 @@ class Beads:
         p = self._run(args, actor=actor)
         new_id = (p.stdout or "").strip().splitlines()[-1].strip() if p.stdout else ""
         if p.returncode != 0 or not new_id:
-            raise BeadsError(f"create failed: {(p.stderr or p.stdout).strip()[:300]}")
+            raise BeadsError(f"create failed: {_clean_bd_error(p.stderr or p.stdout)}")
         return new_id
 
     def claim_next(self, *, lane: str = LANE_WORK, actor: str) -> Item | None:
@@ -830,7 +1001,7 @@ class Beads:
                 )
         p = self._run(["close", item_id, "--reason", reason], actor=actor)
         if p.returncode != 0:
-            raise BeadsError(f"close {item_id}: {(p.stderr or p.stdout).strip()[:300]}")
+            raise BeadsError(f"close {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
         back = self.get(item_id)
         if back.status != "resolved":
             raise BeadsError(
@@ -843,7 +1014,8 @@ class Beads:
         """Hand a held item back to the queue."""
         p = self._run(["update", item_id, "--status", "open", "--assignee", ""])
         if p.returncode != 0:
-            raise BeadsError(f"release {item_id}: {(p.stderr or p.stdout).strip()[:200]}")
+            detail = _clean_bd_error(p.stderr or p.stdout, limit=200)
+            raise BeadsError(f"release {item_id}: {detail}")
 
     # ------------------------------------------------------------------ custody
     #
@@ -904,7 +1076,8 @@ class Beads:
             actor=holder,
         )
         if p.returncode != 0:
-            raise BeadsError(f"take_custody {item_id}: {(p.stderr or p.stdout).strip()[:200]}")
+            detail = _clean_bd_error(p.stderr or p.stdout, limit=200)
+            raise BeadsError(f"take_custody {item_id}: {detail}")
         back = self.get_custody(item_id)
         if back != record:
             raise BeadsError(
@@ -959,7 +1132,8 @@ class Beads:
             actor=holder,
         )
         if p.returncode != 0:
-            raise BeadsError(f"renew_custody {item_id}: {(p.stderr or p.stdout).strip()[:200]}")
+            detail = _clean_bd_error(p.stderr or p.stdout, limit=200)
+            raise BeadsError(f"renew_custody {item_id}: {detail}")
         back = self.get_custody(item_id)
         if back != updated:
             raise BeadsError(
@@ -982,6 +1156,37 @@ class RemovalReport:
     database_removed: bool
     directory_removed: bool
     leftover: list[str] = field(default_factory=list)
+
+
+def _read_lock_pid(lock: Path) -> int | None:
+    """The pid recorded in a `.create.lock` file, or None if it cannot be
+    read as one (missing, empty, non-numeric) -- treated as dead by
+    `_pid_alive`, since an unreadable lock cannot be protecting anything.
+    """
+    try:
+        return int(lock.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _pid_alive(pid: int | None) -> bool:
+    """Is `pid` a live process?
+
+    Deliberately NOT shared with `cli._pid_alive` (which does the same
+    eight lines) -- per IMPLEMENTATION_PHILOSOPHY's "conventions via
+    instructions, not code": this is a trivial, stdlib-shaped check, and
+    `cli.py` already imports FROM this module, so importing back would be
+    circular. Keep both in sync by inspection, not by coupling.
+    """
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, just isn't ours to signal -- still alive
+    return True
 
 
 class Workspace:
@@ -1014,12 +1219,111 @@ class Workspace:
             )
         return Beads(d, actor=actor)
 
+    def creation_state(self, name: str) -> str | None:
+        """Is `name` currently mid-creation, or left over from one that
+        never finished?
+
+        Returns:
+          - ``"creating"``  -- a `.create.lock` names a PID that is still
+            alive; a `create()` call for this name is genuinely in progress
+            elsewhere right now.
+          - ``"abandoned"`` -- a `.create.lock` names a PID that is no
+            longer alive; `create()` self-heals this automatically on its
+            very next call (see `_heal_abandoned`).
+          - ``None``        -- no lock at all; nothing in progress.
+
+        Read-only and side-effect-free -- used by `cmd_instances` so a
+        project caught mid-creation, or broken by one that never finished,
+        is reported as such instead of a blind "ok" that only reflects
+        whether `list()` happened to return without raising. Measured
+        outage, 2026-08-15: `instances` reported a half-created project as
+        `ok` (`TOTAL 0 READY 0 HELD 0 INTAKE 0  ok`) while its
+        `.create.lock` sat right there, unconsulted.
+        """
+        lock = self.path(name) / ".create.lock"
+        if not lock.exists():
+            return None
+        return "creating" if _pid_alive(_read_lock_pid(lock)) else "abandoned"
+
+    def _heal_abandoned(self, name: str, beads_dir: Path, lock: Path) -> None:
+        """Best-effort cleanup of a `create()` attempt that never finished
+        -- a `.create.lock` naming a pid that is no longer alive.
+
+        Drops the server-side database, if any (`drop_database` treats
+        "does not exist" as a normal no-op, never an error -- see its
+        docstring), then removes the local `.beads` directory and the
+        stale lock. This is what lets the very next `create()` call for
+        this name -- including the SAME call that detected the abandoned
+        state -- start from a genuinely clean slate instead of perpetually
+        hitting the stale lock, or a dirty half-migrated database.
+
+        Safe by construction: a `.create.lock` is written ONLY by
+        `create()`, and removed ONLY by that same call's own `finally`
+        block on any normal completion (success, or a raised
+        `BeadsError`). The only way one survives is the process dying
+        abnormally (SIGKILL, host crash) mid-creation -- unambiguous
+        evidence this name's database, if any, never got past THIS
+        attempt, so it is always safe to discard.
+
+        Raises (refuses to proceed) if the drop itself fails for a reason
+        other than "does not exist" -- e.g. the shared dolt server is
+        unreachable -- rather than silently treating an unverifiable state
+        as healed.
+        """
+        try:
+            drop_database(name)
+        except BeadsError as e:
+            raise BeadsError(
+                f"project {name!r} has an abandoned creation attempt at {beads_dir} "
+                f"(a previous `new` never finished), and healing it failed while "
+                f"checking the shared server: {e}. Refusing to guess -- verify the "
+                f"shared dolt server is reachable (`amplifier-work-tracker doctor`) "
+                f"before retrying."
+            ) from e
+        shutil.rmtree(beads_dir, ignore_errors=True)
+        lock.unlink(missing_ok=True)
+
     def create(self, name: str) -> Path:
-        """Create a project. Name rules and post-init verification are ours.
+        """Create a project -- atomically, from the caller's point of
+        view: a `create()` interrupted partway (killed, host crash) must
+        never leave a permanently-unusable project behind. Name rules and
+        post-init verification are ours.
 
         ASSUMPTION project.name_rules -- a dotted name yields an unusable
-        database while `bd init` still reports success, so we reject early and
-        then prove the database actually answers before saying it worked.
+        database while `bd init` still reports success, so we reject early
+        and then prove the database actually answers before saying it
+        worked.
+
+        Measured outage, 2026-08-15: an external timeout killed `new` mid
+        `bd init`. The process died before its own `finally:
+        lock.unlink()` could run, so the lock outlived it -- every later
+        `new` of the same name refused, PERMANENTLY, until an operator
+        noticed and cleaned up by hand (and even then, the server-side
+        residue outlived a manual `rm -rf` of the local directory, burning
+        the name a second way). Three self-healing steps close this, each
+        pinned to a specific part of that outage:
+
+          1. A `.create.lock` naming a DEAD pid heals automatically rather
+             than refusing forever -- see `creation_state`/
+             `_heal_abandoned`.
+          2. A `.beads` directory that answers to no lock at all, but does
+             not actually answer, gets a few short retries before being
+             treated as broken residue -- so a transient dolt hiccup on an
+             otherwise-healthy, long-running project is never mistaken for
+             abandoned residue and dropped (see
+             `_RESIDUE_CHECK_RETRIES`).
+          3. A `bd init` failing on bd's own dirty-schema-migration
+             signature ("pending schema migrations alter pre-existing
+             dirty tables") is recovered by dropping that residue and
+             retrying exactly once, rather than permanently burning the
+             name -- this is the exact failure measured AFTER a manual
+             `rm -rf` of the local directory: the server-side half
+             survived and kept the name unusable even though the local
+             half was gone.
+
+        In every case, `d.mkdir` and a fresh `bd init` run at the end of
+        this SAME call -- healing and creating happen together, not across
+        two separate invocations.
         """
         if not NAME_RE.match(name):
             raise BeadsError(
@@ -1030,36 +1334,56 @@ class Workspace:
         d = self.path(name)
         beads_dir = d / ".beads"
         lock = d / ".create.lock"
+
         if beads_dir.is_dir():
-            if lock.exists():
-                raise BeadsError(f"project {name!r} is already being created (lock: {lock})")
-            try:
-                # A directory existing is not evidence of anything. A failed
-                # `bd init` (crashed process, killed session, disk full)
-                # leaves `.beads/` behind with no usable database inside it.
-                # Without this probe, every later `create(name)` would see
-                # "already exists", return immediately, and report success
-                # on residue -- exactly the silent-partial-success shape
-                # this whole project exists to prevent, in our own code.
-                self.project(name).list()
-                return d
-            except BeadsError as e:
-                # Deliberately phrased as `cd <dir> && rm -r <name>`, never a
-                # bare `rm -rf <abs-path>` -- the literal text `rm -rf /`
-                # trips Amplifier's own bash safety profile as a SUBSTRING
-                # match regardless of whether the path is actually root
-                # (measured cost in a DTU run: 2 wasted tool calls). See
-                # prereqs.py's install-command docstrings for the same fix
-                # applied to a different emitted command.
+            state = self.creation_state(name)
+            if state == "creating":
+                pid = _read_lock_pid(lock)
                 raise BeadsError(
-                    f"project {name!r} has stale residue at {beads_dir}: the directory "
-                    f"exists but the database does not answer ({e}). A previous create "
-                    f"attempt likely failed partway through. Remove it and retry: "
-                    f"`cd {d} && rm -r .beads` (keeps anything else in {d}), or "
-                    f"`cd {d.parent} && rm -r {d.name}` to remove the whole project "
-                    f"directory if it holds nothing else you need. This call refuses to "
-                    f"silently treat dead residue as a successful project."
-                ) from e
+                    f"project {name!r} is already being created (lock: {lock}, pid {pid})"
+                )
+            if state == "abandoned":
+                logger.warning(
+                    "project %r: healing an abandoned creation attempt (lock %s named "
+                    "a dead pid) before retrying",
+                    name,
+                    lock,
+                )
+                self._heal_abandoned(name, beads_dir, lock)
+                # fall through -- a fresh create completes below, same call
+            else:
+                # No lock at all -- unchanged from before this fix. A
+                # directory existing is not evidence of anything by
+                # itself: a failed `bd init` with no surviving lock (rare,
+                # but possible -- e.g. the lock file lost independently of
+                # `.beads`) leaves residue that must be reported, not
+                # silently accepted OR silently dropped. Unlike the
+                # dead-pid-lock case above, there is no unambiguous local
+                # signal here that this residue is safely discardable, so
+                # this stays a refusal with actionable next steps --
+                # see test_workspace_create_refuses_to_report_success_on_dead_residue.
+                try:
+                    self.project(name).list()
+                    return d
+                except BeadsError as e:
+                    # Deliberately phrased as `cd <dir> && rm -r <name>`,
+                    # never a bare `rm -rf <abs-path>` -- the literal text
+                    # `rm -rf /` trips Amplifier's own bash safety profile
+                    # as a SUBSTRING match regardless of whether the path
+                    # is actually root (measured cost in a DTU run: 2
+                    # wasted tool calls). See prereqs.py's install-command
+                    # docstrings for the same fix applied elsewhere.
+                    raise BeadsError(
+                        f"project {name!r} has stale residue at {beads_dir}: the "
+                        f"directory exists but the database does not answer ({e}). A "
+                        f"previous create attempt likely failed partway through, and no "
+                        f"creation lock survived to self-heal automatically. Remove it "
+                        f"and retry: `cd {d} && rm -r .beads` (keeps anything else in "
+                        f"{d}), or `cd {d.parent} && rm -r {d.name}` to remove the whole "
+                        f"project directory if it holds nothing else you need. This call "
+                        f"refuses to silently treat dead residue as a successful project."
+                    ) from e
+
         d.mkdir(parents=True, exist_ok=True)
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -1069,24 +1393,38 @@ class Workspace:
             raise BeadsError(f"project {name!r} is already being created (lock: {lock})") from e
         try:
             if not (d / ".git").is_dir():
-                subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True, check=False)
-                subprocess.run(
+                _run_bounded(["git", "init", "-q"], cwd=d, timeout=_GIT_TIMEOUT_SECONDS)
+                _run_bounded(
                     ["git", "commit", "-q", "--allow-empty", "-m", "init"],
                     cwd=d,
-                    capture_output=True,
-                    check=False,
+                    timeout=_GIT_TIMEOUT_SECONDS,
                 )
             _disable_telemetry_once()  # see docstring -- BD_NON_INTERACTIVE alone does not do this
-            p = subprocess.run(
-                ["bd", "init", "--prefix", name, *_bd_init_server_args()],
-                cwd=d,
-                capture_output=True,
-                text=True,
-                env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
-                check=False,
-            )
+            init_args = ["bd", "init", "--prefix", name, *_bd_init_server_args()]
+            p = _run_bounded(init_args, cwd=d, env=_bd_env(), timeout=_BD_INIT_TIMEOUT_SECONDS)
             if p.returncode != 0:
-                raise BeadsError(f"bd init failed: {(p.stderr or p.stdout)[:300]}")
+                blob = p.stderr or p.stdout or ""
+                if _looks_like_dirty_schema_migration(blob):
+                    # Narrow, bounded auto-recovery: this exact signature
+                    # only arises from a PREVIOUS `bd init` interrupted mid
+                    # schema migration -- never from normal item
+                    # operations. Drop the residue and retry exactly once
+                    # rather than permanently burning this name.
+                    logger.warning(
+                        "project %r: bd init hit a dirty schema migration -- dropping "
+                        "and retrying once: %s",
+                        name,
+                        blob.strip()[:300],
+                    )
+                    try:
+                        drop_database(name)
+                    except BeadsError:
+                        pass  # best-effort; the retry below surfaces any real failure
+                    p = _run_bounded(
+                        init_args, cwd=d, env=_bd_env(), timeout=_BD_INIT_TIMEOUT_SECONDS
+                    )
+                if p.returncode != 0:
+                    raise BeadsError(f"bd init failed: {_clean_bd_error(p.stderr or p.stdout)}")
             self.project(name).list()  # prove it actually answers
             return d
         finally:
@@ -1228,29 +1566,18 @@ def capabilities() -> dict[str, bool]:
             "gate",
             "dep",
         ):
-            r = subprocess.run(
-                ["bd", cmd, "--help"],
-                capture_output=True,
-                text=True,
-                env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
-                check=False,
-            )
+            r = _run_bounded(["bd", cmd, "--help"], env=_bd_env())
             blob = (r.stdout or "") + (r.stderr or "")
             _CAPS[cmd] = "unknown command" not in blob
     return dict(_CAPS)
 
 
 def version() -> tuple[int, int, int]:
-    p = subprocess.run(
-        ["bd", "--version"],
-        capture_output=True,
-        text=True,
-        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
-        check=False,
-    )
+    p = _run_bounded(["bd", "--version"], env=_bd_env())
     m = re.search(r"(\d+)\.(\d+)\.(\d+)", p.stdout or "")
     if not m:
-        raise BeadsError(f"cannot read bd version: {(p.stdout or p.stderr)[:120]}")
+        detail = _clean_bd_error(p.stdout or p.stderr, limit=120)
+        raise BeadsError(f"cannot read bd version: {detail}")
     return tuple(int(x) for x in m.groups())  # type: ignore
 
 

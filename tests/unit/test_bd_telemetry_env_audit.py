@@ -15,12 +15,16 @@ stuck DTU session three fixes from now.
 
 Static, not dynamic: we walk the AST looking for
 `subprocess.run(["bd", ...], ...)` (and Popen/call/check_output/check_call)
-shapes and check each one for an `env=` keyword that traces back to a call
-to `_bd_env` / `Beads._env`. We check source shape, not runtime behaviour,
-because exercising every call site here would need a real (or stubbed) `bd`
-on PATH for each one and would still miss call sites whose branch never
-executes on this machine. A textual audit catches "a new bd subprocess call
-forgot env=" regardless of what's installed.
+shapes, PLUS `_run_bounded(["bd", ...], ...)` / `A._run_bounded(...)` --
+the one seam every `bd`/`dolt`/`git` subprocess call in this module now
+goes through (see its docstring: it wraps `subprocess.Popen` for
+process-group-safe timeout handling) -- and check each one for an `env=`
+keyword that traces back to a call to `_bd_env` / `Beads._env`. We check
+source shape, not runtime behaviour, because exercising every call site
+here would need a real (or stubbed) `bd` on PATH for each one and would
+still miss call sites whose branch never executes on this machine. A
+textual audit catches "a new bd subprocess call forgot env=" regardless of
+what's installed.
 
 Scope note: the "safe names" pass below is FILE-scoped, not scope-aware --
 if the identifier `env` is assigned from `_bd_env(...)` ANYWHERE in a file,
@@ -39,10 +43,15 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "amplifier_work_tracker"
 
 _SUBPROCESS_METHODS = {"run", "Popen", "call", "check_output", "check_call"}
 _ENV_HELPER_ATTRS = {"_bd_env", "_env"}
+_BOUNDED_RUNNER_NAME = "_run_bounded"
 
 
 def _is_subprocess_call(node: ast.Call) -> bool:
     func = node.func
+    if isinstance(func, ast.Attribute) and func.attr == _BOUNDED_RUNNER_NAME:
+        return True  # e.g. `A._run_bounded(...)` from contract.py
+    if isinstance(func, ast.Name) and func.id == _BOUNDED_RUNNER_NAME:
+        return True  # bare `_run_bounded(...)` from within adapter.py itself
     return (
         isinstance(func, ast.Attribute)
         and func.attr in _SUBPROCESS_METHODS

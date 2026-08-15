@@ -312,11 +312,17 @@ def test_disable_telemetry_once_is_cached_per_process(monkeypatch):
     """`_disable_telemetry_once` must only invoke `bd metrics off` once per
     process -- repeated `Workspace.create` calls in the same session must
     not each pay a subprocess round-trip for an idempotent, already-applied
-    setting."""
+    setting.
+
+    Monkeypatches `A._run_bounded` -- the one seam every `bd`/`dolt`/`git`
+    subprocess call in this module goes through (see its docstring) --
+    rather than `subprocess.run` directly, since `_run_bounded` itself uses
+    `subprocess.Popen` for process-group-safe timeout handling.
+    """
     monkeypatch.setattr(A, "_TELEMETRY_OFF_ATTEMPTED", False)
     calls = []
 
-    def fake_run(*args, **kwargs):
+    def fake_run_bounded(args, **kwargs):
         calls.append(args)
 
         class _P:
@@ -326,11 +332,11 @@ def test_disable_telemetry_once_is_cached_per_process(monkeypatch):
 
         return _P()
 
-    monkeypatch.setattr(A.subprocess, "run", fake_run)
+    monkeypatch.setattr(A, "_run_bounded", fake_run_bounded)
     A._disable_telemetry_once()  # noqa: SLF001
     A._disable_telemetry_once()  # noqa: SLF001
     assert len(calls) == 1
-    assert calls[0][0][:3] == ["bd", "metrics", "off"]
+    assert calls[0][:3] == ["bd", "metrics", "off"]
 
 
 def test_disable_telemetry_once_never_raises_on_subprocess_failure(monkeypatch):
@@ -341,7 +347,7 @@ def test_disable_telemetry_once_never_raises_on_subprocess_failure(monkeypatch):
     def boom(*args, **kwargs):
         raise FileNotFoundError("bd not found")
 
-    monkeypatch.setattr(A.subprocess, "run", boom)
+    monkeypatch.setattr(A, "_run_bounded", boom)
     A._disable_telemetry_once()  # noqa: SLF001 -- must not raise
 
 
