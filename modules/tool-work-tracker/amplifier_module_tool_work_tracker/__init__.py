@@ -16,6 +16,15 @@ resolution a closed item ended up with -- forcing a raw `bd list --all
 this bundle exists to make unnecessary. Strictly read-only: it never claims,
 mutates, or touches custody -- see `WorkTrackerSession.list_items`.
 
+`work_list`'s `item_id` parameter closes the OTHER read gap: until now,
+`work_claim` was the ONLY thing that returned an item's `description` /
+`acceptance` / `design` -- so an agent that merely wanted to understand what
+an item was asking for had to take ownership of it first to find out. Pass
+`item_id` to `work_list` (or `--id` to the CLI's `list`) to read one item's
+full record instead, exactly like `work_claim`'s own directed-by-`item_id`
+mode (PR #4), but without claiming, mutating, or touching custody -- see
+`adapter.Beads.get_readonly`.
+
 `work_add` is the sanctioned path for filing a project's FIRST work item (or
 any later one) with no held item required -- unlike `work_file`, which
 requires this session to already be holding something and links
@@ -357,6 +366,7 @@ class WorkTrackerSession:
         self,
         project: str,
         *,
+        item_id: str | None = None,
         status: str | None = None,
         limit: int | None = None,
     ) -> ToolResult:
@@ -366,27 +376,44 @@ class WorkTrackerSession:
         at all, unlike every other tool method above. See
         `adapter.Beads.list_bounded` for the capping/truncation contract --
         `truncated`/`total_count` are always honest, never a silent cap.
+
+        `item_id`, when given, switches to a directed single-item READ (see
+        `adapter.Beads.get_readonly`): the full record for exactly that item
+        -- including `acceptance`/`description`/`design`, the body fields
+        only a successful `work_claim` used to return -- with no claim, no
+        mutation, no custody touched. `status`/`limit` are ignored in this
+        mode; mirrors `work_claim`'s own `item_id` (directed claim, PR #4)
+        so the two directed-by-id shapes stay coherent. This is THE fix for
+        the gap where understanding what an item asks for required first
+        taking ownership of it.
         """
+        if item_id:
+            try:
+                bd = self._project(project)
+                item = bd.get_readonly(item_id)
+            except A.BeadsError as e:
+                return ToolResult(success=False, output=str(e))
+            return ToolResult(
+                success=True,
+                output={
+                    "project": project,
+                    "items": [item.summary(full=True)],
+                    "returned_count": 1,
+                    "total_count": 1,
+                    "truncated": False,
+                    "limit": 1,
+                },
+            )
         try:
             bd = self._project(project)
             result = bd.list_bounded(status=status, limit=limit)
         except A.BeadsError as e:
             return ToolResult(success=False, output=str(e))
-        rows = [
-            {
-                "id": i.id,
-                "title": i.title,
-                "status": i.status,
-                "holder": i.holder,
-                "resolution": i.resolution,
-            }
-            for i in result.items
-        ]
         return ToolResult(
             success=True,
             output={
                 "project": project,
-                "items": rows,
+                "items": [i.summary() for i in result.items],
                 "returned_count": result.returned_count,
                 "total_count": result.total_count,
                 "truncated": result.truncated,
@@ -725,7 +752,12 @@ class WorkListTool:
             "silent. Strictly read-only: never claims, mutates, or touches custody. Use this "
             "to see who holds an item, or what happened to items you didn't claim (closed "
             "items and their resolution are visible here, not just open ones) -- never shell "
-            "out to a raw storage-layer CLI to answer this."
+            "out to a raw storage-layer CLI to answer this. "
+            "Pass item_id to read ONE item's FULL record instead -- including "
+            "acceptance/description/design, the same body work_claim returns -- WITHOUT "
+            "claiming it, mutating it, or touching custody. This is how to understand what an "
+            "item is asking for before deciding whether to claim it at all; work_claim is the "
+            "only tool that used to expose that body, and it takes the item to do so."
         )
 
     @property
@@ -734,19 +766,29 @@ class WorkListTool:
             "type": "object",
             "properties": {
                 "project": {"type": "string", "description": "Named project to list items from."},
+                "item_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional. Read this SPECIFIC item's full record (including "
+                        "acceptance/description/design) instead of listing -- never claims, "
+                        "mutates, or touches custody. Ignores status/limit when given. Mirrors "
+                        "work_claim's own item_id (directed claim) so the directed-by-id shape "
+                        "is consistent across both tools."
+                    ),
+                },
                 "status": {
                     "type": "string",
                     "enum": list(A.STATUSES),
                     "description": (
                         "Optional. Filter to items with exactly this status. Omit to see every "
-                        "status."
+                        "status. Ignored when item_id is given."
                     ),
                 },
                 "limit": {
                     "type": "integer",
                     "description": (
                         f"Optional. Max items to return (default {A.LIST_DEFAULT_LIMIT}, "
-                        f"clamped to {A.LIST_MAX_LIMIT})."
+                        f"clamped to {A.LIST_MAX_LIMIT}). Ignored when item_id is given."
                     ),
                 },
             },
@@ -756,6 +798,7 @@ class WorkListTool:
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         return await self._session.list_items(
             input["project"],
+            item_id=input.get("item_id"),
             status=input.get("status"),
             limit=input.get("limit"),
         )

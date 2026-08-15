@@ -408,27 +408,69 @@ def cmd_instances(a):
         )
 
 
+def _print_item_full(a, item: A.Item) -> None:
+    """Render one item's FULL record (`--id` directed read) -- id, title,
+    status, holder, resolution, plus the body fields only `claim` used to
+    return (acceptance/description/design). See `adapter.Beads.get_readonly`
+    -- this never claims, mutates, or touches custody.
+    """
+    row = item.summary(full=True)
+    if a.json:
+        print(
+            json.dumps(
+                {
+                    "project": a.project,
+                    "items": [row],
+                    "returned_count": 1,
+                    "total_count": 1,
+                    "truncated": False,
+                    "limit": 1,
+                },
+                indent=2,
+            )
+        )
+        return
+    print(f"ID:       {row['id']}")
+    print(f"TITLE:    {row['title']}")
+    print(f"STATUS:   {row['status']}")
+    print(f"HOLDER:   {row['holder'] or ''}")
+    if row.get("resolution"):
+        print(f"\nRESOLUTION:\n{row['resolution']}")
+    if row.get("acceptance"):
+        print(f"\nACCEPTANCE:\n{row['acceptance']}")
+    if row.get("description"):
+        print(f"\nDESCRIPTION:\n{row['description']}")
+    if row.get("design"):
+        print(f"\nDESIGN:\n{row['design']}")
+
+
 def cmd_list(a):
     """Read-only per-item listing: id, title, status, holder, resolution --
     the operator/CLI counterpart to the `work_list` agent tool. See
     `adapter.Beads.list_bounded` for the shared capping/truncation logic;
     this command is a thin wrapper, exactly like `work_add`/`add`.
+
+    `--id` switches to a directed single-item READ: the full record
+    (including description/acceptance/design -- everything `claim` returns)
+    for exactly that item, with no claim, no mutation, no custody touched.
+    Mirrors `claim`'s own `--id` (directed claim by id, PR #4) so the two
+    directed-by-id shapes stay coherent; `--status`/`--limit` are ignored
+    when `--id` is given, since a directed read is inherently one item.
     """
     _guard()
+    bd = _ws(a).project(a.project)
+    if a.id:
+        try:
+            item = bd.get_readonly(a.id)
+        except A.BeadsError as e:
+            die(str(e))
+        _print_item_full(a, item)
+        return
     try:
-        result = _ws(a).project(a.project).list_bounded(status=a.status, limit=a.limit)
+        result = bd.list_bounded(status=a.status, limit=a.limit)
     except A.BeadsError as e:
         die(str(e))
-    rows = [
-        {
-            "id": i.id,
-            "title": i.title,
-            "status": i.status,
-            "holder": i.holder,
-            "resolution": i.resolution,
-        }
-        for i in result.items
-    ]
+    rows = [i.summary() for i in result.items]
     if a.json:
         print(
             json.dumps(
@@ -831,6 +873,15 @@ def main():
         type=int,
         default=None,
         help=f"max items to return (default {A.LIST_DEFAULT_LIMIT}, max {A.LIST_MAX_LIMIT})",
+    )
+    p.add_argument(
+        "--id",
+        default=None,
+        help=(
+            "read this SPECIFIC item's full record -- including description/acceptance/"
+            "design, everything `claim` returns -- WITHOUT claiming it; ignores "
+            "--status/--limit when given (mirrors `claim`'s own --id, PR #4)"
+        ),
     )
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_list)

@@ -32,6 +32,18 @@ claim by that id — a client-side read-then-write). That is different from
 known id is still ONE atomic call (`bd update <id> --claim`), measured
 safe under contention the same way the default queue path is.
 
+## Reading without claiming
+
+**You do not need to claim an item to see what it asks for.** Until this
+was fixed, `work_claim` was the ONLY thing that returned an item's
+`acceptance` / `description` / `design` — so understanding an item meant
+taking ownership of it first, purely to look. If you just want to read one
+item's full record (e.g. to decide whether it's worth claiming, or to look
+at something you don't hold), call `work_list(project=<name>,
+item_id=<id>)` — same body fields `work_claim` returns, but no claim, no
+mutation, no custody touched. Only call `work_claim` when you actually
+intend to do the work.
+
 ## The loop
 
 1. `work_claim(project=<name>)` — atomic claim AND custody establishment, in

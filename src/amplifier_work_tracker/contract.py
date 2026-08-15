@@ -372,6 +372,56 @@ def check_show_dependents(p: Probe) -> Result:
     return Result("show.dependents", True, f"reverse link visible ({len(bare.links)} links)")
 
 
+def check_read_no_mutation(p: Probe) -> Result:
+    """The read path (`Beads.get_readonly` -- the `work_list` tool's
+    `item_id` directed read, and the CLI's `list --id`) is safe by
+    construction only if `bd show` truly never mutates the item it reads.
+    If a future bd release ever gave `show` a side effect (touching
+    `updated_at`, auto-assigning on first view, migrating stored fields on
+    read), every claim this feature makes -- "reading never claims, never
+    takes custody, never changes status" -- would silently stop being true,
+    and an agent choosing to read instead of claim would be quietly worse
+    off for it.
+
+    Reads the same item several times, through both `get` and
+    `get_readonly` (including its not-found and wrong-project error
+    branches -- these misses must be equally inert), and asserts status,
+    holder, and the full metadata blob are identical before and after.
+    """
+    assert p.bd
+    lane = "lane:read_probe"
+    item_id = p.bd.create("read probe item", tags=[lane], priority=1)
+    before = p.bd.get(item_id)
+    for _ in range(3):
+        p.bd.get(item_id)
+        p.bd.get_readonly(item_id)
+    try:
+        p.bd.get_readonly(f"{p.name}-doesnotexist999")
+    except A.BeadsError:
+        pass
+    try:
+        p.bd.get_readonly("not-this-project-at-all-1")
+    except A.BeadsError:
+        pass
+    after = p.bd.get(item_id)
+    if before.status != after.status or before.holder != after.holder or before.meta != after.meta:
+        return Result(
+            "read.no_mutation",
+            False,
+            f"reading {item_id} repeatedly changed its state: status "
+            f"{before.status!r} -> {after.status!r}, holder {before.holder!r} -> "
+            f"{after.holder!r} -- `bd show` (or our wrapper around it) is no "
+            f"longer side-effect-free; the read path can no longer be trusted "
+            f"not to disturb an item it only looked at",
+        )
+    return Result(
+        "read.no_mutation",
+        True,
+        "repeated reads (including not-found/wrong-project misses) leave status, "
+        "holder, and metadata unchanged",
+    )
+
+
 def check_resolution_readable(p: Probe) -> Result:
     assert p.bd
     i = p.bd.create("probe resolution", tags=["lane:probe_res"])
@@ -742,6 +792,7 @@ CHECKS = [
     ("list.includes_closed", check_list_includes_closed),
     ("list.status_filter_includes_closed", check_list_status_filter_includes_closed),
     ("show.dependents", check_show_dependents),
+    ("read.no_mutation", check_read_no_mutation),
     ("resolution.readable", check_resolution_readable),
     ("metadata.roundtrip", check_metadata_roundtrip),
     ("project.name_rules", check_name_rules),

@@ -168,3 +168,104 @@ def test_list_bounded_on_nonexistent_project_raises_distinct_not_found(
         raise AssertionError("expected BeadsError for a nonexistent project")
     except A.BeadsError as e:
         assert "not found" in str(e)
+
+
+def test_list_bounded_rows_are_lean_by_default_no_body_fields(shared_bd, unique_lane):
+    """The default list payload must stay lean -- no acceptance/description/
+    design, not even as an explicit null -- so a bulk listing of many items
+    never balloons the response with bodies nobody asked for."""
+    item_id = shared_bd.create(
+        "work_list leanness probe",
+        tags=[unique_lane],
+        priority=1,
+        description="a description nobody asked to see in the default list",
+        acceptance="acceptance text that should stay out of the lean row",
+    )
+    result = shared_bd.list_bounded()
+    by_id = {i.id: i for i in result.items}
+    assert item_id in by_id
+    row = by_id[item_id].summary()
+    assert "acceptance" not in row
+    assert "description" not in row
+    assert "design" not in row
+
+
+# ------------------------------------------------------------ get_readonly
+
+
+def test_get_readonly_reads_the_real_full_body_without_claiming(shared_bd, unique_lane):
+    """The core scenario the other agent session hit: read acceptance and
+    description for a real item, against the real bd/dolt storage layer,
+    without claiming it -- and it must stay open/unheld afterward."""
+    item_id = shared_bd.create(
+        "get_readonly full-body probe",
+        tags=[unique_lane],
+        priority=1,
+        description="a real description that should come back intact",
+        acceptance="Given a probe, When read, Then the body is visible",
+    )
+
+    item = shared_bd.get_readonly(item_id)
+    assert item.id == item_id
+    assert item.status == "open"
+    assert item.holder is None
+    assert item.description == "a real description that should come back intact"
+    assert item.acceptance == "Given a probe, When read, Then the body is visible"
+
+    # Never claimed.
+    back = shared_bd.get(item_id)
+    assert back.status == "open"
+    assert back.holder is None
+
+
+def test_get_readonly_on_resolved_item_shows_resolution_too(shared_bd, unique_lane):
+    item_id = shared_bd.create("get_readonly resolved probe", tags=[unique_lane], priority=1)
+    claimed = shared_bd.claim_item(item_id, actor="get-readonly-resolver")
+    assert claimed.id == item_id
+    shared_bd.resolve(item_id, "get_readonly resolution text", actor="get-readonly-resolver")
+
+    item = shared_bd.get_readonly(item_id)
+    assert item.status == "resolved"
+    assert item.resolution == "get_readonly resolution text"
+
+
+def test_get_readonly_never_mutates_the_item(shared_bd, unique_lane):
+    item_id = shared_bd.create("get_readonly no-mutation probe", tags=[unique_lane], priority=1)
+
+    def snapshot():
+        i = shared_bd.get(item_id)
+        return (i.status, i.holder, i.meta)
+
+    before = snapshot()
+    for _ in range(3):
+        shared_bd.get_readonly(item_id)
+    after = snapshot()
+    assert before == after
+
+
+def test_get_readonly_on_nonexistent_item_in_this_project_raises_not_found(
+    shared_project_name, shared_bd
+):
+    fake_id = f"{shared_project_name}-doesnotexist999"
+    try:
+        shared_bd.get_readonly(fake_id)
+        raise AssertionError("expected BeadsError for a nonexistent item")
+    except A.BeadsError as e:
+        assert "not found in project" in str(e)
+        assert "does not look like it belongs" not in str(e)
+
+
+def test_get_readonly_on_id_from_a_different_project_raises_distinct_wrong_project_error(
+    shared_bd, project_factory, unique_lane
+):
+    """A VALID id, just belonging to a different project -- bd's own error
+    text is identical to a plain not-found, so this must be distinguished
+    by us, not bd."""
+    other_name, other_bd = project_factory("wrongprojread")
+    other_item_id = other_bd.create("wrong-project source item", tags=[unique_lane], priority=1)
+
+    try:
+        shared_bd.get_readonly(other_item_id)
+        raise AssertionError("expected BeadsError naming the wrong-project mismatch")
+    except A.BeadsError as e:
+        assert "does not look like it belongs to project" in str(e)

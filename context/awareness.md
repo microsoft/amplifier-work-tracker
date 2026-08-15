@@ -42,3 +42,10 @@ Five things here fail **silently** if you get them wrong — no error, no undo:
   `load_skill(skill_name="claiming-work-safely")`.
 - `doctor` output, the seam, or scheduling `reap`/`notify` →
   `load_skill(skill_name="work-tracker-operations")`.
+- **Want to understand what an item is asking for before you decide whether
+  to claim it? Pass `item_id` to `work_list` (or `--id` to the CLI's
+  `list`).** This reads the full record -- title, status, holder,
+  resolution, plus `acceptance`/`description`/`design`, everything
+  `work_claim` returns -- with NO claim, no mutation, no custody touched.
+  `work_claim` is not the only way to see an item's body; do not claim
+  something just to read it.
