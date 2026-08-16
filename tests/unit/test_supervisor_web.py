@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -101,7 +103,7 @@ def test_import_web_modules_wraps_import_error_with_actionable_hint(monkeypatch)
     with pytest.raises(RuntimeError) as excinfo:
         SV.import_web_modules()
     assert "the 'web' extra" in str(excinfo.value)
-    assert "pip install 'amplifier-work-tracker[web]'" in str(excinfo.value)
+    assert "uv tool install --reinstall --with 'amplifier-work-tracker[web]'" in str(excinfo.value)
 
 
 # --------------------------------------------------------------- stop watcher
@@ -282,3 +284,173 @@ def test_async_serve_with_web_runs_all_four_tasks(monkeypatch, tmp_path):
         )
     )
     assert result == 0
+
+
+# ---------------------------------------------------------- the fail-loud gap
+#
+# The live bug: `import_web_modules()` raises plain `RuntimeError` (see its
+# own docstring -- it must, for `cli.py`'s standalone `cmd_web`), but
+# `_async_serve`'s except clause only matches `WebServerStartupError`/
+# `DoltSupervisionExhaustedError`. Before this fix, that `RuntimeError`
+# escaped `web_server_loop` uncaught, which the two tests below prove is
+# now closed at both the SINGLE-task level (`web_server_loop` itself wraps
+# it) and the WHOLE-supervisor level (`_async_serve` really exits, and the
+# real dolt-like child process is not left orphaned).
+
+
+def test_web_server_loop_wraps_missing_web_extra_as_web_server_startup_error(monkeypatch, tmp_path):
+    """`import_web_modules()` raising `RuntimeError` (the 'web' extra
+    genuinely missing) must surface from `web_server_loop` as
+    `WebServerStartupError` -- the SAME type a rejected config or a real
+    bind failure already raise -- so `_async_serve`'s except clause
+    catches it. Before this fix, this raised a bare `RuntimeError` that
+    `_async_serve` did not catch at all.
+    """
+
+    def _poison_import_web_modules():
+        raise RuntimeError("the web dashboard requires the 'web' extra: No module named 'fastapi'")
+
+    monkeypatch.setattr(SV, "import_web_modules", _poison_import_web_modules)
+
+    ws = A.Workspace(tmp_path / "root")
+    web = SV.WebIntegrationConfig(
+        host=None, public=False, port=_free_port(), auth_mode="password", session_ttl=3600
+    )
+    stop_event = asyncio.Event()
+
+    async def run():
+        with pytest.raises(SV.WebServerStartupError) as excinfo:
+            await SV.web_server_loop(ws, web, stop_event=stop_event)
+        assert "the 'web' extra" in str(excinfo.value)
+
+    asyncio.run(run())
+
+
+def test_async_serve_fails_loud_and_terminates_real_dolt_child_on_missing_web_extra(
+    monkeypatch, tmp_path
+):
+    """Regression test for the live incident, end to end: a missing `[web]`
+    extra must not just raise the right exception TYPE -- the whole
+    supervisor process must actually be able to exit, including
+    terminating the real dolt child.
+
+    Before this fix there were TWO independent bugs, either one of which
+    alone reproduces the live symptom (service `active` forever, dolt up,
+    web dashboard silently never bound):
+
+      1. `import_web_modules()`'s plain `RuntimeError` did not match
+         `_async_serve`'s except clause at all, so cleanup never ran.
+      2. Even with the right exception type, `_async_serve`'s cleanup
+         only called `stop_event.set()` -- never `proc.terminate()` on the
+         real dolt child. Cancelling the asyncio Task wrapping `await
+         asyncio.to_thread(proc.wait)` succeeds at the asyncio level, but
+         the real OS subprocess (and its executor thread) keeps running;
+         `asyncio.run()`'s own `shutdown_default_executor()` then blocks
+         FOREVER waiting for that thread, so the process never actually
+         returns.
+
+    A real, long-lived subprocess stands in for dolt here (never a real
+    `dolt` binary -- this file stays dolt-independent per its own
+    docstring) specifically because the hang only reproduces against a
+    REAL OS process + thread, not a plain coroutine fake -- see
+    `_instant_stop_dolt_loop` elsewhere in this file, which would not have
+    caught this bug.
+    """
+    spawned: dict[str, subprocess.Popen] = {}
+
+    def _fake_spawn_dolt(host, port, data_dir):
+        data_dir.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.Popen(["sleep", "300"])  # noqa: S607 -- test fixture, stands in for dolt
+        spawned["proc"] = proc
+        return proc
+
+    def _poison_import_web_modules():
+        raise RuntimeError("the web dashboard requires the 'web' extra: No module named 'fastapi'")
+
+    monkeypatch.setattr(SV, "spawn_dolt", _fake_spawn_dolt)
+    monkeypatch.setattr(SV, "import_web_modules", _poison_import_web_modules)
+
+    web = SV.WebIntegrationConfig(
+        host=None, public=False, port=_free_port(), auth_mode="password", session_ttl=3600
+    )
+
+    async def run():
+        with pytest.raises(SV.WebServerStartupError):
+            await asyncio.wait_for(
+                SV._async_serve(
+                    tmp_path / "root",
+                    host="127.0.0.1",
+                    port=_free_port(),
+                    reap_interval=9999,
+                    notify_interval=9999,
+                    dolt_restart_backoff=0.0,
+                    web=web,
+                ),
+                timeout=10,
+            )
+
+    t0 = time.monotonic()
+    asyncio.run(run())
+    elapsed = time.monotonic() - t0
+    assert elapsed < 8, (
+        f"_async_serve took {elapsed:.1f}s to fail loud -- should be near-instant, "
+        f"not hanging on the still-alive fake dolt child"
+    )
+
+    assert "proc" in spawned, "the fake dolt child was never spawned"
+    # A brief grace period for the SIGTERM `_request_stop()` sent to actually
+    # take effect -- never a bare assertion against `.poll()` immediately.
+    spawned["proc"].wait(timeout=5)
+    assert spawned["proc"].poll() is not None, (
+        "the fake dolt child was left running (orphaned) after the supervisor gave up -- "
+        "_async_serve's cleanup must terminate it, not just cancel the asyncio task"
+    )
+
+
+def test_serve_returns_1_and_prints_remedy_on_missing_web_extra(monkeypatch, tmp_path, capsys):
+    """The full synchronous entry point (`cli.py`'s `cmd_serve` calls this
+    directly): must return 1, never hang, and the stderr message must name
+    the exact remedy an operator needs."""
+    spawned: dict[str, subprocess.Popen] = {}
+
+    def _fake_spawn_dolt(host, port, data_dir):
+        data_dir.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.Popen(["sleep", "300"])  # noqa: S607 -- test fixture, stands in for dolt
+        spawned["proc"] = proc
+        return proc
+
+    def _poison_import_web_modules():
+        # Uses the REAL shared message template (the same one
+        # `import_web_modules()` itself formats on a genuine ImportError)
+        # so this test verifies the actual remedy text a real missing-
+        # extra failure would show, not a hand-rolled stand-in.
+        raise RuntimeError(
+            SV._WEB_EXTRA_ERROR_TEMPLATE.format(e=ImportError("No module named 'fastapi'"))
+        )
+
+    monkeypatch.setattr(SV, "spawn_dolt", _fake_spawn_dolt)
+    monkeypatch.setattr(SV, "import_web_modules", _poison_import_web_modules)
+
+    web = SV.WebIntegrationConfig(
+        host=None, public=False, port=_free_port(), auth_mode="password", session_ttl=3600
+    )
+
+    t0 = time.monotonic()
+    result = SV.serve(
+        tmp_path / "root",
+        host="127.0.0.1",
+        port=_free_port(),
+        dolt_restart_backoff=0.0,
+        web=web,
+    )
+    elapsed = time.monotonic() - t0
+
+    assert result == 1
+    assert elapsed < 8, f"serve() took {elapsed:.1f}s -- should fail loud promptly, not hang"
+
+    captured = capsys.readouterr()
+    assert "uv tool install --reinstall --with 'amplifier-work-tracker[web]'" in captured.err
+
+    if "proc" in spawned:
+        spawned["proc"].wait(timeout=5)
+        assert spawned["proc"].poll() is not None, "fake dolt child left orphaned by serve()"

@@ -507,3 +507,136 @@ def test_service_install_propagates_the_failure_after_rollback(monkeypatch, tmp_
     monkeypatch.setattr(S, "_systemd_install", fake_systemd_install)
     with pytest.raises(subprocess.CalledProcessError):
         S.service_install(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# The install-time preflight: refuse to write/enable a unit at all when the
+# 'web' extra can't be verified importable in the environment that will
+# ACTUALLY run it -- see `WebExtraNotImportableError`'s docstring for the
+# live incident (a unit came up `active`, dolt genuinely served, and the web
+# dashboard silently never bound because this was never checked).
+#
+# `_fake_interpreter` below is a real, directly-executable file whose OWN
+# `#!/bin/sh` shebang makes it a controllable stand-in for "a python that
+# can/can't import fastapi" -- it ignores its `-c <code>` argv entirely and
+# just exits with a hardcoded code, so these tests never depend on any real
+# python actually missing the extra.
+# ---------------------------------------------------------------------------
+
+
+def _fake_console_script_with_interpreter(tmp_path: Path, *, importable: bool) -> Path:
+    """A fake console-script file whose shebang points at a fake
+    "interpreter" that exits 0 (importable) or 1 (not importable) --
+    see this section's docstring."""
+    fake_interp = tmp_path / ("fake-python-ok" if importable else "fake-python-broken")
+    fake_interp.write_text(f"#!/bin/sh\nexit {0 if importable else 1}\n", encoding="utf-8")
+    fake_interp.chmod(0o755)
+    script = tmp_path / S.SERVICE_NAME
+    script.write_text(f"#!{fake_interp}\n", encoding="utf-8")
+    script.chmod(0o755)
+    return script
+
+
+def test_resolve_console_script_interpreter_reads_the_shebang(tmp_path):
+    script = _fake_console_script_with_interpreter(tmp_path, importable=True)
+    interpreter = S._resolve_console_script_interpreter([str(script)])
+    assert interpreter == str(tmp_path / "fake-python-ok")
+
+
+def test_resolve_console_script_interpreter_returns_sys_executable_for_module_fallback():
+    tokens = [S.sys.executable, "-m", "amplifier_work_tracker.cli"]
+    assert S._resolve_console_script_interpreter(tokens) == S.sys.executable
+
+
+def test_resolve_console_script_interpreter_returns_none_when_no_shebang(tmp_path):
+    script = tmp_path / S.SERVICE_NAME
+    script.write_text("not a shebang line at all\n", encoding="utf-8")
+    script.chmod(0o755)
+    assert S._resolve_console_script_interpreter([str(script)]) is None
+
+
+def test_probe_web_extra_importable_true_for_the_real_test_interpreter():
+    """Sanity check using the REAL interpreter running these tests --
+    `dev`+`web` extras are installed for the test suite (see pyproject.toml
+    and the Makefile's `venv` target), so this must report importable."""
+    ok, detail = S.probe_web_extra_importable(
+        [S.sys.executable, "-m", "amplifier_work_tracker.cli"]
+    )
+    assert ok, detail
+    assert detail == ""
+
+
+def test_probe_web_extra_importable_false_when_the_target_cannot_import(tmp_path):
+    script = _fake_console_script_with_interpreter(tmp_path, importable=False)
+    ok, detail = S.probe_web_extra_importable([str(script)])
+    assert not ok
+    assert detail  # some observed detail, never a silent empty string
+
+
+def test_probe_web_extra_importable_false_when_interpreter_cannot_be_resolved(tmp_path):
+    script = tmp_path / S.SERVICE_NAME
+    script.write_text("no shebang here\n", encoding="utf-8")
+    script.chmod(0o755)
+    ok, detail = S.probe_web_extra_importable([str(script)])
+    assert not ok
+    assert "could not determine" in detail
+
+
+def test_service_install_refuses_with_remedy_when_web_extra_not_importable(monkeypatch, tmp_path):
+    """The install-time close of the live bug: refuse BEFORE writing/
+    enabling any unit, naming the exact remedy command."""
+    monkeypatch.setattr(S.sys, "platform", "linux")
+    monkeypatch.setattr(S, "_have_systemctl", lambda: True)
+    script = _fake_console_script_with_interpreter(tmp_path, importable=False)
+    monkeypatch.setattr(S, "_resolve_bin_tokens", lambda: [str(script)])
+
+    def _poison_systemd_install(*a, **k):
+        raise AssertionError("_systemd_install must not run when the web extra check fails")
+
+    monkeypatch.setattr(S, "_systemd_install", _poison_systemd_install)
+
+    with pytest.raises(S.WebExtraNotImportableError) as excinfo:
+        S.service_install(tmp_path / "root", web_port=8095)
+
+    assert "uv tool install --reinstall --with 'amplifier-work-tracker[web]'" in str(excinfo.value)
+    assert "uv pip install -e '.[web]'" in str(excinfo.value)
+
+
+def test_service_install_skips_the_web_extra_check_when_web_port_not_given(monkeypatch, tmp_path):
+    """The default (`web_port=None`) must behave EXACTLY as before this
+    fix: no importability probe at all, matching `_serve_argv_tail`'s own
+    "omit every --web-* flag unless web_port is given" contract."""
+    monkeypatch.setattr(S.sys, "platform", "linux")
+    monkeypatch.setattr(S, "_have_systemctl", lambda: True)
+
+    def _poison_probe(bin_tokens, **kwargs):
+        raise AssertionError("probe_web_extra_importable must not run when web_port is None")
+
+    monkeypatch.setattr(S, "probe_web_extra_importable", _poison_probe)
+    monkeypatch.setattr(S, "_systemd_install", lambda *a, **k: None)
+    monkeypatch.setattr(S, "_systemd_describe", lambda: "sentinel")
+
+    assert S.service_install(tmp_path / "root") == "sentinel"
+
+
+def test_service_install_proceeds_when_web_extra_importable(monkeypatch, tmp_path):
+    """The extra IS importable in the target environment -- the preflight
+    passes silently and the real install path is reached (mocked here, per
+    this file's own no-real-systemctl convention)."""
+    monkeypatch.setattr(S.sys, "platform", "linux")
+    monkeypatch.setattr(S, "_have_systemctl", lambda: True)
+    script = _fake_console_script_with_interpreter(tmp_path, importable=True)
+    monkeypatch.setattr(S, "_resolve_bin_tokens", lambda: [str(script)])
+
+    called: dict[str, bool] = {}
+
+    def fake_systemd_install(*a, **k):
+        called["ran"] = True
+
+    monkeypatch.setattr(S, "_systemd_install", fake_systemd_install)
+    monkeypatch.setattr(S, "_systemd_describe", lambda: "sentinel")
+
+    result = S.service_install(tmp_path / "root", web_port=8095)
+
+    assert called.get("ran") is True
+    assert result == "sentinel"
