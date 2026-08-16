@@ -429,18 +429,19 @@ def cmd_instances(a):
             continue
         try:
             items = ws.project(n).list(include_resolved=True)
-            rows.append(
-                {
-                    "project": n,
-                    "total": len(items),
-                    "ready": sum(1 for i in items if i.status == "open" and A.LANE_WORK in i.tags),
-                    "held": sum(1 for i in items if i.status == "held"),
-                    "intake": sum(
-                        1 for i in items if i.status == "open" and A.LANE_INTAKE in i.tags
-                    ),
-                    "status": "ok",
-                }
-            )
+            row = {
+                "project": n,
+                "total": len(items),
+                "ready": sum(1 for i in items if i.status == "open" and A.LANE_WORK in i.tags),
+                "held": sum(1 for i in items if i.status == "held"),
+                "intake": sum(1 for i in items if i.status == "open" and A.LANE_INTAKE in i.tags),
+                "status": "ok",
+            }
+            # Aging/throughput -- cheap, computed once across the whole
+            # project rather than shipping per-item timestamps in a list
+            # (see `A.project_activity`'s docstring for why).
+            row.update(A.project_activity(items))
+            rows.append(row)
         except A.BeadsError as e:
             # A.truncate_status -- see its docstring: a bare slice cap
             # severs the actionable hint mid-word (same bug as the
@@ -483,6 +484,13 @@ def _print_item_full(a, item: A.Item) -> None:
     print(f"TITLE:    {row['title']}")
     print(f"STATUS:   {row['status']}")
     print(f"HOLDER:   {row['holder'] or ''}")
+    if row.get("created_at"):
+        by = f" by {row['created_by']}" if row.get("created_by") else ""
+        print(f"CREATED:  {row['created_at']}{by}")
+    if row.get("updated_at"):
+        print(f"UPDATED:  {row['updated_at']}")
+    if row.get("closed_at"):
+        print(f"CLOSED:   {row['closed_at']}")
     if row.get("resolution"):
         print(f"\nRESOLUTION:\n{row['resolution']}")
     if row.get("acceptance"):
