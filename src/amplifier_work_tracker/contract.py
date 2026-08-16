@@ -417,6 +417,50 @@ def check_resolution_readable(p: Probe) -> Result:
     return Result("resolution.readable", True, "resolution text round-trips")
 
 
+def check_timestamps_readable(p: Probe) -> Result:
+    """`created_at`/`updated_at`/`closed_at` must survive from bd's own
+    `show --json` into our own `Item`, parsed as real datetimes -- not
+    merely present on the raw payload. Pins the exact gap measured live:
+    bd recorded all three on every item the whole time, but `Item.summary()`
+    never read them, so a project's real aging/throughput data was
+    unreachable through this seam even though bd had it all along.
+
+    Checked in dependency order, same convention as the rest of this
+    module's checks that build on an earlier operation succeeding
+    (create, then close): if `create` itself is broken, `claim.atomic`/
+    `resolution.readable` already fail loudly for that -- this check does
+    not re-diagnose bd's basic write path, only whether OUR parsing of
+    its timestamps holds up once a create/close genuinely happened.
+    """
+    assert p.bd
+    i = p.bd.create("timestamp probe", tags=["lane:probe_ts"])
+    created = p.bd.get(i)
+    if created.created_at is None or created.updated_at is None:
+        return Result(
+            "timestamps.readable",
+            False,
+            f"created_at/updated_at missing (or unparseable) on freshly created "
+            f"{i!r} -- bd's own `show --json` no longer includes them, or our "
+            f"parsing broke: created_at={created.raw.get('created_at')!r}, "
+            f"updated_at={created.raw.get('updated_at')!r}",
+        )
+    p.bd.resolve(i, "timestamp probe resolution")
+    closed = p.bd.get(i)
+    if closed.closed_at is None:
+        return Result(
+            "timestamps.readable",
+            False,
+            f"closed_at missing (or unparseable) after closing {i!r} -- "
+            f"throughput cannot be computed: raw closed_at="
+            f"{closed.raw.get('closed_at')!r}",
+        )
+    return Result(
+        "timestamps.readable",
+        True,
+        "created_at/updated_at/closed_at all round-trip as real datetimes",
+    )
+
+
 def check_metadata_roundtrip(p: Probe) -> Result:
     assert p.bd
     meta = {"reporter_id": "probe_user", "nested": {"a": 1}, "unicode": "café ☕"}
@@ -878,6 +922,7 @@ CHECKS = [
     ("show.dependents", check_show_dependents),
     ("read.no_mutation", check_read_no_mutation),
     ("resolution.readable", check_resolution_readable),
+    ("timestamps.readable", check_timestamps_readable),
     ("metadata.roundtrip", check_metadata_roundtrip),
     ("project.name_rules", check_name_rules),
     ("custody.fresh_survives", check_custody_fresh_survives),

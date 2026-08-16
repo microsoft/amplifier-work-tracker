@@ -348,16 +348,17 @@ class WorkTrackerSession:
         for name in self._ws.names():
             try:
                 items = self._ws.project(name).list(include_resolved=True)
-                projects.append(
-                    {
-                        "project": name,
-                        "total": len(items),
-                        "ready": sum(
-                            1 for i in items if i.status == "open" and A.LANE_WORK in i.tags
-                        ),
-                        "held": sum(1 for i in items if i.status == "held"),
-                    }
-                )
+                row = {
+                    "project": name,
+                    "total": len(items),
+                    "ready": sum(1 for i in items if i.status == "open" and A.LANE_WORK in i.tags),
+                    "held": sum(1 for i in items if i.status == "held"),
+                }
+                # Aging/throughput -- cheap, computed once across the whole
+                # project rather than shipping per-item timestamps in a
+                # list (see `A.project_activity`'s docstring for why).
+                row.update(A.project_activity(items))
+                projects.append(row)
             except A.BeadsError as e:
                 # A.truncate_status caps this without severing the actionable
                 # hint mid-word -- a bare `[:120]` slice used to leave e.g.

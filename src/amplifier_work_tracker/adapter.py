@@ -25,6 +25,7 @@ import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import custody as C
@@ -65,6 +66,10 @@ ASSUMPTIONS = {
     "metadata.roundtrip": "Arbitrary JSON metadata survives a write/read cycle",
     "project.name_rules": "Project names with dots produce an unusable database",
     "conflict.retryable": "Write conflicts surface as retryable serialization errors",
+    "timestamps.readable": (
+        "created_at/updated_at/closed_at survive from bd's own `show --json` into "
+        "our Item, parsed as real datetimes -- not merely present on the raw payload"
+    ),
 }
 
 # --------------------------------------------------------------------------
@@ -445,6 +450,27 @@ class FencedError(BeadsError):
     """
 
 
+def _parse_bd_timestamp(v: object) -> datetime | None:
+    """Parse one of bd's own timestamp strings (`created_at`/`updated_at`/
+    `closed_at`) into a real, timezone-aware `datetime` -- the one place
+    that knows bd's exact wire shape (ISO 8601 with a trailing `Z`), so
+    nothing above this module ever re-parses (or mis-parses) a raw string.
+
+    Returns `None` for anything that isn't a non-empty string, or that
+    fails to parse -- a malformed/absent timestamp is treated as "we don't
+    know", never coerced into a fabricated time. `datetime.fromisoformat`
+    (Python 3.11+) accepts the trailing `Z` directly; no manual `+00:00`
+    substitution needed.
+    """
+    if not isinstance(v, str) or not v.strip():
+        return None
+    try:
+        return datetime.fromisoformat(v)
+    except ValueError:
+        logger.debug("could not parse bd timestamp %r", v)
+        return None
+
+
 @dataclass
 class Item:
     """One unit of work or one user report, in OUR vocabulary."""
@@ -462,6 +488,10 @@ class Item:
     meta: dict = field(default_factory=dict)
     priority: int | None = None
     links: list[dict] = field(default_factory=list)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    closed_at: datetime | None = None
+    created_by: str | None = None
     raw: dict = field(default_factory=dict, repr=False)
 
     @classmethod
@@ -476,6 +506,15 @@ class Item:
         out["tags"] = out.get("tags") or []
         out["meta"] = out.get("meta") or {}
         out["id"] = d.get("id", "")
+        # Timestamps are parsed here, at the seam, into real `datetime`
+        # objects -- never handed upward as raw strings for every caller
+        # to re-parse (and potentially mis-parse) on its own. bd emits
+        # these as ISO 8601 with a trailing "Z"; `_parse_bd_timestamp`
+        # is the one place that knows that shape.
+        out["created_at"] = _parse_bd_timestamp(d.get("created_at"))
+        out["updated_at"] = _parse_bd_timestamp(d.get("updated_at"))
+        out["closed_at"] = _parse_bd_timestamp(d.get("closed_at"))
+        out["created_by"] = d.get("created_by") or None
         return cls(**{k: v for k, v in out.items() if k in cls.__dataclass_fields__}, raw=d)
 
     def summary(self, *, full: bool = False) -> dict:
@@ -493,6 +532,14 @@ class Item:
         able to show everything a claim would have told you, without
         taking the item. See `Beads.get_readonly` for the read primitive
         this is paired with.
+
+        Timestamps (`created_at`/`updated_at`/`closed_at`/`created_by`)
+        are `full`-only, deliberately -- see `project_activity` for the
+        cheaper, project-level alternative (oldest-unclaimed age, recent
+        throughput) the lean list surface uses instead. Adding three ISO
+        strings per row to a 200+ item default listing would bloat the
+        exact payload this method's docstring already promises to keep
+        lean; a single directed read has no such concern.
         """
         row: dict = {
             "id": self.id,
@@ -505,6 +552,10 @@ class Item:
             row["acceptance"] = self.acceptance
             row["description"] = self.description
             row["design"] = self.design
+            row["created_at"] = self.created_at.isoformat() if self.created_at else None
+            row["updated_at"] = self.updated_at.isoformat() if self.updated_at else None
+            row["closed_at"] = self.closed_at.isoformat() if self.closed_at else None
+            row["created_by"] = self.created_by
         return row
 
 
@@ -660,6 +711,76 @@ class ListResult:
     truncated: bool
     limit: int
     requested_limit: int | None
+
+
+def project_activity(items: list[Item]) -> dict:
+    """Time-based aggregates for one project's items -- the shared
+    computation behind the CLI's `instances` command and the `work_status`
+    tool's per-project roll-up, so neither reinvents (or silently
+    disagrees on) what "oldest unclaimed" or "resolved recently" mean.
+    One home for logic two callers both need, same rationale as
+    `list_bounded`.
+
+    Exists because per-item timestamps in a *list* would bloat exactly the
+    payload `Item.summary()`'s lean default is designed to avoid (see its
+    docstring) -- a 200+ item project would carry three extra ISO strings
+    per row for a question ("how's this queue trending?") that only needs
+    a handful of numbers computed once across the whole project. This is
+    that computation.
+
+    Every field below follows the same "skip, don't fail" convention as
+    the rest of this module's dependency-ordered checks (see
+    `cli._check_dolt_reachable`'s docstring for the same idea applied to
+    doctor): an item missing the timestamp a given metric needs is simply
+    excluded from it, never coerced into a fake reading and never raised
+    on. `oldest_unclaimed_age_seconds` is `None` (not `0`) when there is
+    no ready item with a readable `created_at` -- the same "could not
+    read" vs "read as empty" distinction the rest of this codebase
+    already draws for aggregate fields. `resolved_24h`/`resolved_7d` are
+    real zeros when the project genuinely has no matching resolutions --
+    a count of zero is a legitimate, meaningful answer, unlike an age with
+    nothing to measure from.
+
+    Returns:
+        A dict with:
+          - `oldest_unclaimed_age_seconds` (float | None): age of the
+            longest-waiting ready item (`status == "open"` and tagged
+            `LANE_WORK`), or `None` if there is no such item with a
+            readable `created_at`.
+          - `resolved_24h` / `resolved_7d` (int): count of items whose
+            `status == "resolved"` and `closed_at` falls within the last
+            24 hours / 7 days of now.
+          - `last_activity` (str | None): the most recent `updated_at`
+            across every item, as an ISO 8601 string, or `None` if no
+            item has a readable `updated_at`.
+    """
+    now = datetime.now(UTC)
+    ready_ages = [
+        (now - i.created_at).total_seconds()
+        for i in items
+        if i.status == "open" and LANE_WORK in i.tags and i.created_at is not None
+    ]
+    resolved_24h = sum(
+        1
+        for i in items
+        if i.status == "resolved"
+        and i.closed_at is not None
+        and (now - i.closed_at) <= timedelta(hours=24)
+    )
+    resolved_7d = sum(
+        1
+        for i in items
+        if i.status == "resolved"
+        and i.closed_at is not None
+        and (now - i.closed_at) <= timedelta(days=7)
+    )
+    updated_ats = [i.updated_at for i in items if i.updated_at is not None]
+    return {
+        "oldest_unclaimed_age_seconds": max(ready_ages) if ready_ages else None,
+        "resolved_24h": resolved_24h,
+        "resolved_7d": resolved_7d,
+        "last_activity": max(updated_ats).isoformat() if updated_ats else None,
+    }
 
 
 class Beads:
