@@ -1848,4 +1848,111 @@ def run(workspace: A.Workspace, config: WebServerConfig) -> int:
     return 0
 
 
-__all__ = ["AuthMiddleware", "WebServerConfig", "create_app", "run"]
+# ---------------------------------------------------------------------------
+# Shared host/auth-mode resolution -- the ONE place `cmd_web` (cli.py) and
+# the integrated `serve --web-port` path (supervisor.py's `web_server_loop`)
+# both resolve their --host/--public/--auth-mode/--session-ttl inputs into a
+# runnable `WebServerConfig`, so the two callers can never drift on what the
+# non-loopback safety gate or the auth-mode defaulting actually mean.
+#
+# Lives here (not in cli.py) because it is genuinely shared, not because
+# `cmd_web` is somehow secondary -- `resolve_web_config` has no argparse or
+# CLI-exit dependency of its own, which is exactly what lets both a CLI
+# command (which wants to `die()`) and an in-process supervisor task (which
+# wants to raise loudly, never `sys.exit`) call the identical logic and
+# handle the failure their own way.
+# ---------------------------------------------------------------------------
+
+
+class WebConfigError(RuntimeError):
+    """Raised for a rejected host/auth-mode combination -- a non-loopback
+    host requested without `public=True`, or an explicit `auth_mode` that
+    cannot be satisfied (e.g. "pam" requested but the `pam` module isn't
+    importable).
+
+    Never exits the process itself -- this module has no CLI-exit
+    dependency. `cli.py`'s `cmd_web` catches this and calls `die()`;
+    `supervisor.py`'s integrated `--web-port` path re-raises it as
+    `WebServerStartupError` so it fails loud through the exact same path a
+    real bind failure does.
+    """
+
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def resolve_web_config(
+    *,
+    host: str | None,
+    public: bool,
+    port: int,
+    auth_mode: str,
+    session_ttl: int,
+) -> tuple[WebServerConfig, list[str]]:
+    """Resolve `--host`/`--public`/`--port`/`--auth-mode`/`--session-ttl`
+    into a runnable `WebServerConfig`, applying the SAME non-loopback safety
+    gate and auth-mode defaulting `cmd_web` has always applied -- factored
+    out here so `serve --web-port` cannot silently diverge from `web`'s own
+    rules.
+
+    Returns `(config, messages)`. `messages` is an ordered list of
+    human-readable startup lines (the password reveal or PAM sign-in
+    instructions, plus a non-loopback-bind warning when applicable) --
+    returned rather than printed/logged here, since one caller wants
+    `print(..., file=sys.stderr)` (`cmd_web`) and the other wants
+    `logger.info` (the supervisor's `web_server_loop`).
+
+    Raises `WebConfigError` -- never exits the process -- for a
+    non-loopback `host` without `public=True`, or an `auth_mode` that
+    cannot be satisfied.
+    """
+    if host is not None and host not in _LOOPBACK_HOSTS and not public:
+        raise WebConfigError(
+            f"refusing to bind non-loopback host {host!r} without --public/public=True. "
+            f"This is an explicit safety gate, not a limitation of the auth itself "
+            f"(auth is enforced regardless of bind address) -- pass --public to "
+            f"confirm you intend this to be reachable beyond localhost."
+        )
+    effective_host = host if host is not None else ("0.0.0.0" if public else "127.0.0.1")  # noqa: S104
+
+    try:
+        mode = WA.resolve_auth_mode(auth_mode)
+    except RuntimeError as e:
+        raise WebConfigError(str(e)) from e
+
+    messages: list[str] = []
+    password = ""
+    if mode == "password":
+        password = WA.load_password() or WA.generate_and_save_password()
+        messages.append(
+            f"auth mode=password. Password file: {WA.password_path()} (0600). "
+            f"Current password: {password}"
+        )
+    else:
+        messages.append(
+            f"auth mode=pam. Sign in as {WA.running_user()!r} with your system password."
+        )
+
+    secret = WA.load_or_create_secret()
+    auth_config = WA.AuthConfig(
+        mode=mode, secret=secret, ttl_seconds=session_ttl, password=password
+    )
+
+    if effective_host != "127.0.0.1":
+        messages.append(
+            "bound to a non-loopback address -- reachable from the LAN. Authentication is "
+            "enforced for every request; there is no localhost bypass in this server "
+            "(see webauth.py's module docstring)."
+        )
+
+    return WebServerConfig(host=effective_host, port=port, auth=auth_config), messages
+
+
+__all__ = [
+    "AuthMiddleware",
+    "WebConfigError",
+    "WebServerConfig",
+    "create_app",
+    "resolve_web_config",
+    "run",
+]
