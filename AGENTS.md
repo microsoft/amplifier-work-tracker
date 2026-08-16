@@ -44,14 +44,47 @@ for the per-tier targets. **`modules/tool-work-tracker/tests/` is a separate
 package with its own suite and is NOT exercised by root CI** -- a green root
 CI run does not cover it; run it directly if you touch that module.
 
+## Tests run against an ISOLATED dolt server, never the shared one
+
+Both suites (`tests/conftest.py` and
+`modules/tool-work-tracker/tests/conftest.py`) spin up a throwaway `dolt
+sql-server` on its own ephemeral port for the whole session (autouse,
+session-scoped `isolated_dolt_server` fixture; the shared logic lives in
+`tests/_dolt_isolation.py`) and repoint every dolt host/port pointer this
+repo reads at it. **A test run can no longer create a database on the
+shared, permanent server at `~/.beads/shared-server:3308` -- structurally,
+not by teardown discipline.**
+
+Why this exists: fixture-level teardown (below) is Python code that runs
+*after* a test/fixture body, so a `kill -9`, an impatient `timeout` wrapper
+escalating to SIGKILL, or a hard crash skips it entirely and leaves that
+run's databases on the shared server forever. Measured on a live box: 202
+residue databases, enough on their own to make `bd init` (a `CREATE
+DATABASE` under the hood) time out at 240s server-wide -- for real
+projects too. Isolation closes that gap: a killed run leaves at worst an
+orphaned `dolt sql-server` process and a `/tmp` directory, never growth on
+the server every real project also lives on.
+
+A session-scoped `assert_isolated_server_clean` fixture in both suites is
+the final backstop: at session end it queries the isolated server directly
+(not any fixture's bookkeeping) and fails loudly, naming and dropping
+anything left -- on this per-session server, every non-system database is
+test residue by construction, so this catches a leak even from a fixture
+that never went through any of the safe helpers below at all.
+
 ## A project lives in two places -- clean up both
 
-Creating a project creates a directory *and* a database on the shared dolt
-server. A `tmp_path` root only cleans up the first one. Skipping the second
-was measured on a live box at **163 databases for 5 real projects**: 157 of
-them residue, 47 from `doctor` runs alone. dolt holds every database open,
-so the bill arrives continuously -- dropping the residue took that server
-from 1.15 GB RSS / 313 MB on disk to 0.12 GB / 18 MB.
+Creating a project creates a directory *and* a database on the dolt server
+it was pointed at (the isolated one, per the section above). A `tmp_path`
+root only cleans up the first one. Skipping the second was measured on a
+live box at **163 databases for 5 real projects**: 157 of them residue, 47
+from `doctor` runs alone. dolt holds every database open, so the bill
+arrives continuously -- dropping the residue took that server from 1.15 GB
+RSS / 313 MB on disk to 0.12 GB / 18 MB. Isolation (above) means that bill
+can no longer land on the *shared* server, but it still matters within a
+session: an untidy fixture bloats the isolated server's own disk/RSS for
+the rest of a long run, and (per the safety net above) still fails the
+session.
 
 Unique names (see `tests/conftest.py`) are what keep concurrent runs from
 colliding. They are not cleanup. So:
@@ -70,7 +103,8 @@ colliding. They are not cleanup. So:
   session-scoped `assert_no_leaked_projects` fixture fails the run if any
   project a fixture handed out is still there at the end.
 
-For residue an older run already left on a server:
+For residue an older run already left on a server (e.g. the shared
+production one, from a run that predates the isolation fix above):
 
 ```bash
 python scripts/sweep_test_residue.py                 # dry run: names every database, drops none

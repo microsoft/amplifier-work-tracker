@@ -39,6 +39,8 @@ packages = ["amplifier_module_tool_work_tracker"]
 # amplifier_work_tracker resolves via the repo's own src/ (root package this
 # module is co-located with); amplifier_core resolves via the dev dependency
 # above once installed. Neither is a runtime dependency of this module.
-extraPaths = ["../../src"]
+# ../../tests resolves `_dolt_isolation` -- this suite's tests/conftest.py
+# puts it on sys.path at runtime for the same reason (see that file).
+extraPaths = ["../../src", "../../tests"]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
