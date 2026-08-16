@@ -769,26 +769,41 @@ def project_activity(items: list[Item]) -> dict:
         for i in items
         if i.status == "open" and LANE_WORK in i.tags and i.created_at is not None
     ]
-    resolved_24h = sum(
-        1
-        for i in items
-        if i.status == "resolved"
-        and i.closed_at is not None
-        and (now - i.closed_at) <= timedelta(hours=24)
-    )
-    resolved_7d = sum(
-        1
-        for i in items
-        if i.status == "resolved"
-        and i.closed_at is not None
-        and (now - i.closed_at) <= timedelta(days=7)
-    )
-    updated_ats = [i.updated_at for i in items if i.updated_at is not None]
+    # Throughput is counted only from resolutions that actually carry a
+    # readable `closed_at`. A genuine 0 -- a project with no resolutions, or
+    # with dated resolutions but none inside the window -- is a real,
+    # meaningful answer and stays 0. But a project that HAS resolved items
+    # while recording NO `closed_at` on any of them cannot be measured at
+    # all: reporting 0 there would be a fabricated zero, so both figures are
+    # `None` instead -- the same "could not read" vs "read as empty"
+    # distinction `oldest_unclaimed_age_seconds` already draws.
+    resolved_closed_ats = [
+        i.closed_at for i in items if i.status == "resolved" and i.closed_at is not None
+    ]
+    any_resolved = any(i.status == "resolved" for i in items)
+    resolved_24h: int | None
+    resolved_7d: int | None
+    if any_resolved and not resolved_closed_ats:
+        resolved_24h = None
+        resolved_7d = None
+    else:
+        resolved_24h = sum(1 for t in resolved_closed_ats if (now - t) <= timedelta(hours=24))
+        resolved_7d = sum(1 for t in resolved_closed_ats if (now - t) <= timedelta(days=7))
+    # "Last activity" is the most recent timestamp of ANY kind across every
+    # item -- `updated_at`, `closed_at`, or `created_at` -- so the column
+    # reflects real movement even for an item bd happened to record only a
+    # creation or close time for. `updated_at` is normally the most recent of
+    # the three, but taking the max across all of them is honest regardless of
+    # which fields a given item carries, and never leaves the column empty
+    # when the project plainly has activity.
+    activity_times = [
+        t for i in items for t in (i.updated_at, i.closed_at, i.created_at) if t is not None
+    ]
     return {
         "oldest_unclaimed_age_seconds": max(ready_ages) if ready_ages else None,
         "resolved_24h": resolved_24h,
         "resolved_7d": resolved_7d,
-        "last_activity": max(updated_ats).isoformat() if updated_ats else None,
+        "last_activity": max(activity_times).isoformat() if activity_times else None,
     }
 
 
@@ -1685,11 +1700,47 @@ class Workspace:
         )
 
 
-#: Real-world day thresholds for `ready_age_buckets` -- see that field's
+#: Real-world day age bands for `ready_age_buckets` -- see that field's
 #: docstring. Fixed, not rescaled to the workspace's current max: "arrived
 #: today" and "waited a week" should mean the same thing on a calm day and
 #: a bad one.
-READY_AGE_BUCKETS = (("0-1", 0, 1), ("2-3", 2, 3), ("4-6", 4, 6), ("7+", 7, None))
+#:
+#: Each entry is `(label, lo, hi)` interpreted as the HALF-OPEN day range
+#: `[lo, hi)` (the last band's `hi` is `None` -- unbounded above). Read this
+#: way the bands TILE the whole timeline with no gaps, so a floor-day
+#: reading of every label is exact: "0-1" == days 0-1 == `[0, 2)`, "2-3" ==
+#: `[2, 4)`, "4-6" == `[4, 7)`, "7+" == `[7, ..)`. The earlier bounds
+#: (`("0-1", 0, 1)` ... with an INCLUSIVE `d <= hi` test) left holes between
+#: the bands: an item aged 1.5, 3.5 or 6.5 days matched NO band and was
+#: silently dropped from the histogram. Measured on the live workspace that
+#: dropped 26 of 104 ready items -- exactly the gap between the dashboard's
+#: "READY" total and its heartbeat's "unclaimed items" total. See
+#: `_ready_age_bucket_label` for the tiling that closes it.
+READY_AGE_BUCKETS = (("0-1", 0, 2), ("2-3", 2, 4), ("4-6", 4, 7), ("7+", 7, None))
+
+#: Bucket key for ready items with no readable `created_at`. Kept DISTINCT
+#: from every age band so an undated item is never fabricated an age, yet is
+#: still counted -- this is what lets `sum(ready_age_buckets.values())`
+#: equal `ready` for EVERY project, undated items included (see
+#: `_ready_age_buckets`). Normally 0 (the live workspace dates every ready
+#: item); it exists so a single malformed item can never silently
+#: reintroduce the two-totals discrepancy.
+UNKNOWN_READY_AGE = "unknown"
+
+# Health values for `ProjectSummary.status`. A project is `STATUS_OK` only
+# when its database was actually read; each other value names a DISTINCT
+# unhealthy state so a dashboard can never collapse "still being created" or
+# "broken by a create that never finished" into a healthy "0 items / ok"
+# (measured outage, 2026-08-15: `instances` reported a half-created project
+# as `ok` while its `.create.lock` sat right there, unconsulted). An
+# UNREADABLE database keeps the pre-existing `"ERROR: ..."` convention -- a
+# truncated diagnostic string, distinct from all three tokens below -- rather
+# than a fixed token, because there the diagnostic text is the actionable
+# part. Callers should treat "healthy" as `status == STATUS_OK`, never as
+# "not an error string".
+STATUS_OK = "ok"
+STATUS_CREATING = "creating"  # a `new` for this project is in progress right now
+STATUS_BROKEN = "broken"  # a previous `new` never finished; heals on the next `new`
 
 
 @dataclass
@@ -1701,11 +1752,24 @@ class ProjectSummary:
     "resolved recently" mean (that half comes straight from
     `project_activity`, folded in below rather than recomputed a second way).
 
-    `status` is `"ok"` when the counts above were computed successfully, or
-    a truncated `"ERROR: ..."` string (see `truncate_status`) when the
-    project's database could not be read at all -- in which case every
-    field below is `None`/empty, not zero, so a caller can never mistake
-    "could not read" for "read as empty."
+    `status` is one of: `STATUS_OK` (`"ok"`) when the counts below were
+    computed successfully; `STATUS_CREATING`/`STATUS_BROKEN` when the project
+    is mid-creation or was left broken by a `new` that never finished (read
+    from `Workspace.creation_state`, consulted BEFORE any item read so a
+    half-created project is never mistaken for a healthy empty one); or a
+    truncated `"ERROR: ..."` string (see `truncate_status`) when the
+    database exists but could not be read at all. In EVERY non-`ok` case
+    every field below is `None`/empty, not zero, so a caller can never
+    mistake "not healthy" for "read as empty."
+
+    `ready` vs "unclaimed" vs `held`: in this system an OPEN work-lane item
+    IS an unclaimed, ready-to-claim work item -- there is no third state
+    between "open" and "held", so "ready" and "unclaimed" are the SAME set,
+    reported as the ONE number `ready` (not two subtly different ones). `held`
+    is the disjoint set of items currently claimed and in progress. This is
+    the reconciliation of a dashboard that once showed "READY" and "unclaimed
+    items" as two different totals for that one set -- see `ready_age_buckets`
+    below and `_ready_age_buckets` for why they had drifted.
 
     `blocked`, `held_by`, and `last_activity` exist so a dashboard can show
     signals that actually VARY with real data instead of a constant that
@@ -1714,10 +1778,11 @@ class ProjectSummary:
     for how these are used). `held_by` is the sorted, deduplicated list of
     current holders -- who to go ask, not just how many.
 
-    `last_activity` is `project_activity`'s field verbatim (the most recent
-    `updated_at` across every item, as an ISO string) -- there used to be a
-    SECOND, independent computation of "last activity" here, over the raw
-    `updated_at` strings rather than the parsed `Item.updated_at` datetimes
+    `last_activity` is `project_activity`'s field verbatim -- the most recent
+    activity timestamp of ANY kind (`updated_at`/`closed_at`/`created_at`)
+    across every item, as an ISO string. There used to be a SECOND,
+    independent computation of "last activity" here, over the raw
+    `updated_at` strings rather than the parsed `Item` datetimes
     `project_activity` uses. Two homes for one concept is exactly what
     `list_bounded`'s own docstring warns against; this is that reconciliation,
     now that both live in the same module and can share one computation.
@@ -1726,15 +1791,19 @@ class ProjectSummary:
     `project_activity`'s other three fields, folded in here so a caller that
     wants "this project's health" gets the counts AND the aging/throughput
     figures from one function call -- see `project_activity`'s own docstring
-    for exactly what each means and why a `None` age is never coerced to 0.
+    for exactly what each means, why a `None` age is never coerced to 0, and
+    why throughput is `None` (not 0) for a project that records resolutions
+    but no `closed_at` timestamps.
 
     `ready_age_buckets` is a real-world-day histogram of ready items' ages
-    (see `READY_AGE_BUCKETS`) -- a dashboard-wide heartbeat/texture strip
-    can be built by summing these across every project's summary, without
-    a second full item fetch: the counts are derived from the SAME `items`
-    list this function already read to compute everything else. `None`
-    when the project's database could not be read (same "unreadable, not
-    empty" convention as every other field here).
+    (see `READY_AGE_BUCKETS`) whose values sum to EXACTLY `ready` -- every
+    ready item lands in one band, and any undated one in the `UNKNOWN_READY_AGE`
+    bucket, so a dashboard-wide heartbeat built by summing these across every
+    project can never disagree with the summed `ready` total again (the
+    "READY 104 / unclaimed 76" split this reconciles). Derived from the SAME
+    `items` list this function already read; `None` when the project's
+    database could not be read (same "unreadable, not empty" convention as
+    every other field here).
     """
 
     name: str
@@ -1754,31 +1823,80 @@ class ProjectSummary:
     ready_age_buckets: dict[str, int] | None = None
 
 
+def _ready_age_bucket_label(days: float) -> str:
+    """Which age band a ready item aged `days` days falls in.
+
+    The bands are half-open `[lo, hi)` and tile the whole timeline (see
+    `READY_AGE_BUCKETS`): the first band absorbs anything below its upper
+    bound -- including a NEGATIVE age from a small clock skew -- and the last
+    band (`hi is None`) absorbs everything from its lower bound up. So every
+    real `days` value maps to exactly ONE band; no item can fall between two
+    bands the way the previous inclusive `[lo, hi]` bounds allowed.
+    """
+    for label, _lo, hi in READY_AGE_BUCKETS:
+        if hi is None or days < hi:
+            return label
+    return READY_AGE_BUCKETS[-1][0]  # unreachable: the last band's hi is None
+
+
 def _ready_age_buckets(items: list[Item]) -> dict[str, int]:
+    """Age histogram of ready items whose values sum to EXACTLY `ready`.
+
+    "Ready" here is the same set counted by `ProjectSummary.ready`: an open,
+    work-lane item -- i.e. an unclaimed work item. Every one of them lands in
+    exactly one bucket, so `sum(_ready_age_buckets(items).values())` always
+    equals that `ready` count. Two mechanisms guarantee it:
+
+      - the age bands tile the timeline with no gaps (see
+        `_ready_age_bucket_label`), so no DATED item is ever dropped; and
+      - an UNDATED ready item (no readable `created_at`) is counted in the
+        distinct `UNKNOWN_READY_AGE` bucket rather than vanishing.
+
+    That invariant is the whole point: it is what stops the dashboard from
+    ever again showing one number for "READY" and a smaller one for the same
+    "unclaimed items" set, computed two slightly different ways.
+    """
     now = datetime.now(UTC)
-    ready_days = [
-        (now - i.created_at).total_seconds() / 86400
-        for i in items
-        if i.status == "open" and LANE_WORK in i.tags and i.created_at is not None
-    ]
-    out: dict[str, int] = {}
-    for label, lo, hi in READY_AGE_BUCKETS:
-        out[label] = sum(1 for d in ready_days if d >= lo and (hi is None or d <= hi))
+    ready = [i for i in items if i.status == "open" and LANE_WORK in i.tags]
+    out: dict[str, int] = {label: 0 for label, _, _ in READY_AGE_BUCKETS}
+    out[UNKNOWN_READY_AGE] = 0
+    for i in ready:
+        if i.created_at is None:
+            out[UNKNOWN_READY_AGE] += 1
+            continue
+        out[_ready_age_bucket_label((now - i.created_at).total_seconds() / 86400)] += 1
     return out
 
 
 def project_summary(ws: Workspace, name: str) -> ProjectSummary:
     """Compute one project's `ProjectSummary` against the live `bd` project.
 
-    Never raises -- a project whose database cannot be read reports
-    `status="ERROR: ..."` (truncated) with every field left `None`/empty,
-    exactly like `cli.cmd_instances`'s prior per-project error handling.
+    Never raises. A project's health is decided in this order, so an
+    unhealthy one is never mistaken for a healthy empty one:
 
-    Fetches items exactly ONCE (`ws.project(name).list(include_resolved=True)`)
-    and derives every field -- counts, `project_activity`'s aging/throughput
-    figures, and the ready-age histogram -- from that single in-memory list.
-    No field here costs a second `bd` call.
+      1. `Workspace.creation_state` is consulted FIRST, before any item read.
+         A project mid-creation reports `STATUS_CREATING`; one left broken by
+         a `new` that never finished reports `STATUS_BROKEN` -- in both cases
+         with every count left `None`. This is the fix for a measured outage
+         where a half-created project (its `.create.lock` sitting right there)
+         reported a healthy `ok` with 0 items. `webapp.py` calls this function
+         directly, so putting the check HERE -- not only in `cli.cmd_instances`
+         -- is what makes the web dashboard honest too.
+      2. A database that then cannot be read reports `status="ERROR: ..."`
+         (truncated), again with every field `None`/empty.
+      3. Otherwise `STATUS_OK`, with real counts.
+
+    On the healthy path, fetches items exactly ONCE
+    (`ws.project(name).list(include_resolved=True)`) and derives every field
+    -- counts, `project_activity`'s aging/throughput figures, and the
+    ready-age histogram -- from that single in-memory list. No field here
+    costs a second `bd` call.
     """
+    state = ws.creation_state(name)
+    if state == "creating":
+        return ProjectSummary(name=name, status=STATUS_CREATING)
+    if state == "abandoned":
+        return ProjectSummary(name=name, status=STATUS_BROKEN)
     try:
         items = ws.project(name).list(include_resolved=True)
     except BeadsError as e:
@@ -1787,7 +1905,7 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
     activity = project_activity(items)
     return ProjectSummary(
         name=name,
-        status="ok",
+        status=STATUS_OK,
         total=len(items),
         ready=sum(1 for i in items if i.status == "open" and LANE_WORK in i.tags),
         held=len(held_items),
