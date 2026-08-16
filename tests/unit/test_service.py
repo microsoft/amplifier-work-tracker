@@ -60,6 +60,117 @@ def test_serve_argv_tail_omits_dolt_flags_when_not_given():
     assert "--dolt-port" not in argv
 
 
+# ------------------------------------------------------- serve --web-port
+
+
+def test_serve_argv_tail_omits_every_web_flag_when_web_port_not_given():
+    """The default (`web_port=None`): behaviorally IDENTICAL to before this
+    feature existed -- no `--web-*` flag baked in at all."""
+    argv = S._serve_argv_tail(Path("/abs/root"))
+    assert not any(tok.startswith("--web-") for tok in argv)
+
+
+def test_serve_argv_tail_bakes_web_port_and_defaults():
+    argv = S._serve_argv_tail(Path("/abs/root"), web_port=8095)
+    assert argv == ["serve", "--root", "/abs/root", "--web-port", "8095"]
+
+
+def test_serve_argv_tail_bakes_every_web_flag_when_given():
+    argv = S._serve_argv_tail(
+        Path("/abs/root"),
+        dolt_host="127.0.0.1",
+        dolt_port=3308,
+        web_port=8095,
+        web_host="0.0.0.0",  # noqa: S104 -- asserting the baked argv, never bound
+        web_public=True,
+        web_auth_mode="pam",
+        web_session_ttl=7200,
+    )
+    assert argv == [
+        "serve",
+        "--root",
+        "/abs/root",
+        "--dolt-host",
+        "127.0.0.1",
+        "--dolt-port",
+        "3308",
+        "--web-port",
+        "8095",
+        "--web-host",
+        "0.0.0.0",  # noqa: S104
+        "--web-public",
+        "--web-auth-mode",
+        "pam",
+        "--web-session-ttl",
+        "7200",
+    ]
+
+
+def test_serve_argv_tail_omits_web_host_public_auth_ttl_when_only_web_port_given():
+    """Each secondary `--web-*` flag is independently optional -- omitted
+    unless its own value was explicitly given, mirroring `--dolt-host`/
+    `--dolt-port`'s existing independence."""
+    argv = S._serve_argv_tail(Path("/abs/root"), web_port=8095)
+    assert "--web-host" not in argv
+    assert "--web-public" not in argv
+    assert "--web-auth-mode" not in argv
+    assert "--web-session-ttl" not in argv
+
+
+def test_systemd_unit_content_bakes_web_flags_into_exec_start(monkeypatch, tmp_path):
+    _force_console_script_present(monkeypatch, tmp_path)
+    root = tmp_path / "workspace-root"
+    unit = S._systemd_unit_content(
+        root,
+        dolt_host=None,
+        dolt_port=None,
+        web_port=8095,
+        web_public=True,
+        web_auth_mode="pam",
+    )
+    exec_start_line = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+    assert "--web-port 8095" in exec_start_line
+    assert "--web-public" in exec_start_line
+    assert "--web-auth-mode pam" in exec_start_line
+
+
+def test_systemd_unit_content_omits_web_flags_when_web_port_not_given(monkeypatch, tmp_path):
+    _force_console_script_present(monkeypatch, tmp_path)
+    root = tmp_path / "workspace-root"
+    unit = S._systemd_unit_content(root, dolt_host=None, dolt_port=None)
+    exec_start_line = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+    assert "--web-" not in exec_start_line
+
+
+@pytest.mark.skipif(not _HAVE_SYSTEMD_ANALYZE, reason="systemd-analyze not on PATH")
+def test_systemd_analyze_verify_clean_with_web_flags_baked_in(monkeypatch, tmp_path):
+    """The web-integrated ExecStart must still be a systemd-valid unit --
+    same proof `test_systemd_analyze_verify_clean_for_console_script_resolution_path`
+    already applies to the dolt-only ExecStart, extended to the new flags."""
+    _force_console_script_present(monkeypatch, tmp_path)
+    root = tmp_path / "workspace-root"
+    unit = S._systemd_unit_content(
+        root,
+        dolt_host="127.0.0.1",
+        dolt_port=3308,
+        web_port=8095,
+        web_host="127.0.0.1",
+        web_public=False,
+        web_auth_mode="password",
+        web_session_ttl=3600,
+    )
+    unit_path = tmp_path / f"{S.SERVICE_NAME}.service"
+    unit_path.write_text(unit, encoding="utf-8")
+
+    result = subprocess.run(
+        ["systemd-analyze", "verify", str(unit_path)], capture_output=True, text=True
+    )
+    assert result.returncode == 0, (
+        f"systemd-analyze verify failed with web flags baked in:\n"
+        f"unit:\n{unit}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+
 def test_resolve_bin_tokens_never_returns_a_single_shell_string():
     """launchd does not shell-split inside one <string> -- every token
     returned here must be independently exec-able, never `"a b c"` as one
@@ -390,7 +501,7 @@ def test_service_install_propagates_the_failure_after_rollback(monkeypatch, tmp_
     monkeypatch.setattr(S.sys, "platform", "linux")
     monkeypatch.setattr(S, "_have_systemctl", lambda: True)
 
-    def fake_systemd_install(root, *, dolt_host, dolt_port):
+    def fake_systemd_install(root, *, dolt_host, dolt_port, **_web_kwargs):
         raise subprocess.CalledProcessError(1, ["systemctl", "--user", "enable"])
 
     monkeypatch.setattr(S, "_systemd_install", fake_systemd_install)

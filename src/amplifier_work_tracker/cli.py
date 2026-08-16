@@ -30,8 +30,6 @@ from . import supervisor as SV
 
 POLL_TICK_SECONDS = 5
 
-_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
-
 
 def die(msg: str, code: int = 1) -> NoReturn:
     print(f"amplifier-work-tracker: {msg}", file=sys.stderr)
@@ -932,77 +930,53 @@ def cmd_web(a):
     """
     _guard()
     try:
-        from . import webapp
-        from . import webauth as WA
-    except ImportError as e:
-        die(
-            f"the web dashboard requires the 'web' extra: {e}\n"
-            f"Install it with: pip install 'amplifier-work-tracker[web]' "
-            f"(or, from a checkout: pip install -e '.[web]')"
-        )
-
-    if a.host is not None and a.host not in _LOOPBACK_HOSTS and not a.public:
-        die(
-            f"refusing to bind non-loopback host {a.host!r} without --public. "
-            f"This is an explicit safety gate, not a limitation of the auth itself "
-            f"(auth is enforced regardless of bind address) -- pass --public to "
-            f"confirm you intend this to be reachable beyond localhost."
-        )
-    if a.host is not None:
-        effective_host = a.host
-    else:
-        effective_host = "0.0.0.0" if a.public else "127.0.0.1"  # noqa: S104
-
-    try:
-        mode = WA.resolve_auth_mode(a.auth_mode)
+        webapp = SV.import_web_modules()
     except RuntimeError as e:
         die(str(e))
 
-    password = ""
-    if mode == "password":
-        password = WA.load_password() or WA.generate_and_save_password()
-        print(
-            f"amplifier-work-tracker web: auth mode=password. "
-            f"Password file: {WA.password_path()} (0600). "
-            f"Current password: {password}",
-            file=sys.stderr,
+    try:
+        config, messages = webapp.resolve_web_config(
+            host=a.host,
+            public=a.public,
+            port=a.port,
+            auth_mode=a.auth_mode,
+            session_ttl=a.session_ttl,
         )
-    else:
-        print(
-            f"amplifier-work-tracker web: auth mode=pam. "
-            f"Sign in as {WA.running_user()!r} with your system password.",
-            file=sys.stderr,
-        )
+    except webapp.WebConfigError as e:
+        die(str(e))
 
-    secret = WA.load_or_create_secret()
-    auth_config = WA.AuthConfig(
-        mode=mode, secret=secret, ttl_seconds=a.session_ttl, password=password
-    )
+    for m in messages:
+        print(f"amplifier-work-tracker web: {m}", file=sys.stderr)
     ws = _ws(a)
     print(
-        f"amplifier-work-tracker web: listening on http://{effective_host}:{a.port} "
+        f"amplifier-work-tracker web: listening on http://{config.host}:{config.port} "
         f"(root={ws.root})"
     )
-    if effective_host != "127.0.0.1":
-        print(
-            "amplifier-work-tracker web: bound to a non-loopback address -- reachable "
-            "from the LAN. Authentication is enforced for every request; there is no "
-            "localhost bypass in this server (see webauth.py's module docstring).",
-            file=sys.stderr,
-        )
-    return webapp.run(
-        ws, webapp.WebServerConfig(host=effective_host, port=a.port, auth=auth_config)
-    )
+    return webapp.run(ws, config)
 
 
 def cmd_serve(a):
-    """Run the supervisor in the foreground: dolt sql-server child + reap/notify sweeps.
+    """Run the supervisor in the foreground: dolt sql-server child + reap/notify sweeps,
+    plus -- OPTIONALLY, when `--web-port` is given -- the web dashboard as a 4th
+    concurrent task (see `supervisor.web_server_loop`).
 
     This is the systemd/launchd ExecStart target (see service.py) -- it is
     also perfectly runnable directly in a terminal for local testing or on a
     platform with no service manager at all.
+
+    Omitting `--web-port` (the default) is behaviorally IDENTICAL to before
+    this flag existed: three tasks, no uvicorn/fastapi import.
     """
     root = A.Workspace(getattr(a, "root", None)).root
+    web_config = None
+    if a.web_port is not None:
+        web_config = SV.WebIntegrationConfig(
+            host=a.web_host,
+            public=a.web_public,
+            port=a.web_port,
+            auth_mode=a.web_auth_mode,
+            session_ttl=a.web_session_ttl,
+        )
     return SV.serve(
         root,
         host=a.dolt_host,
@@ -1012,13 +986,21 @@ def cmd_serve(a):
         dolt_restart_backoff=a.dolt_restart_backoff,
         dolt_restart_budget_count=a.dolt_restart_budget_count,
         dolt_restart_budget_window=a.dolt_restart_budget_window,
+        web=web_config,
     )
 
 
 def cmd_service_install(a):
     try:
         info = S.service_install(
-            A.Workspace(getattr(a, "root", None)).root, dolt_host=a.dolt_host, dolt_port=a.dolt_port
+            A.Workspace(getattr(a, "root", None)).root,
+            dolt_host=a.dolt_host,
+            dolt_port=a.dolt_port,
+            web_port=a.web_port,
+            web_host=a.web_host,
+            web_public=a.web_public,
+            web_auth_mode=a.web_auth_mode,
+            web_session_ttl=a.web_session_ttl,
         )
     except S.ServiceUnsupportedError as e:
         die(str(e))
@@ -1317,6 +1299,52 @@ def main():
             f"(default {SV.DEFAULT_DOLT_RESTART_BUDGET_WINDOW_SECONDS:.0f})"
         ),
     )
+    p.add_argument(
+        "--web-port",
+        type=int,
+        default=None,
+        help=(
+            "run the web dashboard as a 4th concurrent task alongside dolt/reap/notify "
+            "(an OPTIONAL, additive feature -- omitting this flag, the default, runs "
+            "EXACTLY as before: three tasks, no uvicorn/fastapi import required)"
+        ),
+    )
+    p.add_argument(
+        "--web-host",
+        default=None,
+        help=(
+            "web dashboard bind host (default: 127.0.0.1, loopback-only; a non-loopback "
+            "value requires --web-public); ignored unless --web-port is given"
+        ),
+    )
+    p.add_argument(
+        "--web-public",
+        action="store_true",
+        help=(
+            "bind the web dashboard to all interfaces (0.0.0.0) for LAN access -- required "
+            "explicitly to widen the default loopback bind; authentication is still enforced "
+            "regardless; ignored unless --web-port is given"
+        ),
+    )
+    p.add_argument(
+        "--web-auth-mode",
+        choices=["auto", "pam", "password"],
+        default="auto",
+        help=(
+            "'auto' (default) uses PAM when the `pam` module is importable, else a generated "
+            "password file; 'pam'/'password' force one explicitly; ignored unless --web-port "
+            "is given"
+        ),
+    )
+    p.add_argument(
+        "--web-session-ttl",
+        type=int,
+        default=12 * 3600,
+        help=(
+            "web dashboard session cookie lifetime in seconds (default 12h; 0 = no "
+            "server-side expiry); ignored unless --web-port is given"
+        ),
+    )
     p.set_defaults(fn=cmd_serve)
 
     p = sub.add_parser(
@@ -1370,6 +1398,40 @@ def main():
     )
     p.add_argument("--dolt-host", default=None)
     p.add_argument("--dolt-port", type=int, default=None)
+    p.add_argument(
+        "--web-port",
+        type=int,
+        default=None,
+        help=(
+            "bake `--web-port` into the installed unit's ExecStart, running the web "
+            "dashboard as a 4th concurrent task inside the service (omit for no change "
+            "in behavior -- the default)"
+        ),
+    )
+    p.add_argument(
+        "--web-host",
+        default=None,
+        help="bake `--web-host` into the installed unit; ignored unless --web-port is given",
+    )
+    p.add_argument(
+        "--web-public",
+        action="store_true",
+        help="bake `--web-public` into the installed unit; ignored unless --web-port is given",
+    )
+    p.add_argument(
+        "--web-auth-mode",
+        choices=["auto", "pam", "password"],
+        default="auto",
+        help=("bake `--web-auth-mode` into the installed unit; ignored unless --web-port is given"),
+    )
+    p.add_argument(
+        "--web-session-ttl",
+        type=int,
+        default=12 * 3600,
+        help=(
+            "bake `--web-session-ttl` into the installed unit; ignored unless --web-port is given"
+        ),
+    )
     p.set_defaults(fn=cmd_service_install)
 
     p = svc_sub.add_parser("uninstall", help="stop and remove the service (data is left untouched)")

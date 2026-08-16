@@ -49,6 +49,7 @@ import socket
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -547,6 +548,159 @@ async def dolt_supervisor_loop(
 
 
 # ---------------------------------------------------------------------------
+# Web dashboard integration -- `serve --web-port`, the 4th concurrent task.
+#
+# The dashboard (`webapp.py`/`webauth.py`) has always been runnable as its
+# OWN standalone client of the shared dolt server via `amplifier-work-tracker
+# web` (`cli.cmd_web`). This section folds it into the supervisor itself as
+# an OPTIONAL fourth `asyncio.gather`-ed task, so it can be always-on and
+# reboot-surviving (the systemd/launchd unit already is) instead of a
+# separate foreground process someone has to remember to start, in a
+# terminal, after every reboot.
+#
+# `resolve_web_config` (webapp.py) is the ONE place both this path and
+# `cmd_web` resolve --host/--public/--auth-mode -- see that function's
+# docstring. `import_web_modules` below is the ONE guarded-import path both
+# use too, so the two callers can never drift on the ImportError message
+# shown when the optional `web` extra isn't installed.
+# ---------------------------------------------------------------------------
+
+_WEB_EXTRA_ERROR_TEMPLATE = (
+    "the web dashboard requires the 'web' extra: {e}\n"
+    "Install it with: pip install 'amplifier-work-tracker[web]' "
+    "(or, from a checkout: pip install -e '.[web]')"
+)
+
+
+def import_web_modules():
+    """Guarded import of `webapp` -- it (transitively, via its own `from .
+    import webauth as WA`) requires the optional `web` extra (fastapi/
+    uvicorn/itsdangerous/python-pam/...), so importing it outside a
+    `web`-extra install raises `ImportError`. Converts that into a clear,
+    actionable `RuntimeError` -- never a bare traceback -- shared by
+    `cli.py`'s `cmd_web` and this module's own `web_server_loop` so the two
+    paths can never drift apart on the message a caller sees.
+    """
+    try:
+        from . import webapp
+    except ImportError as e:
+        raise RuntimeError(_WEB_EXTRA_ERROR_TEMPLATE.format(e=e)) from e
+    return webapp
+
+
+@dataclass
+class WebIntegrationConfig:
+    """`serve --web-port`'s web-specific inputs -- the same shape `cmd_web`
+    accepts (`--host`/`--public`/`--port`/`--auth-mode`/`--session-ttl`),
+    just carried as one value so `_async_serve`'s signature gains a single
+    new optional parameter instead of five."""
+
+    host: str | None
+    public: bool
+    port: int
+    auth_mode: str
+    session_ttl: int
+
+
+class WebServerStartupError(RuntimeError):
+    """Raised when the integrated web dashboard cannot start -- a rejected
+    host/auth-mode combination (`webapp.WebConfigError`), or a real bind
+    failure (e.g. the port already in use).
+
+    A bind failure is, internally, uvicorn's OWN `Server.startup()` calling
+    `sys.exit(STARTUP_FAILURE)` on an `OSError` from `loop.create_server(...)`
+    -- a bare `SystemExit` raised from inside an asyncio task, which would
+    otherwise surface as an opaque, hard-to-diagnose failure (or, worse, a
+    silently-swallowed one) rather than the loud, actionable error this
+    supervisor's fail-loud policy requires everywhere else (see
+    `PortConflictError`, `DoltSupervisionExhaustedError`). `web_server_loop`
+    catches both cases and re-raises as this exception, a plain `Exception`
+    `asyncio.gather` propagates normally -- never a silent fallback that
+    continues serving without the web dashboard.
+    """
+
+
+async def _web_stop_watcher(server: Any, stop_event: asyncio.Event) -> None:
+    """Mirror THIS supervisor's `stop_event` into uvicorn's own `should_exit`
+    flag -- the ONLY shutdown signal the web task responds to. See
+    `web_server_loop`'s docstring for why uvicorn's own signal capturing is
+    deliberately bypassed in favor of this single-authority approach."""
+    await stop_event.wait()
+    server.should_exit = True
+
+
+async def web_server_loop(
+    ws: A.Workspace,
+    web: WebIntegrationConfig,
+    *,
+    stop_event: asyncio.Event,
+) -> None:
+    """Run the web dashboard as the supervisor's 4th concurrent task, for as
+    long as `serve` runs, sharing the EXACT SAME `stop_event` the dolt/reap/
+    notify tasks already use -- one shutdown authority for the whole
+    process, not four independent ones.
+
+    Deliberately calls uvicorn's private `Server._serve(...)` rather than
+    its public `Server.serve()`. The public method wraps the real serve
+    loop in `capture_signals()`, which installs ITS OWN SIGTERM/SIGINT
+    handlers via `signal.signal(...)` -- directly on top of the handlers
+    `_async_serve` already installed via `loop.add_signal_handler(...)` for
+    the exact same two signals. Two independent, competing signal handlers
+    for the same signal is exactly the kind of hidden, order-dependent state
+    this codebase avoids elsewhere (see `classify_port_holders`'s docstring
+    on `_kill_stale_port_holder`-style discrimination). `_web_stop_watcher`
+    mirrors `stop_event` into `server.should_exit` instead, so a real
+    SIGTERM (`_request_stop`, already wired to `stop_event`) drains the web
+    server exactly like the other three tasks -- through the same single
+    path, whether the trigger was a real OS signal or (as the test suite
+    does, matching `reap_loop`/`notify_loop`'s own tests) a direct
+    `stop_event.set()` with no signal involved at all.
+    """
+    webapp = import_web_modules()
+    try:
+        import uvicorn
+    except ImportError as e:
+        raise WebServerStartupError(_WEB_EXTRA_ERROR_TEMPLATE.format(e=e)) from e
+
+    try:
+        config, messages = webapp.resolve_web_config(
+            host=web.host,
+            public=web.public,
+            port=web.port,
+            auth_mode=web.auth_mode,
+            session_ttl=web.session_ttl,
+        )
+    except webapp.WebConfigError as e:
+        raise WebServerStartupError(str(e)) from e
+
+    for m in messages:
+        logger.info("web: %s", m)
+    logger.info(
+        "web dashboard listening on http://%s:%s (root=%s)", config.host, config.port, ws.root
+    )
+
+    app = webapp.create_app(ws, config.auth)
+    uv_config = uvicorn.Config(app, host=config.host, port=config.port, log_level="info")
+    server = uvicorn.Server(uv_config)
+
+    watcher = asyncio.create_task(_web_stop_watcher(server, stop_event))
+    try:
+        await server._serve()  # noqa: SLF001 -- see docstring: bypasses uvicorn's own signal capture
+    except SystemExit as e:
+        raise WebServerStartupError(
+            f"web dashboard failed to start on {config.host}:{config.port} (uvicorn exited "
+            f"during startup, code {e.code}) -- most likely the port is already in use. "
+            f"Check: ss -ltn | grep :{config.port}"
+        ) from e
+    finally:
+        watcher.cancel()
+        try:
+            await watcher
+        except asyncio.CancelledError:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -580,6 +734,7 @@ async def _async_serve(
     dolt_restart_backoff: float,
     dolt_restart_budget_count: int = DEFAULT_DOLT_RESTART_BUDGET_COUNT,
     dolt_restart_budget_window: float = DEFAULT_DOLT_RESTART_BUDGET_WINDOW_SECONDS,
+    web: WebIntegrationConfig | None = None,
 ) -> int:
     ws = A.Workspace(root)
     data_dir = default_dolt_dir()
@@ -619,22 +774,33 @@ async def _async_serve(
     notify_task = asyncio.create_task(
         notify_loop(ws, interval=notify_interval, stop_event=stop_event)
     )
+    tasks = [dolt_task, reap_task, notify_task]
+    # The web task is OPTIONAL (only when `--web-port` was given) -- when
+    # absent, `serve` behaves EXACTLY as before this feature: three tasks,
+    # no uvicorn/fastapi import, no behavior change whatsoever.
+    if web is not None:
+        tasks.append(asyncio.create_task(web_server_loop(ws, web, stop_event=stop_event)))
 
     try:
-        await asyncio.gather(dolt_task, reap_task, notify_task)
-    except DoltSupervisionExhaustedError as e:
-        # The deeper bug this closes: giving up on dolt must be LOUD and
-        # non-zero, never a tidy shutdown indistinguishable from an
-        # operator's own `systemctl stop` -- see that exception's docstring.
-        # `asyncio.gather` (without `return_exceptions=True`) re-raises the
-        # first task exception immediately but does NOT itself cancel the
-        # still-running tasks -- do that explicitly so the process can exit
-        # promptly instead of leaving reap/notify running as orphans.
+        await asyncio.gather(*tasks)
+    except (DoltSupervisionExhaustedError, WebServerStartupError) as e:
+        # The deeper bug this closes: giving up on dolt (or failing to start
+        # the web dashboard) must be LOUD and non-zero, never a tidy
+        # shutdown indistinguishable from an operator's own `systemctl
+        # stop` -- see DoltSupervisionExhaustedError's/WebServerStartupError's
+        # own docstrings. `asyncio.gather` (without `return_exceptions=True`)
+        # re-raises the first task exception immediately but does NOT itself
+        # cancel the still-running tasks -- do that explicitly, for whichever
+        # tasks are still alive (the one that raised is already done), so the
+        # process can exit promptly instead of leaving the rest running as
+        # orphans. Generalized over `tasks` (not hand-enumerated) so this
+        # keeps working correctly regardless of whether `web` is present.
         logger.error("supervisor giving up: %s", e)
         stop_event.set()
-        for t in (reap_task, notify_task):
+        remaining = [t for t in tasks if not t.done()]
+        for t in remaining:
             t.cancel()
-        await asyncio.gather(reap_task, notify_task, return_exceptions=True)
+        await asyncio.gather(*remaining, return_exceptions=True)
         raise
     return 0
 
@@ -649,15 +815,25 @@ def serve(
     dolt_restart_backoff: float = DEFAULT_DOLT_RESTART_BACKOFF_SECONDS,
     dolt_restart_budget_count: int = DEFAULT_DOLT_RESTART_BUDGET_COUNT,
     dolt_restart_budget_window: float = DEFAULT_DOLT_RESTART_BUDGET_WINDOW_SECONDS,
+    web: WebIntegrationConfig | None = None,
 ) -> int:
     """Synchronous entry point for `amplifier-work-tracker serve` -- what
     cli.py's `cmd_serve` calls, and what the systemd/launchd unit's
     ExecStart ultimately runs.
 
-    Returns 1 (never a bare, silent 0) both for a port conflict AND for
-    `DoltSupervisionExhaustedError` -- the supervisor giving up on dolt is a
-    real failure and must be reported as one at the process-exit level, not
-    swallowed into a tidy-looking shutdown. See that exception's docstring.
+    `web` is OPTIONAL (`cmd_serve` only builds one when `--web-port` was
+    given). When `None`, this behaves EXACTLY as it always has -- three
+    tasks, no uvicorn/fastapi import, no new dependency required at
+    runtime. When given, the web dashboard runs as a 4th concurrent task
+    (see `web_server_loop`), always-on and reboot-surviving for as long as
+    this supervisor (and the systemd/launchd unit wrapping it) runs.
+
+    Returns 1 (never a bare, silent 0) for a port conflict,
+    `DoltSupervisionExhaustedError`, OR `WebServerStartupError` -- the
+    supervisor giving up on dolt, or failing to start the web dashboard, is
+    a real failure and must be reported as one at the process-exit level,
+    not swallowed into a tidy-looking shutdown. See those exceptions'
+    docstrings.
     """
     _configure_logging()
     try:
@@ -671,12 +847,16 @@ def serve(
                 dolt_restart_backoff=dolt_restart_backoff,
                 dolt_restart_budget_count=dolt_restart_budget_count,
                 dolt_restart_budget_window=dolt_restart_budget_window,
+                web=web,
             )
         )
     except PortConflictError as e:
         print(f"amplifier-work-tracker serve: {e}", file=sys.stderr)
         return 1
     except DoltSupervisionExhaustedError as e:
+        print(f"amplifier-work-tracker serve: {e}", file=sys.stderr)
+        return 1
+    except WebServerStartupError as e:
         print(f"amplifier-work-tracker serve: {e}", file=sys.stderr)
         return 1
 
@@ -692,11 +872,14 @@ __all__ = [
     "DoltSupervisionExhaustedError",
     "PortAction",
     "PortConflictError",
+    "WebIntegrationConfig",
+    "WebServerStartupError",
     "classify_port_holders",
     "default_dolt_dir",
     "dolt_supervisor_loop",
     "ensure_port_available",
     "get_port_holder_pids",
+    "import_web_modules",
     "notify_loop",
     "notify_project",
     "notify_sweep",

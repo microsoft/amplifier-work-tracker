@@ -276,17 +276,38 @@ def _serve_argv_tail(
     *,
     dolt_host: str | None = None,
     dolt_port: int | None = None,
+    web_port: int | None = None,
+    web_host: str | None = None,
+    web_public: bool = False,
+    web_auth_mode: str | None = None,
+    web_session_ttl: int | None = None,
 ) -> list[str]:
     """The `serve` subcommand and its arguments, explicit and absolute --
     never an environment variable a service manager might not propagate.
     Shared by both the systemd (joined into one ExecStart string) and
     launchd (kept as separate argv tokens) install paths so the two can
-    never drift apart on what gets baked in."""
+    never drift apart on what gets baked in.
+
+    Every `--web-*` flag is OMITTED entirely unless `web_port` is given --
+    matching `serve`'s own contract that the web dashboard is off by
+    default and the installed unit's behavior is unchanged unless an
+    operator explicitly opts in via `service install --web-port`.
+    """
     argv = ["serve", "--root", str(root)]
     if dolt_host is not None:
         argv += ["--dolt-host", dolt_host]
     if dolt_port is not None:
         argv += ["--dolt-port", str(dolt_port)]
+    if web_port is not None:
+        argv += ["--web-port", str(web_port)]
+        if web_host is not None:
+            argv += ["--web-host", web_host]
+        if web_public:
+            argv += ["--web-public"]
+        if web_auth_mode is not None:
+            argv += ["--web-auth-mode", web_auth_mode]
+        if web_session_ttl is not None:
+            argv += ["--web-session-ttl", str(web_session_ttl)]
     return argv
 
 
@@ -303,7 +324,17 @@ def _resolve_root(root: str | Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _systemd_unit_content(root: Path, *, dolt_host: str | None, dolt_port: int | None) -> str:
+def _systemd_unit_content(
+    root: Path,
+    *,
+    dolt_host: str | None,
+    dolt_port: int | None,
+    web_port: int | None = None,
+    web_host: str | None = None,
+    web_public: bool = False,
+    web_auth_mode: str | None = None,
+    web_session_ttl: int | None = None,
+) -> str:
     """Render the systemd unit's text, and nothing else -- pure and directly
     testable (e.g. with `systemd-analyze verify` against the rendered text)
     without touching a real systemd or writing to `_SYSTEMD_UNIT_PATH`.
@@ -324,7 +355,16 @@ def _systemd_unit_content(root: Path, *, dolt_host: str | None, dolt_port: int |
     """
     exec_argv = [
         *_resolve_bin_tokens(),
-        *_serve_argv_tail(root, dolt_host=dolt_host, dolt_port=dolt_port),
+        *_serve_argv_tail(
+            root,
+            dolt_host=dolt_host,
+            dolt_port=dolt_port,
+            web_port=web_port,
+            web_host=web_host,
+            web_public=web_public,
+            web_auth_mode=web_auth_mode,
+            web_session_ttl=web_session_ttl,
+        ),
     ]
     exec_start = shlex.join(exec_argv)
     safe_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
@@ -381,8 +421,27 @@ def _systemd_rollback_unit_file() -> str:
     return "; ".join(steps)
 
 
-def _systemd_install(root: Path, *, dolt_host: str | None, dolt_port: int | None) -> None:
-    unit_content = _systemd_unit_content(root, dolt_host=dolt_host, dolt_port=dolt_port)
+def _systemd_install(
+    root: Path,
+    *,
+    dolt_host: str | None,
+    dolt_port: int | None,
+    web_port: int | None = None,
+    web_host: str | None = None,
+    web_public: bool = False,
+    web_auth_mode: str | None = None,
+    web_session_ttl: int | None = None,
+) -> None:
+    unit_content = _systemd_unit_content(
+        root,
+        dolt_host=dolt_host,
+        dolt_port=dolt_port,
+        web_port=web_port,
+        web_host=web_host,
+        web_public=web_public,
+        web_auth_mode=web_auth_mode,
+        web_session_ttl=web_session_ttl,
+    )
 
     _SYSTEMD_UNIT_DIR.mkdir(parents=True, exist_ok=True)
     _SYSTEMD_UNIT_PATH.write_text(unit_content, encoding="utf-8")
@@ -554,9 +613,28 @@ def _launchd_bootstrap(uid: int, *, attempts: int = 6, accept_already_loaded: bo
     )
 
 
-def _launchd_install(root: Path, *, dolt_host: str | None, dolt_port: int | None) -> None:
+def _launchd_install(
+    root: Path,
+    *,
+    dolt_host: str | None,
+    dolt_port: int | None,
+    web_port: int | None = None,
+    web_host: str | None = None,
+    web_public: bool = False,
+    web_auth_mode: str | None = None,
+    web_session_ttl: int | None = None,
+) -> None:
     bin_tokens = _resolve_bin_tokens()
-    argv = bin_tokens + _serve_argv_tail(root, dolt_host=dolt_host, dolt_port=dolt_port)
+    argv = bin_tokens + _serve_argv_tail(
+        root,
+        dolt_host=dolt_host,
+        dolt_port=dolt_port,
+        web_port=web_port,
+        web_host=web_host,
+        web_public=web_public,
+        web_auth_mode=web_auth_mode,
+        web_session_ttl=web_session_ttl,
+    )
     # Each argv token is its own <string> element. launchd does NOT
     # shell-split inside a <string>, so the whole command must NEVER be put
     # into one element.
@@ -683,12 +761,23 @@ def service_install(
     *,
     dolt_host: str | None = None,
     dolt_port: int | None = None,
+    web_port: int | None = None,
+    web_host: str | None = None,
+    web_public: bool = False,
+    web_auth_mode: str | None = None,
+    web_session_ttl: int | None = None,
 ) -> ServiceInfo:
     """Install (or re-install) the supervisor service unit for the current
     user and start it.
 
     Safe to re-run -- e.g. to change --root, re-run with the new path to
-    rebake and restart the unit against it.
+    rebake and restart the unit against it. The same applies to `web_port`:
+    re-running with a new value (or omitting it) rebakes and restarts the
+    unit's `--web-port`/`--web-host`/`--web-public`/`--web-auth-mode`/
+    `--web-session-ttl` flags exactly like `--dolt-host`/`--dolt-port`
+    always have -- see `_serve_argv_tail`. `web_port=None` (the default)
+    omits every `--web-*` flag entirely: the installed unit's behavior is
+    unchanged unless an operator explicitly opts in.
 
     Transactional: if `systemctl`/`launchctl` fails partway through (unit
     written but never enabled/loaded), the unit file written by THIS call is
@@ -702,10 +791,28 @@ def service_install(
     if _is_windows():
         raise ServiceUnsupportedError(_WINDOWS_UNSUPPORTED_DETAIL)
     if _is_darwin():
-        _launchd_install(resolved_root, dolt_host=dolt_host, dolt_port=dolt_port)
+        _launchd_install(
+            resolved_root,
+            dolt_host=dolt_host,
+            dolt_port=dolt_port,
+            web_port=web_port,
+            web_host=web_host,
+            web_public=web_public,
+            web_auth_mode=web_auth_mode,
+            web_session_ttl=web_session_ttl,
+        )
         return _launchd_describe()
     if _have_systemctl():
-        _systemd_install(resolved_root, dolt_host=dolt_host, dolt_port=dolt_port)
+        _systemd_install(
+            resolved_root,
+            dolt_host=dolt_host,
+            dolt_port=dolt_port,
+            web_port=web_port,
+            web_host=web_host,
+            web_public=web_public,
+            web_auth_mode=web_auth_mode,
+            web_session_ttl=web_session_ttl,
+        )
         return _systemd_describe()
     raise ServiceUnsupportedError(_no_systemctl_detail())
 
