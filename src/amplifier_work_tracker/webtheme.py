@@ -190,8 +190,19 @@ a{color:inherit}
 .attrib .id{color:var(--dim);font-weight:400;letter-spacing:.04em}
 .attrib .sep{color:var(--dim);font-weight:400}
 .attrib .since{font-weight:400;letter-spacing:.06em;color:var(--quiet)}
+.attrib::after{content:"\203A";font-weight:700;font-size:14px;
+  letter-spacing:0;text-transform:none;color:var(--mid)}
 a.attrib:hover{color:var(--amber)}
 a.attrib:hover .since{color:var(--amber)}
+a.attrib:hover::after{color:var(--amber)}
+
+/* the hero's own pointer to the oldest item (project page): same "prose
+   link" grammar as `.kv .v a` / `.links-list a` below -- an inline title,
+   not a full row, so it gets the underline treatment rather than the row
+   chevron. Made explicit rather than left to the browser's unstyled
+   default underline, which happened to look right by accident. */
+a.what{color:inherit;text-decoration:underline;text-decoration-color:var(--rule-hi)}
+a.what:hover{color:var(--amber)}
 
 /* -- HEARTBEAT -- ready items as ticks, placed by age ------------------- */
 .beat{width:100%}
@@ -364,6 +375,9 @@ tr.hidden{display:none}
 .ti a{color:inherit;text-decoration:none;display:flex;align-items:center;
   width:100%;min-height:var(--u);padding:7px 0}
 .ti a:hover{color:var(--amber)}
+.ti a::after{content:"\203A";margin-left:auto;padding-left:14px;
+  font-family:var(--sans);font-weight:700;font-size:15px;color:var(--mid)}
+.ti a:hover::after{color:var(--amber)}
 .idx{font-family:var(--sans);font-size:10.5px;color:var(--dim);letter-spacing:.05em}
 .iid{font-family:var(--sans);font-size:12px;font-weight:600;color:var(--mid);
   letter-spacing:.05em}
@@ -380,6 +394,10 @@ tr.hidden{display:none}
 td.link-cell{padding:0}
 td.link-cell > a{display:flex;align-items:center;width:100%;min-height:52px;
   padding:10px 16px 10px 0;text-decoration:none;color:inherit}
+td.link-cell > a:hover{color:var(--amber)}
+td.link-cell > a::after{content:"\203A";margin-left:auto;padding-left:14px;
+  font-family:var(--sans);font-weight:700;font-size:15px;color:var(--mid)}
+td.link-cell > a:hover::after{color:var(--amber)}
 
 /* -- PROSE --------------------------------------------------------------- */
 .prose{font-size:16.5px;line-height:1.66;color:var(--ink);font-weight:400;
