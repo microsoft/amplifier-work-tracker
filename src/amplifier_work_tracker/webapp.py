@@ -180,22 +180,58 @@ def _esc(value: object) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
+def _pluralize(count: int, noun: str, plural: str | None = None) -> str:
+    """`f"{count} {noun-or-plural}"` with the correct form for `count` --
+    "1 item", "0 items", "2 items", never a bare "1 items". `plural`
+    defaults to `noun + "s"`; pass it explicitly for irregular nouns.
+
+    Available for every count+noun render in this module's own helpers
+    (none currently render one -- see this file's owning goal for the
+    call sites elsewhere in the app, e.g. the project item-count badge
+    and the live search-filter counter, that should adopt this)."""
+    word = noun if count == 1 else (plural if plural is not None else f"{noun}s")
+    return f"{count} {word}"
+
+
 def _parse_iso(ts: str | None) -> datetime | None:
+    """Parse an ISO-8601 timestamp string into a timezone-aware `datetime`.
+
+    Accepts both the bare `bd`-style trailing-`Z` form (`_parse_bd_timestamp`
+    in `adapter.py`) and whatever `datetime.isoformat()` itself produces for
+    an already-parsed, timezone-aware value -- notably `+00:00` rather than
+    `Z` for UTC. A strict `strptime(..., "%Y-%m-%dT%H:%M:%SZ")` accepted only
+    the former, so round-tripping `item.created_at.isoformat()` (used
+    throughout this module) silently failed to parse and rendered as
+    "missing" -- the exact cause of resolved items showing "--" for
+    CREATED/UPDATED/RESOLVED despite the timestamps being present all along.
+    `datetime.fromisoformat` (Python 3.11+) accepts both forms directly; a
+    naive result (no offset at all) is treated as UTC, matching this
+    function's previous behavior."""
     if not ts:
         return None
     try:
-        return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        dt = datetime.fromisoformat(ts)
     except ValueError:
         return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+# The single empty-value glyph for every helper below that renders a
+# timestamp or age. One glyph everywhere -- rather than letting "--" and
+# "\u2014" coexist depending on which branch happened to run -- is what
+# keeps a single column (e.g. the dashboard's LAST ACTIVITY, rendered via
+# `_abs_and_rel`) from showing two different placeholders for "no
+# timestamp at all" vs. "a timestamp that failed to parse".
+_EMPTY_GLYPH = "\u2014"
 
 
 def _relative_time(ts: str | None) -> str:
-    """Render an ISO-8601 UTC timestamp as a short, coarse relative string
-    ("just now", "12m ago", "3h ago", "5d ago"), or "--" for missing/
-    unparseable input."""
+    """Render an ISO-8601 timestamp as a short, coarse relative string
+    ("just now", "12m ago", "3h ago", "5d ago"), or `_EMPTY_GLYPH` for
+    missing/unparseable input."""
     dt = _parse_iso(ts)
     if dt is None:
-        return "--"
+        return _EMPTY_GLYPH
     seconds = int((datetime.now(UTC) - dt).total_seconds())
     if seconds < 60:
         return "just now"
@@ -216,9 +252,12 @@ def _relative_time(ts: str | None) -> str:
 
 def _abs_and_rel(ts: str | None) -> str:
     """`<span title="raw ISO timestamp">relative time</span>`, or a plain
-    "--" when there is nothing to show."""
+    `_EMPTY_GLYPH` when there is nothing to show. Uses the same glyph
+    `_relative_time` itself falls back to, so a missing timestamp and an
+    unparseable one never render two different placeholders in the same
+    column."""
     if not ts:
-        return '<span class="muted">\u2014</span>'
+        return f'<span class="muted">{_EMPTY_GLYPH}</span>'
     return f'<span title="{_esc(ts)}">{_esc(_relative_time(ts))}</span>'
 
 
@@ -284,12 +323,20 @@ def _item_state_html(status: str) -> str:
 
 
 def _identity_right(request: Request) -> str:
+    """Top-bar right-hand chrome: a live dot, "live", and (when signed in)
+    the identity plus a logout link. Built as a list of non-empty segments
+    joined by `&middot;` rather than hardcoded inline separators, so an
+    empty trailing segment (e.g. a future variant of this chrome that
+    conditionally omits the logout link) can never leave a dangling
+    "live &middot; operator &middot;" with nothing after the last dot."""
     dot_title = "Server-rendered from the shared queue database on every request"
     dot = f'<span class="dot on" title="{dot_title}"></span>'
+    segments = ["live"]
     identity = _identity(request)
-    if not identity:
-        return f"{dot} live"
-    return f'{dot} live &middot; {_esc(identity)} &middot; <a href="/auth/logout">Logout</a>'
+    if identity:
+        segments.append(_esc(identity))
+        segments.append('<a href="/auth/logout">Logout</a>')
+    return f"{dot} " + " &middot; ".join(s for s in segments if s)
 
 
 def _crumb(*parts: tuple[str, str]) -> str:
@@ -354,7 +401,16 @@ def _pagination_html(
     """Real reachability control for a project's item table: with more than
     one page's worth of items, every one of them -- however many there are
     -- is reachable by clicking Next, not just the first `LIST_DEFAULT_LIMIT`.
-    Absent entirely when everything already fits on one page."""
+    Absent entirely when everything already fits on one page.
+
+    `result.total_count` is never a stale, unfiltered project-wide total:
+    `adapter.Workspace.list_bounded` computes it from the SAME
+    status-filtered query used to populate `result.items` (see that
+    method's docstring), so when a caller applies `?status=`, the footer's
+    "Items X-Y of N" and the page count both already reflect N as the
+    filtered total, not the whole project. No separate filtered flag is
+    needed from webapp-routes for that reason -- `result` already carries
+    the honest number."""
     if total_pages <= 1:
         return ""
 
