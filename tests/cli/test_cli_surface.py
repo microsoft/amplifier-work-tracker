@@ -40,6 +40,7 @@ SUBCOMMANDS = [
     "remove",
     "add",
     "instances",
+    "status",
     "list",
     "claim",
     "custody",
