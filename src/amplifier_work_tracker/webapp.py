@@ -11,54 +11,47 @@ that job).
 All bd/dolt knowledge stays in `amplifier_work_tracker.adapter` -- every
 route below calls the same `Workspace`/`Beads` methods `cli.py` calls, and
 nothing else. Where a view needed something the seam didn't expose
-(per-project counts, per-project "what changed most recently"), that logic
-was added to the seam itself (`adapter.project_summary`), not duplicated
-here -- see that function's docstring.
+(per-project counts, aging/throughput figures, per-project "what changed
+most recently"), that logic was added to the seam itself
+(`adapter.project_summary`/`adapter.project_activity`), not duplicated
+here -- see those functions' docstrings.
 
 Auth is `webauth.py`, ported from muxplex's pattern (see that module's
 docstring for exactly what was kept and what was deliberately changed).
 
 Rendering is plain server-rendered HTML via small string-building helpers
-below -- no template engine, no static asset pipeline, no client-side JS
-framework. There is exactly one page style (`_STYLE`, inlined once) and no
-external files to package/serve, which sidesteps an entire class of "which
-paths are exempt from auth" hazard muxplex's own static-asset exemption had
-to work around (see its `_is_real_static_asset` docstring).
+below plus `webtheme.py` (fonts, CSS, chrome, age/duration formatting) --
+no template engine, no static asset pipeline, no client-side JS framework.
 
-Design notes (round 2 -- the redesign this docstring describes)
------------------------------------------------------------------
-The first cut of this UI shipped with no way to drill into an item's body
-(description/acceptance criteria/resolution were write-only -- visible only
-in the create form, unreachable forever after), a resolve form rendered
-live on every single row of a 179-item table regardless of that row's
-status, a "Health" column that could only ever read "ok", and a directed-
-claim control that revealed no input field when selected. A design council
-and a product council (13 lenses total) both converged on the same root
-cause independently: the app taught a navigation grammar with its dashboard
-project links (blue/underlined = "this leads somewhere") and then silently
-withdrew that promise at the item level, where cells looked identical but
-did nothing.
+Design notes (round 3 -- the J-editorial-dark visual system)
+--------------------------------------------------------------
+The first two rounds of this UI used a light, generic admin-panel style.
+This revision ports the J-editorial-dark design candidate (see
+`.amplifier/design-gauntlet/wt-dashboard-v2/candidates/J-editorial-dark/`,
+that design's own MANIFEST.md), which won a 12-candidate bake-off spanning
+three independent approaches and passed an independent visual review with
+a verdict of SHIP. `webtheme.py`'s module docstring records exactly what
+was ported verbatim and what was deliberately adapted for a real,
+data-backed app instead of a static fixture-driven mockup.
 
-This revision:
-  - Adds a real item detail page (`GET /projects/{name}/items/{item_id}`)
-    -- the ONLY place description/acceptance/resolution/timestamps/links
-    live. Every ID and title cell in every table is now a real link to it.
-  - Removes the per-row resolve form entirely. Resolving (and, symmetrically,
-    claiming a specific item) is a contextual action that lives only on
-    that item's own detail page, and only when the item's status makes it
-    applicable -- never rendered, not merely hidden, on a row.
-  - Removes the "Health: ok" column (a signal that can't vary carries no
-    information) and the dead claim-by-id radio toggle (directed claim
-    still exists -- it now lives as a real "Claim this item" button on the
-    item's own detail page, where there is always an unambiguous id).
-  - Replaces the removed signals with ones that can actually vary:
-    `blocked` count, who currently holds an item (`held_by`), and
-    `last_activity` (most recent `updated_at` across a project's items) --
-    see `adapter.ProjectSummary`.
-  - Routes every BeadsError that can reach a browser through
-    `_public_error_message` -- a raw adapter exception can contain a local
-    filesystem path or a CLI-only instruction, neither of which belongs in
-    front of someone using the web UI.
+The load-bearing property this port exists to deliver: the dashboard's
+hero is the AGE of the oldest unclaimed item, never a count. `held == 0`
+is true on most days -- a giant `0` trains a viewer to stop looking. An
+age reads as neglect, which is the thing actually worth a glance. Queues
+sort STALEST FIRST for the same reason: a count-encoded dashboard makes
+the biggest queue the biggest object on screen, which is exactly the
+wrong axis to make prominent. See `webtheme.py` and this module's
+`_dashboard_sort_key`/`_hero_html` for the mechanism.
+
+This revision also retires the reference design's biggest fixture-driven
+compromise. Its MANIFEST recorded a dagger-footnoted caveat -- "cortex
+only -- the other 11 queues record no completion timestamps" -- because
+at the time it was built, `closed_at` was not reachable through this
+project's own seam. It is now (`adapter.Item.created_at/updated_at/
+closed_at`, `adapter.project_activity`): every project's throughput
+(`resolved_24h`/`resolved_7d`) and every project's own oldest-unclaimed
+age are real, for all of them, all the time. There is no dagger anywhere
+in this file.
 """
 
 from __future__ import annotations
@@ -79,6 +72,7 @@ from starlette.responses import Response
 
 from . import adapter as A
 from . import webauth as WA
+from . import webtheme as T
 
 logger = logging.getLogger(__name__)
 
@@ -198,12 +192,7 @@ def _parse_iso(ts: str | None) -> datetime | None:
 def _relative_time(ts: str | None) -> str:
     """Render an ISO-8601 UTC timestamp as a short, coarse relative string
     ("just now", "12m ago", "3h ago", "5d ago"), or "--" for missing/
-    unparseable input.
-
-    This is the mechanism that lets a dashboard/table cell carry a signal
-    that actually varies over time instead of a value that is always the
-    same -- see the module docstring and `adapter.ProjectSummary`.
-    """
+    unparseable input."""
     dt = _parse_iso(ts)
     if dt is None:
         return "--"
@@ -227,24 +216,17 @@ def _relative_time(ts: str | None) -> str:
 
 def _abs_and_rel(ts: str | None) -> str:
     """`<span title="raw ISO timestamp">relative time</span>`, or a plain
-    "--" when there is nothing to show. The absolute value is always
-    available (as a tooltip) for anyone who wants exact precision; the
-    relative value is what's readable at a glance."""
+    "--" when there is nothing to show."""
     if not ts:
-        return '<span class="muted">--</span>'
+        return '<span class="muted">\u2014</span>'
     return f'<span title="{_esc(ts)}">{_esc(_relative_time(ts))}</span>'
-
-
-def _now_utc_str() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 # GitHub's own noreply commit-identity format: `<numeric-id>+<username>@users.
 # noreply.github.com` -- e.g. the Amplifier co-author trailer every automated
 # commit/item carries. The ONE pattern actually observed leaking verbatim
-# into "Reported by"/holder cells (see module docstring, cycle 2). Anything
-# else (a real actor name, an agent session id like "agent-spark-1-106784")
-# passes through unchanged -- there is nothing to humanize about those.
+# into "Reported by"/holder cells. Anything else (a real actor name, an
+# agent session id like "agent-spark-1-106784") passes through unchanged.
 _GH_NOREPLY_RE = re.compile(
     r"^\d+\+([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)@users\.noreply\.github\.com$"
 )
@@ -262,12 +244,9 @@ def _humanize_identity(raw: str | None) -> str:
 
 
 def _identity_html(raw: str | None) -> str:
-    """`<span title="raw value">humanized label</span>` -- same idiom as
-    `_abs_and_rel` for timestamps: the readable form is what's shown, the
-    exact raw string is always one hover away, and nothing is silently
-    dropped. Returns "" for an empty/missing identity so callers can use it
-    directly in a boolean context (`if item.holder: ... _identity_html(...)`)
-    exactly like they previously used `_esc` alone."""
+    """`<span title="raw value">humanized label</span>` -- the readable form
+    is what's shown, the exact raw string is always one hover away, and
+    nothing is silently dropped. Returns "" for an empty/missing identity."""
     text = (raw or "").strip()
     if not text:
         return ""
@@ -277,191 +256,64 @@ def _identity_html(raw: str | None) -> str:
     return f'<span title="{_esc(text)}">{_esc(humanized)}</span>'
 
 
-_STATUS_LABELS = {
+_STATE_LABEL = {
+    "open": "Open",
+    "held": "Held",
+    "resolved": "Resolved",
+    "blocked": "Blocked",
+    "deferred": "Deferred",
+}
+_STATE_CSS = {
     "open": "open",
     "held": "held",
-    "resolved": "resolved",
-    "blocked": "blocked",
+    "resolved": "done",
+    "blocked": "blkd",
     "deferred": "deferred",
 }
 
 
-def _status_badge(status: str) -> str:
-    cls = f"badge-{status}" if status in _STATUS_LABELS else "badge-unknown"
-    label = _STATUS_LABELS.get(status, status)
-    return f'<span class="badge {cls}">{_esc(label)}</span>'
+def _item_state_html(status: str) -> str:
+    cls = _STATE_CSS.get(status, "open")
+    label = _STATE_LABEL.get(status, status.title())
+    return f'<span class="st st-{cls}">{_esc(label)}</span>'
 
 
 # ---------------------------------------------------------------------------
-# Rendering -- plain string building. `_esc` is the one choke point every
-# user-controlled value must pass through before landing in HTML.
+# page shell
 # ---------------------------------------------------------------------------
 
-_STYLE = """
-<style>
-  :root {
-    color-scheme: light dark;
-    --ink: #1a2027; --ink-muted: #4b5563; --border: #d3d9e0;
-    --surface: #f6f7f9; --accent: #2451b8; --accent-ink: #16326e;
-    /* Single source of truth for table cell padding -- shared by the
-       `th, td` rule below AND `td.link-cell`'s stretched-link trick, so
-       the two can never silently drift out of sync with each other. */
-    --cell-pad-y: 0.4rem; --cell-pad-x: 0.6rem;
-  }
-  * { box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    margin: 0; padding: 0; line-height: 1.45; color: var(--ink); background: #fff;
-  }
-  header {
-    background: #16202b; color: #fff; padding: 0.7rem 1.25rem; display: flex;
-    justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;
-  }
-  header a.brand { color: #fff; text-decoration: none; font-weight: 700; letter-spacing: 0.01em; }
-  header .identity {
-    font-size: 0.85rem; opacity: 0.9; display: flex; align-items: center; gap: 0.5rem;
-  }
-  header .identity a { color: #cfe0ff; }
-  .live-dot {
-    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-    background: #35d07f; animation: livepulse 2s ease-in-out infinite;
-  }
-  @keyframes livepulse {
-    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(53,208,127,0.5); }
-    50% { opacity: 0.6; box-shadow: 0 0 0 4px rgba(53,208,127,0); }
-  }
-  main { padding: 1.25rem; max-width: 1150px; margin: 0 auto; }
-  h1 { font-size: 1.5rem; margin: 0.2rem 0 0.6rem; }
-  h2 { font-size: 1.1rem; margin: 1.4rem 0 0.5rem; }
-  .subtle-heading { color: var(--ink-muted); font-size: 0.85rem; margin: -0.4rem 0 1rem; }
-  a { color: var(--accent); }
-  a.nav-link, a.crumb {
-    color: var(--accent); text-decoration: underline; text-decoration-color: rgba(36,81,184,0.35);
-  }
-  a.nav-link:hover, a.crumb:hover { text-decoration-color: var(--accent); }
-  .crumb-row { margin: 0 0 0.75rem; font-size: 0.9rem; }
-  table { border-collapse: collapse; width: 100%; margin: 0.75rem 0 1rem; }
-  th, td {
-    border: 1px solid var(--border); padding: var(--cell-pad-y) var(--cell-pad-x);
-    text-align: left; font-size: 0.92rem; vertical-align: middle; line-height: 1.3;
-  }
-  th { background: var(--surface); font-weight: 600; }
-  th.num, td.num { text-align: right; }
-  tr:nth-child(even) { background: rgba(0,0,0,0.02); }
-  /* Stretched-link cells (fix #6): the anchor takes over the FULL padding
-     box of its own td via a negative margin equal to the cell's own
-     padding, then re-applies that same padding to itself -- net visual
-     result is identical spacing, but the entire cell (not just the text)
-     is now clickable/hoverable. Sharing --cell-pad-* with the `th, td`
-     rule above is what keeps this from silently drifting out of sync with
-     it if the row-density padding ever changes again. */
-  td.link-cell { padding: 0; }
-  td.link-cell > a.nav-link {
-    display: block; margin: 0; padding: var(--cell-pad-y) var(--cell-pad-x);
-  }
-  .item-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
-  .badge {
-    display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.78rem;
-    font-weight: 600; white-space: nowrap;
-  }
-  .badge-open { background: #e0e7ff; color: #2d2a8f; }
-  .badge-held { background: #fef3c7; color: #7a4a00; }
-  .badge-resolved { background: #d1fae5; color: #065f28; }
-  .badge-blocked { background: #fee2e2; color: #8f1414; }
-  .badge-deferred { background: #e5e7eb; color: #33383f; }
-  .badge-unknown { background: #e5e7eb; color: #33383f; }
-  .badge-error { background: #fee2e2; color: #7a1212; }
-  .chip {
-    display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.78rem;
-    background: #eef1f5; color: var(--ink); border: 1px solid var(--border);
-    margin: 0 0.15rem 0.15rem 0;
-  }
-  .stat-num { font-weight: 700; }
-  .stat-num.zero { font-weight: 400; color: var(--ink-muted); }
-  .stat-num.attn { color: #8f4a00; }
-  form.inline { display: inline; }
-  fieldset {
-    border: 1px solid var(--border); border-radius: 8px; margin: 1rem 0; padding: 0.9rem 1.1rem;
-  }
-  fieldset.danger-zone { border-color: #e3b3b3; background: #fff8f8; }
-  legend { font-weight: 600; padding: 0 0.4rem; }
-  label { display: block; margin: 0.5rem 0 0.2rem; font-size: 0.88rem; font-weight: 500; }
-  .field-hint { font-size: 0.8rem; color: var(--ink-muted); margin: 0.1rem 0 0.3rem; }
-  input[type=text], input[type=password], textarea, select {
-    width: 100%; max-width: 480px; padding: 0.5rem 0.6rem; box-sizing: border-box;
-    font-family: inherit; font-size: 0.94rem; min-height: 44px; border: 1px solid var(--border);
-    border-radius: 6px; background: #fff; color: var(--ink);
-  }
-  textarea { min-height: 5.5rem; }
-  input::placeholder, textarea::placeholder { color: var(--ink-muted); opacity: 1; }
-  button, input[type=submit], a.btn {
-    padding: 0.5rem 1.1rem; margin-top: 0.6rem; cursor: pointer; min-height: 44px;
-    border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff;
-    font-size: 0.94rem; font-weight: 600; display: inline-flex; align-items: center;
-    justify-content: center; text-decoration: none;
-  }
-  button:hover, input[type=submit]:hover, a.btn:hover { background: var(--accent-ink); }
-  button.secondary, a.btn.secondary {
-    background: #fff; color: var(--accent); border-color: var(--accent);
-  }
-  button.danger, input.danger, a.btn.danger {
-    background: #b3261e; border-color: #b3261e; color: #fff;
-  }
-  button.danger:hover, a.btn.danger:hover { background: #8f1e18; }
-  .flash { padding: 0.7rem 1rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.92rem; }
-  .flash-msg { background: #d1fae5; color: #065f28; }
-  .flash-error { background: #fee2e2; color: #7a1212; }
-  .muted { color: var(--ink-muted); font-size: 0.88rem; }
-  .empty-state {
-    border: 1px dashed var(--border); border-radius: 8px; padding: 1.5rem; text-align: left;
-    color: var(--ink-muted); margin: 0.75rem 0 1.25rem; background: var(--surface);
-  }
-  .content-block {
-    white-space: pre-wrap; word-break: break-word; background: var(--surface);
-    border: 1px solid var(--border); border-radius: 8px; padding: 0.9rem 1rem;
-    font-size: 0.94rem; margin: 0.3rem 0 1rem;
-  }
-  .meta-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 0.6rem 1rem; margin: 0.75rem 0 1.25rem; font-size: 0.9rem;
-  }
-  .meta-grid dt {
-    color: var(--ink-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em;
-  }
-  .meta-grid dd { margin: 0.05rem 0 0; }
-  .item-header { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
-  code {
-    background: var(--surface); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.9em;
-  }
-  .links-list { margin: 0.2rem 0 1rem; padding-left: 1.2rem; font-size: 0.9rem; }
-  .pagination {
-    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
-    gap: 0.5rem 1rem; margin: -0.25rem 0 1.25rem; font-size: 0.88rem;
-  }
-</style>
-"""
+
+def _identity_right(request: Request) -> str:
+    dot_title = "Server-rendered from the shared queue database on every request"
+    dot = f'<span class="dot on" title="{dot_title}"></span>'
+    identity = _identity(request)
+    if not identity:
+        return f"{dot} live"
+    return f'{dot} live &middot; {_esc(identity)} &middot; <a href="/auth/logout">Logout</a>'
 
 
-def _page(request: Request, title: str, body: str) -> HTMLResponse:
-    identity = _esc(_identity(request))
-    live_title = "Server-rendered from the shared queue database on every request"
-    live = f'<span class="live-dot" title="{live_title}"></span> live'
-    logout_link = '<a href="/auth/logout" style="color:#cfe0ff">logout</a>'
-    brand = '<a class="brand" href="/">amplifier-work-tracker</a>'
-    header = (
-        f"<header><div>{brand}</div>"
-        f'<div class="identity">{live} &middot; {identity} &middot; {logout_link}</div>'
-        "</header>"
-        if identity
-        else f'<header><div>{brand}</div><div class="identity">{live}</div></header>'
-    )
-    html_doc = (
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>{_esc(title)} - amplifier-work-tracker</title>{_STYLE}</head>"
-        f"<body>{header}<main>{body}</main></body></html>"
-    )
-    return HTMLResponse(html_doc)
+def _crumb(*parts: tuple[str, str]) -> str:
+    """`parts` is (href, label) pairs; `href == ""` renders as plain text
+    (the current page -- never a link to itself)."""
+    out = [
+        f'<a href="{_esc(href)}">{_esc(label)}</a>' if href else _esc(label)
+        for href, label in parts
+    ]
+    return " / ".join(out)
+
+
+def _page(
+    request: Request,
+    title: str,
+    body: str,
+    *,
+    crumb_html: str = "",
+    statusbar_html: str = "",
+    js: str = "",
+) -> HTMLResponse:
+    top = T.top_bar(crumb_html=crumb_html, right_html=_identity_right(request))
+    full_body = f'{top}<main class="wrap" id="main">{body}</main>{statusbar_html}'
+    return HTMLResponse(T.page(f"{title} \u00b7 amplifier-work-tracker", full_body, js=js))
 
 
 def _flash(request: Request) -> str:
@@ -485,24 +337,14 @@ def _redirect(path: str, *, msg: str | None = None, error: str | None = None) ->
     return RedirectResponse(url=url, status_code=303)
 
 
-def _crumbs(*links: tuple[str, str]) -> str:
-    """`links` is a sequence of (href, label) pairs, rendered as
-    `label &raquo; label &raquo; ...` -- the same `.crumb` link style used
-    everywhere else something is navigable, so the grammar stays one thing
-    at every level (dashboard, project, item)."""
-    parts = [f'<a class="crumb" href="{_esc(href)}">{_esc(label)}</a>' for href, label in links]
-    return f'<div class="crumb-row">{" &raquo; ".join(parts)}</div>'
-
-
-def _not_found_body(request: Request, *, heading: str, back_href: str, back_label: str) -> str:
+def _not_found_body(*, heading: str, back_href: str, back_label: str) -> str:
     return (
-        f"{_flash(request)}"
         f"<h1>{_esc(heading)}</h1>"
         '<div class="empty-state">'
         "<p>That project or item doesn't exist. It may have been removed, or the name/id "
         "is mistyped.</p>"
         "</div>"
-        f'<p><a class="nav-link" href="{_esc(back_href)}">&laquo; {_esc(back_label)}</a></p>'
+        f'<p><a href="{_esc(back_href)}">&laquo; {_esc(back_label)}</a></p>'
     )
 
 
@@ -511,17 +353,8 @@ def _pagination_html(
 ) -> str:
     """Real reachability control for a project's item table: with more than
     one page's worth of items, every one of them -- however many there are
-    -- is reachable by clicking Next, not just the first `LIST_DEFAULT_LIMIT`
-    (see module docstring, cycle 2: 129 of 179 items in a real project were
-    previously unreachable through the UI at all). Absent entirely when
-    everything already fits on one page -- nothing to paginate is not a
-    degraded version of this control, it's the correct empty case.
-
-    Deliberately plain `<a href>` navigation, no client-side JS: consistent
-    with the rest of this module (see its docstring) and, unlike the
-    default-limit copy this replaces, never mentions a CLI flag -- there is
-    no `--limit` a browser user could pass.
-    """
+    -- is reachable by clicking Next, not just the first `LIST_DEFAULT_LIMIT`.
+    Absent entirely when everything already fits on one page."""
     if total_pages <= 1:
         return ""
 
@@ -532,12 +365,12 @@ def _pagination_html(
         return f"/projects/{_esc(name)}?{q}"
 
     prev = (
-        f'<a class="nav-link" href="{_href(page - 1)}">&laquo; Previous</a>'
+        f'<a href="{_href(page - 1)}">&laquo; Previous</a>'
         if page > 1
         else '<span class="muted">&laquo; Previous</span>'
     )
     nxt = (
-        f'<a class="nav-link" href="{_href(page + 1)}">Next &raquo;</a>'
+        f'<a href="{_href(page + 1)}">Next &raquo;</a>'
         if page < total_pages
         else '<span class="muted">Next &raquo;</span>'
     )
@@ -545,11 +378,339 @@ def _pagination_html(
     end_n = result.offset + result.returned_count
     return (
         '<div class="pagination">'
-        f'<span class="muted">Items {start_n}&ndash;{end_n} of {result.total_count} '
+        f"<span>Items {start_n}&ndash;{end_n} of {result.total_count} "
         f"&middot; page {page} of {total_pages}</span>"
-        f'<span class="pagination-links">{prev} &middot; {nxt}</span>'
+        f"<span>{prev} &middot; {nxt}</span>"
         "</div>"
     )
+
+
+# ---------------------------------------------------------------------------
+# dashboard-specific rendering -- the hero, the heartbeat, the ledger
+# ---------------------------------------------------------------------------
+
+
+def _dashboard_sort_key(s: A.ProjectSummary) -> tuple[int, float, str]:
+    """STALEST FIRST -- age is the sort key, never a count. Queues with no
+    readable/ready age (unreadable projects, or genuinely empty queues)
+    sort last, deterministically by name. See `webtheme.py`'s module
+    docstring for why this is the single sharpest finding this whole port
+    exists to deliver: a count-encoded dashboard makes the biggest queue
+    the biggest object, which is the wrong axis to make prominent."""
+    age = s.oldest_unclaimed_age_seconds if s.status == "ok" else None
+    if age is not None:
+        return (0, -age, s.name)
+    return (1, 0.0, s.name)
+
+
+def _global_oldest(summaries: list[A.ProjectSummary]) -> tuple[str, float] | None:
+    candidates = [
+        (s.name, s.oldest_unclaimed_age_seconds)
+        for s in summaries
+        if s.status == "ok" and s.oldest_unclaimed_age_seconds is not None
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda c: c[1])
+
+
+def _oldest_ready_item(bd: A.Beads) -> A.Item | None:
+    """The single oldest ready (open, tagged `LANE_WORK`) item in one
+    project -- used only for the hero's attribution line (which real item
+    is the N-day-old one). One extra, project-scoped `bd list` call; never
+    a workspace-wide fan-out. Returns `None` (never a guess) if the project
+    can't be read or has no dated ready item."""
+    try:
+        items = bd.list(lane=A.LANE_WORK, status="open")
+    except A.BeadsError:
+        return None
+    dated = [i for i in items if i.created_at is not None]
+    if not dated:
+        return None
+    return min(dated, key=lambda i: i.created_at)  # type: ignore[arg-type,return-value]
+
+
+def _hero_html(age_seconds: float | None, project_name: str | None, item: A.Item | None) -> str:
+    """The dashboard's isolated hero. NOTHING sits beside it -- the void to
+    its right is what makes the metric read as expensive; two earlier
+    design cycles failed by crowding it with explanatory text (see
+    `webtheme.py`'s module docstring)."""
+    if age_seconds is None:
+        empty_note = "No unclaimed work anywhere in this workspace right now."
+        return f"""
+<div class="hero solo">
+  <span class="eyebrow">Oldest unclaimed work item</span>
+  <div class="figrow"><span class="fig none" style="font-size:120px">\u2014</span></div>
+  <div class="subtle" style="margin-top:20px">{empty_note}</div>
+</div>"""
+    value, unit = T.duration_words(age_seconds)
+    attrib = ""
+    if project_name and item is not None:
+        since = item.created_at.strftime("%b %d") if item.created_at else "an unknown date"
+        href = f"/projects/{_esc(project_name)}/items/{_esc(item.id)}"
+        attrib = (
+            f'<a class="attrib" href="{href}">{_esc(project_name)}<span class="id">'
+            f'{_esc(item.id)}</span><span class="sep">/</span><span class="since">'
+            f"Unclaimed since {_esc(since)}, no holder</span></a>"
+        )
+    elif project_name:
+        href = f"/projects/{_esc(project_name)}"
+        attrib = f'<a class="attrib" href="{href}">{_esc(project_name)}</a>'
+    figrow = f'<span class="fig">{_esc(value)}</span><span class="figunit am">{_esc(unit)}</span>'
+    return f"""
+<div class="hero solo">
+  <span class="eyebrow">Oldest unclaimed work item</span>
+  <div class="figrow">{figrow}</div>
+  {attrib}
+</div>"""
+
+
+_BUCKET_HEIGHT = {"0-1": 12, "2-3": 22, "4-6": 34, "7+": 44}
+_BUCKET_BAND = {"0-1": "t0", "2-3": "t1", "4-6": "t2", "7+": "t3"}
+
+
+def _aggregate_buckets(summaries: list[A.ProjectSummary]) -> dict[str, int]:
+    totals = {label: 0 for label, _, _ in A.READY_AGE_BUCKETS}
+    for s in summaries:
+        if s.status == "ok" and s.ready_age_buckets:
+            for k, v in s.ready_age_buckets.items():
+                totals[k] = totals.get(k, 0) + v
+    return totals
+
+
+def _heartbeat_html(buckets: dict[str, int]) -> str:
+    """The ready queue's age profile, one tick per real ready item across
+    the whole workspace, banded into the same fixed real-world-day
+    thresholds every other age reading in this app uses. A texture, not a
+    chart -- it must never out-shout the hero."""
+    total = sum(buckets.values())
+    if total == 0:
+        empty_note = "Nothing is ready to be claimed anywhere."
+        return (
+            '<div class="beat"><span class="eyebrow">Ready queue by age</span>'
+            f'<div class="subtle" style="margin-top:14px">{empty_note}</div></div>'
+        )
+    ticks = "".join(
+        f'<span class="tick {_BUCKET_BAND[label]}" style="height:{_BUCKET_HEIGHT[label]}px"></span>'
+        for label, _, _ in A.READY_AGE_BUCKETS
+        for _n in range(buckets.get(label, 0))
+    )
+    fresh = buckets.get("0-1", 0)
+    stale = buckets.get("7+", 0)
+    aria = f"Age profile of {total} unclaimed items across the workspace."
+    legend = (
+        f'<div class="legend"><div><span class="sw s0"></span>'
+        f'<span class="n">{fresh}</span><span class="l">Arrived last day</span></div>'
+        f'<div><span class="sw s3"></span><span class="n am">{stale}</span>'
+        f'<span class="l">7d or older</span></div></div>'
+    )
+    return f"""
+<div class="beat">
+  <div class="bhead">
+    <span class="eyebrow">Ready queue by age</span>
+    {legend}
+  </div>
+  <div class="ticks" role="img" aria-label="{aria}">{ticks}</div>
+  <div class="scale"><span>Fresher</span><span>one mark per item</span><span>Older</span></div>
+</div>"""
+
+
+def _ledger_html(held: int, blocked: int, resolved_24h: int, resolved_7d: int) -> str:
+    """Status and throughput, real for every project (no instrumentation
+    gap -- see this module's own docstring). Placement matters: this sits
+    BELOW the hero, flanking the heartbeat, never beside the hero itself --
+    see `webtheme.py`'s module docstring for why crowding the hero's right
+    side is exactly the mistake two earlier design cycles made."""
+    return f"""
+<div class="ledger">
+  <div class="grp">
+    <span class="glbl">Status</span>
+    <div class="stat"><span class="v">{held}</span><span class="k">Held right now</span></div>
+    <div class="stat"><span class="v">{blocked}</span><span class="k">Blocked</span></div>
+  </div>
+  <div class="grp">
+    <span class="glbl">Throughput</span>
+    <div class="stat"><span class="v">{resolved_24h}</span>
+      <span class="k">Resolved &middot; 24h</span></div>
+    <div class="stat"><span class="v">{resolved_7d}</span>
+      <span class="k">Resolved &middot; 7d</span></div>
+  </div>
+</div>"""
+
+
+def _dashboard_row(s: A.ProjectSummary, scale_seconds: float) -> str:
+    if s.status != "ok":
+        key = f"{s.name} broken {s.status}".lower()
+        return (
+            f'<tr data-t="{_esc(key)}">'
+            f'<td class="link-cell"><a href="/projects/{_esc(s.name)}">{_esc(s.name)}</a></td>'
+            f'<td colspan="7"><span class="c">{T.state_html("bad", "Broken")} '
+            f'<span class="muted">{_esc(s.status)}</span></span></td>'
+            "</tr>"
+        )
+    age_cell = T.age_cell_html(s.oldest_unclaimed_age_seconds, scale_seconds)
+    held_by_chips = "".join(f'<span class="chip">{_identity_html(h)}</span>' for h in s.held_by)
+    if s.held:
+        state = T.state_html("warn", f"{s.held} held")
+    elif s.ready == 0:
+        state = T.state_html("ok", "Nothing ready")
+    else:
+        state = T.state_html("ok", "Healthy")
+    key = f"{s.name} {'held' if s.held else 'healthy'}".lower()
+    ready_cls = "ink" if s.ready else "zero"
+    held_cls = "ink" if s.held else "zero"
+    blocked_cls = "ink" if s.blocked else "zero"
+    return f"""<tr data-t="{_esc(key)}">
+  <td class="link-cell"><a href="/projects/{_esc(s.name)}">{_esc(s.name)}</a></td>
+  <td><span class="c">{age_cell}</span></td>
+  <td class="r"><span class="c r"><span class="n {ready_cls}">{s.ready}</span></span></td>
+  <td class="r"><span class="c r"><span class="n">{s.total}</span></span></td>
+  <td class="r"><span class="c r"><span class="n {held_cls}">{s.held}</span>
+    {held_by_chips}</span></td>
+  <td class="r"><span class="c r"><span class="n {blocked_cls}">{s.blocked}</span></span></td>
+  <td class="gap"><span class="c">{state}</span></td>
+  <td><span class="c">{_abs_and_rel(s.last_activity)}</span></td>
+</tr>"""
+
+
+def _dashboard_totals(summaries: list[A.ProjectSummary]) -> str:
+    ok = [s for s in summaries if s.status == "ok"]
+    t_ready = sum(s.ready or 0 for s in ok)
+    t_total = sum(s.total or 0 for s in ok)
+    t_held = sum(s.held or 0 for s in ok)
+    t_blocked = sum(s.blocked or 0 for s in ok)
+    return f"""<tfoot><tr>
+  <td><span class="c"><span class="totk">All {len(summaries)} queues</span></span></td>
+  <td><span class="c"></span></td>
+  <td class="r"><span class="c r"><span class="n">{t_ready}</span></span></td>
+  <td class="r"><span class="c r"><span class="n">{t_total}</span></span></td>
+  <td class="r"><span class="c r"><span class="n">{t_held}</span></span></td>
+  <td class="r"><span class="c r"><span class="n">{t_blocked}</span></span></td>
+  <td class="gap"><span class="c">
+    <span class="totk">{len(ok)} of {len(summaries)} readable</span></span></td>
+  <td></td>
+</tr></tfoot>"""
+
+
+def _create_project_form() -> str:
+    return """
+<div class="formsec">
+  <span class="flegend">Create a project</span>
+  <form method="post" action="/projects">
+    <label for="name">Project name</label>
+    <input type="text" id="name" name="name" pattern="[a-z][a-z0-9_]{1,30}" required
+           placeholder="my_project">
+    <p class="field-hint">Lowercase letters, digits, underscores; must start with a letter.</p>
+    <button type="submit">Create</button>
+  </form>
+</div>"""
+
+
+# ---------------------------------------------------------------------------
+# project-view-specific rendering
+# ---------------------------------------------------------------------------
+
+
+def _project_hero_html(name: str, summary: A.ProjectSummary, oldest_item: A.Item | None) -> str:
+    if summary.status != "ok":
+        return (
+            '<div class="hero">'
+            '<span class="eyebrow" style="color:var(--crimson)">Unavailable</span>'
+            '<div class="subtle" style="margin-top:16px;max-width:600px">'
+            f"{_esc(summary.status)}</div></div>"
+        )
+    age = summary.oldest_unclaimed_age_seconds
+    if age is None:
+        fig = '<span class="fig none sm">\u2014</span><span class="figunit">No ready items</span>'
+        said = (
+            '<div class="said"><div class="subtle">'
+            "Nothing is waiting to be claimed in this queue right now.</div></div>"
+        )
+    else:
+        value, unit = T.duration_words(age)
+        fig = f'<span class="fig sm">{_esc(value)}</span><span class="figunit">{_esc(unit)}</span>'
+        if oldest_item is not None:
+            since = (
+                oldest_item.created_at.strftime("%b %d")
+                if oldest_item.created_at
+                else "an unknown date"
+            )
+            item_href = f"/projects/{_esc(name)}/items/{_esc(oldest_item.id)}"
+            said = (
+                f'<div class="said"><div class="who">{_esc(name)}'
+                f'<span class="id">{_esc(oldest_item.id)}</span></div>'
+                f'<a class="what" href="{item_href}">{_esc(oldest_item.title)}</a>'
+                f'<div class="subtle" style="margin-top:8px">'
+                f"Unclaimed since {_esc(since)}, no holder</div></div>"
+            )
+        else:
+            said = ""
+    tallies = f"""<div class="tallies">
+      <div class="tally"><div class="v ink">{summary.ready}</div>
+        <span class="k">Open</span></div>
+      <div class="tally"><div class="v">{summary.blocked}</div>
+        <span class="k">Blocked</span></div>
+      <div class="tally"><div class="v">{summary.resolved}</div>
+        <span class="k">Resolved</span></div>
+      <div class="tally"><div class="v">{summary.held}</div><span class="k">Held</span></div>
+    </div>"""
+    throughput = f"""<div class="grp" style="margin-top:22px">
+      <span class="glbl">Throughput</span>
+      <div class="stat"><span class="v">{summary.resolved_24h}</span>
+        <span class="k">Resolved &middot; 24h</span></div>
+      <div class="stat"><span class="v">{summary.resolved_7d}</span>
+        <span class="k">Resolved &middot; 7d</span></div>
+    </div>"""
+    beat_head = (
+        f'<span class="eyebrow">Composition</span><span class="subtle">{summary.total} items</span>'
+    )
+    return f"""
+<div class="hero">
+  <div class="lead">
+    <span class="eyebrow">Oldest unclaimed in this queue</span>
+    <div class="figrow">{fig}</div>
+    {said}
+  </div>
+  <div class="beat" style="min-width:260px;flex:1 1 260px">
+    <div class="bhead">{beat_head}</div>
+    {tallies}
+    {throughput}
+  </div>
+</div>"""
+
+
+def _item_lifecycle_seconds(i: A.Item) -> float | None:
+    """The row's own age -- since created (open), since last touched
+    (held/blocked/deferred), or since resolution (resolved). Staleness
+    COLOUR is only meaningful for still-open items (see `_item_row`);
+    every status still gets an honest duration value here."""
+    now = datetime.now(UTC)
+    basis = {
+        "open": i.created_at,
+        "held": i.updated_at,
+        "resolved": i.closed_at,
+    }.get(i.status, i.updated_at)
+    if basis is None:
+        return None
+    return max(0.0, (now - basis).total_seconds())
+
+
+def _item_row(name: str, i: A.Item, idx: int) -> str:
+    seconds = _item_lifecycle_seconds(i)
+    band = T.age_band_class(seconds) if i.status == "open" else "a0"
+    value, unit = T.age_short(seconds)
+    holder = _identity_html(i.holder) if i.holder else '<span class="muted">&mdash;</span>'
+    href = f"/projects/{_esc(name)}/items/{_esc(i.id)}"
+    key = f"{i.id} {i.title} {i.status} {i.holder or ''}".lower()
+    age_html = f'<span class="age {band}">{_esc(value)}<span class="u">{_esc(unit)}</span></span>'
+    return f"""<tr data-t="{_esc(key)}">
+  <td><span class="c"><span class="idx">{idx:03d}</span></span></td>
+  <td><span class="c"><span class="iid">{_esc(i.id)}</span></span></td>
+  <td><span class="c">{_item_state_html(i.status)}</span></td>
+  <td><span class="c">{age_html}</span></td>
+  <td><span class="c"><span class="holder">{holder}</span></span></td>
+  <td class="ti"><a href="{href}">{_esc(i.title)}</a></td>
+</tr>"""
 
 
 # ---------------------------------------------------------------------------
@@ -586,11 +747,15 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             else '<input type="hidden" name="username" value="operator">'
         )
         error_html = f'<div class="flash flash-error">{_esc(error)}</div>' if error else ""
+        heading_style = (
+            "font-family:var(--sans);font-size:24px;font-weight:500;"
+            "color:var(--ink);margin:20px 0 4px"
+        )
         body = f"""
-        <h1>Sign in</h1>
-        <p class="muted">{mode_hint}</p>
+        <h1 style="{heading_style}">Sign in</h1>
+        <p class="subtle">{mode_hint}</p>
         {error_html}
-        <form method="post" action="/login" style="max-width:320px">
+        <form method="post" action="/login" style="max-width:340px;margin-top:16px">
           <input type="hidden" name="next" value="{_esc(next_value)}">
           {username_field}
           <label for="password">Password</label>
@@ -637,73 +802,102 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request):  # type: ignore[no-untyped-def]
         names = workspace.names()
-        rows = ""
-        for name in names:
-            s = A.project_summary(workspace, name)
-            if s.status == "ok":
-                held_cell = (
-                    (
-                        f'<span class="stat-num attn">{s.held}</span> '
-                        + "".join(
-                            f'<span class="chip">{_identity_html(h)}</span>' for h in s.held_by
-                        )
-                    )
-                    if s.held
-                    else '<span class="stat-num zero">0</span>'
-                )
-                blocked_cell = (
-                    f'<span class="stat-num attn">{s.blocked}</span>'
-                    if s.blocked
-                    else '<span class="stat-num zero">0</span>'
-                )
-                ready_cls = "stat-num" if s.ready else "stat-num zero"
-                cells = (
-                    f'<td class="num"><span class="{ready_cls}">{s.ready}</span> '
-                    f'<span class="muted">/ {s.total} total</span></td>'
-                    f'<td class="num">{held_cell}</td>'
-                    f'<td class="num">{blocked_cell}</td>'
-                    f"<td>{_abs_and_rel(s.last_activity)}</td>"
-                )
-            else:
-                cells = (
-                    f'<td colspan="3"><span class="badge badge-error">unavailable</span> '
-                    f'<span class="muted">{_esc(s.status)}</span></td><td>--</td>'
-                )
-            rows += (
-                f'<tr><td class="link-cell">'
-                f'<a class="nav-link" href="/projects/{_esc(name)}">{_esc(name)}</a></td>'
-                f"{cells}</tr>"
+        summaries = [A.project_summary(workspace, n) for n in names]
+
+        if not names:
+            body = (
+                f"{_flash(request)}"
+                f'<section class="sec heroic">{_hero_html(None, None, None)}</section>'
+                '<div class="hr bleed"></div>'
+                '<section class="sec"><div class="empty-state"><p>No projects yet. '
+                "Create one below to get started.</p></div></section>"
+                f'<section class="sec">{_create_project_form()}</section>'
             )
-        table = (
-            '<table><thead><tr><th>Project</th><th class="num">Ready</th>'
-            '<th class="num">Held</th><th class="num">Blocked</th>'
-            "<th>Last activity</th></tr></thead>"
-            f"<tbody>{rows}</tbody></table>"
-            if names
-            else (
-                '<div class="empty-state"><p>No projects yet. '
-                "Create one below to get started.</p></div>"
+            sb = T.statusbar('<span class="s"><span class="dot on"></span>No projects yet</span>')
+            return _page(request, "Dashboard", body, statusbar_html=sb)
+
+        ordered = sorted(summaries, key=_dashboard_sort_key)
+        winner = _global_oldest(summaries)
+        oldest_item = None
+        winner_name = None
+        winner_age = None
+        if winner:
+            winner_name, winner_age = winner
+            oldest_item = _oldest_ready_item(workspace.project(winner_name))
+
+        scale_seconds = winner_age or 1.0
+
+        buckets = _aggregate_buckets(summaries)
+
+        ok = [s for s in summaries if s.status == "ok"]
+        held_total = sum(s.held or 0 for s in ok)
+        blocked_total = sum(s.blocked or 0 for s in ok)
+        resolved_24h_total = sum(s.resolved_24h or 0 for s in ok)
+        resolved_7d_total = sum(s.resolved_7d or 0 for s in ok)
+
+        heartbeat = _heartbeat_html(buckets)
+        ledger = _ledger_html(held_total, blocked_total, resolved_24h_total, resolved_7d_total)
+
+        rows = "".join(_dashboard_row(s, scale_seconds) for s in ordered)
+        table = f"""<table class="tbl dense">
+          <colgroup><col><col style="width:232px"><col style="width:70px">
+            <col style="width:70px"><col style="width:70px"><col style="width:78px">
+            <col style="width:150px"><col style="width:150px"></colgroup>
+          <thead><tr>
+            <th>Queue</th>
+            <th class="axis">Oldest unclaimed{T.axis_ruler_html(scale_seconds)}</th>
+            <th class="r">Ready</th><th class="r">Items</th><th class="r">Held</th>
+            <th class="r">Blocked</th><th class="gap">Status</th><th>Last activity</th>
+          </tr></thead>
+          <tbody>{rows}</tbody>
+          {_dashboard_totals(summaries)}
+        </table>"""
+
+        broken = [s for s in summaries if s.status != "ok"]
+        broken_foot = ""
+        if broken:
+            names_str = ", ".join(s.name for s in broken)
+            broken_foot = (
+                '<div class="foot"><span class="fm">Broken</span>'
+                f"<span>{_esc(names_str)} cannot be read. Excluded from every total above, so the "
+                f"workspace figures read {sum(s.total or 0 for s in ok)} items across {len(ok)} "
+                "readable queues.</span></div>"
             )
-        )
+
         body = f"""
         {_flash(request)}
-        <h1>Projects</h1>
-        <p class="subtle-heading">As of {_esc(_now_utc_str())} &middot;
-           <a class="nav-link" href="/">refresh</a></p>
-        {table}
-        <fieldset>
-          <legend>Create a project</legend>
-          <form method="post" action="/projects">
-            <label for="name">Project name</label>
-            <input type="text" id="name" name="name" pattern="[a-z][a-z0-9_]{{1,30}}" required
-                   placeholder="my_project">
-            <p class="field-hint">Lowercase letters, digits, underscores; must start with a
-              letter.</p>
-            <button type="submit">Create</button>
-          </form>
-        </fieldset>
+        <section class="sec heroic">{_hero_html(winner_age, winner_name, oldest_item)}</section>
+        <div class="hr bleed"></div>
+        <section class="sec tight">
+          <div class="context">{heartbeat}<div class="ledgercol">{ledger}</div></div>
+        </section>
+        <div class="hr bleed"></div>
+        <section class="sec tight">
+          <div class="controls">
+            {T.search_field("Filter queues by name or state")}
+            <span class="count" id="qc">{len(summaries)} QUEUES</span>
+          </div>
+          {table}
+          {broken_foot}
+        </section>
+        <div class="hr bleed"></div>
+        <section class="sec">{_create_project_form()}</section>
         """
-        return _page(request, "Dashboard", body)
+        sb = T.statusbar(
+            f'<span class="s"><span class="dot on"></span>Sweep <b>healthy</b></span>'
+            f'<span class="s">Oldest unclaimed <b class="am">{T.duration_words(winner_age)[0]}'
+            f" {T.duration_words(winner_age)[1].lower()}</b></span>"
+            if winner_age is not None
+            else '<span class="s"><span class="dot on"></span>Sweep <b>healthy</b></span>',
+            f'<span class="s">Held <b>{held_total}</b></span><a href="/">Refresh</a>',
+        )
+        return _page(
+            request,
+            "Dashboard",
+            body,
+            statusbar_html=sb,
+            js=T.search_js(len(summaries), "QUEUES", "tbody tr[data-t]"),
+        )
 
     @app.post("/projects")
     async def create_project(name: str = Form(...)):  # type: ignore[no-untyped-def]
@@ -722,15 +916,15 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             page = max(1, int(request.query_params.get("page", "1")))
         except ValueError:
             page = 1
+        crumb = _crumb(("/", "All projects"), ("", name))
         try:
             bd = workspace.project(name)
         except A.BeadsError:
             return _page(
                 request,
                 name,
-                _not_found_body(
-                    request, heading=name, back_href="/", back_label="back to dashboard"
-                ),
+                _not_found_body(heading=name, back_href="/", back_label="back to dashboard"),
+                crumb_html=_crumb(("/", "All projects")),
             )
         page_size = A.LIST_DEFAULT_LIMIT
         try:
@@ -745,111 +939,110 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
                 page = total_pages
                 result = bd.list_bounded(status=status, offset=(page - 1) * page_size)
         except A.BeadsError as e:
-            return _page(
-                request,
-                name,
+            body = (
                 f"{_flash(request)}<h1>{_esc(name)}</h1>"
                 f'<div class="flash flash-error">{_esc(_public_error_message(e))}</div>'
-                f'<p><a class="nav-link" href="/">&laquo; back to dashboard</a></p>',
             )
+            return _page(request, name, body, crumb_html=crumb)
 
         summary = A.project_summary(workspace, name)
-        summary_chips = ""
-        if summary.status == "ok":
-            summary_chips = (
-                f'<p class="subtle-heading">{summary.ready} ready &middot; '
-                f"{summary.held} held &middot; {summary.blocked} blocked &middot; "
-                f"{summary.total} total &middot; last activity "
-                f"{_abs_and_rel(summary.last_activity)}</p>"
-            )
+        oldest_item = None
+        if summary.status == "ok" and summary.oldest_unclaimed_age_seconds is not None:
+            oldest_item = _oldest_ready_item(bd)
 
         status_options = "".join(
             f'<option value="{_esc(s)}"{" selected" if s == status else ""}>{_esc(s)}</option>'
             for s in A.STATUSES
         )
 
-        def _item_row(i: A.Item) -> str:
-            item_href = f"/projects/{_esc(name)}/items/{_esc(i.id)}"
-            if i.holder:
-                holder_cell = f'<span class="chip">{_identity_html(i.holder)}</span>'
-            else:
-                holder_cell = '<span class="muted">&mdash;</span>'
-            return (
-                f'<tr><td class="item-id link-cell"><a class="nav-link" href="{item_href}">'
-                f"{_esc(i.id)}</a></td>"
-                f'<td class="link-cell"><a class="nav-link" href="{item_href}">'
-                f"{_esc(i.title)}</a></td>"
-                f"<td>{_status_badge(i.status)}</td>"
-                f"<td>{holder_cell}</td>"
-                f"<td>{_abs_and_rel(i.raw.get('updated_at'))}</td>"
-                "</tr>"
-            )
-
-        rows = "".join(_item_row(i) for i in result.items)
+        rows = "".join(
+            _item_row(name, i, result.offset + n + 1) for n, i in enumerate(result.items)
+        )
         pagination_html = _pagination_html(name, status, page, total_pages, result)
         if result.items:
-            table = (
-                "<table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Holder</th>"
-                "<th>Updated</th></tr></thead>"
-                f"<tbody>{rows}</tbody></table>"
-            )
+            table = f"""<table class="tbl">
+              <colgroup><col style="width:46px"><col style="width:64px"><col style="width:82px">
+                <col style="width:70px"><col style="width:130px"><col></colgroup>
+              <thead><tr>
+                <th>#</th><th>Id</th><th>State</th><th>Age</th><th>Holder</th><th>Title</th>
+              </tr></thead>
+              <tbody>{rows}</tbody>
+            </table>"""
         elif status:
             table = (
                 '<div class="empty-state"><p>No items match status '
                 f"<code>{_esc(status)}</code>.</p>"
-                f'<p><a class="nav-link" href="/projects/{_esc(name)}">clear filter</a></p></div>'
+                f'<p><a href="/projects/{_esc(name)}">clear filter</a></p></div>'
             )
         else:
             table = '<div class="empty-state"><p>No items yet. Add the first one below.</p></div>'
+
         body = f"""
-        {_crumbs(("/", "All projects"))}
         {_flash(request)}
-        <h1>{_esc(name)}</h1>
-        {summary_chips}
-        <form method="get" action="/projects/{_esc(name)}">
-          <label for="status">Filter by status</label>
-          <select id="status" name="status" onchange="this.form.submit()" style="max-width:220px">
-            <option value="">(all)</option>
-            {status_options}
-          </select>
-        </form>
-        {table}
-        {pagination_html}
-
-        <fieldset>
-          <legend>Add item</legend>
-          <form method="post" action="/projects/{_esc(name)}/items">
-            <label for="title">Title</label>
-            <input type="text" id="title" name="title" required>
-            <label for="description">Description</label>
-            <textarea id="description" name="description" rows="2"></textarea>
-            <label for="acceptance">Acceptance criteria</label>
-            <textarea id="acceptance" name="acceptance" rows="2"></textarea>
-            <button type="submit">Add</button>
-          </form>
-        </fieldset>
-
-        <fieldset>
-          <legend>Claim next ready item</legend>
-          <form method="post" action="/projects/{_esc(name)}/claim">
-            <input type="hidden" name="mode" value="next">
-            <label for="lane">Lane</label>
-            <input type="text" id="lane" name="lane" value="{_esc(A.LANE_WORK)}">
-            <label for="claim_actor">Actor</label>
-            <input type="text" id="claim_actor" name="actor"
-                   value="{_esc(_identity(request))}" required>
-            <p class="field-hint">Claims the next open item in this lane and takes you to it.
-              To claim a specific item instead, open it and use the Claim button there.</p>
-            <button type="submit">Claim next</button>
-          </form>
-        </fieldset>
-
-        <fieldset class="danger-zone">
-          <legend>Danger zone</legend>
-          <a class="btn danger" href="/projects/{_esc(name)}/remove">Remove this project&hellip;</a>
-        </fieldset>
+        <section class="sec">{_project_hero_html(name, summary, oldest_item)}</section>
+        <div class="hr bleed"></div>
+        <section class="sec tight">
+          <div class="controls">
+            {T.search_field("Search titles, ids, holders and state")}
+            <select name="__status_filter" style="max-width:180px;height:44px"
+                    onchange="location.href='/projects/{_esc(name)}'+(this.value?'?status='+this.value:'')">
+              <option value="">(all statuses)</option>
+              {status_options}
+            </select>
+            <span class="count" id="qc">{result.total_count} ITEMS</span>
+          </div>
+          {table}
+          {pagination_html}
+        </section>
+        <div class="hr bleed"></div>
+        <section class="sec">
+          <div class="formsec">
+            <span class="flegend">Add item</span>
+            <form method="post" action="/projects/{_esc(name)}/items">
+              <label for="title">Title</label>
+              <input type="text" id="title" name="title" required>
+              <label for="description">Description</label>
+              <textarea id="description" name="description" rows="2"></textarea>
+              <label for="acceptance">Acceptance criteria</label>
+              <textarea id="acceptance" name="acceptance" rows="2"></textarea>
+              <button type="submit">Add</button>
+            </form>
+          </div>
+          <div class="formsec">
+            <span class="flegend">Claim next ready item</span>
+            <form method="post" action="/projects/{_esc(name)}/claim">
+              <input type="hidden" name="mode" value="next">
+              <label for="lane">Lane</label>
+              <input type="text" id="lane" name="lane" value="{_esc(A.LANE_WORK)}">
+              <label for="claim_actor">Actor</label>
+              <input type="text" id="claim_actor" name="actor"
+                     value="{_esc(_identity(request))}" required>
+              <p class="field-hint">Claims the next open item in this lane and takes you to it.
+                To claim a specific item instead, open it and use the Claim button there.</p>
+              <button type="submit">Claim next</button>
+            </form>
+          </div>
+          <div class="formsec danger">
+            <span class="flegend">Danger zone</span>
+            <a class="btn danger" href="/projects/{_esc(name)}/remove">Remove this
+              project&hellip;</a>
+          </div>
+        </section>
         """
-        return _page(request, name, body)
+        held_display = summary.held if summary.status == "ok" else "\u2014"
+        sb = T.statusbar(
+            '<span class="s"><span class="dot on"></span>Sweep <b>healthy</b></span>'
+            f'<span class="s">Held <b>{held_display}</b></span>',
+            f'<a href="/projects/{_esc(name)}">Refresh</a>',
+        )
+        return _page(
+            request,
+            name,
+            body,
+            crumb_html=crumb,
+            statusbar_html=sb,
+            js=T.search_js(result.total_count, "ITEMS", "tbody tr[data-t]"),
+        )
 
     @app.post("/projects/{name}/items")
     async def add_item(  # type: ignore[no-untyped-def]
@@ -922,24 +1115,22 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
                 request,
                 item_id,
                 _not_found_body(
-                    request,
                     heading=item_id,
                     back_href=f"/projects/{name}",
                     back_label=f"back to {name}",
                 ),
+                crumb_html=_crumb(("/", "All projects"), (f"/projects/{name}", name)),
             )
 
         identity_val = _esc(_identity(request))
 
         # ------------------------------------------------ contextual action
         # Exactly one action control, chosen by the item's own status --
-        # never rendered for a status it doesn't apply to (see module
-        # docstring: this replaced a resolve form rendered on every row of
-        # every table regardless of status).
+        # never rendered for a status it doesn't apply to.
         if item.status == "open":
             action_html = f"""
-            <fieldset>
-              <legend>Claim this item</legend>
+            <div class="formsec">
+              <span class="flegend">Claim this item</span>
               <form method="post" action="/projects/{_esc(name)}/claim">
                 <input type="hidden" name="mode" value="id">
                 <input type="hidden" name="item_id" value="{_esc(item.id)}">
@@ -947,12 +1138,12 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
                 <input type="text" id="claim_actor" name="actor" value="{identity_val}" required>
                 <button type="submit">Claim</button>
               </form>
-            </fieldset>
+            </div>
             """
         elif item.status == "held":
             action_html = f"""
-            <fieldset>
-              <legend>Resolve</legend>
+            <div class="formsec">
+              <span class="flegend">Resolve</span>
               <form method="post" action="/projects/{_esc(name)}/items/{_esc(item.id)}/resolve">
                 <label for="reason">Resolution reason</label>
                 <textarea id="reason" name="reason" rows="3" required></textarea>
@@ -960,7 +1151,7 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
                 <input type="text" id="resolve_actor" name="actor" value="{identity_val}" required>
                 <button type="submit">Resolve</button>
               </form>
-            </fieldset>
+            </div>
             """
         else:
             # resolved / blocked / deferred -- no action applies. Absent,
@@ -982,26 +1173,27 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
                     ln_type = ln.get("type") or "related"
                     ln_href = f"/projects/{_esc(name)}/items/{_esc(ln_id)}"
                     out += (
-                        f'<li><a class="nav-link" href="{ln_href}">{_esc(ln_id)}</a> '
+                        f'<li><a href="{ln_href}">{_esc(ln_id)}</a> '
                         f'<span class="muted">({_esc(ln_type)})</span></li>'
                     )
                 return out
 
             if depends_on:
                 links_html += (
-                    '<h2>Depends on</h2><ul class="links-list">' + _link_items(depends_on) + "</ul>"
+                    '<h2 class="eyebrow" style="display:block;margin-top:30px">Depends on</h2>'
+                    f'<ul class="links-list">{_link_items(depends_on)}</ul>'
                 )
             if required_by:
                 links_html += (
-                    '<h2>Required by</h2><ul class="links-list">'
-                    + _link_items(required_by)
-                    + "</ul>"
+                    '<h2 class="eyebrow" style="display:block;margin-top:30px">Required by</h2>'
+                    f'<ul class="links-list">{_link_items(required_by)}</ul>'
                 )
 
         resolution_html = ""
         if item.status == "resolved" and item.resolution:
             resolution_html = (
-                f'<h2>Resolution</h2><div class="content-block">{_esc(item.resolution)}</div>'
+                '<span class="eyebrow am" style="display:block;margin-top:30px">Resolution</span>'
+                f'<div class="content-block">{_esc(item.resolution)}</div>'
             )
 
         description_html = (
@@ -1015,49 +1207,69 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             else '<span class="muted">No acceptance criteria provided.</span>'
         )
 
-        # `v` values below are ALREADY html-safe (either `_esc(...)`-escaped
-        # plain text, or `_identity_html`'s own escaped span) -- the join
-        # below must NOT run them through `_esc` again, or the "Reported
-        # by" span markup would render as literal text instead of a tag.
-        meta_items = [
+        facts = [
+            ("Queue", f'<a href="/projects/{_esc(name)}">{_esc(name)}</a>'),
             ("Kind", _esc(item.kind or "--")),
             ("Priority", _esc(str(item.priority) if item.priority is not None else "--")),
         ]
         owner = item.raw.get("owner")
         if owner:
-            meta_items.append(("Reported by", _identity_html(str(owner))))
-        meta_grid = "".join(f"<dt>{_esc(k)}</dt><dd>{v}</dd>" for k, v in meta_items)
+            facts.append(("Reported by", _identity_html(str(owner))))
+        facts_kv = "".join(
+            f'<div><span class="k">{_esc(k)}</span><span class="v">{v}</span></div>'
+            for k, v in facts
+        )
 
-        body = f"""
-        {_crumbs(("/", "All projects"), (f"/projects/{_esc(name)}", name))}
-        {_flash(request)}
-        <div class="item-header">
-          <span class="item-id muted">{_esc(item.id)}</span>
-          {_status_badge(item.status)}
-          {
+        time_kv_parts = [
+            ("Created", _abs_and_rel(item.created_at.isoformat() if item.created_at else None)),
+            ("Updated", _abs_and_rel(item.updated_at.isoformat() if item.updated_at else None)),
+        ]
+        if item.status == "resolved" and item.closed_at:
+            time_kv_parts.append(("Resolved", _abs_and_rel(item.closed_at.isoformat())))
+        time_kv = "".join(
+            f'<div><span class="k">{_esc(k)}</span><span class="v serif">{v}</span></div>'
+            for k, v in time_kv_parts
+        )
+
+        held_chip = (
             f'<span class="chip">held by {_identity_html(item.holder)}</span>'
             if item.holder
             else ""
-        }
-        </div>
-        <h1>{_esc(item.title)}</h1>
-        <dl class="meta-grid">
-          {meta_grid}
-          <dt>Created</dt><dd>{_abs_and_rel(item.raw.get("created_at"))}</dd>
-          <dt>Updated</dt><dd>{_abs_and_rel(item.raw.get("updated_at"))}</dd>
-        </dl>
+        )
 
-        <h2>Description</h2>
-        <div class="content-block">{description_html}</div>
+        body = f"""
+        {_flash(request)}
+        <section class="sec">
+          <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+            <span class="muted">{_esc(item.id)}</span>
+            {_item_state_html(item.status)}
+            {held_chip}
+          </div>
+          <h1 style="font-family:var(--sans);font-size:26px;font-weight:500;line-height:1.32;
+                     letter-spacing:-.013em;color:var(--ink);max-width:900px;margin:12px 0 22px">
+            {_esc(item.title)}</h1>
+          <div class="kv">{facts_kv}</div>
+          <div class="kv" style="margin-top:10px">{time_kv}</div>
+        </section>
+        <div class="hr bleed"></div>
+        <section class="sec">
+          <span class="eyebrow">Description</span>
+          <div class="content-block">{description_html}</div>
 
-        <h2>Acceptance criteria</h2>
-        <div class="content-block">{acceptance_html}</div>
+          <span class="eyebrow" style="display:block;margin-top:30px">Acceptance criteria</span>
+          <div class="content-block">{acceptance_html}</div>
 
-        {resolution_html}
-        {links_html}
-        {action_html}
+          {resolution_html}
+          {links_html}
+          {action_html}
+        </section>
         """
-        return _page(request, f"{item.id} - {item.title}", body)
+        return _page(
+            request,
+            f"{item.id} - {item.title}",
+            body,
+            crumb_html=_crumb(("/", "All projects"), (f"/projects/{name}", name), ("", item.id)),
+        )
 
     @app.post("/projects/{name}/items/{item_id}/resolve")
     async def resolve(  # type: ignore[no-untyped-def]
@@ -1073,22 +1285,31 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
 
     @app.get("/projects/{name}/remove", response_class=HTMLResponse)
     async def remove_confirm(request: Request, name: str):  # type: ignore[no-untyped-def]
+        remove_heading_style = (
+            "font-family:var(--sans);font-size:24px;font-weight:500;"
+            "color:var(--ink);margin:20px 0 14px"
+        )
         body = f"""
-        {_crumbs(("/", "All projects"), (f"/projects/{_esc(name)}", name))}
         {_flash(request)}
-        <h1>Remove project '{_esc(name)}'</h1>
-        <p>This permanently deletes the project's local directory AND its shared-server
-        database. It is refused if any item is currently <strong>held</strong>.
-        This cannot be undone.</p>
-        <form method="post" action="/projects/{_esc(name)}/remove">
+        <h1 style="{remove_heading_style}">Remove project '{_esc(name)}'</h1>
+        <p class="subtle" style="max-width:640px">This permanently deletes the project's local
+          directory AND its shared-server database. It is refused if any item is currently
+          <strong style="color:var(--ink)">held</strong>. This cannot be undone.</p>
+        <form method="post" action="/projects/{_esc(name)}/remove" style="margin-top:18px">
           <label for="confirm_name">Type the project name
             (<code>{_esc(name)}</code>) to confirm</label>
           <input type="text" id="confirm_name" name="confirm_name" required autocomplete="off">
           <button type="submit" class="danger">Permanently remove</button>
         </form>
-        <p><a class="nav-link" href="/projects/{_esc(name)}">&laquo; cancel, back to project</a></p>
+        <p style="margin-top:14px">
+          <a href="/projects/{_esc(name)}">&laquo; cancel, back to project</a></p>
         """
-        return _page(request, f"Remove {name}", body)
+        return _page(
+            request,
+            f"Remove {name}",
+            body,
+            crumb_html=_crumb(("/", "All projects"), (f"/projects/{name}", name), ("", "Remove")),
+        )
 
     @app.post("/projects/{name}/remove")
     async def remove_project(name: str, confirm_name: str = Form(...)):  # type: ignore[no-untyped-def]

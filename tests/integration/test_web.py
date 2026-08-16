@@ -86,7 +86,7 @@ def test_login_success_sets_cookie_and_grants_dashboard_access(client):
     _login(client)
     resp = client.get("/")
     assert resp.status_code == 200
-    assert "Projects" in resp.text
+    assert "amplifier-work-tracker" in resp.text
 
 
 def test_logout_clears_session(client):
@@ -415,8 +415,9 @@ def test_project_view_pagination_reachability_and_no_cli_flag_leak(
     assert f'href="{next_href}"' in page1_text
     assert "--limit" not in page1_text  # no CLI flag anywhere in the web copy
 
-    # Item cells are real stretched-link cells (fix #6), not text-width-only.
-    assert 'class="item-id link-cell"' in page1_text
+    # Every title cell is a real link to its own item detail page, not
+    # text-width-only.
+    assert 'class="ti"' in page1_text
 
     missing_from_page1 = [i for i in all_ids if f"/items/{i}" not in page1_text]
     assert missing_from_page1, "expected at least one item to be unreachable on page 1 alone"
@@ -450,9 +451,9 @@ def test_dashboard_ready_held_blocked_columns_are_right_aligned(client, shared_p
     _login(client)
     r = client.get("/")
     assert r.status_code == 200
-    assert '<th class="num">Ready</th>' in r.text
-    assert '<th class="num">Held</th>' in r.text
-    assert '<th class="num">Blocked</th>' in r.text
+    assert '<th class="r">Ready</th>' in r.text
+    assert '<th class="r">Held</th>' in r.text
+    assert '<th class="r">Blocked</th>' in r.text
 
 
 def test_dashboard_project_name_cell_is_a_stretched_link(client, shared_project_name):

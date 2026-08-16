@@ -1685,13 +1685,21 @@ class Workspace:
         )
 
 
+#: Real-world day thresholds for `ready_age_buckets` -- see that field's
+#: docstring. Fixed, not rescaled to the workspace's current max: "arrived
+#: today" and "waited a week" should mean the same thing on a calm day and
+#: a bad one.
+READY_AGE_BUCKETS = (("0-1", 0, 1), ("2-3", 2, 3), ("4-6", 4, 6), ("7+", 7, None))
+
+
 @dataclass
 class ProjectSummary:
     """One project's item counts, in OUR vocabulary -- the shared computation
     behind the CLI's `instances` command and the web dashboard (see
     `webapp.py`), so neither reinvents (or silently disagrees on) what
-    "ready"/"held"/"intake" mean. Same rationale as `list_bounded`: one home
-    for logic two callers both need.
+    "ready"/"held"/"intake"/"blocked" mean, or what "oldest unclaimed"/
+    "resolved recently" mean (that half comes straight from
+    `project_activity`, folded in below rather than recomputed a second way).
 
     `status` is `"ok"` when the counts above were computed successfully, or
     a truncated `"ERROR: ..."` string (see `truncate_status`) when the
@@ -1704,10 +1712,29 @@ class ProjectSummary:
     never changes (a design-review finding: a badge that always reads the
     same value carries no information -- see webapp.py's dashboard route
     for how these are used). `held_by` is the sorted, deduplicated list of
-    current holders -- who to go ask, not just how many. `last_activity` is
-    the most recent `updated_at` across every item (our own domain concept;
-    not a Beads field itself), so a genuinely idle project reads differently
-    from one with agents actively moving through it right now.
+    current holders -- who to go ask, not just how many.
+
+    `last_activity` is `project_activity`'s field verbatim (the most recent
+    `updated_at` across every item, as an ISO string) -- there used to be a
+    SECOND, independent computation of "last activity" here, over the raw
+    `updated_at` strings rather than the parsed `Item.updated_at` datetimes
+    `project_activity` uses. Two homes for one concept is exactly what
+    `list_bounded`'s own docstring warns against; this is that reconciliation,
+    now that both live in the same module and can share one computation.
+
+    `oldest_unclaimed_age_seconds`, `resolved_24h`, `resolved_7d` are
+    `project_activity`'s other three fields, folded in here so a caller that
+    wants "this project's health" gets the counts AND the aging/throughput
+    figures from one function call -- see `project_activity`'s own docstring
+    for exactly what each means and why a `None` age is never coerced to 0.
+
+    `ready_age_buckets` is a real-world-day histogram of ready items' ages
+    (see `READY_AGE_BUCKETS`) -- a dashboard-wide heartbeat/texture strip
+    can be built by summing these across every project's summary, without
+    a second full item fetch: the counts are derived from the SAME `items`
+    list this function already read to compute everything else. `None`
+    when the project's database could not be read (same "unreadable, not
+    empty" convention as every other field here).
     """
 
     name: str
@@ -1717,23 +1744,47 @@ class ProjectSummary:
     held: int | None = None
     intake: int | None = None
     blocked: int | None = None
+    resolved: int | None = None
+    deferred: int | None = None
     held_by: list[str] = field(default_factory=list)
     last_activity: str | None = None
+    oldest_unclaimed_age_seconds: float | None = None
+    resolved_24h: int | None = None
+    resolved_7d: int | None = None
+    ready_age_buckets: dict[str, int] | None = None
+
+
+def _ready_age_buckets(items: list[Item]) -> dict[str, int]:
+    now = datetime.now(UTC)
+    ready_days = [
+        (now - i.created_at).total_seconds() / 86400
+        for i in items
+        if i.status == "open" and LANE_WORK in i.tags and i.created_at is not None
+    ]
+    out: dict[str, int] = {}
+    for label, lo, hi in READY_AGE_BUCKETS:
+        out[label] = sum(1 for d in ready_days if d >= lo and (hi is None or d <= hi))
+    return out
 
 
 def project_summary(ws: Workspace, name: str) -> ProjectSummary:
     """Compute one project's `ProjectSummary` against the live `bd` project.
 
     Never raises -- a project whose database cannot be read reports
-    `status="ERROR: ..."` (truncated) with the count fields left `None`,
+    `status="ERROR: ..."` (truncated) with every field left `None`/empty,
     exactly like `cli.cmd_instances`'s prior per-project error handling.
+
+    Fetches items exactly ONCE (`ws.project(name).list(include_resolved=True)`)
+    and derives every field -- counts, `project_activity`'s aging/throughput
+    figures, and the ready-age histogram -- from that single in-memory list.
+    No field here costs a second `bd` call.
     """
     try:
         items = ws.project(name).list(include_resolved=True)
     except BeadsError as e:
         return ProjectSummary(name=name, status=truncate_status(f"ERROR: {e}"))
     held_items = [i for i in items if i.status == "held"]
-    updated_ats = [ts for i in items if (ts := i.raw.get("updated_at"))]
+    activity = project_activity(items)
     return ProjectSummary(
         name=name,
         status="ok",
@@ -1742,8 +1793,14 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
         held=len(held_items),
         intake=sum(1 for i in items if i.status == "open" and LANE_INTAKE in i.tags),
         blocked=sum(1 for i in items if i.status == "blocked"),
+        resolved=sum(1 for i in items if i.status == "resolved"),
+        deferred=sum(1 for i in items if i.status == "deferred"),
         held_by=sorted({i.holder for i in held_items if i.holder}),
-        last_activity=max(updated_ats) if updated_ats else None,
+        last_activity=activity["last_activity"],
+        oldest_unclaimed_age_seconds=activity["oldest_unclaimed_age_seconds"],
+        resolved_24h=activity["resolved_24h"],
+        resolved_7d=activity["resolved_7d"],
+        ready_age_buckets=_ready_age_buckets(items),
     )
 
 
