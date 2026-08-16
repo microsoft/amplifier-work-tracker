@@ -535,10 +535,13 @@ def _aggregate_buckets(summaries: list[A.ProjectSummary]) -> dict[str, int]:
 
 
 def _heartbeat_html(buckets: dict[str, int]) -> str:
-    """The ready queue's age profile, one tick per real ready item across
-    the whole workspace, banded into the same fixed real-world-day
-    thresholds every other age reading in this app uses. A texture, not a
-    chart -- it must never out-shout the hero."""
+    """The ready queue's age profile: one tick per real ready item across
+    the whole workspace, grouped under the SAME fixed real-world-day bands
+    (`READY_AGE_BUCKETS`) every other age reading in this app uses -- now
+    with a printed day-range axis and a per-band count beneath each group,
+    so a tick's horizontal position carries a real unit an operator can
+    read, not just an unlabelled 'fresher -> older'. Still a texture, kept
+    short enough it never out-shouts the hero."""
     total = sum(buckets.values())
     if total == 0:
         empty_note = "Nothing is ready to be claimed anywhere."
@@ -546,14 +549,56 @@ def _heartbeat_html(buckets: dict[str, int]) -> str:
             '<div class="beat"><span class="eyebrow">Ready queue by age</span>'
             f'<div class="subtle" style="margin-top:14px">{empty_note}</div></div>'
         )
-    ticks = "".join(
-        f'<span class="tick {_BUCKET_BAND[label]}" style="height:{_BUCKET_HEIGHT[label]}px"></span>'
-        for label, _, _ in A.READY_AGE_BUCKETS
-        for _n in range(buckets.get(label, 0))
+    seg_base = (
+        "flex:1 1 0;min-width:0;display:flex;align-items:flex-end;gap:2px;"
+        "overflow:hidden;padding:0 8px"
     )
+    ax_base = (
+        "flex:1 1 0;min-width:0;display:flex;flex-direction:column;"
+        "align-items:center;gap:3px;padding:0 8px"
+    )
+    divider = ";border-left:1px solid var(--rule)"
+    segments = []
+    axis = []
+    for idx, (label, lo, hi) in enumerate(A.READY_AGE_BUCKETS):
+        n = buckets.get(label, 0)
+        band = _BUCKET_BAND[label]
+        height = _BUCKET_HEIGHT[label]
+        # readable day-range for this band -- the axis unit the old
+        # "FRESHER -> OLDER" strip lacked: "0-1d", "2-3d", "4-6d", "7d+".
+        if hi is None:
+            day = f"{lo}d+"
+        elif lo == 0:
+            day = f"0\u2013{hi}d"
+        else:
+            day = f"{lo}\u2013{hi}d"
+        ticks = "".join(
+            f'<span class="tick {band}" style="height:{height}px;flex:0 0 3px"></span>'
+            for _n in range(n)
+        )
+        seg_style = seg_base + (divider if idx else "")
+        ax_style = ax_base + (divider if idx else "")
+        num_color = "var(--amber)" if (hi is None and n) else "var(--mid)"
+        segments.append(f'<span style="{seg_style}">{ticks}</span>')
+        axis.append(
+            f'<span style="{ax_style}">'
+            '<span style="font-family:var(--sans);font-size:10px;font-weight:500;'
+            "letter-spacing:.1em;text-transform:uppercase;color:var(--dim);"
+            f'white-space:nowrap">{_esc(day)}</span>'
+            '<span style="font-family:var(--sans);font-size:14px;font-weight:500;'
+            f'line-height:1;color:{num_color}">{n}</span></span>'
+        )
     fresh = buckets.get("0-1", 0)
     stale = buckets.get("7+", 0)
-    aria = f"Age profile of {total} unclaimed items across the workspace."
+    aria = (
+        f"Age profile of {total} unclaimed items across the workspace: "
+        + ", ".join(
+            f"{buckets.get(label, 0)} aged "
+            + (f"{lo} or more days" if hi is None else f"{lo} to {hi} days")
+            for label, lo, hi in A.READY_AGE_BUCKETS
+        )
+        + "."
+    )
     legend = (
         f'<div class="legend"><div><span class="sw s0"></span>'
         f'<span class="n">{fresh}</span><span class="l">Arrived last day</span></div>'
@@ -566,8 +611,8 @@ def _heartbeat_html(buckets: dict[str, int]) -> str:
     <span class="eyebrow">Ready queue by age</span>
     {legend}
   </div>
-  <div class="ticks" role="img" aria-label="{aria}">{ticks}</div>
-  <div class="scale"><span>Fresher</span><span>one mark per item</span><span>Older</span></div>
+  <div class="ticks" role="img" aria-label="{aria}">{"".join(segments)}</div>
+  <div style="display:flex;margin-top:8px">{"".join(axis)}</div>
 </div>"""
 
 
@@ -596,16 +641,43 @@ def _ledger_html(held: int, blocked: int, resolved_24h: int, resolved_7d: int) -
 
 def _dashboard_row(s: A.ProjectSummary, scale_seconds: float) -> str:
     if s.status != "ok":
-        key = f"{s.name} broken {s.status}".lower()
+        # A broken/creating queue must be unmissable, never a quiet grey row
+        # lost among healthy ones. `class="alarm"` is the shared escalation
+        # hook webtheme owns (residual: add a dedicated `--alarm` token +
+        # `tr.alarm` styling); the inline treatment here makes it read as an
+        # alarm TODAY without depending on that lane landing first.
+        st = s.status
+        creating = st.lower().startswith(("creating", "provisioning"))
+        if creating:
+            kind, word, accent = "warn", "Provisioning", "var(--amber)"
+            tint = "rgba(217,162,83,.12)"
+            detail = "Being created \u2014 counts appear once its database is ready."
+        else:
+            kind, word, accent = "bad", "Broken", "var(--crimson)"
+            tint = "rgba(224,101,90,.12)"
+            detail = st  # e.g. "ERROR: ..." (already truncated by the adapter)
+        # keep the reading width sane: one legible line, full text on hover
+        shown = detail if len(detail) <= 120 else detail[:119] + "\u2026"
+        key = f"{s.name} {'provisioning' if creating else 'broken'} {st}".lower()
+        row_style = f"background:{tint};box-shadow:inset 4px 0 0 {accent}"
         return (
-            f'<tr data-t="{_esc(key)}">'
+            f'<tr class="alarm" data-t="{_esc(key)}" style="{row_style}">'
             f'<td class="link-cell"><a href="/projects/{_esc(s.name)}">{_esc(s.name)}</a></td>'
-            f'<td colspan="7"><span class="c">{T.state_html("bad", "Broken")} '
-            f'<span class="muted">{_esc(s.status)}</span></span></td>'
+            f'<td colspan="7"><span class="c">{T.state_html(kind, word)} '
+            f'<span class="muted" title="{_esc(st)}" style="overflow-wrap:anywhere">'
+            f"{_esc(shown)}</span></span></td>"
             "</tr>"
         )
     age_cell = T.age_cell_html(s.oldest_unclaimed_age_seconds, scale_seconds)
-    held_by_chips = "".join(f'<span class="chip">{_identity_html(h)}</span>' for h in s.held_by)
+    # A raw machine holder id in the fixed-width Held column used to wrap
+    # across three lines. Pin each chip to one legible line, ellipsis the
+    # overflow, and keep the full identity one hover away via `title`.
+    held_by_chips = "".join(
+        f'<span class="chip" title="{_esc(h)}" style="max-width:100%;white-space:nowrap;'
+        f'overflow:hidden;text-overflow:ellipsis;vertical-align:bottom">'
+        f"{_identity_html(h)}</span>"
+        for h in s.held_by
+    )
     if s.held:
         state = T.state_html("warn", f"{s.held} held")
     elif s.ready == 0:
@@ -669,11 +741,27 @@ def _create_project_form() -> str:
 
 def _project_hero_html(name: str, summary: A.ProjectSummary, oldest_item: A.Item | None) -> str:
     if summary.status != "ok":
+        # Same alarm vocabulary as the dashboard's broken row: a bordered,
+        # tinted block that cannot be mistaken for a healthy hero. `alarm`
+        # is webtheme's escalation hook (residual: `--alarm` token +
+        # `.hero.alarm` styling); inline crimson/amber makes it read now.
+        st = summary.status
+        creating = st.lower().startswith(("creating", "provisioning"))
+        if creating:
+            label, accent, tint = "Provisioning", "var(--amber)", "rgba(217,162,83,.12)"
+            body = (
+                "This project is still being created. Its counts appear once its database is ready."
+            )
+        else:
+            label, accent, tint = "Unavailable", "var(--crimson)", "rgba(224,101,90,.12)"
+            body = st
         return (
-            '<div class="hero">'
-            '<span class="eyebrow" style="color:var(--crimson)">Unavailable</span>'
-            '<div class="subtle" style="margin-top:16px;max-width:600px">'
-            f"{_esc(summary.status)}</div></div>"
+            '<div class="hero alarm" style="display:block">'
+            f'<div style="border-left:4px solid {accent};background:{tint};'
+            'padding:20px 24px;max-width:640px">'
+            f'<span class="eyebrow" style="color:{accent}">{label}</span>'
+            '<div class="subtle" style="margin-top:12px;overflow-wrap:anywhere">'
+            f"{_esc(body)}</div></div></div>"
         )
     age = summary.oldest_unclaimed_age_seconds
     if age is None:
@@ -693,10 +781,18 @@ def _project_hero_html(name: str, summary: A.ProjectSummary, oldest_item: A.Item
             )
             item_href = f"/projects/{_esc(name)}/items/{_esc(oldest_item.id)}"
             said = (
-                f'<div class="said"><div class="who">{_esc(name)}'
-                f'<span class="id">{_esc(oldest_item.id)}</span></div>'
-                f'<a class="what" href="{item_href}">{_esc(oldest_item.title)}</a>'
-                f'<div class="subtle" style="margin-top:8px">'
+                '<div class="said" style="max-width:560px">'
+                # `.who` is an unstyled div, so name and id butted together
+                # ("cortex" + "cortex-i2u" -> "cortexcortex-i2u"). Lay it out
+                # as a baseline flex row with a real gap, and give the id the
+                # same dim secondary treatment the hero attribution uses.
+                '<div class="who" style="display:flex;gap:8px;align-items:baseline;'
+                f'flex-wrap:wrap">{_esc(name)}'
+                '<span class="id" style="color:var(--dim);font-weight:400;'
+                f'letter-spacing:.04em">{_esc(oldest_item.id)}</span></div>'
+                f'<a class="what" href="{item_href}" style="display:inline-block;'
+                f'max-width:100%;overflow-wrap:anywhere">{_esc(oldest_item.title)}</a>'
+                '<div class="subtle" style="margin-top:8px">'
                 f"Unclaimed since {_esc(since)}, no holder</div></div>"
             )
         else:
