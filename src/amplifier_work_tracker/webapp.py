@@ -711,6 +711,122 @@ def _item_row(name: str, i: A.Item, idx: int) -> str:
   <td><span class="c"><span class="holder">{holder}</span></span></td>
   <td class="ti"><a href="{href}">{_esc(i.title)}</a></td>
 </tr>"""
+    # NOTE (goal: item-render, deliverable 3): the described "cortexcortex-i2u"
+    # no-separator id/title concat bug is NOT reproducible in this row as
+    # currently written -- `i.id` and `i.title` are rendered in separate
+    # `<td>` cells above, never concatenated into one string, and every
+    # f-string join in this function (`href`, `key`) already inserts a
+    # literal separator ("/", " ") between fields. Verified by reading
+    # every field access in this function; no change made because there is
+    # nothing here to fix.
+
+
+# ---------------------------------------------------------------------------
+# item body rendering -- markdown-lite + monospace/aligned content blocks
+# ---------------------------------------------------------------------------
+#
+# All THREE deliverables below (markdown rendering, monospace alignment,
+# ~90ch reading measure) are satisfied entirely with inline styles emitted
+# by these helpers -- none require a webtheme.py change. The item-detail
+# ROUTE (in `create_app()`, owned by the webapp-routes lane) still needs to
+# call `_content_block_html`/`_fact_value_html` instead of its current
+# `_esc(...)` calls -- see this module's residual notes (recorded in
+# DONE.json) for the exact call sites.
+
+_FENCED_CODE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+_BOLD_RE = re.compile(r"\*\*([^\n*]+?)\*\*")
+_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+)$", re.MULTILINE)
+_CODEBLOCK_TOKEN_RE = re.compile(r"\x00CODEBLOCK(\d+)\x00")
+
+
+def _render_item_markdown(text: str) -> str:
+    """A small, dependency-free markdown-lite renderer for item
+    description/acceptance/resolution bodies: fenced ``` code blocks,
+    inline `code`, **bold**, and '#'-style headings become real HTML.
+    Everything else -- including any HTML the author typed -- passes
+    through as literal, already-escaped text; the surrounding
+    `.content-block`'s `white-space: pre-wrap` (see `_content_block_html`)
+    preserves blank lines and indentation exactly as typed, so this never
+    needs to emit its own paragraph or `<br>` markup.
+
+    Escapes FIRST (`_esc`, the same helper every other renderer in this
+    module uses), so no substitution below can ever introduce live HTML
+    from untrusted input -- only the fixed tag strings this function
+    writes itself land unescaped in the result."""
+    escaped = _esc(text)
+
+    code_blocks: list[str] = []
+
+    def _stash_code_block(m: re.Match[str]) -> str:
+        # The regex's content group always includes the newline right
+        # before the closing fence (that's how the opening fence's own
+        # trailing newline is excluded) -- drop exactly one, so a
+        # ```\ncode\n``` block doesn't render with a trailing blank line.
+        content = m.group(1)
+        if content.endswith("\n"):
+            content = content[:-1]
+        code_blocks.append(f"<pre><code>{content}</code></pre>")
+        return f"\x00CODEBLOCK{len(code_blocks) - 1}\x00"
+
+    without_blocks = _FENCED_CODE_RE.sub(_stash_code_block, escaped)
+
+    def _heading(m: re.Match[str]) -> str:
+        # h1-h3 are reserved for the page's own title/section chrome -- an
+        # item body heading is always a SUBORDINATE heading (h4-h6),
+        # however many '#'s the author used.
+        level = min(len(m.group(1)) + 3, 6)
+        return f"<h{level}>{m.group(2)}</h{level}>"
+
+    with_headings = _HEADING_RE.sub(_heading, without_blocks)
+    with_code = _INLINE_CODE_RE.sub(r"<code>\1</code>", with_headings)
+    with_bold = _BOLD_RE.sub(r"<strong>\1</strong>", with_code)
+
+    def _restore_code_block(m: re.Match[str]) -> str:
+        return code_blocks[int(m.group(1))]
+
+    return _CODEBLOCK_TOKEN_RE.sub(_restore_code_block, with_bold)
+
+
+# `var(--mono, <fallback>)` reads webtheme.py's token if one is ever added
+# there, but works TODAY via the fallback -- no webtheme.py edit required
+# for this deliverable. (Residual-noted anyway: promoting this to a real
+# `--mono` custom property in webtheme.py would let every future monospace
+# need reuse one token instead of repeating this stack.)
+_CONTENT_MONO_STACK = (
+    "var(--mono,ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace)"
+)
+
+
+def _content_block_html(text: str | None, *, empty_message: str) -> str:
+    """The full `.content-block` for an item's description/acceptance/
+    resolution body -- markdown-lite rendered (`_render_item_markdown`), a
+    monospace font stack (so pasted ASCII tables and code keep their
+    column alignment: the shared `.content-block` rule in webtheme.py sets
+    `white-space: pre-wrap` but not a monospace font, which silently
+    destroys alignment under the proportional `--sans` face), and a ~90
+    character reading measure (the raw container is otherwise full-width
+    of the page's `.wrap`, which reads at ~190 characters/line on a wide
+    viewport). All three constraints are applied here, inline, on the
+    element THIS helper returns -- not as new webtheme.py classes.
+
+    Returns the same muted "No X provided." placeholder the item-detail
+    route already renders today for an empty/missing body, so swapping the
+    route's `_esc(...)` call for this one is a drop-in replacement."""
+    if not text:
+        return f'<div class="content-block"><span class="muted">{_esc(empty_message)}</span></div>'
+    rendered = _render_item_markdown(text)
+    style = f"font-family:{_CONTENT_MONO_STACK};max-width:90ch"
+    return f'<div class="content-block" style="{style}">{rendered}</div>'
+
+
+def _fact_value_html(value: str) -> str:
+    """A static (non-interactive) fact value for the item-detail page's
+    KIND/PRIORITY-style fields: explicitly non-clickable (`cursor:default`,
+    no underline/href), so it never reads as a disguised link or an
+    editable field sitting next to the page's genuinely interactive `.kv`
+    values (the Queue link, the identity spans)."""
+    return f'<span class="fact-static" style="cursor:default">{_esc(value)}</span>'
 
 
 # ---------------------------------------------------------------------------
