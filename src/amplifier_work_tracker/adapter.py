@@ -428,6 +428,200 @@ def drop_database(name: str) -> bool:
     raise BeadsError(f"drop_database {name!r} failed: {_clean_bd_error(blob)}")
 
 
+def _dolt_tables(db: str) -> tuple[list[str], list[str]]:
+    """`(base_tables, views)` in database `db` on the shared dolt server,
+    each sorted, read from `information_schema.TABLES` over the same direct
+    SQL path `database_exists`/`drop_database` use.
+
+    Views are returned separately because a faithful copy must create the
+    base tables (and their foreign keys) before the views that select from
+    them. `db` has already passed `NAME_RE`, so it carries no SQL-relevant
+    character (see `database_exists`'s note on the same guarantee).
+    """
+    p = _dolt_sql(
+        "SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES "
+        f"WHERE TABLE_SCHEMA='{db}' ORDER BY TABLE_TYPE, TABLE_NAME"
+    )
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not list tables of database {db!r} on the shared dolt server: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    base: list[str] = []
+    views: list[str] = []
+    for line in (p.stdout or "").splitlines()[1:]:  # drop CSV header
+        if not line.strip():
+            continue
+        name, _, ttype = line.partition(",")  # table names carry no comma
+        (views if ttype.strip() == "VIEW" else base).append(name.strip())
+    return base, views
+
+
+def _dolt_show_create(name: str, *, db: str, kind: str) -> str:
+    """The `CREATE TABLE`/`CREATE VIEW` DDL for `db`.`name`, read via dolt's
+    JSON result format so the multi-line DDL survives intact (CSV mangles
+    embedded newlines and quotes). `kind` is ``"table"`` or ``"view"``.
+
+    `--use-db <db>` (a global flag, placed before the `sql` subcommand like
+    the other `_dolt_conn_args` flags) scopes `SHOW CREATE` to the source
+    database, so the returned DDL names the object bare (no schema prefix)
+    and can be replayed verbatim against the destination database.
+    """
+    verb = "TABLE" if kind == "table" else "VIEW"
+    key = "Create Table" if kind == "table" else "Create View"
+    p = _run_bounded(
+        [
+            "dolt",
+            *_dolt_conn_args(),
+            "--use-db",
+            db,
+            "sql",
+            "-q",
+            f"SHOW CREATE {verb} `{name}`",
+            "-r",
+            "json",
+        ],
+        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+    )
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not read the schema of {db}.{name}: {_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    try:
+        rows = json.loads(p.stdout or "{}")["rows"]
+        return str(rows[0][key])
+    except (json.JSONDecodeError, KeyError, IndexError) as e:
+        raise BeadsError(f"could not parse the schema of {db}.{name}: {e}") from e
+
+
+def _dolt_table_counts(db: str, tables: list[str]) -> dict[str, int]:
+    """Row count of each of `tables` in database `db`, in one SQL round trip
+    (a `UNION ALL` of per-table `COUNT(*)`), used to prove a copy is complete
+    rather than merely non-erroring.
+    """
+    if not tables:
+        return {}
+    query = " UNION ALL ".join(
+        f"SELECT '{t}' AS t, COUNT(*) AS n FROM `{db}`.`{t}`" for t in tables
+    )
+    p = _dolt_sql(query)
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not count rows in database {db!r}: {_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    counts: dict[str, int] = {}
+    for line in (p.stdout or "").splitlines()[1:]:  # drop CSV header
+        if not line.strip():
+            continue
+        name, _, n = line.partition(",")
+        counts[name.strip()] = int(n.strip())
+    return counts
+
+
+def copy_database(src: str, dst: str) -> None:
+    """Create database `dst` as a faithful copy of `src` on the shared dolt
+    server: identical schema (every base table, view, and foreign key) and
+    every row, verified complete before returning.
+
+    Why a full copy rather than a rename: dolt 2.2.3 has no `RENAME DATABASE`
+    / `ALTER DATABASE ... RENAME` (both are parse errors) and no server-side
+    database-copy primitive -- `dolt dump` refuses outright in a remote/server
+    context ("has not yet been migrated to function in a remote context").
+    A schema+data copy over the ordinary SQL connection is the mechanism.
+    Two behaviours, both verified live against the installed binary, make it
+    a single statement: cross-database `INSERT ... SELECT` works, and a
+    session-scoped `SET foreign_key_checks=0` lets the base tables be created
+    and loaded in any order despite their foreign keys to `issues`/`wisps`.
+    Running the whole script through one `dolt sql -q` keeps it in one
+    session, so that `SET` and the `USE` both persist across its statements.
+
+    Item ids and the issue prefix are preserved EXACTLY: the `issues`,
+    `config`, `dependencies`, ... rows are copied verbatim, so no id is
+    rewritten and no `discovered-from` link is broken. A renamed project's
+    existing items keep their original ids, and new items continue on the
+    original prefix (bd reads it from the copied `config` row).
+
+    Atomic from the caller's view: on ANY failure -- schema read, the copy
+    script, or the completeness check -- the partial `dst` (which may have
+    been created with some-but-not-all tables before a failing statement) is
+    dropped before raising, so the only outcomes are "`dst` is a complete
+    copy" or "`dst` does not exist." `src` is never touched.
+    """
+    base, views = _dolt_tables(src)
+    if not base and not views:
+        raise BeadsError(
+            f"cannot copy database {src!r}: it has no tables -- it is not a usable bd project."
+        )
+    statements = ["SET foreign_key_checks=0", f"CREATE DATABASE `{dst}`", f"USE `{dst}`"]
+    statements += [_dolt_show_create(t, db=src, kind="table") for t in base]
+    statements += [_dolt_show_create(v, db=src, kind="view") for v in views]
+    statements += [f"INSERT INTO `{dst}`.`{t}` SELECT * FROM `{src}`.`{t}`" for t in base]
+    script = ";\n".join(statements) + ";"
+
+    # A large project's copy can be as slow as a real `bd init` (both are
+    # bounded by the shared dolt server under load), so use the same larger
+    # budget rather than the default per-call one.
+    p = _run_bounded(
+        ["dolt", *_dolt_conn_args(), "sql", "-q", script],
+        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+        timeout=_BD_INIT_TIMEOUT_SECONDS,
+    )
+    if p.returncode != 0:
+        _drop_database_best_effort(dst)
+        raise BeadsError(
+            f"copying database {src!r} to {dst!r} failed: {_clean_bd_error(p.stderr or p.stdout)}"
+        )
+
+    # Prove the copy is complete, not merely non-erroring: every base table's
+    # row count in `dst` must equal `src`. A mismatch is treated as a failed
+    # copy -- drop `dst` and raise, never leave a half-populated database.
+    src_counts = _dolt_table_counts(src, base)
+    dst_counts = _dolt_table_counts(dst, base)
+    mismatches = [t for t in base if src_counts.get(t) != dst_counts.get(t)]
+    if mismatches:
+        example = mismatches[0]
+        _drop_database_best_effort(dst)
+        raise BeadsError(
+            f"copying database {src!r} to {dst!r} left an incomplete copy: "
+            f"{len(mismatches)} table(s) have a different row count (e.g. {example!r}: "
+            f"{src_counts.get(example)} rows in the source, "
+            f"{dst_counts.get(example)} in the copy). "
+            f"The incomplete copy was dropped; {src!r} is untouched."
+        )
+
+
+def _drop_database_best_effort(name: str) -> None:
+    """Drop `name`, swallowing any BeadsError -- for cleanup paths where a
+    drop failure must not mask the ORIGINAL error being handled (a failed
+    copy, a rolled-back rename). `drop_database` itself is the fail-loud
+    version; this is only for use inside an `except`/rollback.
+    """
+    try:
+        drop_database(name)
+    except BeadsError:
+        logger.warning("best-effort drop of database %r failed during cleanup", name)
+
+
+def _repoint_beads_metadata(beads_dir: Path, db_name: str) -> None:
+    """Point a project's local bd metadata at shared-server database
+    `db_name`. bd records which database a `.beads` directory maps to in
+    `.beads/metadata.json` (`dolt_database`); after a rename that single
+    field is the one thing that must change for `bd` to resolve the renamed
+    database (verified empirically: updating only this field, plus moving the
+    directory and the database, makes `bd list`/`bd create` work against the
+    new name). Every other key -- host, port, project id -- is unchanged.
+    """
+    meta_path = beads_dir / "metadata.json"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise BeadsError(
+            f"could not read bd metadata at {meta_path} to repoint it at database {db_name!r}: {e}"
+        ) from e
+    meta["dolt_database"] = db_name
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+
 class BeadsError(Exception):
     """A Beads operation failed. Never caught to degrade -- only to report."""
 
@@ -1303,6 +1497,22 @@ class RemovalReport:
     leftover: list[str] = field(default_factory=list)
 
 
+@dataclass
+class RenameReport:
+    """What `Workspace.rename` actually did -- see its docstring for the full
+    contract. `item_count` is the number of items in the renamed project
+    (proven readable under the new name before the rename committed);
+    `old_database_dropped` records that the source database was removed, so a
+    caller can see no orphan was left behind.
+    """
+
+    old: str
+    new: str
+    directory: Path
+    item_count: int
+    old_database_dropped: bool
+
+
 def _read_lock_pid(lock: Path) -> int | None:
     """The pid recorded in a `.create.lock` file, or None if it cannot be
     read as one (missing, empty, non-numeric) -- treated as dead by
@@ -1682,6 +1892,128 @@ class Workspace:
             database_removed=database_removed,
             directory_removed=directory_removed,
             leftover=leftover,
+        )
+
+    def rename(self, old: str, new: str) -> RenameReport:
+        """Rename a project safely: its on-disk directory, its shared-server
+        database, and bd's local metadata, together -- atomic from the
+        caller's view, mirroring `create`'s self-heal discipline.
+
+        The class of bug this closes: a naive rename that moves only the
+        directory leaves the database still named `old` on the shared server
+        -- exactly the kind of server-side residue that "burned" a name
+        before (see `create`/`remove`'s docstrings). This renames BOTH, and
+        rolls back completely on any failure rather than leaving a
+        half-renamed project or an orphan database.
+
+        Refuses (no override, before any mutation) when:
+          - `new` is not a valid project name (same `NAME_RE` as `create` --
+            dots/hyphens rejected, since a dotted database name is unusable);
+          - `old` and `new` are the same name;
+          - `new` is already taken -- a directory OR a database of that name
+            exists (same residue caution `create` applies);
+          - `old` does not exist, or is in a split state (a directory without
+            its database, or vice versa) that cannot be renamed safely;
+          - any item in `old` is currently HELD -- an agent may be actively
+            working it, the same safety property `remove` enforces.
+
+        Mechanism (see `copy_database`): dolt has no `RENAME DATABASE`, so the
+        database is renamed by copying `old` to `new` (full schema + data,
+        verified complete), then dropping `old` once `new` is proven live.
+        Item ids and the issue prefix are preserved exactly -- existing items
+        keep their ids, new items continue on the original prefix.
+
+        Rollback: the source database is dropped only at the very end, after
+        the copy, the directory move, the metadata repoint, and a real
+        `bd list` under the new name have all succeeded. A failure anywhere
+        before that restores the original state -- the directory is moved
+        back, its metadata is restored, and the copied `new` database is
+        dropped -- so `old` is left exactly as it was found.
+        """
+        if not NAME_RE.match(new):
+            raise BeadsError(
+                f"invalid new project name {new!r}: must match {NAME_RE.pattern}. "
+                f"Dots and hyphens are rejected deliberately -- they produce a database "
+                f"that reports success and then fails every later command."
+            )
+        if old == new:
+            raise BeadsError(f"cannot rename project {old!r} to itself")
+        if not NAME_RE.match(old):
+            raise BeadsError(f"invalid project name {old!r}: must match {NAME_RE.pattern}")
+
+        old_dir = self.path(old)
+        new_dir = self.path(new)
+        old_has_dir = (old_dir / ".beads").is_dir()
+        old_has_db = database_exists(old)
+
+        if not old_has_dir and not old_has_db:
+            raise BeadsError(
+                f"project {old!r} not found: no {old_dir / '.beads'} directory and no "
+                f"database named {old!r} on the shared dolt server. Nothing to rename."
+            )
+        if not old_has_dir or not old_has_db:
+            raise BeadsError(
+                f"project {old!r} is in a split state -- directory "
+                f"{'present' if old_has_dir else 'missing'}, database "
+                f"{'present' if old_has_db else 'missing'} -- and cannot be safely renamed. "
+                f"Resolve it first: `amplifier-work-tracker remove {old} --yes` (which handles "
+                f"both halves), then re-create."
+            )
+        if (new_dir / ".beads").is_dir() or database_exists(new):
+            raise BeadsError(
+                f"cannot rename {old!r} to {new!r}: a project or database named {new!r} "
+                f"already exists. Choose a different name, or remove {new!r} first "
+                f"(`amplifier-work-tracker remove {new} --yes`)."
+            )
+
+        held = [i for i in self.project(old).list(include_resolved=False) if i.status == "held"]
+        if held:
+            names = ", ".join(f"{i.id} (held by {i.holder!r})" for i in held)
+            raise BeadsError(
+                f"refusing to rename project {old!r}: {len(held)} item(s) currently HELD -- "
+                f"{names}. An agent may be actively working this queue. Resolve or reap the "
+                f"item(s) first, then rename again."
+            )
+
+        # --- mutate, with full rollback until the final commit (dropping old) ---
+        db_copied = False
+        moved = False
+        repointed = False
+        try:
+            copy_database(old, new)  # creates `new`; self-cleans its own partial residue on failure
+            db_copied = True
+            shutil.move(str(old_dir), str(new_dir))
+            moved = True
+            _repoint_beads_metadata(new_dir / ".beads", new)
+            repointed = True
+            item_count = len(self.project(new).list(include_resolved=True))  # prove it answers
+        except BaseException:
+            # Restore the original state, in reverse order, best-effort. Each
+            # step is guarded so a secondary failure never masks the original.
+            if moved:
+                try:
+                    shutil.move(str(new_dir), str(old_dir))
+                except Exception:  # noqa: BLE001 -- best-effort rollback; original error re-raised below
+                    logger.warning("rollback: could not move %s back to %s", new_dir, old_dir)
+            if repointed:
+                # After the move-back the directory is at old_dir again; put
+                # its metadata back to `old` so the untouched `old` database
+                # still resolves.
+                try:
+                    _repoint_beads_metadata(old_dir / ".beads", old)
+                except Exception:  # noqa: BLE001 -- best-effort rollback
+                    logger.warning("rollback: could not restore metadata for %s", old)
+            if db_copied:
+                _drop_database_best_effort(new)
+            raise
+
+        old_database_dropped = drop_database(old)
+        return RenameReport(
+            old=old,
+            new=new,
+            directory=new_dir,
+            item_count=item_count,
+            old_database_dropped=old_database_dropped,
         )
 
 

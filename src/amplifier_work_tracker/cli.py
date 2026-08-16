@@ -354,6 +354,39 @@ def cmd_remove(a):
     )
 
 
+def cmd_rename(a):
+    """Rename a project: its directory, its shared-server database, and bd's
+    local metadata, together -- atomically, or a clean failure that leaves the
+    original untouched.
+
+    Operator-only, like `remove` (see `modules/tool-work-tracker`) -- an agent
+    must never be able to rename a work queue out from under other agents. The
+    class of bug this closes is a rename that moves only the directory and
+    leaves the database still named `<old>` on the shared server; this renames
+    both. Refuses if `<new>` is already taken, if `<old>` is missing or in a
+    split state, or if any item in `<old>` is currently HELD -- see
+    `Workspace.rename`'s docstring for the full contract, including how item
+    ids and the issue prefix are preserved.
+    """
+    _guard()
+    try:
+        report = _ws(a).rename(a.old, a.new)
+    except A.BeadsError as e:
+        die(str(e))
+    print(
+        json.dumps(
+            {
+                "renamed": report.old,
+                "to": report.new,
+                "directory": str(report.directory),
+                "items": report.item_count,
+                "old_database_dropped": report.old_database_dropped,
+            },
+            indent=2,
+        )
+    )
+
+
 def cmd_add(a):
     """File a new engineering-lane work item directly -- the sanctioned path
     for seeding a project's FIRST item(s), or adding more later.
@@ -979,6 +1012,19 @@ def main():
         help="required confirmation -- this is destructive and irreversible",
     )
     p.set_defaults(fn=cmd_remove)
+
+    p = sub.add_parser(
+        "rename",
+        help=(
+            "rename a project: its directory AND its shared-server database, together "
+            "(refuses if the new name is taken, the old is missing, or any item is HELD; "
+            "item ids are preserved)"
+        ),
+        parents=[root_parent],
+    )
+    p.add_argument("old", help="current project name")
+    p.add_argument("new", help="new project name (same rules as `new`: lowercase/underscore)")
+    p.set_defaults(fn=cmd_rename)
 
     p = sub.add_parser(
         "add",
