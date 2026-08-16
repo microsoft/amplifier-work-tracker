@@ -448,6 +448,8 @@ def cmd_instances(a):
                     "held": s.held,
                     "intake": s.intake,
                     "blocked": s.blocked,
+                    "deferred": s.deferred,
+                    "resolved": s.resolved,
                     "held_by": s.held_by,
                     "last_activity": s.last_activity,
                     "oldest_unclaimed_age_seconds": s.oldest_unclaimed_age_seconds,
@@ -462,14 +464,118 @@ def cmd_instances(a):
         ]
         print(json.dumps(rows, indent=2))
         return
-    print(f"{'PROJECT':<20} {'TOTAL':>6} {'READY':>6} {'HELD':>5} {'INTAKE':>7}  STATUS")
+    print(
+        f"{'PROJECT':<20} {'TOTAL':>6} {'READY':>6} {'HELD':>5} {'INTAKE':>7} "
+        f"{'BLOCK':>6} {'DEFER':>6} {'RESOLV':>7}  STATUS"
+    )
     for s in summaries:
         print(
             f"{s.name:<20} {s.total if s.total is not None else '':>6} "
             f"{s.ready if s.ready is not None else '':>6} "
             f"{s.held if s.held is not None else '':>5} "
-            f"{s.intake if s.intake is not None else '':>7}  {s.status}"
+            f"{s.intake if s.intake is not None else '':>7} "
+            f"{s.blocked if s.blocked is not None else '':>6} "
+            f"{s.deferred if s.deferred is not None else '':>6} "
+            f"{s.resolved if s.resolved is not None else '':>7}  {s.status}"
         )
+
+
+def _project_summary_row(s: A.ProjectSummary) -> dict:
+    """One project's `ProjectSummary` as a JSON-ready dict -- the full field
+    set (including the per-project-only `ready_age_buckets` histogram),
+    shared by `cmd_status`'s `--json` output. `cmd_instances`'s own JSON rows
+    stay hand-built (a narrower, list-view field set) rather than routed
+    through this helper, so trimming a field from the detail view can never
+    silently trim it from the summary table too.
+    """
+    if s.status != "ok":
+        return {"project": s.name, "status": s.status}
+    return {
+        "project": s.name,
+        "status": s.status,
+        "total": s.total,
+        "ready": s.ready,
+        "held": s.held,
+        "intake": s.intake,
+        "blocked": s.blocked,
+        "deferred": s.deferred,
+        "resolved": s.resolved,
+        "held_by": s.held_by,
+        "last_activity": s.last_activity,
+        "oldest_unclaimed_age_seconds": s.oldest_unclaimed_age_seconds,
+        "resolved_24h": s.resolved_24h,
+        "resolved_7d": s.resolved_7d,
+        "ready_age_buckets": s.ready_age_buckets,
+    }
+
+
+def cmd_status(a):
+    """Per-project detail view: the FULL status breakdown for exactly one
+    project -- the cheap `instances` table's per-project counterpart.
+
+    Reads through the exact same `Workspace.creation_state` + `adapter.
+    project_summary` path `cmd_instances` uses (see that command's
+    docstring for why creation-state is consulted first), so a project
+    caught mid-`new` or left broken never reports a misleadingly healthy
+    zeroed breakdown here either.
+
+    Unlike `instances` (a multi-project listing, where one unreadable row
+    must never abort the whole table), this is a DIRECTED single-project
+    read -- like `list --project`/`claim --id` -- so a project that was
+    never created at all (no `.beads` directory and no creation lock)
+    fails loudly (non-zero exit), exactly like `Workspace.project()` does
+    for every other directed command.
+    """
+    _guard()
+    ws = _ws(a)
+    state = ws.creation_state(a.project)
+    if state == "creating":
+        s = A.ProjectSummary(
+            name=a.project,
+            status=(
+                "creating -- a `new` for this project is in progress elsewhere "
+                "right now; try again once it finishes"
+            ),
+        )
+    elif state == "abandoned":
+        s = A.ProjectSummary(
+            name=a.project,
+            status=(
+                f"broken -- a previous `new` never finished; run "
+                f"`amplifier-work-tracker new {a.project}` to heal it automatically"
+            ),
+        )
+    elif not (ws.path(a.project) / ".beads").is_dir():
+        die(
+            f"project {a.project!r} not found at {ws.path(a.project) / '.beads'}. "
+            f"Create it first: amplifier-work-tracker new {a.project}"
+        )
+    else:
+        s = A.project_summary(ws, a.project)
+    if a.json:
+        print(json.dumps(_project_summary_row(s), indent=2))
+        return
+    if s.status != "ok":
+        print(f"{a.project}: {s.status}")
+        return
+    print(f"PROJECT:   {s.name}")
+    print(f"TOTAL:     {s.total}")
+    print(f"READY:     {s.ready}")
+    print(f"HELD:      {s.held}  (by: {', '.join(s.held_by) if s.held_by else '-'})")
+    print(f"INTAKE:    {s.intake}")
+    print(f"BLOCKED:   {s.blocked}")
+    print(f"DEFERRED:  {s.deferred}")
+    print(f"RESOLVED:  {s.resolved}")
+    print(f"LAST ACTIVITY:            {s.last_activity or '-'}")
+    print(
+        "OLDEST UNCLAIMED (seconds): "
+        f"{s.oldest_unclaimed_age_seconds if s.oldest_unclaimed_age_seconds is not None else '-'}"
+    )
+    print(f"RESOLVED (24h):           {s.resolved_24h}")
+    print(f"RESOLVED (7d):            {s.resolved_7d}")
+    if s.ready_age_buckets:
+        buckets = "  ".join(f"{label}d={count}" for label, count in s.ready_age_buckets.items())
+        print(f"READY AGE BUCKETS:        {buckets}")
 
 
 def _print_item_full(a, item: A.Item) -> None:
@@ -997,6 +1103,18 @@ def main():
     p = sub.add_parser("instances", help="list projects", parents=[root_parent])
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_instances)
+
+    p = sub.add_parser(
+        "status",
+        help=(
+            "full status breakdown for ONE project -- open/ready/held/intake/blocked/"
+            "deferred/resolved counts plus aging and throughput; read-only"
+        ),
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_status)
 
     p = sub.add_parser(
         "list",
