@@ -428,6 +428,200 @@ def drop_database(name: str) -> bool:
     raise BeadsError(f"drop_database {name!r} failed: {_clean_bd_error(blob)}")
 
 
+def _dolt_tables(db: str) -> tuple[list[str], list[str]]:
+    """`(base_tables, views)` in database `db` on the shared dolt server,
+    each sorted, read from `information_schema.TABLES` over the same direct
+    SQL path `database_exists`/`drop_database` use.
+
+    Views are returned separately because a faithful copy must create the
+    base tables (and their foreign keys) before the views that select from
+    them. `db` has already passed `NAME_RE`, so it carries no SQL-relevant
+    character (see `database_exists`'s note on the same guarantee).
+    """
+    p = _dolt_sql(
+        "SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES "
+        f"WHERE TABLE_SCHEMA='{db}' ORDER BY TABLE_TYPE, TABLE_NAME"
+    )
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not list tables of database {db!r} on the shared dolt server: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    base: list[str] = []
+    views: list[str] = []
+    for line in (p.stdout or "").splitlines()[1:]:  # drop CSV header
+        if not line.strip():
+            continue
+        name, _, ttype = line.partition(",")  # table names carry no comma
+        (views if ttype.strip() == "VIEW" else base).append(name.strip())
+    return base, views
+
+
+def _dolt_show_create(name: str, *, db: str, kind: str) -> str:
+    """The `CREATE TABLE`/`CREATE VIEW` DDL for `db`.`name`, read via dolt's
+    JSON result format so the multi-line DDL survives intact (CSV mangles
+    embedded newlines and quotes). `kind` is ``"table"`` or ``"view"``.
+
+    `--use-db <db>` (a global flag, placed before the `sql` subcommand like
+    the other `_dolt_conn_args` flags) scopes `SHOW CREATE` to the source
+    database, so the returned DDL names the object bare (no schema prefix)
+    and can be replayed verbatim against the destination database.
+    """
+    verb = "TABLE" if kind == "table" else "VIEW"
+    key = "Create Table" if kind == "table" else "Create View"
+    p = _run_bounded(
+        [
+            "dolt",
+            *_dolt_conn_args(),
+            "--use-db",
+            db,
+            "sql",
+            "-q",
+            f"SHOW CREATE {verb} `{name}`",
+            "-r",
+            "json",
+        ],
+        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+    )
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not read the schema of {db}.{name}: {_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    try:
+        rows = json.loads(p.stdout or "{}")["rows"]
+        return str(rows[0][key])
+    except (json.JSONDecodeError, KeyError, IndexError) as e:
+        raise BeadsError(f"could not parse the schema of {db}.{name}: {e}") from e
+
+
+def _dolt_table_counts(db: str, tables: list[str]) -> dict[str, int]:
+    """Row count of each of `tables` in database `db`, in one SQL round trip
+    (a `UNION ALL` of per-table `COUNT(*)`), used to prove a copy is complete
+    rather than merely non-erroring.
+    """
+    if not tables:
+        return {}
+    query = " UNION ALL ".join(
+        f"SELECT '{t}' AS t, COUNT(*) AS n FROM `{db}`.`{t}`" for t in tables
+    )
+    p = _dolt_sql(query)
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not count rows in database {db!r}: {_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    counts: dict[str, int] = {}
+    for line in (p.stdout or "").splitlines()[1:]:  # drop CSV header
+        if not line.strip():
+            continue
+        name, _, n = line.partition(",")
+        counts[name.strip()] = int(n.strip())
+    return counts
+
+
+def copy_database(src: str, dst: str) -> None:
+    """Create database `dst` as a faithful copy of `src` on the shared dolt
+    server: identical schema (every base table, view, and foreign key) and
+    every row, verified complete before returning.
+
+    Why a full copy rather than a rename: dolt 2.2.3 has no `RENAME DATABASE`
+    / `ALTER DATABASE ... RENAME` (both are parse errors) and no server-side
+    database-copy primitive -- `dolt dump` refuses outright in a remote/server
+    context ("has not yet been migrated to function in a remote context").
+    A schema+data copy over the ordinary SQL connection is the mechanism.
+    Two behaviours, both verified live against the installed binary, make it
+    a single statement: cross-database `INSERT ... SELECT` works, and a
+    session-scoped `SET foreign_key_checks=0` lets the base tables be created
+    and loaded in any order despite their foreign keys to `issues`/`wisps`.
+    Running the whole script through one `dolt sql -q` keeps it in one
+    session, so that `SET` and the `USE` both persist across its statements.
+
+    Item ids and the issue prefix are preserved EXACTLY: the `issues`,
+    `config`, `dependencies`, ... rows are copied verbatim, so no id is
+    rewritten and no `discovered-from` link is broken. A renamed project's
+    existing items keep their original ids, and new items continue on the
+    original prefix (bd reads it from the copied `config` row).
+
+    Atomic from the caller's view: on ANY failure -- schema read, the copy
+    script, or the completeness check -- the partial `dst` (which may have
+    been created with some-but-not-all tables before a failing statement) is
+    dropped before raising, so the only outcomes are "`dst` is a complete
+    copy" or "`dst` does not exist." `src` is never touched.
+    """
+    base, views = _dolt_tables(src)
+    if not base and not views:
+        raise BeadsError(
+            f"cannot copy database {src!r}: it has no tables -- it is not a usable bd project."
+        )
+    statements = ["SET foreign_key_checks=0", f"CREATE DATABASE `{dst}`", f"USE `{dst}`"]
+    statements += [_dolt_show_create(t, db=src, kind="table") for t in base]
+    statements += [_dolt_show_create(v, db=src, kind="view") for v in views]
+    statements += [f"INSERT INTO `{dst}`.`{t}` SELECT * FROM `{src}`.`{t}`" for t in base]
+    script = ";\n".join(statements) + ";"
+
+    # A large project's copy can be as slow as a real `bd init` (both are
+    # bounded by the shared dolt server under load), so use the same larger
+    # budget rather than the default per-call one.
+    p = _run_bounded(
+        ["dolt", *_dolt_conn_args(), "sql", "-q", script],
+        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+        timeout=_BD_INIT_TIMEOUT_SECONDS,
+    )
+    if p.returncode != 0:
+        _drop_database_best_effort(dst)
+        raise BeadsError(
+            f"copying database {src!r} to {dst!r} failed: {_clean_bd_error(p.stderr or p.stdout)}"
+        )
+
+    # Prove the copy is complete, not merely non-erroring: every base table's
+    # row count in `dst` must equal `src`. A mismatch is treated as a failed
+    # copy -- drop `dst` and raise, never leave a half-populated database.
+    src_counts = _dolt_table_counts(src, base)
+    dst_counts = _dolt_table_counts(dst, base)
+    mismatches = [t for t in base if src_counts.get(t) != dst_counts.get(t)]
+    if mismatches:
+        example = mismatches[0]
+        _drop_database_best_effort(dst)
+        raise BeadsError(
+            f"copying database {src!r} to {dst!r} left an incomplete copy: "
+            f"{len(mismatches)} table(s) have a different row count (e.g. {example!r}: "
+            f"{src_counts.get(example)} rows in the source, "
+            f"{dst_counts.get(example)} in the copy). "
+            f"The incomplete copy was dropped; {src!r} is untouched."
+        )
+
+
+def _drop_database_best_effort(name: str) -> None:
+    """Drop `name`, swallowing any BeadsError -- for cleanup paths where a
+    drop failure must not mask the ORIGINAL error being handled (a failed
+    copy, a rolled-back rename). `drop_database` itself is the fail-loud
+    version; this is only for use inside an `except`/rollback.
+    """
+    try:
+        drop_database(name)
+    except BeadsError:
+        logger.warning("best-effort drop of database %r failed during cleanup", name)
+
+
+def _repoint_beads_metadata(beads_dir: Path, db_name: str) -> None:
+    """Point a project's local bd metadata at shared-server database
+    `db_name`. bd records which database a `.beads` directory maps to in
+    `.beads/metadata.json` (`dolt_database`); after a rename that single
+    field is the one thing that must change for `bd` to resolve the renamed
+    database (verified empirically: updating only this field, plus moving the
+    directory and the database, makes `bd list`/`bd create` work against the
+    new name). Every other key -- host, port, project id -- is unchanged.
+    """
+    meta_path = beads_dir / "metadata.json"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise BeadsError(
+            f"could not read bd metadata at {meta_path} to repoint it at database {db_name!r}: {e}"
+        ) from e
+    meta["dolt_database"] = db_name
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+
 class BeadsError(Exception):
     """A Beads operation failed. Never caught to degrade -- only to report."""
 
@@ -703,7 +897,15 @@ def _clean_bd_error(blob: str | None, *, limit: int = STATUS_ERROR_MAX) -> str:
 class ListResult:
     """What `Beads.list_bounded` actually returned, and how it relates to
     the true total -- see that method's docstring for why `truncated` is a
-    measured fact, not an inference from bd's own default page size."""
+    measured fact, not an inference from bd's own default page size.
+
+    `offset` is the (clamped-to-nonnegative) window start this result was
+    sliced from -- `0` for every existing caller that never passed one, so
+    this field's addition changes nothing for the CLI's `list` subcommand
+    or the `work_list` tool. It exists so a caller doing real pagination
+    (the web UI's project item table) can compute "is there a previous
+    page" (`offset > 0`) without reinventing the window math this class
+    already tracks."""
 
     items: list[Item]
     total_count: int
@@ -711,6 +913,7 @@ class ListResult:
     truncated: bool
     limit: int
     requested_limit: int | None
+    offset: int = 0
 
 
 def project_activity(items: list[Item]) -> dict:
@@ -760,26 +963,41 @@ def project_activity(items: list[Item]) -> dict:
         for i in items
         if i.status == "open" and LANE_WORK in i.tags and i.created_at is not None
     ]
-    resolved_24h = sum(
-        1
-        for i in items
-        if i.status == "resolved"
-        and i.closed_at is not None
-        and (now - i.closed_at) <= timedelta(hours=24)
-    )
-    resolved_7d = sum(
-        1
-        for i in items
-        if i.status == "resolved"
-        and i.closed_at is not None
-        and (now - i.closed_at) <= timedelta(days=7)
-    )
-    updated_ats = [i.updated_at for i in items if i.updated_at is not None]
+    # Throughput is counted only from resolutions that actually carry a
+    # readable `closed_at`. A genuine 0 -- a project with no resolutions, or
+    # with dated resolutions but none inside the window -- is a real,
+    # meaningful answer and stays 0. But a project that HAS resolved items
+    # while recording NO `closed_at` on any of them cannot be measured at
+    # all: reporting 0 there would be a fabricated zero, so both figures are
+    # `None` instead -- the same "could not read" vs "read as empty"
+    # distinction `oldest_unclaimed_age_seconds` already draws.
+    resolved_closed_ats = [
+        i.closed_at for i in items if i.status == "resolved" and i.closed_at is not None
+    ]
+    any_resolved = any(i.status == "resolved" for i in items)
+    resolved_24h: int | None
+    resolved_7d: int | None
+    if any_resolved and not resolved_closed_ats:
+        resolved_24h = None
+        resolved_7d = None
+    else:
+        resolved_24h = sum(1 for t in resolved_closed_ats if (now - t) <= timedelta(hours=24))
+        resolved_7d = sum(1 for t in resolved_closed_ats if (now - t) <= timedelta(days=7))
+    # "Last activity" is the most recent timestamp of ANY kind across every
+    # item -- `updated_at`, `closed_at`, or `created_at` -- so the column
+    # reflects real movement even for an item bd happened to record only a
+    # creation or close time for. `updated_at` is normally the most recent of
+    # the three, but taking the max across all of them is honest regardless of
+    # which fields a given item carries, and never leaves the column empty
+    # when the project plainly has activity.
+    activity_times = [
+        t for i in items for t in (i.updated_at, i.closed_at, i.created_at) if t is not None
+    ]
     return {
         "oldest_unclaimed_age_seconds": max(ready_ages) if ready_ages else None,
         "resolved_24h": resolved_24h,
         "resolved_7d": resolved_7d,
-        "last_activity": max(updated_ats).isoformat() if updated_ats else None,
+        "last_activity": max(activity_times).isoformat() if activity_times else None,
     }
 
 
@@ -1052,17 +1270,19 @@ class Beads:
         data = self._json(args) or []
         return [Item.from_beads(d) for d in data if isinstance(d, dict)]
 
-    def list_bounded(self, *, status: str | None = None, limit: int | None = None) -> ListResult:
+    def list_bounded(
+        self, *, status: str | None = None, limit: int | None = None, offset: int = 0
+    ) -> ListResult:
         """Read-only, explicitly-capped item listing for human/agent
         consumption -- the shared implementation behind both the CLI's
         `list` subcommand and the `work_list` tool, so neither reinvents
         (or silently disagrees on) the capping policy.
 
         Always fetches the FULL matching set first (`limit=0` -- bd's own
-        "unlimited") to learn the true total, THEN caps in Python. This is
-        what makes `truncated` a fact rather than a guess: a caller that
-        only ever saw bd's own default-50-item page would have no way to
-        know whether 50 was the true total or a silent truncation.
+        "unlimited") to learn the true total, THEN windows/caps in Python.
+        This is what makes `truncated` a fact rather than a guess: a caller
+        that only ever saw bd's own default-50-item page would have no way
+        to know whether 50 was the true total or a silent truncation.
 
         `limit=None` uses `LIST_DEFAULT_LIMIT`; any requested limit is
         clamped to `[1, LIST_MAX_LIMIT]` -- silently for the lower bound (a
@@ -1071,17 +1291,30 @@ class Beads:
         `ListResult.requested_limit` vs `ListResult.limit` when the upper
         bound clamps, so a caller asking for more than the max learns that
         distinctly from asking for exactly 500 -- a cap must never be silent.
+
+        `offset` (default 0, clamped to nonnegative) shifts the returned
+        window without changing the page size -- real pagination, not a
+        second cap. This is additive: every existing caller that never
+        passed `offset` sees byte-identical behavior (window starts at 0,
+        exactly as before). It exists because a project with more items
+        than one page's worth was previously only reachable up to
+        `LIST_DEFAULT_LIMIT`/`LIST_MAX_LIMIT` items -- there was no way to
+        ask for the NEXT window at all, only a bigger one. See the web
+        UI's project-listing route for the actual pagination controls this
+        makes possible.
         """
         effective = LIST_DEFAULT_LIMIT if limit is None else max(1, min(limit, LIST_MAX_LIMIT))
+        start = max(0, offset)
         items = self.list(status=status, include_resolved=(status is None), limit=0)
-        capped = items[:effective]
+        capped = items[start : start + effective]
         return ListResult(
             items=capped,
             total_count=len(items),
             returned_count=len(capped),
-            truncated=len(capped) < len(items),
+            truncated=(start + len(capped)) < len(items),
             limit=effective,
             requested_limit=limit,
+            offset=start,
         )
 
     def resolve(self, item_id: str, reason: str, *, actor: str | None = None) -> Item:
@@ -1277,6 +1510,22 @@ class RemovalReport:
     database_removed: bool
     directory_removed: bool
     leftover: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RenameReport:
+    """What `Workspace.rename` actually did -- see its docstring for the full
+    contract. `item_count` is the number of items in the renamed project
+    (proven readable under the new name before the rename committed);
+    `old_database_dropped` records that the source database was removed, so a
+    caller can see no orphan was left behind.
+    """
+
+    old: str
+    new: str
+    directory: Path
+    item_count: int
+    old_database_dropped: bool
 
 
 def _read_lock_pid(lock: Path) -> int | None:
@@ -1659,6 +1908,350 @@ class Workspace:
             directory_removed=directory_removed,
             leftover=leftover,
         )
+
+    def rename(self, old: str, new: str) -> RenameReport:
+        """Rename a project safely: its on-disk directory, its shared-server
+        database, and bd's local metadata, together -- atomic from the
+        caller's view, mirroring `create`'s self-heal discipline.
+
+        The class of bug this closes: a naive rename that moves only the
+        directory leaves the database still named `old` on the shared server
+        -- exactly the kind of server-side residue that "burned" a name
+        before (see `create`/`remove`'s docstrings). This renames BOTH, and
+        rolls back completely on any failure rather than leaving a
+        half-renamed project or an orphan database.
+
+        Refuses (no override, before any mutation) when:
+          - `new` is not a valid project name (same `NAME_RE` as `create` --
+            dots/hyphens rejected, since a dotted database name is unusable);
+          - `old` and `new` are the same name;
+          - `new` is already taken -- a directory OR a database of that name
+            exists (same residue caution `create` applies);
+          - `old` does not exist, or is in a split state (a directory without
+            its database, or vice versa) that cannot be renamed safely;
+          - any item in `old` is currently HELD -- an agent may be actively
+            working it, the same safety property `remove` enforces.
+
+        Mechanism (see `copy_database`): dolt has no `RENAME DATABASE`, so the
+        database is renamed by copying `old` to `new` (full schema + data,
+        verified complete), then dropping `old` once `new` is proven live.
+        Item ids and the issue prefix are preserved exactly -- existing items
+        keep their ids, new items continue on the original prefix.
+
+        Rollback: the source database is dropped only at the very end, after
+        the copy, the directory move, the metadata repoint, and a real
+        `bd list` under the new name have all succeeded. A failure anywhere
+        before that restores the original state -- the directory is moved
+        back, its metadata is restored, and the copied `new` database is
+        dropped -- so `old` is left exactly as it was found.
+        """
+        if not NAME_RE.match(new):
+            raise BeadsError(
+                f"invalid new project name {new!r}: must match {NAME_RE.pattern}. "
+                f"Dots and hyphens are rejected deliberately -- they produce a database "
+                f"that reports success and then fails every later command."
+            )
+        if old == new:
+            raise BeadsError(f"cannot rename project {old!r} to itself")
+        if not NAME_RE.match(old):
+            raise BeadsError(f"invalid project name {old!r}: must match {NAME_RE.pattern}")
+
+        old_dir = self.path(old)
+        new_dir = self.path(new)
+        old_has_dir = (old_dir / ".beads").is_dir()
+        old_has_db = database_exists(old)
+
+        if not old_has_dir and not old_has_db:
+            raise BeadsError(
+                f"project {old!r} not found: no {old_dir / '.beads'} directory and no "
+                f"database named {old!r} on the shared dolt server. Nothing to rename."
+            )
+        if not old_has_dir or not old_has_db:
+            raise BeadsError(
+                f"project {old!r} is in a split state -- directory "
+                f"{'present' if old_has_dir else 'missing'}, database "
+                f"{'present' if old_has_db else 'missing'} -- and cannot be safely renamed. "
+                f"Resolve it first: `amplifier-work-tracker remove {old} --yes` (which handles "
+                f"both halves), then re-create."
+            )
+        if (new_dir / ".beads").is_dir() or database_exists(new):
+            raise BeadsError(
+                f"cannot rename {old!r} to {new!r}: a project or database named {new!r} "
+                f"already exists. Choose a different name, or remove {new!r} first "
+                f"(`amplifier-work-tracker remove {new} --yes`)."
+            )
+
+        held = [i for i in self.project(old).list(include_resolved=False) if i.status == "held"]
+        if held:
+            names = ", ".join(f"{i.id} (held by {i.holder!r})" for i in held)
+            raise BeadsError(
+                f"refusing to rename project {old!r}: {len(held)} item(s) currently HELD -- "
+                f"{names}. An agent may be actively working this queue. Resolve or reap the "
+                f"item(s) first, then rename again."
+            )
+
+        # --- mutate, with full rollback until the final commit (dropping old) ---
+        db_copied = False
+        moved = False
+        repointed = False
+        try:
+            copy_database(old, new)  # creates `new`; self-cleans its own partial residue on failure
+            db_copied = True
+            shutil.move(str(old_dir), str(new_dir))
+            moved = True
+            _repoint_beads_metadata(new_dir / ".beads", new)
+            repointed = True
+            item_count = len(self.project(new).list(include_resolved=True))  # prove it answers
+        except BaseException:
+            # Restore the original state, in reverse order, best-effort. Each
+            # step is guarded so a secondary failure never masks the original.
+            if moved:
+                try:
+                    shutil.move(str(new_dir), str(old_dir))
+                except Exception:  # noqa: BLE001 -- best-effort rollback; original error re-raised below
+                    logger.warning("rollback: could not move %s back to %s", new_dir, old_dir)
+            if repointed:
+                # After the move-back the directory is at old_dir again; put
+                # its metadata back to `old` so the untouched `old` database
+                # still resolves.
+                try:
+                    _repoint_beads_metadata(old_dir / ".beads", old)
+                except Exception:  # noqa: BLE001 -- best-effort rollback
+                    logger.warning("rollback: could not restore metadata for %s", old)
+            if db_copied:
+                _drop_database_best_effort(new)
+            raise
+
+        old_database_dropped = drop_database(old)
+        return RenameReport(
+            old=old,
+            new=new,
+            directory=new_dir,
+            item_count=item_count,
+            old_database_dropped=old_database_dropped,
+        )
+
+
+#: Real-world day age bands for `ready_age_buckets` -- see that field's
+#: docstring. Fixed, not rescaled to the workspace's current max: "arrived
+#: today" and "waited a week" should mean the same thing on a calm day and
+#: a bad one.
+#:
+#: Each entry is `(label, lo, hi)` interpreted as the HALF-OPEN day range
+#: `[lo, hi)` (the last band's `hi` is `None` -- unbounded above). Read this
+#: way the bands TILE the whole timeline with no gaps, so a floor-day
+#: reading of every label is exact: "0-1" == days 0-1 == `[0, 2)`, "2-3" ==
+#: `[2, 4)`, "4-6" == `[4, 7)`, "7+" == `[7, ..)`. The earlier bounds
+#: (`("0-1", 0, 1)` ... with an INCLUSIVE `d <= hi` test) left holes between
+#: the bands: an item aged 1.5, 3.5 or 6.5 days matched NO band and was
+#: silently dropped from the histogram. Measured on the live workspace that
+#: dropped 26 of 104 ready items -- exactly the gap between the dashboard's
+#: "READY" total and its heartbeat's "unclaimed items" total. See
+#: `_ready_age_bucket_label` for the tiling that closes it.
+READY_AGE_BUCKETS = (("0-1", 0, 2), ("2-3", 2, 4), ("4-6", 4, 7), ("7+", 7, None))
+
+#: Bucket key for ready items with no readable `created_at`. Kept DISTINCT
+#: from every age band so an undated item is never fabricated an age, yet is
+#: still counted -- this is what lets `sum(ready_age_buckets.values())`
+#: equal `ready` for EVERY project, undated items included (see
+#: `_ready_age_buckets`). Normally 0 (the live workspace dates every ready
+#: item); it exists so a single malformed item can never silently
+#: reintroduce the two-totals discrepancy.
+UNKNOWN_READY_AGE = "unknown"
+
+# Health values for `ProjectSummary.status`. A project is `STATUS_OK` only
+# when its database was actually read; each other value names a DISTINCT
+# unhealthy state so a dashboard can never collapse "still being created" or
+# "broken by a create that never finished" into a healthy "0 items / ok"
+# (measured outage, 2026-08-15: `instances` reported a half-created project
+# as `ok` while its `.create.lock` sat right there, unconsulted). An
+# UNREADABLE database keeps the pre-existing `"ERROR: ..."` convention -- a
+# truncated diagnostic string, distinct from all three tokens below -- rather
+# than a fixed token, because there the diagnostic text is the actionable
+# part. Callers should treat "healthy" as `status == STATUS_OK`, never as
+# "not an error string".
+STATUS_OK = "ok"
+STATUS_CREATING = "creating"  # a `new` for this project is in progress right now
+STATUS_BROKEN = "broken"  # a previous `new` never finished; heals on the next `new`
+
+
+@dataclass
+class ProjectSummary:
+    """One project's item counts, in OUR vocabulary -- the shared computation
+    behind the CLI's `instances` command and the web dashboard (see
+    `webapp.py`), so neither reinvents (or silently disagrees on) what
+    "ready"/"held"/"intake"/"blocked" mean, or what "oldest unclaimed"/
+    "resolved recently" mean (that half comes straight from
+    `project_activity`, folded in below rather than recomputed a second way).
+
+    `status` is one of: `STATUS_OK` (`"ok"`) when the counts below were
+    computed successfully; `STATUS_CREATING`/`STATUS_BROKEN` when the project
+    is mid-creation or was left broken by a `new` that never finished (read
+    from `Workspace.creation_state`, consulted BEFORE any item read so a
+    half-created project is never mistaken for a healthy empty one); or a
+    truncated `"ERROR: ..."` string (see `truncate_status`) when the
+    database exists but could not be read at all. In EVERY non-`ok` case
+    every field below is `None`/empty, not zero, so a caller can never
+    mistake "not healthy" for "read as empty."
+
+    `ready` vs "unclaimed" vs `held`: in this system an OPEN work-lane item
+    IS an unclaimed, ready-to-claim work item -- there is no third state
+    between "open" and "held", so "ready" and "unclaimed" are the SAME set,
+    reported as the ONE number `ready` (not two subtly different ones). `held`
+    is the disjoint set of items currently claimed and in progress. This is
+    the reconciliation of a dashboard that once showed "READY" and "unclaimed
+    items" as two different totals for that one set -- see `ready_age_buckets`
+    below and `_ready_age_buckets` for why they had drifted.
+
+    `blocked`, `held_by`, and `last_activity` exist so a dashboard can show
+    signals that actually VARY with real data instead of a constant that
+    never changes (a design-review finding: a badge that always reads the
+    same value carries no information -- see webapp.py's dashboard route
+    for how these are used). `held_by` is the sorted, deduplicated list of
+    current holders -- who to go ask, not just how many.
+
+    `last_activity` is `project_activity`'s field verbatim -- the most recent
+    activity timestamp of ANY kind (`updated_at`/`closed_at`/`created_at`)
+    across every item, as an ISO string. There used to be a SECOND,
+    independent computation of "last activity" here, over the raw
+    `updated_at` strings rather than the parsed `Item` datetimes
+    `project_activity` uses. Two homes for one concept is exactly what
+    `list_bounded`'s own docstring warns against; this is that reconciliation,
+    now that both live in the same module and can share one computation.
+
+    `oldest_unclaimed_age_seconds`, `resolved_24h`, `resolved_7d` are
+    `project_activity`'s other three fields, folded in here so a caller that
+    wants "this project's health" gets the counts AND the aging/throughput
+    figures from one function call -- see `project_activity`'s own docstring
+    for exactly what each means, why a `None` age is never coerced to 0, and
+    why throughput is `None` (not 0) for a project that records resolutions
+    but no `closed_at` timestamps.
+
+    `ready_age_buckets` is a real-world-day histogram of ready items' ages
+    (see `READY_AGE_BUCKETS`) whose values sum to EXACTLY `ready` -- every
+    ready item lands in one band, and any undated one in the `UNKNOWN_READY_AGE`
+    bucket, so a dashboard-wide heartbeat built by summing these across every
+    project can never disagree with the summed `ready` total again (the
+    "READY 104 / unclaimed 76" split this reconciles). Derived from the SAME
+    `items` list this function already read; `None` when the project's
+    database could not be read (same "unreadable, not empty" convention as
+    every other field here).
+    """
+
+    name: str
+    status: str
+    total: int | None = None
+    ready: int | None = None
+    held: int | None = None
+    intake: int | None = None
+    blocked: int | None = None
+    resolved: int | None = None
+    deferred: int | None = None
+    held_by: list[str] = field(default_factory=list)
+    last_activity: str | None = None
+    oldest_unclaimed_age_seconds: float | None = None
+    resolved_24h: int | None = None
+    resolved_7d: int | None = None
+    ready_age_buckets: dict[str, int] | None = None
+
+
+def _ready_age_bucket_label(days: float) -> str:
+    """Which age band a ready item aged `days` days falls in.
+
+    The bands are half-open `[lo, hi)` and tile the whole timeline (see
+    `READY_AGE_BUCKETS`): the first band absorbs anything below its upper
+    bound -- including a NEGATIVE age from a small clock skew -- and the last
+    band (`hi is None`) absorbs everything from its lower bound up. So every
+    real `days` value maps to exactly ONE band; no item can fall between two
+    bands the way the previous inclusive `[lo, hi]` bounds allowed.
+    """
+    for label, _lo, hi in READY_AGE_BUCKETS:
+        if hi is None or days < hi:
+            return label
+    return READY_AGE_BUCKETS[-1][0]  # unreachable: the last band's hi is None
+
+
+def _ready_age_buckets(items: list[Item]) -> dict[str, int]:
+    """Age histogram of ready items whose values sum to EXACTLY `ready`.
+
+    "Ready" here is the same set counted by `ProjectSummary.ready`: an open,
+    work-lane item -- i.e. an unclaimed work item. Every one of them lands in
+    exactly one bucket, so `sum(_ready_age_buckets(items).values())` always
+    equals that `ready` count. Two mechanisms guarantee it:
+
+      - the age bands tile the timeline with no gaps (see
+        `_ready_age_bucket_label`), so no DATED item is ever dropped; and
+      - an UNDATED ready item (no readable `created_at`) is counted in the
+        distinct `UNKNOWN_READY_AGE` bucket rather than vanishing.
+
+    That invariant is the whole point: it is what stops the dashboard from
+    ever again showing one number for "READY" and a smaller one for the same
+    "unclaimed items" set, computed two slightly different ways.
+    """
+    now = datetime.now(UTC)
+    ready = [i for i in items if i.status == "open" and LANE_WORK in i.tags]
+    out: dict[str, int] = {label: 0 for label, _, _ in READY_AGE_BUCKETS}
+    out[UNKNOWN_READY_AGE] = 0
+    for i in ready:
+        if i.created_at is None:
+            out[UNKNOWN_READY_AGE] += 1
+            continue
+        out[_ready_age_bucket_label((now - i.created_at).total_seconds() / 86400)] += 1
+    return out
+
+
+def project_summary(ws: Workspace, name: str) -> ProjectSummary:
+    """Compute one project's `ProjectSummary` against the live `bd` project.
+
+    Never raises. A project's health is decided in this order, so an
+    unhealthy one is never mistaken for a healthy empty one:
+
+      1. `Workspace.creation_state` is consulted FIRST, before any item read.
+         A project mid-creation reports `STATUS_CREATING`; one left broken by
+         a `new` that never finished reports `STATUS_BROKEN` -- in both cases
+         with every count left `None`. This is the fix for a measured outage
+         where a half-created project (its `.create.lock` sitting right there)
+         reported a healthy `ok` with 0 items. `webapp.py` calls this function
+         directly, so putting the check HERE -- not only in `cli.cmd_instances`
+         -- is what makes the web dashboard honest too.
+      2. A database that then cannot be read reports `status="ERROR: ..."`
+         (truncated), again with every field `None`/empty.
+      3. Otherwise `STATUS_OK`, with real counts.
+
+    On the healthy path, fetches items exactly ONCE
+    (`ws.project(name).list(include_resolved=True)`) and derives every field
+    -- counts, `project_activity`'s aging/throughput figures, and the
+    ready-age histogram -- from that single in-memory list. No field here
+    costs a second `bd` call.
+    """
+    state = ws.creation_state(name)
+    if state == "creating":
+        return ProjectSummary(name=name, status=STATUS_CREATING)
+    if state == "abandoned":
+        return ProjectSummary(name=name, status=STATUS_BROKEN)
+    try:
+        items = ws.project(name).list(include_resolved=True)
+    except BeadsError as e:
+        return ProjectSummary(name=name, status=truncate_status(f"ERROR: {e}"))
+    held_items = [i for i in items if i.status == "held"]
+    activity = project_activity(items)
+    return ProjectSummary(
+        name=name,
+        status=STATUS_OK,
+        total=len(items),
+        ready=sum(1 for i in items if i.status == "open" and LANE_WORK in i.tags),
+        held=len(held_items),
+        intake=sum(1 for i in items if i.status == "open" and LANE_INTAKE in i.tags),
+        blocked=sum(1 for i in items if i.status == "blocked"),
+        resolved=sum(1 for i in items if i.status == "resolved"),
+        deferred=sum(1 for i in items if i.status == "deferred"),
+        held_by=sorted({i.holder for i in held_items if i.holder}),
+        last_activity=activity["last_activity"],
+        oldest_unclaimed_age_seconds=activity["oldest_unclaimed_age_seconds"],
+        resolved_24h=activity["resolved_24h"],
+        resolved_7d=activity["resolved_7d"],
+        ready_age_buckets=_ready_age_buckets(items),
+    )
 
 
 _CAPS: dict[str, bool] | None = None

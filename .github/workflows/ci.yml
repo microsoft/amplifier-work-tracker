@@ -70,7 +70,7 @@ jobs:
       - name: Set up amplifier-work-tracker
         run: |
           uv venv .venv --python 3.12
-          uv pip install --python .venv/bin/python -e ".[dev]"
+          uv pip install --python .venv/bin/python -e ".[dev,web]"
 
       - name: Lint + format check (ruff)
         run: .venv/bin/ruff check . && .venv/bin/ruff format --check .

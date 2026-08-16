@@ -30,6 +30,8 @@ from . import supervisor as SV
 
 POLL_TICK_SECONDS = 5
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
 
 def die(msg: str, code: int = 1) -> NoReturn:
     print(f"amplifier-work-tracker: {msg}", file=sys.stderr)
@@ -352,6 +354,39 @@ def cmd_remove(a):
     )
 
 
+def cmd_rename(a):
+    """Rename a project: its directory, its shared-server database, and bd's
+    local metadata, together -- atomically, or a clean failure that leaves the
+    original untouched.
+
+    Operator-only, like `remove` (see `modules/tool-work-tracker`) -- an agent
+    must never be able to rename a work queue out from under other agents. The
+    class of bug this closes is a rename that moves only the directory and
+    leaves the database still named `<old>` on the shared server; this renames
+    both. Refuses if `<new>` is already taken, if `<old>` is missing or in a
+    split state, or if any item in `<old>` is currently HELD -- see
+    `Workspace.rename`'s docstring for the full contract, including how item
+    ids and the issue prefix are preserved.
+    """
+    _guard()
+    try:
+        report = _ws(a).rename(a.old, a.new)
+    except A.BeadsError as e:
+        die(str(e))
+    print(
+        json.dumps(
+            {
+                "renamed": report.old,
+                "to": report.new,
+                "directory": str(report.directory),
+                "items": report.item_count,
+                "old_database_dropped": report.old_database_dropped,
+            },
+            indent=2,
+        )
+    )
+
+
 def cmd_add(a):
     """File a new engineering-lane work item directly -- the sanctioned path
     for seeding a project's FIRST item(s), or adding more later.
@@ -395,6 +430,14 @@ def cmd_instances(a):
     ever attempting `list()`, so a project caught mid-creation or left
     broken by one that never finished is reported as such -- `creating` or
     `broken` -- and `ok` is restored to actually meaning "writable."
+
+    Counting logic beyond creation-state lives in `adapter.project_summary`
+    -- shared with the web dashboard (see `webapp.py`) so the two can never
+    silently disagree on what "ready"/"held"/"intake"/"blocked" mean, or on
+    the aging/throughput figures (`oldest_unclaimed_age_seconds`,
+    `resolved_24h`, `resolved_7d`) folded in from `adapter.project_activity`.
+    See those functions' docstrings for why an unreadable project reports
+    `None` counts rather than zero.
     """
     _guard()
     ws = _ws(a)
@@ -402,60 +445,170 @@ def cmd_instances(a):
     if not names:
         print("no projects")
         return
-    rows = []
+    summaries = []
     for n in names:
         state = ws.creation_state(n)
         if state == "creating":
-            rows.append(
-                {
-                    "project": n,
-                    "status": (
+            summaries.append(
+                A.ProjectSummary(
+                    name=n,
+                    status=(
                         "creating -- a `new` for this project is in progress elsewhere "
                         "right now; try again once it finishes"
                     ),
-                }
+                )
             )
             continue
         if state == "abandoned":
-            rows.append(
-                {
-                    "project": n,
-                    "status": (
+            summaries.append(
+                A.ProjectSummary(
+                    name=n,
+                    status=(
                         f"broken -- a previous `new` never finished; run "
                         f"`amplifier-work-tracker new {n}` to heal it automatically"
                     ),
-                }
+                )
             )
             continue
-        try:
-            items = ws.project(n).list(include_resolved=True)
-            row = {
-                "project": n,
-                "total": len(items),
-                "ready": sum(1 for i in items if i.status == "open" and A.LANE_WORK in i.tags),
-                "held": sum(1 for i in items if i.status == "held"),
-                "intake": sum(1 for i in items if i.status == "open" and A.LANE_INTAKE in i.tags),
-                "status": "ok",
-            }
-            # Aging/throughput -- cheap, computed once across the whole
-            # project rather than shipping per-item timestamps in a list
-            # (see `A.project_activity`'s docstring for why).
-            row.update(A.project_activity(items))
-            rows.append(row)
-        except A.BeadsError as e:
-            # A.truncate_status -- see its docstring: a bare slice cap
-            # severs the actionable hint mid-word (same bug as the
-            # work_status tool's per-project error; fixed in one place).
-            rows.append({"project": n, "status": A.truncate_status(f"ERROR: {e}")})
+        summaries.append(A.project_summary(ws, n))
     if a.json:
+        rows = [
+            (
+                {
+                    "project": s.name,
+                    "total": s.total,
+                    "ready": s.ready,
+                    "held": s.held,
+                    "intake": s.intake,
+                    "blocked": s.blocked,
+                    "deferred": s.deferred,
+                    "resolved": s.resolved,
+                    "held_by": s.held_by,
+                    "last_activity": s.last_activity,
+                    "oldest_unclaimed_age_seconds": s.oldest_unclaimed_age_seconds,
+                    "resolved_24h": s.resolved_24h,
+                    "resolved_7d": s.resolved_7d,
+                    "status": s.status,
+                }
+                if s.status == "ok"
+                else {"project": s.name, "status": s.status}
+            )
+            for s in summaries
+        ]
         print(json.dumps(rows, indent=2))
         return
-    print(f"{'PROJECT':<20} {'TOTAL':>6} {'READY':>6} {'HELD':>5} {'INTAKE':>7}  STATUS")
-    for r in rows:
+    print(
+        f"{'PROJECT':<20} {'TOTAL':>6} {'READY':>6} {'HELD':>5} {'INTAKE':>7} "
+        f"{'BLOCK':>6} {'DEFER':>6} {'RESOLV':>7}  STATUS"
+    )
+    for s in summaries:
         print(
-            f"{r['project']:<20} {r.get('total', ''):>6} {r.get('ready', ''):>6} "
-            f"{r.get('held', ''):>5} {r.get('intake', ''):>7}  {r['status']}"
+            f"{s.name:<20} {s.total if s.total is not None else '':>6} "
+            f"{s.ready if s.ready is not None else '':>6} "
+            f"{s.held if s.held is not None else '':>5} "
+            f"{s.intake if s.intake is not None else '':>7} "
+            f"{s.blocked if s.blocked is not None else '':>6} "
+            f"{s.deferred if s.deferred is not None else '':>6} "
+            f"{s.resolved if s.resolved is not None else '':>7}  {s.status}"
         )
+
+
+def _project_summary_row(s: A.ProjectSummary) -> dict:
+    """One project's `ProjectSummary` as a JSON-ready dict -- the full field
+    set (including the per-project-only `ready_age_buckets` histogram),
+    shared by `cmd_status`'s `--json` output. `cmd_instances`'s own JSON rows
+    stay hand-built (a narrower, list-view field set) rather than routed
+    through this helper, so trimming a field from the detail view can never
+    silently trim it from the summary table too.
+    """
+    if s.status != "ok":
+        return {"project": s.name, "status": s.status}
+    return {
+        "project": s.name,
+        "status": s.status,
+        "total": s.total,
+        "ready": s.ready,
+        "held": s.held,
+        "intake": s.intake,
+        "blocked": s.blocked,
+        "deferred": s.deferred,
+        "resolved": s.resolved,
+        "held_by": s.held_by,
+        "last_activity": s.last_activity,
+        "oldest_unclaimed_age_seconds": s.oldest_unclaimed_age_seconds,
+        "resolved_24h": s.resolved_24h,
+        "resolved_7d": s.resolved_7d,
+        "ready_age_buckets": s.ready_age_buckets,
+    }
+
+
+def cmd_status(a):
+    """Per-project detail view: the FULL status breakdown for exactly one
+    project -- the cheap `instances` table's per-project counterpart.
+
+    Reads through the exact same `Workspace.creation_state` + `adapter.
+    project_summary` path `cmd_instances` uses (see that command's
+    docstring for why creation-state is consulted first), so a project
+    caught mid-`new` or left broken never reports a misleadingly healthy
+    zeroed breakdown here either.
+
+    Unlike `instances` (a multi-project listing, where one unreadable row
+    must never abort the whole table), this is a DIRECTED single-project
+    read -- like `list --project`/`claim --id` -- so a project that was
+    never created at all (no `.beads` directory and no creation lock)
+    fails loudly (non-zero exit), exactly like `Workspace.project()` does
+    for every other directed command.
+    """
+    _guard()
+    ws = _ws(a)
+    state = ws.creation_state(a.project)
+    if state == "creating":
+        s = A.ProjectSummary(
+            name=a.project,
+            status=(
+                "creating -- a `new` for this project is in progress elsewhere "
+                "right now; try again once it finishes"
+            ),
+        )
+    elif state == "abandoned":
+        s = A.ProjectSummary(
+            name=a.project,
+            status=(
+                f"broken -- a previous `new` never finished; run "
+                f"`amplifier-work-tracker new {a.project}` to heal it automatically"
+            ),
+        )
+    elif not (ws.path(a.project) / ".beads").is_dir():
+        die(
+            f"project {a.project!r} not found at {ws.path(a.project) / '.beads'}. "
+            f"Create it first: amplifier-work-tracker new {a.project}"
+        )
+    else:
+        s = A.project_summary(ws, a.project)
+    if a.json:
+        print(json.dumps(_project_summary_row(s), indent=2))
+        return
+    if s.status != "ok":
+        print(f"{a.project}: {s.status}")
+        return
+    print(f"PROJECT:   {s.name}")
+    print(f"TOTAL:     {s.total}")
+    print(f"READY:     {s.ready}")
+    print(f"HELD:      {s.held}  (by: {', '.join(s.held_by) if s.held_by else '-'})")
+    print(f"INTAKE:    {s.intake}")
+    print(f"BLOCKED:   {s.blocked}")
+    print(f"DEFERRED:  {s.deferred}")
+    print(f"RESOLVED:  {s.resolved}")
+    print(f"LAST ACTIVITY:            {s.last_activity or '-'}")
+    print(
+        "OLDEST UNCLAIMED (seconds): "
+        f"{s.oldest_unclaimed_age_seconds if s.oldest_unclaimed_age_seconds is not None else '-'}"
+    )
+    print(f"RESOLVED (24h):           {s.resolved_24h}")
+    print(f"RESOLVED (7d):            {s.resolved_7d}")
+    if s.ready_age_buckets:
+        buckets = "  ".join(f"{label}d={count}" for label, count in s.ready_age_buckets.items())
+        print(f"READY AGE BUCKETS:        {buckets}")
 
 
 def _print_item_full(a, item: A.Item) -> None:
@@ -768,6 +921,80 @@ def _root_parent_parser() -> argparse.ArgumentParser:
     return parent
 
 
+def cmd_web(a):
+    """Serve the web dashboard + full interaction UI as an ADDITIONAL client
+    of the same shared dolt server the CLI and background service use.
+
+    Never spawns, supervises, restarts, or reinstalls anything -- see
+    `webapp.py`'s module docstring. Requires the `web` extra
+    (`pip install amplifier-work-tracker[web]`); a clear ImportError message
+    (not a bare traceback) is what a caller sees if it isn't installed.
+    """
+    _guard()
+    try:
+        from . import webapp
+        from . import webauth as WA
+    except ImportError as e:
+        die(
+            f"the web dashboard requires the 'web' extra: {e}\n"
+            f"Install it with: pip install 'amplifier-work-tracker[web]' "
+            f"(or, from a checkout: pip install -e '.[web]')"
+        )
+
+    if a.host is not None and a.host not in _LOOPBACK_HOSTS and not a.public:
+        die(
+            f"refusing to bind non-loopback host {a.host!r} without --public. "
+            f"This is an explicit safety gate, not a limitation of the auth itself "
+            f"(auth is enforced regardless of bind address) -- pass --public to "
+            f"confirm you intend this to be reachable beyond localhost."
+        )
+    if a.host is not None:
+        effective_host = a.host
+    else:
+        effective_host = "0.0.0.0" if a.public else "127.0.0.1"  # noqa: S104
+
+    try:
+        mode = WA.resolve_auth_mode(a.auth_mode)
+    except RuntimeError as e:
+        die(str(e))
+
+    password = ""
+    if mode == "password":
+        password = WA.load_password() or WA.generate_and_save_password()
+        print(
+            f"amplifier-work-tracker web: auth mode=password. "
+            f"Password file: {WA.password_path()} (0600). "
+            f"Current password: {password}",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"amplifier-work-tracker web: auth mode=pam. "
+            f"Sign in as {WA.running_user()!r} with your system password.",
+            file=sys.stderr,
+        )
+
+    secret = WA.load_or_create_secret()
+    auth_config = WA.AuthConfig(
+        mode=mode, secret=secret, ttl_seconds=a.session_ttl, password=password
+    )
+    ws = _ws(a)
+    print(
+        f"amplifier-work-tracker web: listening on http://{effective_host}:{a.port} "
+        f"(root={ws.root})"
+    )
+    if effective_host != "127.0.0.1":
+        print(
+            "amplifier-work-tracker web: bound to a non-loopback address -- reachable "
+            "from the LAN. Authentication is enforced for every request; there is no "
+            "localhost bypass in this server (see webauth.py's module docstring).",
+            file=sys.stderr,
+        )
+    return webapp.run(
+        ws, webapp.WebServerConfig(host=effective_host, port=a.port, auth=auth_config)
+    )
+
+
 def cmd_serve(a):
     """Run the supervisor in the foreground: dolt sql-server child + reap/notify sweeps.
 
@@ -893,6 +1120,19 @@ def main():
     p.set_defaults(fn=cmd_remove)
 
     p = sub.add_parser(
+        "rename",
+        help=(
+            "rename a project: its directory AND its shared-server database, together "
+            "(refuses if the new name is taken, the old is missing, or any item is HELD; "
+            "item ids are preserved)"
+        ),
+        parents=[root_parent],
+    )
+    p.add_argument("old", help="current project name")
+    p.add_argument("new", help="new project name (same rules as `new`: lowercase/underscore)")
+    p.set_defaults(fn=cmd_rename)
+
+    p = sub.add_parser(
         "add",
         help=(
             "file a new engineering-lane work item directly (the sanctioned way to seed a "
@@ -909,6 +1149,18 @@ def main():
     p = sub.add_parser("instances", help="list projects", parents=[root_parent])
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_instances)
+
+    p = sub.add_parser(
+        "status",
+        help=(
+            "full status breakdown for ONE project -- open/ready/held/intake/blocked/"
+            "deferred/resolved counts plus aging and throughput; read-only"
+        ),
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_status)
 
     p = sub.add_parser(
         "list",
@@ -1066,6 +1318,47 @@ def main():
         ),
     )
     p.set_defaults(fn=cmd_serve)
+
+    p = sub.add_parser(
+        "web",
+        help=(
+            "serve the web dashboard + full interaction UI (an ADDITIONAL client of the "
+            "same shared dolt server -- never spawns/supervises/restarts anything)"
+        ),
+        parents=[root_parent],
+    )
+    p.add_argument(
+        "--host",
+        default=None,
+        help=(
+            "bind host (default: 127.0.0.1, loopback-only; a non-loopback value requires --public)"
+        ),
+    )
+    p.add_argument(
+        "--public",
+        action="store_true",
+        help=(
+            "bind to all interfaces (0.0.0.0) for LAN access -- required explicitly to widen "
+            "the default loopback bind; authentication is still enforced regardless"
+        ),
+    )
+    p.add_argument("--port", type=int, default=8090)
+    p.add_argument(
+        "--auth-mode",
+        choices=["auto", "pam", "password"],
+        default="auto",
+        help=(
+            "'auto' (default) uses PAM when the `pam` module is importable, else a generated "
+            "password file; 'pam'/'password' force one explicitly"
+        ),
+    )
+    p.add_argument(
+        "--session-ttl",
+        type=int,
+        default=12 * 3600,
+        help="session cookie lifetime in seconds (default 12h; 0 = no server-side expiry)",
+    )
+    p.set_defaults(fn=cmd_web)
 
     svc = sub.add_parser(
         "service", help="install/manage amplifier-work-tracker as a background OS service"
