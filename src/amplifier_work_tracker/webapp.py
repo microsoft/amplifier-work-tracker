@@ -722,6 +722,115 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
     app = FastAPI(title="amplifier-work-tracker", docs_url=None, redoc_url=None)
     app.add_middleware(AuthMiddleware, auth=auth)
 
+    # -----------------------------------------------------------------------
+    # webapp-routes lane helpers -- route-owned, defined INSIDE create_app so
+    # they never collide with the module-level render helpers owned by the
+    # dashboard-render / item-render / shell-nits lanes. They call those
+    # helpers and the adapter seam; they never rewrite a helper body.
+    # -----------------------------------------------------------------------
+
+    def _impairment_label(name: str, summary: A.ProjectSummary) -> str | None:
+        """A short, human-facing condition for a project that must NEVER be
+        allowed to read as a healthy, empty queue -- the stop-ship signal.
+
+        Returns one of "Being created", "Creation unfinished", "Broken", or
+        ``None`` when the project is genuinely OK.
+
+        A project caught mid-creation (or left broken by a creation that
+        never finished) can still answer ``list()`` with an empty result and
+        so land as ``status == "ok"`` with every count zero -- pixel-identical
+        to a healthy but empty queue (measured outage, 2026-08-15; see
+        `adapter.Workspace.creation_state`). That is exactly the confusion
+        this signal exists to prevent.
+
+        Intended data source: a broken/creating field on `A.ProjectSummary`
+        produced by the adapter-data lane. Until that merges in this
+        worktree we derive the minimal signal directly from
+        `Workspace.creation_state` (read-only, side-effect free) plus the
+        summary's own read-error status. See DONE.json residuals.
+        """
+        state = workspace.creation_state(name)
+        if state == "creating":
+            return "Being created"
+        if state == "abandoned":
+            return "Creation unfinished"
+        if summary.status != "ok":
+            return "Broken"
+        return None
+
+    def _impairment_banner(pairs: list[tuple[str, str]]) -> str:
+        """An unmissable, top-of-page alert naming every impaired project and
+        its condition, so a backend-broken or mid-creation project can never
+        be mistaken for a healthy empty queue wherever it is listed."""
+        if not pairs:
+            return ""
+        rows = "".join(
+            f'<li><a href="/projects/{_esc(n)}">{_esc(n)}</a> '
+            f"&mdash; <strong>{_esc(cond)}</strong></li>"
+            for n, cond in pairs
+        )
+        noun = "project is" if len(pairs) == 1 else "projects are"
+        return (
+            '<div class="flash flash-error" role="alert">'
+            f"Heads up &mdash; {len(pairs)} {noun} not healthy and must not be "
+            "read as an empty queue:"
+            f'<ul style="margin:8px 0 0;padding-left:22px">{rows}</ul>'
+            "</div>"
+        )
+
+    def _item_search_key(i: A.Item) -> str:
+        """The same searchable text `_item_row` encodes into each row's
+        `data-t` attribute -- kept deliberately in sync so a server-side
+        search and the row it matches agree on what is searchable. (If
+        `_item_row`'s key changes, this must follow -- see DONE.json
+        residual proposing one shared key helper.)"""
+        return f"{i.id} {i.title} {i.status} {i.holder or ''}".lower()
+
+    def _filtered_pagination(
+        name: str,
+        status: str | None,
+        q: str,
+        page: int,
+        total_pages: int,
+        result: A.ListResult,
+    ) -> str:
+        """Filter-aware pagination footer: identical layout to
+        `_pagination_html`, but every page href also carries the active `q`
+        so paging a filtered view never silently drops the filter. Used only
+        when a search is active; the unfiltered path reuses `_pagination_html`
+        verbatim. This nested copy exists only because that helper -- owned by
+        the shell-nits lane -- has no `q` parameter yet (see DONE.json
+        residual proposing it take one so this can be deleted)."""
+        if total_pages <= 1:
+            return ""
+
+        def _href(p: int) -> str:
+            parts = [f"page={p}"]
+            if status:
+                parts.append(f"status={quote(status)}")
+            parts.append(f"q={quote(q)}")
+            return f"/projects/{_esc(name)}?{'&'.join(parts)}"
+
+        prev = (
+            f'<a href="{_href(page - 1)}">&laquo; Previous</a>'
+            if page > 1
+            else '<span class="muted">&laquo; Previous</span>'
+        )
+        nxt = (
+            f'<a href="{_href(page + 1)}">Next &raquo;</a>'
+            if page < total_pages
+            else '<span class="muted">Next &raquo;</span>'
+        )
+        start_n = result.offset + 1 if result.returned_count else 0
+        end_n = result.offset + result.returned_count
+        return (
+            '<div class="pagination">'
+            f"<span>Items {start_n}&ndash;{end_n} of {result.total_count} "
+            f"&middot; page {page} of {total_pages}</span>"
+            f"<span>{prev} &middot; {nxt}</span>"
+            "</div>"
+        )
+
     # --------------------------------------------------------------- health
 
     @app.get("/healthz")
@@ -825,15 +934,46 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             winner_name, winner_age = winner
             oldest_item = _oldest_ready_item(workspace.project(winner_name))
 
-        scale_seconds = winner_age or 1.0
+        # D3 -- the bar and its label agree. Bar length is measured against
+        # this scale; the printed ruler graduations and every row's floored
+        # day-label must read against the SAME axis. Round the oldest-unclaimed
+        # age UP to a whole number of days (min 1) so (a) no row can exceed the
+        # scale -- a bar clamped-at-max while its numeral shows a lower number
+        # cannot happen -- and (b) the ruler's endpoint is a whole day matching
+        # age_short's day-flooring, instead of a full-width bar sitting at the
+        # "5d" ruler mark while its own numeral floors to "4d". The fix is in
+        # what we PASS to axis_ruler_html / age_cell_html; those helpers are
+        # unchanged.
+        if winner_age:
+            scale_seconds = float(max(1, math.ceil(winner_age / 86400.0)) * 86400)
+        else:
+            scale_seconds = 86400.0
 
         buckets = _aggregate_buckets(summaries)
 
         ok = [s for s in summaries if s.status == "ok"]
+        broken = [s for s in summaries if s.status != "ok"]
         held_total = sum(s.held or 0 for s in ok)
         blocked_total = sum(s.blocked or 0 for s in ok)
         resolved_24h_total = sum(s.resolved_24h or 0 for s in ok)
         resolved_7d_total = sum(s.resolved_7d or 0 for s in ok)
+
+        # D4 -- one reconciled workspace roll-up, so no two figures on the page
+        # are computed two different ways and left free to disagree. Totals
+        # cover the readable queues only (a queue whose database cannot be read
+        # contributes no honest number); `workspace_last_activity` is the most
+        # recent per-project last_activity across the workspace -- itself an
+        # already-reconciled per-project value (adapter.project_summary /
+        # project_activity) -- surfaced at workspace scope here for the first
+        # time. Intended source once merged: adapter-data's reconciled
+        # workspace totals; see DONE.json residuals.
+        readable_count = len(ok)
+        reconciled_items = sum(s.total or 0 for s in ok)
+        _activity_stamps = [s.last_activity for s in ok if s.last_activity]
+        workspace_last_activity = max(_activity_stamps) if _activity_stamps else None
+
+        impaired = [(s.name, lbl) for s in summaries if (lbl := _impairment_label(s.name, s))]
+        impaired_banner = _impairment_banner(impaired)
 
         heartbeat = _heartbeat_html(buckets)
         ledger = _ledger_html(held_total, blocked_total, resolved_24h_total, resolved_7d_total)
@@ -853,19 +993,22 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
           {_dashboard_totals(summaries)}
         </table>"""
 
-        broken = [s for s in summaries if s.status != "ok"]
         broken_foot = ""
         if broken:
             names_str = ", ".join(s.name for s in broken)
+            n_broken = len(broken)
             broken_foot = (
-                '<div class="foot"><span class="fm">Broken</span>'
-                f"<span>{_esc(names_str)} cannot be read. Excluded from every total above, so the "
-                f"workspace figures read {sum(s.total or 0 for s in ok)} items across {len(ok)} "
-                "readable queues.</span></div>"
+                '<div class="foot"><span class="fm">Reconciled</span>'
+                f"<span>Every total above covers the {readable_count} readable "
+                f"queue{'s' if readable_count != 1 else ''} only "
+                f"({reconciled_items} items). {n_broken} "
+                f"queue{'s' if n_broken != 1 else ''} ({_esc(names_str)}) "
+                "could not be read and are excluded from those totals.</span></div>"
             )
 
         body = f"""
         {_flash(request)}
+        {impaired_banner}
         <section class="sec heroic">{_hero_html(winner_age, winner_name, oldest_item)}</section>
         <div class="hr bleed"></div>
         <section class="sec tight">
@@ -883,12 +1026,18 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         <div class="hr bleed"></div>
         <section class="sec">{_create_project_form()}</section>
         """
+        sb_left = ['<span class="s"><span class="dot on"></span>Sweep <b>healthy</b></span>']
+        if winner_age is not None:
+            _wv, _wu = T.duration_words(winner_age)
+            sb_left.append(
+                f'<span class="s">Oldest unclaimed <b class="am">{_wv} {_wu.lower()}</b></span>'
+            )
+        if workspace_last_activity:
+            sb_left.append(
+                f'<span class="s">Last activity {_abs_and_rel(workspace_last_activity)}</span>'
+            )
         sb = T.statusbar(
-            f'<span class="s"><span class="dot on"></span>Sweep <b>healthy</b></span>'
-            f'<span class="s">Oldest unclaimed <b class="am">{T.duration_words(winner_age)[0]}'
-            f" {T.duration_words(winner_age)[1].lower()}</b></span>"
-            if winner_age is not None
-            else '<span class="s"><span class="dot on"></span>Sweep <b>healthy</b></span>',
+            "".join(sb_left),
             f'<span class="s">Held <b>{held_total}</b></span><a href="/">Refresh</a>',
         )
         return _page(
@@ -912,6 +1061,11 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
     @app.get("/projects/{name}", response_class=HTMLResponse)
     async def project_view(request: Request, name: str):  # type: ignore[no-untyped-def]
         status = request.query_params.get("status") or None
+        # D2 -- search tells the truth. `q` filters SERVER-side over the full
+        # matching set (see the q-branch below), so the count and pagination
+        # reflect real matches across the whole project, not just whatever
+        # rows happened to be on the current page's DOM.
+        q = (request.query_params.get("q") or "").strip()
         try:
             page = max(1, int(request.query_params.get("page", "1")))
         except ValueError:
@@ -927,17 +1081,46 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
                 crumb_html=_crumb(("/", "All projects")),
             )
         page_size = A.LIST_DEFAULT_LIMIT
+        # Unfiltered project total for the current status filter -- the honest
+        # denominator behind an "N OF M ITEMS" count when a search is active.
+        project_total = None
         try:
-            result = bd.list_bounded(status=status, offset=(page - 1) * page_size)
-            total_pages = (
-                max(1, math.ceil(result.total_count / page_size)) if result.total_count else 1
-            )
-            if page > total_pages:
-                # A stale/hand-edited `?page=` past the real last page --
-                # land on the actual last page instead of a confusingly
-                # empty one whose own URL claims there should be more.
-                page = total_pages
+            if q:
+                # Server-side search: fetch the FULL matching set (bd's own
+                # unlimited, exactly as list_bounded does internally), filter
+                # it against the same searchable text every row exposes, THEN
+                # window/paginate the FILTERED set. This is what makes the
+                # count and pagination reflect real matches across the whole
+                # project instead of the current page's 50 DOM rows.
+                all_items = bd.list(status=status, include_resolved=(status is None), limit=0)
+                project_total = len(all_items)
+                needle = q.lower()
+                matched = [i for i in all_items if needle in _item_search_key(i)]
+                total = len(matched)
+                total_pages = max(1, math.ceil(total / page_size)) if total else 1
+                page = min(page, total_pages)
+                offset = (page - 1) * page_size
+                window = matched[offset : offset + page_size]
+                result = A.ListResult(
+                    items=window,
+                    total_count=total,
+                    returned_count=len(window),
+                    truncated=(offset + len(window)) < total,
+                    limit=page_size,
+                    requested_limit=None,
+                    offset=offset,
+                )
+            else:
                 result = bd.list_bounded(status=status, offset=(page - 1) * page_size)
+                total_pages = (
+                    max(1, math.ceil(result.total_count / page_size)) if result.total_count else 1
+                )
+                if page > total_pages:
+                    # A stale/hand-edited `?page=` past the real last page --
+                    # land on the actual last page instead of a confusingly
+                    # empty one whose own URL claims there should be more.
+                    page = total_pages
+                    result = bd.list_bounded(status=status, offset=(page - 1) * page_size)
         except A.BeadsError as e:
             body = (
                 f"{_flash(request)}<h1>{_esc(name)}</h1>"
@@ -950,6 +1133,11 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         if summary.status == "ok" and summary.oldest_unclaimed_age_seconds is not None:
             oldest_item = _oldest_ready_item(bd)
 
+        # D1 -- a broken/mid-creation project must be unmissable on its own
+        # page too, not just on the dashboard.
+        impaired_label = _impairment_label(name, summary)
+        impaired_banner = _impairment_banner([(name, impaired_label)] if impaired_label else [])
+
         status_options = "".join(
             f'<option value="{_esc(s)}"{" selected" if s == status else ""}>{_esc(s)}</option>'
             for s in A.STATUSES
@@ -958,7 +1146,11 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         rows = "".join(
             _item_row(name, i, result.offset + n + 1) for n, i in enumerate(result.items)
         )
-        pagination_html = _pagination_html(name, status, page, total_pages, result)
+        pagination_html = (
+            _filtered_pagination(name, status, q, page, total_pages, result)
+            if q
+            else _pagination_html(name, status, page, total_pages, result)
+        )
         if result.items:
             table = f"""<table class="tbl">
               <colgroup><col style="width:46px"><col style="width:64px"><col style="width:82px">
@@ -968,6 +1160,16 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
               </tr></thead>
               <tbody>{rows}</tbody>
             </table>"""
+        elif q:
+            # A search that matched nothing -- name the search (and any active
+            # status), and offer a real one-click way back to the full list.
+            clear_href = f"/projects/{_esc(name)}" + (f"?status={quote(status)}" if status else "")
+            with_status = f" with status <code>{_esc(status)}</code>" if status else ""
+            table = (
+                '<div class="empty-state"><p>No items match '
+                f"<code>{_esc(q)}</code>{with_status}.</p>"
+                f'<p><a href="{clear_href}">clear search</a></p></div>'
+            )
         elif status:
             table = (
                 '<div class="empty-state"><p>No items match status '
@@ -977,20 +1179,43 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         else:
             table = '<div class="empty-state"><p>No items yet. Add the first one below.</p></div>'
 
-        body = f"""
-        {_flash(request)}
-        <section class="sec">{_project_hero_html(name, summary, oldest_item)}</section>
-        <div class="hr bleed"></div>
-        <section class="sec tight">
-          <div class="controls">
-            {T.search_field("Search titles, ids, holders and state")}
-            <select name="__status_filter" style="max-width:180px;height:44px"
-                    onchange="location.href='/projects/{_esc(name)}'+(this.value?'?status='+this.value:'')">
+        # D2 -- a real server-side search control. It is a GET form so the URL
+        # carries the query, the status select submits WITH it (preserving an
+        # active search), and the count below is the honest server figure --
+        # not a client-side recount over only the current page's rows. The
+        # count reads "matches OF project-total" while searching, else the
+        # plain project total.
+        search_hint = "Search titles, ids, holders and state"
+        clear_search = ""
+        if q:
+            clear_href = f"/projects/{_esc(name)}" + (f"?status={quote(status)}" if status else "")
+            clear_search = f'<a class="clear-search" href="{clear_href}">clear</a>'
+        qc_text = (
+            f"{result.total_count} OF {project_total} ITEMS" if q else f"{result.total_count} ITEMS"
+        )
+        typed_cls = " typed" if q else ""
+        controls = f"""<form method="get" action="/projects/{_esc(name)}" class="controls">
+            <div class="field{typed_cls}" id="field">
+              <span class="mag">{T.ICONS["mag"]}</span>
+              <input id="q" name="q" type="search" autocomplete="off" spellcheck="false"
+                     value="{_esc(q)}" placeholder="{_esc(search_hint)}"
+                     aria-label="{_esc(search_hint)}">
+            </div>
+            <select name="status" style="max-width:180px;height:44px" onchange="this.form.submit()">
               <option value="">(all statuses)</option>
               {status_options}
             </select>
-            <span class="count" id="qc">{result.total_count} ITEMS</span>
-          </div>
+            <button type="submit">Search</button>
+            {clear_search}
+            <span class="count" id="qc">{qc_text}</span>
+          </form>"""
+        body = f"""
+        {_flash(request)}
+        {impaired_banner}
+        <section class="sec">{_project_hero_html(name, summary, oldest_item)}</section>
+        <div class="hr bleed"></div>
+        <section class="sec tight">
+          {controls}
           {table}
           {pagination_html}
         </section>
@@ -1035,13 +1260,17 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             f'<span class="s">Held <b>{held_display}</b></span>',
             f'<a href="/projects/{_esc(name)}">Refresh</a>',
         )
+        # No client-side search_js here: the search is now a server-side GET
+        # (see the `q` handling above), so the count and pagination are the
+        # honest server figures rather than a recount over the current page's
+        # rows. A client-side re-filter would reintroduce exactly the
+        # under-reporting this deliverable removes.
         return _page(
             request,
             name,
             body,
             crumb_html=crumb,
             statusbar_html=sb,
-            js=T.search_js(result.total_count, "ITEMS", "tbody tr[data-t]"),
         )
 
     @app.post("/projects/{name}/items")
