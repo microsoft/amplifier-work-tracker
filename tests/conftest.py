@@ -10,24 +10,28 @@ Isolation model
   parallel-safe, and carry no ordering assumptions -- this also makes the
   suite safe under pytest-xdist, since each worker process mints its own
   unique names and never collides with another worker's.
-- Server-side state is cleaned up too, not just the local directory. A
-  project lives in two independent places: a directory under the tmp root
-  above, and a database on the shared dolt server (bd's shared-server
-  topology stores it under ``~/.beads/shared-server/dolt/<name>``). This
-  file used to document dropping the second half as an accepted trade-off
-  -- correctly, at the time: there was no removal primitive. There is one
-  now (``adapter.drop_database`` / ``Workspace.remove``, added in PR #6),
-  so the trade-off is no longer accepted, because the cost was measured
-  and it is not small. On a live box: 163 databases for 5 real projects,
-  157 of them test residue. dolt holds every database open -- dropping the
-  residue took the server from 1.15 GB RSS / 313 MB on disk to 0.12 GB /
-  18 MB. Unique names stop runs colliding; they do not stop the pile
-  growing on every CI run.
+- The dolt SERVER itself is isolated too, not just the local directory --
+  see ``isolated_dolt_server`` below. Every project a test creates lives in
+  two independent places: a directory under the tmp root above, and a
+  database on whatever dolt server ``bd`` was pointed at. That used to
+  *always* be the conventional shared server at ``~/.beads/shared-server:3308``
+  -- the same server every real, permanent project also lives on --
+  and fixture-level teardown (``drop_project``, below) is Python code that
+  runs *after* a test/fixture body, so it cannot run at all if the process
+  never gets to unwind (a `kill -9`, an impatient `timeout` wrapper
+  escalating to SIGKILL, a hard crash). Measured on a live box: 202 residue
+  databases, enough on their own to make `bd init` (a `CREATE DATABASE`
+  under the hood) time out at 240s server-wide, for real projects too.
+  Teardown discipline cannot close that gap; only isolation can -- see
+  ``tests/_dolt_isolation.py``'s module docstring for the full story.
 
-  Every fixture here that creates a project therefore drops it again (see
-  ``drop_project``), and ``assert_no_leaked_projects`` fails the session if
-  any created project outlives the run. Unique naming is still what makes
-  the suite parallel-safe; teardown is what makes it leave nothing behind.
+  Every fixture here that creates a project also drops it again (see
+  ``drop_project``), and ``assert_no_leaked_projects`` /
+  ``assert_isolated_server_clean`` both fail the session if any created
+  project (or, independent of that bookkeeping, any database at all)
+  outlives the run. Unique naming is still what makes the suite
+  parallel-safe within one isolated server; the isolated server is what
+  keeps a killed run from ever reaching the permanent one.
 """
 
 from __future__ import annotations
@@ -52,6 +56,8 @@ import pytest
 from amplifier_work_tracker import adapter as A
 from amplifier_work_tracker import contract
 from amplifier_work_tracker import gateway as G
+
+from . import _dolt_isolation as DI
 
 # ---------------------------------------------------------------------------
 # Skip integration/cli tests loudly (not one confusing failure per test) if
@@ -78,6 +84,114 @@ def unique_name(prefix: str = "t") -> str:
     always unique. ``NAME_RE`` requires a lowercase-letter start and only
     ``[a-z0-9_]`` after that, so the prefix must itself comply."""
     return f"{prefix}{uuid.uuid4().hex[:12]}"
+
+
+# ---------------------------------------------------------------------------
+# Isolated dolt server -- see tests/_dolt_isolation.py's module docstring for
+# the full story. Session-scoped and autouse: every test in this suite gets
+# it whether or not it names it as a parameter, because the whole point is
+# that NOTHING in this process can reach the shared production server.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolated_dolt_server(tmp_path_factory):
+    """Spin up a throwaway ``dolt sql-server`` on its own ephemeral port for
+    the whole test session, and repoint every place this repo's code reads
+    the dolt host/port at it -- so every `bd`/`dolt` call any fixture or
+    test makes for the rest of the session, in-process AND in any
+    subprocess (`run_cli` spawns a fresh Python process that re-imports
+    `supervisor` and re-reads these exact env vars at ITS OWN import time),
+    lands on the isolated server instead of the shared one at
+    ``~/.beads/shared-server:3308``.
+
+    Two repoints, because there are two kinds of caller:
+      - In-process (`tests/integration`, `tests/unit`, this suite's own
+        fixtures): `adapter._bd_init_server_args()` / `_dolt_conn_args()`
+        read `supervisor.DEFAULT_DOLT_HOST` / `DEFAULT_DOLT_PORT` as live
+        module attributes on every call, so monkeypatching them here takes
+        effect immediately for the rest of this process.
+      - Subprocess (`tests/cli`, via `run_cli`): a brand-new Python process
+        computes those same module attributes from
+        `AMPLIFIER_WORK_TRACKER_DOLT_HOST` / `_PORT` at import time, so the
+        env vars (inherited automatically -- `run_cli` builds its subprocess
+        env from `os.environ`) are what reaches it.
+
+    A SIGTERM handler is installed for the session: SIGKILL cannot be
+    caught (nothing can, by any process, ever) but SIGTERM -- what a CI
+    job's own cancellation, or `timeout`'s first signal, typically sends --
+    has NO default Python handler and would otherwise skip this fixture's
+    `yield`-time teardown entirely. Restored to whatever was previously
+    installed (pytest's own, if any) when the session ends.
+    """
+    from amplifier_work_tracker import supervisor as SV
+
+    data_dir = tmp_path_factory.mktemp("isolated_dolt")
+    server = DI.start(data_dir)
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(SV, "DEFAULT_DOLT_HOST", server.host)
+    mp.setattr(SV, "DEFAULT_DOLT_PORT", server.port)
+    mp.setenv("AMPLIFIER_WORK_TRACKER_DOLT_HOST", server.host)
+    mp.setenv("AMPLIFIER_WORK_TRACKER_DOLT_PORT", str(server.port))
+
+    import signal
+
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def _on_sigterm(signum, frame):  # noqa: ARG001 - required signal-handler signature
+        DI.stop(server)
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
+    try:
+        yield server
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        mp.undo()
+        DI.stop(server)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def assert_isolated_server_clean(isolated_dolt_server, assert_no_leaked_projects):
+    """The real backstop: at session end, query the isolated server itself
+    -- not any fixture's in-memory bookkeeping -- and fail loudly if any
+    database survives.
+
+    `assert_no_leaked_projects` below only catches a leak if the leaking
+    fixture remembered to register the name it created; this catches a
+    leak even from a fixture (present or future) that creates a project
+    without going through any of the safe helpers at all, because on this
+    isolated, per-session server EVERY non-system database is test residue
+    by construction -- nothing else has ever had the chance to create one
+    here.
+
+    Depends on (so tears down after) `assert_no_leaked_projects`, so its own
+    bookkeeping-based drops happen first and this only ever reports whatever
+    that pass could not explain -- and depends on (so tears down before)
+    `isolated_dolt_server`, so the server is still alive to query and clean.
+    """
+    yield
+    host, port = isolated_dolt_server.host, isolated_dolt_server.port
+    leaked = DI.list_test_databases(host, port)
+    if not leaked:
+        return
+    failed: list[str] = []
+    for name in leaked:
+        try:
+            A.drop_database(name)
+        except A.BeadsError as e:  # noqa: PERF203 - per-database, one failure must not hide the rest
+            failed.append(f"{name} ({e})")
+    detail = f"failed to drop: {', '.join(failed)}" if failed else "all dropped now"
+    raise AssertionError(
+        f"{len(leaked)} database(s) survived on the isolated test server "
+        f"({host}:{port}) with no fixture accounting for them: "
+        f"{', '.join(leaked)}. {detail}. A fixture somewhere created a "
+        f"project without routing through `drop_project` / the module "
+        f"suite's `project` fixture -- find it and fix its teardown."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +297,12 @@ def unique_lane() -> str:
 
 
 @pytest.fixture(scope="session")
-def workspace_root(tmp_path_factory):
+def workspace_root(tmp_path_factory, isolated_dolt_server):
+    """`isolated_dolt_server` is an explicit dependency, not just an autouse
+    accident: every real `bd init` this suite performs goes through a
+    `Workspace` rooted here, and that must never happen before the isolated
+    server is already up and every dolt host/port pointer already repointed
+    at it."""
     root = tmp_path_factory.mktemp("amplifier_work_tracker_root")
     mp = pytest.MonkeyPatch()
     mp.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(root))
@@ -241,12 +360,17 @@ def project_factory(workspace):
 
 
 @pytest.fixture(scope="module")
-def probe():
+def probe(isolated_dolt_server):
     """A disposable throwaway project, via ``amplifier_work_tracker.contract.Probe``
     -- reused directly here (rather than reimplemented) so integration tests
     exercise the exact same probing machinery ``amplifier-work-tracker doctor``
     does. ``Probe`` drops its own database on exit, so this needs no teardown
-    of its own (and ``test_probe_leaves_no_database_behind`` proves it)."""
+    of its own (and ``test_probe_leaves_no_database_behind`` proves it).
+
+    Depends on ``isolated_dolt_server`` explicitly: unlike ``workspace_root``,
+    ``Probe`` creates its own ``Workspace`` directly and does not chain
+    through that fixture, so nothing else would otherwise guarantee the
+    isolated server is already up before it runs `bd init`."""
     with contract.Probe() as p:
         yield p
 
