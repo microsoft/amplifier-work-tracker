@@ -97,23 +97,77 @@ CSS = r"""
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 :root{
   --ground:#0D0D0C;
-  --raise:#151513;
+  --raise:#151513;    /* the only lighter surface text ever sits on (hovered
+                         rows, fields, chips, content blocks) -- every text
+                         token below is checked against BOTH --ground and this */
   --sink:#070706;
-  --ink:#F2EEE6;      /* 16.80:1 */
-  --mid:#A6A199;      /*  7.57:1 */
-  --dim:#89857D;      /*  5.29:1  -- the floor; true small print only */
-  --quiet:#9C978F;    /*  6.70:1  -- secondary prose, footnotes, counts */
-  --amber:#D9A253;    /*  8.56:1 */
-  --crimson:#E0655A;  /*  5.72:1  -- escalation only, never decorative */
+
+  /* NEUTRAL TEXT RAMP -- four steps, each a real measured contrast. Even the
+     quietest step (--dim) clears WCAG AA (4.5:1) with margin against --ground
+     AND against a hovered row (--raise), at the small sizes this UI uses. No
+     content-bearing text ever drops below this floor. */
+  --ink:#F2EEE6;      /* 16.80:1  -- primary text */
+  --mid:#A6A199;      /*  7.57:1  -- secondary: chrome, labels, holders, ids */
+  --quiet:#9C978F;    /*  6.70:1  -- tertiary: prose, footnotes, counts */
+  --dim:#928E85;      /*  5.95:1  (5.60:1 on --raise) -- quietest legible step.
+                         Lifted off the previous 5.29/4.98 floor so small print
+                         (resolved status, row ids, axis numerals) reads as
+                         quiet, never as functionally-invisible. */
+
+  /* SIGNAL COLOURS -- exactly three, each with ONE job, never decorative.
+     The accent (--amber) is spent on ATTENTION only; good news stays neutral
+     (--live); a broken queue gets its own unmistakable hue (--alarm). */
+  --amber:#D9A253;    /*  8.56:1  -- ATTENTION, and nothing else: accumulating
+                         time / the one thing to look at (hero age, the a3 stale
+                         band, oldest-unclaimed emphasis) and the interactive
+                         accent that confirms it (hover, focus, caret, selection).
+                         NOT good news. NOT alarm. This is the single referent. */
+  --alarm:#FF6A45;    /*  6.85:1  -- BROKEN: a project the backend cannot read.
+                         A distinct hot hue, brighter and more saturated than
+                         both amber (warm gold) and crimson (soft coral), so a
+                         broken queue is unmissable and never read as ordinary
+                         attention or item-level escalation. Render lanes apply
+                         it via `state_html("alarm", ...)` / `.state.alarm`. */
+  --crimson:#E0655A;  /*  5.72:1  -- ESCALATION: a blocked item, a destructive
+                         action. Item-level and reversible-with-care, distinct
+                         from a whole-project --alarm. Never decorative. */
+  --live:#A6A199;     /*  neutral (== --mid) -- "healthy / live" is GOOD NEWS and
+                         is kept QUIET on purpose: the breathing status dot, no
+                         accent. Good news must never spend the one accent. */
+
   --rule:#1F1F1D;
   --rule-hi:#333330;
+  --link-underline:#333330;  /* the resting affordance for INLINE prose links --
+                                see "AFFORDANCE GRAMMAR" note below the tokens */
   --serif:'Bodoni Moda',Georgia,serif;
   --sans:'Archivo','Helvetica Neue',sans-serif;
+  --mono:ui-monospace,'SFMono-Regular','JetBrains Mono',Menlo,Consolas,'Liberation Mono',monospace;
   --pad:52px;
   --u:44px;           /* WCAG target minimum */
   --hero-opsz:48;
   --beat-h:50px;
+  --fig-size:236px;   /* hero age figure size -- a token so density classes can
+                         shrink the heaviest element without restructuring it */
+  --fig-unit:32px;    /* the hero figure's unit label (DAYS/HOURS/...) */
 }
+
+/* -- AFFORDANCE GRAMMAR (one documented convention) ----------------------
+   Three signals of "clickable" were in use (a trailing chevron, bold-amber
+   text, and a lone underline). Consolidated to ONE rule, enforced by the
+   classes below:
+
+     1. A link's RESTING affordance is STRUCTURAL, and there are two forms,
+        one per context -- never a colour:
+          - ROW / navigational links (a whole row or cell that navigates):
+            a trailing chevron  ">"  (`.ti a`, `td.link-cell > a`, `.attrib`).
+          - INLINE prose links (a link inside a value or sentence):
+            an underline in --link-underline (`.prose-link`, `.kv .v a`,
+            `.links-list a`, `a.what`).
+     2. --amber is NEVER a resting link colour. Amber appears on a link ONLY
+        on :hover / :focus, as the universal "interactive" confirmation.
+        (Amber text at rest means ATTENTION -- see the token -- not "click me".)
+   New inline links should use `.prose-link`; the older selectors above are
+   kept as aliases so existing markup keeps its single underline affordance. */
 html{background:var(--ground)}
 body{
   background:var(--ground);color:var(--ink);
@@ -150,7 +204,9 @@ a{color:inherit}
 .top .identity a{color:var(--mid);text-decoration:none}
 .top .identity a:hover{color:var(--amber)}
 .dot{width:6px;height:6px;border-radius:50%;flex:0 0 6px;display:inline-block}
-.dot.on{background:var(--amber);animation:breathe 4s ease-in-out infinite}
+/* the live/"healthy" pulse is GOOD NEWS -> neutral (--live), never the accent.
+   "live" is carried by the breathing motion + the word beside it, not colour. */
+.dot.on{background:var(--live);animation:breathe 4s ease-in-out infinite}
 @keyframes breathe{0%,100%{opacity:1}50%{opacity:.35}}
 
 /* -- content ------------------------------------------------------------ */
@@ -166,18 +222,36 @@ a{color:inherit}
 .subtle{font-family:var(--sans);font-size:11.5px;color:var(--quiet);
   letter-spacing:.015em;line-height:1.6}
 
+/* -- DENSITY -- compact affordances for sparse projects -------------------
+   A 2-item queue should not wear the same heavy hero/stats chrome as a
+   264-item one (~80% chrome/air on a tiny queue). This is the MECHANISM only:
+   a render lane adds `compact` to a scope (the content `.wrap`, or a single
+   `.sec`) and the heavy elements inside shrink; it adds `compact-hide` to a
+   specific block that carries no signal for a tiny queue (a 2-tick histogram,
+   an all-zero ledger). Nothing here decides WHEN to compact -- that is the
+   render lane's call from the real item count. Heavy layout re-architecture
+   (fold/scroll) is deliberately out of scope; these are additive knobs. */
+.compact{--fig-size:118px;--fig-unit:22px}
+.compact .sec{padding:22px 0}
+.compact .sec.tight{padding:12px 0}
+.compact .sec.heroic{padding:18px 0 22px}
+.compact .figrow{margin:14px 0 0}
+.compact .hero{gap:32px}
+.compact .context{gap:32px}
+.compact-hide{display:none}
+
 /* -- HERO -- age is the biggest thing on the screen --------------------- */
 .hero{display:flex;align-items:flex-end;gap:54px;flex-wrap:wrap}
 .hero .lead{min-width:0;flex:0 0 auto}
 .figrow{display:flex;align-items:baseline;gap:12px;margin:26px 0 0}
 .fig{
   font-family:var(--serif);font-weight:500;color:var(--amber);
-  font-size:236px;line-height:.78;letter-spacing:-.035em;
+  font-size:var(--fig-size);line-height:.78;letter-spacing:-.035em;
   font-variation-settings:"opsz" var(--hero-opsz);display:block;
 }
-.fig.sm{font-size:120px}
+.fig.sm{--fig-size:120px}
 .fig.none{color:var(--mid)}
-.figunit{font-family:var(--sans);font-weight:600;font-size:32px;
+.figunit{font-family:var(--sans);font-weight:600;font-size:var(--fig-unit);
   letter-spacing:.2em;color:var(--ink);text-transform:uppercase;line-height:1}
 .figunit.am{color:var(--amber)}
 .hero.solo{display:block}
@@ -201,7 +275,7 @@ a.attrib:hover::after{color:var(--amber)}
    not a full row, so it gets the underline treatment rather than the row
    chevron. Made explicit rather than left to the browser's unstyled
    default underline, which happened to look right by accident. */
-a.what{color:inherit;text-decoration:underline;text-decoration-color:var(--rule-hi)}
+a.what{color:inherit;text-decoration:underline;text-decoration-color:var(--link-underline)}
 a.what:hover{color:var(--amber)}
 
 /* -- HEARTBEAT -- ready items as ticks, placed by age ------------------- */
@@ -357,17 +431,25 @@ tr.hidden{display:none}
 .n.ink{color:var(--mid);font-weight:500}
 .n.zero{color:var(--dim)}
 
-/* status -- type + a hairline mark, never a pill */
+/* status -- type + a hairline mark, never a pill. Each state is distinguished
+   by MARKER SHAPE and WEIGHT as well as hue, so none reads on colour alone. */
 .state{font-family:var(--sans);font-size:10.5px;font-weight:600;
   letter-spacing:.15em;text-transform:uppercase;color:var(--mid);
   display:inline-flex;align-items:center;gap:9px;white-space:nowrap}
 .state .sq{width:5px;height:5px;flex:0 0 5px;background:var(--mid)}
-.state.ok{color:var(--dim)}
+.state.ok{color:var(--dim);font-weight:500}
 .state.ok .sq{background:#5C5851}
-.state.warnv{color:var(--amber)}
-.state.warnv .sq{background:var(--amber)}
-.state.bad{color:var(--crimson)}
-.state.bad .sq{background:var(--crimson)}
+/* HELD -- legible beyond hue: heavier weight AND a taller filled marker, so it
+   is told apart from "healthy" (a small dim square) by shape, not just amber. */
+.state.warnv{color:var(--amber);font-weight:700}
+.state.warnv .sq{background:var(--amber);height:11px}
+/* BROKEN -- the loudest marker: the distinct --alarm hue + bold + an oversized
+   block. `state_html("alarm", ...)` renders this; render lanes mark broken
+   projects with it (a broken queue must never look like a healthy empty one). */
+.state.alarm{color:var(--alarm);font-weight:700}
+.state.alarm .sq{background:var(--alarm);width:9px;height:9px}
+.state.bad{color:var(--crimson);font-weight:700}
+.state.bad .sq{background:var(--crimson);width:7px;height:7px}
 
 /* -- item rows (dense ledger) -------------------------------------------- */
 .ti{font-size:14px;line-height:1.4;color:var(--ink);letter-spacing:-.002em;
@@ -385,9 +467,15 @@ tr.hidden{display:none}
 .st{font-family:var(--sans);font-size:10px;font-weight:600;letter-spacing:.15em;
   text-transform:uppercase;white-space:nowrap}
 .st-open{color:var(--ink)}
-.st-held{color:var(--amber)}
-.st-done{color:var(--dim);font-weight:400;font-size:9.5px;letter-spacing:.13em}
-.st-blkd{color:var(--crimson)}
+/* HELD carries a ticking custody clock -- the word HELD plus a heavy weight
+   (not amber alone) is the beyond-hue signal. */
+.st-held{color:var(--amber);font-weight:700}
+/* RESOLVED is the quietest status AND the most common row on a busy queue.
+   Previously --dim at 9.5px/400 it read as functionally invisible; kept the
+   dimmest (now the lifted --dim floor) but a touch larger and heavier so it is
+   legible small print, not absent. */
+.st-done{color:var(--dim);font-weight:500;font-size:10.5px;letter-spacing:.13em}
+.st-blkd{color:var(--crimson);font-weight:700}
 .st-deferred{color:var(--quiet)}
 
 /* -- link-cell (stretched-link): whole cell clickable, not just text ---- */
@@ -406,6 +494,18 @@ td.link-cell > a:hover::after{color:var(--amber)}
 .content-block{white-space:pre-wrap;word-break:break-word;background:var(--raise);
   border:1px solid var(--rule);border-radius:6px;padding:0.9rem 1rem;
   font-size:15px;line-height:1.6;color:var(--ink);margin:0.3rem 0 0}
+/* MONOSPACE face for content whose alignment is meaningful -- ASCII tables,
+   code, fixed-width output. Proportional Archivo destroys column alignment, so
+   the item-body renderer applies `.mono` (e.g. `<div class="content-block mono">`)
+   to pre-formatted content. `--measure` (set per-page via page()) already caps
+   comfortable reading width for prose. */
+.mono{font-family:var(--mono);font-variant-ligatures:none;
+  font-variant-numeric:tabular-nums}
+/* the single INLINE-link resting affordance: an underline in --link-underline,
+   amber only on hover (never amber at rest -- amber at rest means attention). */
+.prose-link{color:inherit;text-decoration:underline;
+  text-decoration-color:var(--link-underline);text-underline-offset:2px}
+.prose-link:hover{color:var(--amber);text-decoration-color:var(--amber)}
 
 .foot{margin-top:24px;display:flex;gap:14px;align-items:baseline;
   font-family:var(--sans);font-size:12px;color:var(--quiet);letter-spacing:.015em;
@@ -423,7 +523,7 @@ td.link-cell > a:hover::after{color:var(--amber)}
   letter-spacing:.18em;text-transform:uppercase;color:var(--dim);display:block;
   margin-bottom:7px}
 .kv .v{font-family:var(--sans);font-size:13.5px;color:var(--ink);letter-spacing:.01em}
-.kv .v a{color:inherit;text-decoration:underline;text-decoration-color:var(--rule-hi)}
+.kv .v a{color:inherit;text-decoration:underline;text-decoration-color:var(--link-underline)}
 .kv .v a:hover{color:var(--amber)}
 .kv .v.serif{font-family:var(--serif);font-size:20px;font-weight:500}
 .kv .v.am{color:var(--amber)}
@@ -483,7 +583,7 @@ button.danger:hover,a.btn.danger:hover{background:#c44c40}
 .links-list{margin:0.2rem 0 1rem;padding-left:1.2rem;font-size:13px;
   color:var(--mid)}
 .links-list a{color:var(--mid);text-decoration:underline;
-  text-decoration-color:var(--rule-hi)}
+  text-decoration-color:var(--link-underline)}
 .links-list a:hover{color:var(--amber)}
 
 /* -- pagination ----------------------------------------------------------- */
@@ -782,8 +882,19 @@ def age_cell_html(seconds: float | None, scale_seconds: float) -> str:
 
 def state_html(kind: str, label: str) -> str:
     """A status marker: type + a hairline coloured square, never a pill.
-    `kind` is one of "ok" | "warn" | "bad"."""
-    cls = {"ok": "ok", "warn": "warnv", "bad": "bad"}.get(kind, "ok")
+
+    `kind` is one of:
+      "ok"    -- healthy / quiet (dim, small square)
+      "warn"  -- HELD: attention, amber, heavier weight + a taller marker
+      "alarm" -- BROKEN: a project the backend cannot read; the distinct
+                 --alarm hue + bold + an oversized block. Render lanes mark a
+                 broken/creating project with this so it is never pixel-identical
+                 to a healthy empty one.
+      "bad"   -- ESCALATION: crimson, item-level (a blocked item, a danger).
+
+    Unknown kinds fall back to "ok". Each state is legible beyond hue alone
+    (weight + marker shape), per the status CSS."""
+    cls = {"ok": "ok", "warn": "warnv", "alarm": "alarm", "bad": "bad"}.get(kind, "ok")
     return f'<span class="state {cls}"><span class="sq"></span>{_esc(label)}</span>'
 
 
