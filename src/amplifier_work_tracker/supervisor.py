@@ -567,8 +567,9 @@ async def dolt_supervisor_loop(
 
 _WEB_EXTRA_ERROR_TEMPLATE = (
     "the web dashboard requires the 'web' extra: {e}\n"
-    "Install it with: pip install 'amplifier-work-tracker[web]' "
-    "(or, from a checkout: pip install -e '.[web]')"
+    "Install it with: uv tool install --reinstall --with 'amplifier-work-tracker[web]' "
+    "'git+https://github.com/microsoft/amplifier-work-tracker@main'\n"
+    "(or, for a dev checkout: uv pip install -e '.[web]')"
 )
 
 
@@ -580,6 +581,18 @@ def import_web_modules():
     actionable `RuntimeError` -- never a bare traceback -- shared by
     `cli.py`'s `cmd_web` and this module's own `web_server_loop` so the two
     paths can never drift apart on the message a caller sees.
+
+    NOTE for `web_server_loop` callers: this raises plain `RuntimeError`,
+    NOT `WebServerStartupError` -- it is also called by `cli.py`'s
+    `cmd_web`, a standalone foreground command with no supervisor/gather
+    involved, which already catches `RuntimeError` directly. Callers that
+    run inside the supervisor's `asyncio.gather` (i.e. `web_server_loop`)
+    MUST catch this `RuntimeError` and re-raise as `WebServerStartupError`
+    themselves -- see that function's own comment for why this is not
+    optional (a plain `RuntimeError` here previously escaped `_async_serve`'s
+    except clause entirely, which only matches `WebServerStartupError`/
+    `DoltSupervisionExhaustedError`, silently degrading a real supervisor to
+    dolt-only with the web dashboard simply never bound).
     """
     try:
         from . import webapp
@@ -655,8 +668,25 @@ async def web_server_loop(
     path, whether the trigger was a real OS signal or (as the test suite
     does, matching `reap_loop`/`notify_loop`'s own tests) a direct
     `stop_event.set()` with no signal involved at all.
+
+    `import_web_modules()` is called inside a try/except here -- NOT bare,
+    as it was before this fix -- because it raises plain `RuntimeError`
+    (see its own docstring: it is shared with `cli.py`'s standalone
+    `cmd_web`, which already expects that type). A bare `RuntimeError`
+    escaping this task does NOT match `_async_serve`'s except clause
+    (`DoltSupervisionExhaustedError`/`WebServerStartupError` only), so it
+    silently missed the supervisor's whole fail-loud path: this was the
+    live bug -- a `uv tool install` with the `[web]` extra missing left the
+    dolt server and reap/notify sweeps running seemingly fine forever,
+    with the web dashboard simply never bound and nothing said so. Wrap it
+    here, exactly like the `import uvicorn` case just below, so BOTH of
+    this task's only two possible import failures become the same
+    exception type `_async_serve` already knows how to fail loud on.
     """
-    webapp = import_web_modules()
+    try:
+        webapp = import_web_modules()
+    except RuntimeError as e:
+        raise WebServerStartupError(str(e)) from e
     try:
         import uvicorn
     except ImportError as e:
@@ -795,8 +825,25 @@ async def _async_serve(
         # process can exit promptly instead of leaving the rest running as
         # orphans. Generalized over `tasks` (not hand-enumerated) so this
         # keeps working correctly regardless of whether `web` is present.
+        #
+        # `_request_stop()`, not a bare `stop_event.set()` -- this is the
+        # second half of the same bug. Cancelling `dolt_task` (below) only
+        # cancels the ASYNCIO wrapper around `await
+        # asyncio.to_thread(proc.wait)`; it does NOT terminate the real
+        # `dolt sql-server` OS process, which keeps its executor thread
+        # blocked in `proc.wait()` for as long as dolt stays alive (i.e.
+        # forever, for a healthy server). `asyncio.run()`'s own cleanup
+        # (`shutdown_default_executor()`) then blocks waiting for that
+        # thread to finish -- so with only `stop_event.set()` here, this
+        # whole process would hang indefinitely rather than actually
+        # exiting non-zero, reproducing the exact silent-degrade symptom
+        # (dolt still up, nothing telling anyone the web task died) this
+        # fix exists to close. `_request_stop()` does everything
+        # `stop_event.set()` did AND sends the real child process a
+        # SIGTERM, so `dolt_supervisor_loop`'s blocking wait actually
+        # resolves and this function can really return/raise.
         logger.error("supervisor giving up: %s", e)
-        stop_event.set()
+        _request_stop()
         remaining = [t for t in tasks if not t.done()]
         for t in remaining:
             t.cancel()

@@ -158,6 +158,145 @@ class ServiceUnsupportedError(RuntimeError):
     """
 
 
+_WEB_EXTRA_INSTALL_REMEDY = (
+    "Install it with: uv tool install --reinstall --with 'amplifier-work-tracker[web]' "
+    "'git+https://github.com/microsoft/amplifier-work-tracker@main'\n"
+    "(or, for a dev checkout: uv pip install -e '.[web]')"
+)
+
+
+class WebExtraNotImportableError(RuntimeError):
+    """Raised by `service_install(..., web_port=...)` when the 'web' extra
+    (fastapi/uvicorn/itsdangerous) cannot be verified importable in the
+    environment that will actually run the installed unit's ExecStart.
+
+    This is the INSTALL-TIME half of the same fail-loud contract
+    `supervisor.WebServerStartupError` enforces at RUNTIME (see that
+    class's docstring). The live bug this closes: `service install
+    --web-port` wrote and started a unit whose `ExecStart` ran under a
+    `uv tool install` venv that never got the optional `[web]` extra --
+    the unit came up `active`, dolt genuinely serving, and the web
+    dashboard simply never bound, with nothing refusing the install or
+    saying why. Refusing HERE, before any unit file is ever written, is
+    strictly better than writing a half-dead unit and discovering the gap
+    only after `serve` itself fails loud (which it now also does -- see
+    `supervisor.py` -- but a preflight refusal is faster feedback and
+    never touches systemd/launchd state at all).
+    """
+
+
+def _resolve_console_script_interpreter(bin_tokens: list[str]) -> str | None:
+    """The python interpreter that will actually execute `bin_tokens[0]` --
+    NOT necessarily the interpreter running *this* process.
+
+    `_resolve_bin_tokens()` returns one of two shapes:
+
+      - `[sys.executable, "-m", "amplifier_work_tracker.cli"]` (the bare
+        fallback) -- the interpreter IS `sys.executable`, no file to read.
+      - `[<path>]`, a real console-script wrapper (the stable
+        `~/.local/bin/amplifier-work-tracker` symlink, or a `shutil.which`
+        hit) -- these are text files whose first line is a `#!<interpreter>`
+        shebang, the standard mechanism pip/uv/pipx-installed console
+        scripts use. For a `uv tool install`, that interpreter is the
+        TOOL'S OWN venv python -- a DIFFERENT interpreter than whatever is
+        running this installer (e.g. a dev checkout's own .venv). Reading
+        it is the only reliable way to check importability in the
+        environment the unit will ACTUALLY run under; checking `sys.
+        modules`/`import fastapi` in this process instead is exactly the
+        bug that let a half-dead unit get installed in the first place.
+
+    Handles the `#!/usr/bin/env python3`-style indirection too (resolves
+    the real interpreter via PATH). Returns `None` -- never raises, never
+    guesses -- if the shebang can't be read or parsed; callers MUST treat
+    `None` as "could not determine" and refuse rather than assume success.
+    """
+    if bin_tokens[0] == sys.executable:
+        return sys.executable
+    script = Path(bin_tokens[0])
+    try:
+        real = script.resolve()
+        with open(real, encoding="utf-8", errors="replace") as f:
+            first_line = f.readline()
+    except OSError:
+        return None
+    if not first_line.startswith("#!"):
+        return None
+    tokens = first_line[2:].strip().split()
+    if not tokens:
+        return None
+    if Path(tokens[0]).name == "env" and len(tokens) > 1:
+        return shutil.which(tokens[1]) or tokens[1]
+    return tokens[0]
+
+
+# Mirrors the eager top-level imports `supervisor.import_web_modules()` (via
+# `webapp`/`webauth`) and `supervisor.web_server_loop`'s own `import uvicorn`
+# actually perform -- see those modules' imports. Intentionally the same
+# three packages named in the LIVE incident ("fastapi, uvicorn, itsdangerous
+# all MISSING").
+_WEB_IMPORT_PROBE_CODE = "import fastapi, uvicorn, itsdangerous"
+_WEB_IMPORT_PROBE_TIMEOUT_S = 15.0
+
+
+def probe_web_extra_importable(
+    bin_tokens: list[str], *, timeout: float = _WEB_IMPORT_PROBE_TIMEOUT_S
+) -> tuple[bool, str]:
+    """Real subprocess check: can the environment that will run
+    `bin_tokens[0]` (see `_resolve_bin_tokens`) import the optional `web`
+    extra?
+
+    Returns `(True, "")` if importable. Returns `(False, detail)` --
+    never raises -- both when the import genuinely fails AND when the
+    check itself could not be reliably performed (no interpreter could be
+    resolved, the subprocess couldn't be started, or it timed out); in
+    EVERY `False` case the caller (`_ensure_web_extra_importable_or_raise`)
+    must refuse rather than silently proceed, matching this module's
+    fail-loud contract -- "could not verify" is never treated as "verified
+    fine."
+    """
+    interpreter = _resolve_console_script_interpreter(bin_tokens)
+    if interpreter is None:
+        return False, (
+            f"could not determine the python interpreter that will run {bin_tokens[0]!r} "
+            f"to verify the 'web' extra is importable there"
+        )
+    try:
+        result = subprocess.run(
+            [interpreter, "-c", _WEB_IMPORT_PROBE_CODE],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except OSError as e:
+        return False, f"failed to run {interpreter!r} to check the 'web' extra: {e}"
+    except subprocess.TimeoutExpired:
+        return False, f"timed out after {timeout:.0f}s checking the 'web' extra via {interpreter!r}"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        return False, detail or f"import failed (exit {result.returncode})"
+    return True, ""
+
+
+def _ensure_web_extra_importable_or_raise() -> None:
+    """Preflight gate for `service_install(..., web_port=...)`: refuse to
+    write/install a unit at all unless the 'web' extra is verified
+    importable in the environment that will actually run it -- see
+    `WebExtraNotImportableError`'s docstring for the incident this closes.
+
+    Raises `WebExtraNotImportableError` naming the exact remedy on any
+    failure (import genuinely fails, or the check itself could not be
+    performed). Never a silent pass.
+    """
+    bin_tokens = _resolve_bin_tokens()
+    ok, detail = probe_web_extra_importable(bin_tokens)
+    if not ok:
+        raise WebExtraNotImportableError(
+            f"refusing to install with --web-port: the 'web' extra "
+            f"(fastapi/uvicorn/itsdangerous) is not importable in the environment that will "
+            f"run {bin_tokens[0]!r} ({detail}).\n" + _WEB_EXTRA_INSTALL_REMEDY
+        )
+
+
 @dataclass
 class ServiceInfo:
     """Structured, read-only description of the current service state -- what
@@ -790,6 +929,13 @@ def service_install(
 
     if _is_windows():
         raise ServiceUnsupportedError(_WINDOWS_UNSUPPORTED_DETAIL)
+    if web_port is not None:
+        # Refuse BEFORE writing/enabling anything -- see
+        # `WebExtraNotImportableError`'s docstring for the incident (a unit
+        # installed and started fine, dolt genuinely up, the web dashboard
+        # silently never bound because the target environment's 'web'
+        # extra was never verified) this preflight exists to prevent.
+        _ensure_web_extra_importable_or_raise()
     if _is_darwin():
         _launchd_install(
             resolved_root,

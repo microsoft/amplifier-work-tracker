@@ -1002,7 +1002,7 @@ def cmd_service_install(a):
             web_auth_mode=a.web_auth_mode,
             web_session_ttl=a.web_session_ttl,
         )
-    except S.ServiceUnsupportedError as e:
+    except (S.ServiceUnsupportedError, S.WebExtraNotImportableError) as e:
         die(str(e))
     print(f"Installed and started the {S.SERVICE_NAME} service ({info.platform}).")
     print(f"  Unit: {info.unit_path}")
