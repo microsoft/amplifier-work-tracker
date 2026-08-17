@@ -345,7 +345,11 @@ def test_no_claim_affordance_anywhere_in_the_web_ui(client, project_factory, uni
 # --------------------------------------------------- honest dashboard signals
 
 
-def test_dashboard_shows_held_by_chip_for_a_held_item(client, project_factory, unique_actor):
+def test_dashboard_held_item_raises_the_custody_reading(client, project_factory, unique_actor):
+    """The A-Ledger overview has no per-row holder chip (see webapp.py's
+    dashboard-rendering module comment) -- a held item's signal is the
+    workspace-wide CUSTODY secondary reading and the queue's own
+    composition-bar HELD segment, not a named identity on the overview."""
     _login(client)
     name, bd = project_factory("dashboardheldproj")
     bd.create("held for dashboard signal", tags=[A.LANE_WORK])
@@ -353,7 +357,9 @@ def test_dashboard_shows_held_by_chip_for_a_held_item(client, project_factory, u
 
     r = client.get("/")
     assert r.status_code == 200
-    assert unique_actor in r.text
+    assert '<span class="k">Custody</span>' in r.text
+    # the held count (>=1) must appear as the custody reading's own figure
+    assert re.search(r'Custody</span>\s*<span class="n">[1-9]\d*</span>', r.text)
 
 
 def test_dashboard_never_shows_a_static_health_ok_badge(client, shared_project_name):
@@ -462,13 +468,16 @@ def test_project_view_pagination_reachability_and_no_cli_flag_leak(
 # ------------------------------------------------- cycle 2: numeric alignment
 
 
-def test_dashboard_ready_held_blocked_columns_are_right_aligned(client, shared_project_name):
+def test_dashboard_queue_table_numeric_columns_are_right_aligned(client, shared_project_name):
+    """The A-Ledger queue table's numeric columns (Total/Ready/Resolved/
+    Done) -- see webapp.py's `_dashboard_row`/dashboard route."""
     _login(client)
     r = client.get("/")
     assert r.status_code == 200
+    assert '<th class="r">Total</th>' in r.text
     assert '<th class="r">Ready</th>' in r.text
-    assert '<th class="r">Held</th>' in r.text
-    assert '<th class="r">Blocked</th>' in r.text
+    assert '<th class="r">Resolved</th>' in r.text
+    assert '<th class="r">Done</th>' in r.text
 
 
 def test_dashboard_project_name_cell_is_a_stretched_link(client, shared_project_name):
