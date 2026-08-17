@@ -441,21 +441,33 @@ def _pagination_html(
 
 
 # ---------------------------------------------------------------------------
-# dashboard-specific rendering -- the hero, the heartbeat, the ledger
+# dashboard-specific rendering -- the A-Ledger overview: a restrained
+# ready-count hero, the full-width "workspace by state" composition bar,
+# the (unchanged) ready-queue-by-age heartbeat, throughput, and a
+# per-project composition table.
+#
+# This retires the previous round's age-led hero (see git history for
+# `_hero_html`/`_ledger_html` if that design is ever wanted again). Ready
+# COUNT is the question an operator asks dozens of times a day -- "how
+# much is waiting on me?" -- and answers it in one glance; three quiet
+# 27px secondary readings (concentration / waiting 7d+ / custody) answer
+# "is any of it rotting?" without competing with the hero for attention.
+# Age is demoted to a supporting stat, never absent -- see
+# `_secondary_readings_html`'s "Waiting 7d+" reading and the (unchanged)
+# `_heartbeat_html` ready-queue-by-age histogram below.
 # ---------------------------------------------------------------------------
 
 
 def _dashboard_sort_key(s: A.ProjectSummary) -> tuple[int, float, str]:
-    """STALEST FIRST -- age is the sort key, never a count. Queues with no
-    readable/ready age (unreadable projects, or genuinely empty queues)
-    sort last, deterministically by name. See `webtheme.py`'s module
-    docstring for why this is the single sharpest finding this whole port
-    exists to deliver: a count-encoded dashboard makes the biggest queue
-    the biggest object, which is the wrong axis to make prominent."""
-    age = s.oldest_unclaimed_age_seconds if s.status == "ok" else None
-    if age is not None:
-        return (0, -age, s.name)
-    return (1, 0.0, s.name)
+    """READY-COUNT DESCENDING -- ready is the axis this overview is built
+    around (see this module's own docstring above), so the queue table
+    orders by it: the biggest ready backlog is the one most worth seeing
+    first. Broken/creating queues sort FIRST regardless of count -- an
+    alarm row must never be pushed below the fold by a healthy queue with
+    a bigger ready number."""
+    if s.status != "ok":
+        return (0, 0.0, s.name)
+    return (1, -float(s.ready or 0), s.name)
 
 
 def _global_oldest(summaries: list[A.ProjectSummary]) -> tuple[str, float] | None:
@@ -485,38 +497,186 @@ def _oldest_ready_item(bd: A.Beads) -> A.Item | None:
     return min(dated, key=lambda i: i.created_at)  # type: ignore[arg-type,return-value]
 
 
-def _hero_html(age_seconds: float | None, project_name: str | None, item: A.Item | None) -> str:
-    """The dashboard's isolated hero. NOTHING sits beside it -- the void to
-    its right is what makes the metric read as expensive; two earlier
-    design cycles failed by crowding it with explanatory text (see
-    `webtheme.py`'s module docstring)."""
-    if age_seconds is None:
-        empty_note = "No unclaimed work anywhere in this workspace right now."
-        return f"""
-<div class="hero solo">
-  <span class="eyebrow">Oldest unclaimed work item</span>
-  <div class="figrow"><span class="fig none" style="font-size:120px">\u2014</span></div>
-  <div class="subtle" style="margin-top:20px">{empty_note}</div>
+def _ledger_hero_html(ready_total: int | None, n_projects: int, burn_days: float | None) -> str:
+    """The overview's restrained ready-count hero -- READY TO CLAIM, at
+    `--fig-size-ledger` (62px), a deliberate 3.8x demotion from the
+    previous round's 236px oldest-unclaimed-AGE hero. Ready COUNT answers
+    "how much is waiting on me" in one glance; age is demoted to a
+    supporting stat (see `_secondary_readings_html`'s "Waiting 7d+"), never
+    absent.
+
+    `ready_total is None` means "could not be measured" -- every project in
+    the workspace is unreadable -- and renders an honest dash, never a
+    fabricated 0. `n_projects == 0` (no projects exist at all) is a
+    genuinely different, and genuinely honest, 0: rendered as the real
+    number, with its own under-line."""
+    if ready_total is None:
+        return """
+<div class="lead">
+  <span class="eyebrow">Ready to claim</span>
+  <div class="figrow"><span class="fig ledger none">\u2014</span></div>
+  <div class="under">No queue could be read right now &mdash; see the banner above.</div>
 </div>"""
-    value, unit = T.duration_words(age_seconds)
-    attrib = ""
-    if project_name and item is not None:
-        since = item.created_at.strftime("%b %d") if item.created_at else "an unknown date"
-        href = f"/projects/{_esc(project_name)}/items/{_esc(item.id)}"
-        attrib = (
-            f'<a class="attrib" href="{href}">{_esc(project_name)}<span class="id">'
-            f'{_esc(item.id)}</span><span class="sep">/</span><span class="since">'
-            f"Unclaimed since {_esc(since)}, no holder</span></a>"
+    if n_projects == 0:
+        under = "No projects yet."
+    else:
+        rate_clause = (
+            f" &middot; <b>{burn_days:g}</b> days of work at today's measured rate"
+            if burn_days is not None
+            else " &middot; no measured throughput today"
         )
-    elif project_name:
-        href = f"/projects/{_esc(project_name)}"
-        attrib = f'<a class="attrib" href="{href}">{_esc(project_name)}</a>'
-    figrow = f'<span class="fig">{_esc(value)}</span><span class="figunit am">{_esc(unit)}</span>'
+        under = f"across <b>{n_projects}</b> {_pluralize(n_projects, 'queue')}{rate_clause}"
     return f"""
-<div class="hero solo">
-  <span class="eyebrow">Oldest unclaimed work item</span>
-  <div class="figrow">{figrow}</div>
-  {attrib}
+<div class="lead">
+  <span class="eyebrow">Ready to claim</span>
+  <div class="figrow"><span class="fig ledger">{ready_total}</span>\
+<span class="figunit">items</span></div>
+  <div class="under">{under}</div>
+</div>"""
+
+
+def _secondary_readings_html(
+    concentration: tuple[str, int, float] | None,
+    waiting7d_count: int,
+    waiting7d_pct: float | None,
+    oldest_waiting_days: int | None,
+    oldest_waiting_href: str | None,
+    held_total: int,
+    blocked_total: int,
+) -> str:
+    """The hero's three quiet 27px readings (`.hstats`, pushed right via
+    `margin-left:auto`, own font scale -- never competing with the hero):
+    CONCENTRATION (the single biggest ready queue, so a workspace-wide
+    total never hides one queue quietly drowning), WAITING 7D+ (the one
+    age reading that survives the hero's demotion, amber only here --
+    never on a good number), and CUSTODY (held/blocked, real for every
+    project, no instrumentation gap).
+
+    Every argument is a real, already-honestly-computed value from the
+    route -- `None` where a reading genuinely cannot be formed (no ready
+    items anywhere to concentrate), never a fabricated placeholder."""
+    if concentration is None:
+        conc_n, conc_sub = "\u2014", "nothing ready to concentrate"
+    else:
+        name, n, pct = concentration
+        conc_n = str(n)
+        conc_sub = (
+            f'in <a href="/projects/{_esc(name)}">{_esc(name)}</a><br>{pct:.0f}% of the ready queue'
+        )
+
+    waiting_cls = "n am" if waiting7d_count else "n"
+    if waiting7d_count == 0:
+        waiting_sub = "nothing has waited a week"
+    else:
+        oldest_clause = ""
+        if oldest_waiting_days is not None and oldest_waiting_href:
+            oldest_clause = f', oldest <a href="{oldest_waiting_href}">{oldest_waiting_days}d</a>'
+        pct_clause = f"{waiting7d_pct:.0f}% of the ready queue" if waiting7d_pct is not None else ""
+        waiting_sub = f"{_pluralize(waiting7d_count, 'item')}{oldest_clause}<br>{pct_clause}"
+
+    if held_total == 0 and blocked_total == 0:
+        custody_note = "nothing is stuck"
+    elif blocked_total:
+        custody_note = f"{_pluralize(blocked_total, 'item')} blocked, needs a look"
+    else:
+        custody_note = "in progress"
+    custody_sub = f"held &middot; {blocked_total} blocked<br>{custody_note}"
+
+    return f"""
+<div class="hstats">
+  <div class="s"><span class="k">Concentration</span>
+    <span class="n">{conc_n}</span>
+    <span class="sub">{conc_sub}</span></div>
+  <div class="s"><span class="k">Waiting 7d+</span>
+    <span class="{waiting_cls}">{waiting7d_count}</span>
+    <span class="sub">{waiting_sub}</span></div>
+  <div class="s"><span class="k">Custody</span>
+    <span class="n">{held_total}</span>
+    <span class="sub">{custody_sub}</span></div>
+</div>"""
+
+
+_STATE_ORDER = ("ready", "held", "blocked", "deferred", "resolved")
+_STATE_FILL = {
+    "ready": "var(--st-ready)",
+    "held": "var(--amber)",  # same hue as `.state.warnv` elsewhere -- held
+    # is ATTENTION, not alarm, not good news; never a second, competing hue.
+    "blocked": "var(--crimson)",  # same hue as `.st-blkd` -- escalation.
+    "deferred": "var(--st-deferred)",
+    "resolved": "var(--st-resolved)",
+}
+
+
+def _state_counts(s: A.ProjectSummary) -> dict[str, int]:
+    """The fixed five-slot state breakdown for one project, `0` (never
+    `None`) for every field -- callers must only pass an `ok` summary."""
+    return {
+        "ready": s.ready or 0,
+        "held": s.held or 0,
+        "blocked": s.blocked or 0,
+        "deferred": s.deferred or 0,
+        "resolved": s.resolved or 0,
+    }
+
+
+def _state_bar_html(counts: dict[str, int]) -> str:
+    """The 'hard-drive-storage-split-by-type' composition bar, fixed
+    five-slot order, always -- shared by the full-width workspace bar and
+    every table row's mini bar (`.comp .sbar` / `.tbl td.mb .sbar` set the
+    height only; this draws the same object either way, so the two can
+    never visually disagree). A zero-count state renders as a 2px neutral
+    seam rather than nothing, so the eye learns the five slots and a
+    segment appearing for the first time (a queue's first-ever HELD item)
+    is instantly legible -- see webtheme.py's module comment for why a
+    hollow outline was rejected in favour of a solid, dimmed seam."""
+    parts = []
+    for key in _STATE_ORDER:
+        n = counts[key]
+        if n > 0:
+            parts.append(f'<i style="flex:{n} 1 0;background:{_STATE_FILL[key]}"></i>')
+        else:
+            parts.append('<span class="seam"></span>')
+    return f'<div class="sbar">{"".join(parts)}</div>'
+
+
+def _state_legend_html(counts: dict[str, int]) -> str:
+    """The workspace bar's legend -- swatch + count + label per state, in
+    the SAME fixed order the bar draws them. A zero count still shows its
+    real number (a zero IS a reading, never whispered to invisibility),
+    just in the quieter `.n.z` tone -- the "alarm lamp present and
+    switched off" convention: every state keeps its slot, visibly, even
+    at zero."""
+    items = []
+    for key in _STATE_ORDER:
+        n = counts[key]
+        swatch = _STATE_FILL[key] if n else "var(--rule-hi)"
+        cls = "n" if n else "n z"
+        items.append(
+            f'<div class="li"><span class="sw" style="background:{swatch}"></span>'
+            f'<span class="{cls}">{n}</span><span class="l">{key}</span></div>'
+        )
+    return f'<div class="legend">{"".join(items)}</div>'
+
+
+def _workspace_composition_html(counts: dict[str, int], total: int) -> str:
+    """ "Workspace by state" -- the full-width centrepiece the user asked
+    for verbatim: "like a hard-drive-storage-split-by-type bar". Zero-value
+    states (held/blocked/deferred at 0, the common case on a calm
+    workspace) still render as a visible seam + a dimmed legend swatch --
+    never absent, never a giant celebratory "0"."""
+    pct_resolved = round(counts["resolved"] / total * 100) if total else 0
+    bar = _state_bar_html(counts)
+    legend = _state_legend_html(counts)
+    item_word = _pluralize(total, "item").split(" ", 1)[1]
+    return f"""
+<div class="comp">
+  <div class="chead">
+    <span class="eyebrow">Workspace by state</span>
+    <span class="rt">empty states keep their slot as a seam &middot; {total} {item_word} \
+&middot; <b>{pct_resolved}%</b> resolved</span>
+  </div>
+  {bar}
+  {legend}
 </div>"""
 
 
@@ -615,36 +775,67 @@ def _heartbeat_html(buckets: dict[str, int]) -> str:
 </div>"""
 
 
-def _ledger_html(held: int, blocked: int, resolved_24h: int, resolved_7d: int) -> str:
-    """Status and throughput, real for every project (no instrumentation
-    gap -- see this module's own docstring). Placement matters: this sits
-    BELOW the hero, flanking the heartbeat, never beside the hero itself --
-    see `webtheme.py`'s module docstring for why crowding the hero's right
-    side is exactly the mistake two earlier design cycles made."""
+def _throughput_html(
+    today: int,
+    prior_rate: float | None,
+    delta_pct: int | None,
+    resolved_7d: int,
+    older_than_7d: int,
+    n_measurable: int,
+    n_with_resolutions: int,
+) -> str:
+    """Resolved today vs the prior-6-day average, with a trend indicator --
+    sits in `.context .ledgercol` beside the (unchanged) ready-queue-by-age
+    heartbeat, reusing that flex split verbatim.
+
+    Honesty gap this renders rather than hides: `project_activity` reports
+    `None` (not a fabricated 0) for a project that has resolved items but
+    records no `closed_at` on any of them -- such projects are excluded
+    from every figure here (see the route's own comment for the exact
+    partition), and `n_measurable`/`n_with_resolutions` say so explicitly
+    in the footnote rather than silently rolling them into a workspace
+    total that would then be a lie."""
+    max_v = max(today, prior_rate or 0.0, 1.0)
+    track = 220
+    today_w = max(3, round(track * today / max_v))
+    prior_w = max(3, round(track * (prior_rate or 0.0) / max_v)) if prior_rate else 0
+    if delta_pct is None:
+        trend = "no prior rate to compare against"
+    else:
+        sign = "+" if delta_pct >= 0 else ""
+        trend = f"<b>{sign}{delta_pct}%</b> against the prior-6-day rate"
+    queue_word = _pluralize(n_with_resolutions, "queue").split(" ", 1)[1]
+    coverage = (
+        f"Throughput reflects {n_measurable} of {n_with_resolutions} "
+        f"{queue_word} that record completion timestamps."
+        if n_with_resolutions > n_measurable
+        else ""
+    )
     return f"""
-<div class="ledger">
-  <div class="grp">
-    <span class="glbl">Status</span>
-    <div class="stat"><span class="v">{held}</span><span class="k">Held right now</span></div>
-    <div class="stat"><span class="v">{blocked}</span><span class="k">Blocked</span></div>
-  </div>
-  <div class="grp">
-    <span class="glbl">Throughput</span>
-    <div class="stat"><span class="v">{resolved_24h}</span>
-      <span class="k">Resolved &middot; 24h</span></div>
-    <div class="stat"><span class="v">{resolved_7d}</span>
-      <span class="k">Resolved &middot; 7d</span></div>
-  </div>
+<div class="thru">
+  <div class="bh"><span class="eyebrow">Throughput</span></div>
+  <div class="trow"><span class="tn">{today}</span><span class="tl">today</span>
+    <span class="tb" style="width:{today_w}px"></span></div>
+  <div class="trow prev"><span class="tn">{round(prior_rate) if prior_rate else 0}</span>
+    <span class="tl">prior 6 d</span>
+    <span class="tb" style="width:{prior_w}px"></span></div>
+  <div class="tfoot">resolved per day &middot; {trend}<br>
+    {resolved_7d} resolved in 7 days &middot; {older_than_7d} older than that</div>
+  {f'<div class="tfoot">{coverage}</div>' if coverage else ""}
 </div>"""
 
 
-def _dashboard_row(s: A.ProjectSummary, scale_seconds: float) -> str:
+def _dashboard_row(s: A.ProjectSummary) -> str:
+    """One queue row of the bottom QUEUE table: name, a micro composition
+    bar, TOTAL / READY / RESOLVED / DONE%. `Resolved` is the project's
+    lifetime resolved count (`ProjectSummary.resolved`) -- always real,
+    never time-windowed, so this column carries no honesty gap the way a
+    24h/7d figure would for a project with no `closed_at` data."""
     if s.status != "ok":
         # A broken/creating queue must be unmissable, never a quiet grey row
         # lost among healthy ones. `class="alarm"` is the shared escalation
-        # hook webtheme owns (residual: add a dedicated `--alarm` token +
-        # `tr.alarm` styling); the inline treatment here makes it read as an
-        # alarm TODAY without depending on that lane landing first.
+        # hook webtheme owns; the inline treatment here makes it read as an
+        # alarm without depending on a dedicated token landing first.
         st = s.status
         creating = st.lower().startswith(("creating", "provisioning"))
         if creating:
@@ -662,41 +853,28 @@ def _dashboard_row(s: A.ProjectSummary, scale_seconds: float) -> str:
         return (
             f'<tr class="alarm" data-t="{_esc(key)}" style="{row_style}">'
             f'<td class="link-cell"><a href="/projects/{_esc(s.name)}">{_esc(s.name)}</a></td>'
-            f'<td colspan="7"><span class="c">{T.state_html(kind, word)} '
+            f'<td colspan="5"><span class="c">{T.state_html(kind, word)} '
             f'<span class="muted" title="{_esc(st)}" style="overflow-wrap:anywhere">'
             f"{_esc(shown)}</span></span></td>"
             "</tr>"
         )
-    age_cell = T.age_cell_html(s.oldest_unclaimed_age_seconds, scale_seconds)
-    # A raw machine holder id in the fixed-width Held column used to wrap
-    # across three lines. Pin each chip to one legible line, ellipsis the
-    # overflow, and keep the full identity one hover away via `title`.
-    held_by_chips = "".join(
-        f'<span class="chip" title="{_esc(h)}" style="max-width:100%;white-space:nowrap;'
-        f'overflow:hidden;text-overflow:ellipsis;vertical-align:bottom">'
-        f"{_identity_html(h)}</span>"
-        for h in s.held_by
-    )
-    if s.held:
-        state = T.state_html("warn", f"{s.held} held")
-    elif s.ready == 0:
-        state = T.state_html("ok", "Nothing ready")
-    else:
-        state = T.state_html("ok", "Healthy")
+    counts = _state_counts(s)
+    total = s.total or 0
+    resolved = counts["resolved"]
+    mini_bar = _state_bar_html(counts)
+    pct_done = f"{round(resolved / total * 100)}%" if total else "\u2014"
+    resolved_shown = str(resolved) if resolved else "\u2014"
+    resolved_cls = "n hi" if resolved else "n z"
+    pct_cls = "r n hi" if resolved else "r n z"
     key = f"{s.name} {'held' if s.held else 'healthy'}".lower()
-    ready_cls = "ink" if s.ready else "zero"
-    held_cls = "ink" if s.held else "zero"
-    blocked_cls = "ink" if s.blocked else "zero"
     return f"""<tr data-t="{_esc(key)}">
   <td class="link-cell"><a href="/projects/{_esc(s.name)}">{_esc(s.name)}</a></td>
-  <td><span class="c">{age_cell}</span></td>
-  <td class="r"><span class="c r"><span class="n {ready_cls}">{s.ready}</span></span></td>
-  <td class="r"><span class="c r"><span class="n">{s.total}</span></span></td>
-  <td class="r"><span class="c r"><span class="n {held_cls}">{s.held}</span>
-    {held_by_chips}</span></td>
-  <td class="r"><span class="c r"><span class="n {blocked_cls}">{s.blocked}</span></span></td>
-  <td class="gap"><span class="c">{state}</span></td>
-  <td><span class="c">{_abs_and_rel(s.last_activity)}</span></td>
+  <td class="mb">{mini_bar}</td>
+  <td class="r"><span class="c r"><span class="n">{total}</span></span></td>
+  <td class="r"><span class="c r"><span class="n {"ink" if counts["ready"] else "zero"}">\
+{counts["ready"]}</span></span></td>
+  <td class="r"><span class="c r"><span class="{resolved_cls}">{resolved_shown}</span></span></td>
+  <td class="r"><span class="c r"><span class="{pct_cls}">{pct_done}</span></span></td>
 </tr>"""
 
 
@@ -704,18 +882,24 @@ def _dashboard_totals(summaries: list[A.ProjectSummary]) -> str:
     ok = [s for s in summaries if s.status == "ok"]
     t_ready = sum(s.ready or 0 for s in ok)
     t_total = sum(s.total or 0 for s in ok)
-    t_held = sum(s.held or 0 for s in ok)
-    t_blocked = sum(s.blocked or 0 for s in ok)
+    t_resolved = sum(s.resolved or 0 for s in ok)
+    counts = {
+        "ready": t_ready,
+        "held": sum(s.held or 0 for s in ok),
+        "blocked": sum(s.blocked or 0 for s in ok),
+        "deferred": sum(s.deferred or 0 for s in ok),
+        "resolved": t_resolved,
+    }
+    mini_bar = _state_bar_html(counts)
+    pct_done = f"{round(t_resolved / t_total * 100)}%" if t_total else "\u2014"
+    all_label = _pluralize(len(summaries), "queue")
     return f"""<tfoot><tr>
-  <td><span class="c"><span class="totk">All {len(summaries)} queues</span></span></td>
-  <td><span class="c"></span></td>
-  <td class="r"><span class="c r"><span class="n">{t_ready}</span></span></td>
+  <td><span class="c"><span class="totk">All {all_label}</span></span></td>
+  <td class="mb">{mini_bar}</td>
   <td class="r"><span class="c r"><span class="n">{t_total}</span></span></td>
-  <td class="r"><span class="c r"><span class="n">{t_held}</span></span></td>
-  <td class="r"><span class="c r"><span class="n">{t_blocked}</span></span></td>
-  <td class="gap"><span class="c">
-    <span class="totk">{len(ok)} of {len(summaries)} readable</span></span></td>
-  <td></td>
+  <td class="r"><span class="c r"><span class="n">{t_ready}</span></span></td>
+  <td class="r"><span class="c r"><span class="n">{t_resolved}</span></span></td>
+  <td class="r"><span class="c r"><span class="n">{pct_done}</span></span></td>
 </tr></tfoot>"""
 
 
@@ -1205,7 +1389,8 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         if not names:
             body = (
                 f"{_flash(request)}"
-                f'<section class="sec heroic">{_hero_html(None, None, None)}</section>'
+                '<section class="sec heroic"><div class="hero">'
+                f"{_ledger_hero_html(0, 0, None)}</div></section>"
                 '<div class="hr bleed"></div>'
                 '<section class="sec"><div class="empty-state"><p>No projects yet. '
                 "Create one below to get started.</p></div></section>"
@@ -1215,68 +1400,109 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             return _page(request, "Dashboard", body, statusbar_html=sb)
 
         ordered = sorted(summaries, key=_dashboard_sort_key)
-        winner = _global_oldest(summaries)
-        oldest_item = None
-        winner_name = None
-        winner_age = None
-        if winner:
-            winner_name, winner_age = winner
-            oldest_item = _oldest_ready_item(workspace.project(winner_name))
-
-        # D3 -- the bar and its label agree. Bar length is measured against
-        # this scale; the printed ruler graduations and every row's floored
-        # day-label must read against the SAME axis. Round the oldest-unclaimed
-        # age UP to a whole number of days (min 1) so (a) no row can exceed the
-        # scale -- a bar clamped-at-max while its numeral shows a lower number
-        # cannot happen -- and (b) the ruler's endpoint is a whole day matching
-        # age_short's day-flooring, instead of a full-width bar sitting at the
-        # "5d" ruler mark while its own numeral floors to "4d". The fix is in
-        # what we PASS to axis_ruler_html / age_cell_html; those helpers are
-        # unchanged.
-        if winner_age:
-            scale_seconds = float(max(1, math.ceil(winner_age / 86400.0)) * 86400)
-        else:
-            scale_seconds = 86400.0
-
         buckets = _aggregate_buckets(summaries)
 
         ok = [s for s in summaries if s.status == "ok"]
         broken = [s for s in summaries if s.status != "ok"]
-        held_total = sum(s.held or 0 for s in ok)
-        blocked_total = sum(s.blocked or 0 for s in ok)
-        resolved_24h_total = sum(s.resolved_24h or 0 for s in ok)
-        resolved_7d_total = sum(s.resolved_7d or 0 for s in ok)
 
-        # D4 -- one reconciled workspace roll-up, so no two figures on the page
-        # are computed two different ways and left free to disagree. Totals
-        # cover the readable queues only (a queue whose database cannot be read
-        # contributes no honest number); `workspace_last_activity` is the most
-        # recent per-project last_activity across the workspace -- itself an
-        # already-reconciled per-project value (adapter.project_summary /
-        # project_activity) -- surfaced at workspace scope here for the first
-        # time. Intended source once merged: adapter-data's reconciled
-        # workspace totals; see DONE.json residuals.
+        # F1 -- one reconciled workspace roll-up, so no two figures on the
+        # page are computed two different ways and left free to disagree.
+        # Every total below covers the readable queues only (a queue whose
+        # database cannot be read contributes no honest number).
         readable_count = len(ok)
         reconciled_items = sum(s.total or 0 for s in ok)
+        ready_total = sum(s.ready or 0 for s in ok)
+        held_total = sum(s.held or 0 for s in ok)
+        blocked_total = sum(s.blocked or 0 for s in ok)
+        deferred_total = sum(s.deferred or 0 for s in ok)
+        resolved_total = sum(s.resolved or 0 for s in ok)
         _activity_stamps = [s.last_activity for s in ok if s.last_activity]
         workspace_last_activity = max(_activity_stamps) if _activity_stamps else None
 
         impaired = [(s.name, lbl) for s in summaries if (lbl := _impairment_label(s.name, s))]
         impaired_banner = _impairment_banner(impaired)
 
-        heartbeat = _heartbeat_html(buckets)
-        ledger = _ledger_html(held_total, blocked_total, resolved_24h_total, resolved_7d_total)
+        # F2 -- concentration: the single biggest ready queue, so a
+        # workspace-wide READY total never hides one queue quietly
+        # drowning under the rest. `None` (never an arbitrary 0-ready
+        # "winner") when nothing is ready anywhere.
+        ranked = [s for s in ok if (s.ready or 0) > 0]
+        concentration = None
+        if ranked and ready_total:
+            top = max(ranked, key=lambda s: s.ready or 0)
+            concentration = (top.name, top.ready or 0, (top.ready or 0) / ready_total * 100)
 
-        rows = "".join(_dashboard_row(s, scale_seconds) for s in ordered)
+        # F3 -- waiting 7d+, straight from the SAME `ready_age_buckets`
+        # roll-up `_heartbeat_html`'s histogram draws from (`buckets["7+"]`),
+        # so this reading and the histogram's own oldest band can never
+        # disagree. `_global_oldest`/`_oldest_ready_item` (unchanged) supply
+        # the one real item "oldest Nd" attributes to and links.
+        n7d = buckets.get("7+", 0)
+        pct7d = (n7d / ready_total * 100) if ready_total else None
+        winner = _global_oldest(summaries)
+        oldest_days: int | None = None
+        oldest_href: str | None = None
+        if winner and n7d:
+            winner_name, winner_age = winner
+            oldest_days = int(winner_age // 86400)
+            oldest_item = _oldest_ready_item(workspace.project(winner_name))
+            item_path = f"/items/{_esc(oldest_item.id)}" if oldest_item is not None else ""
+            oldest_href = f"/projects/{_esc(winner_name)}{item_path}"
+
+        # F4 -- throughput, partitioned into measurable (a real 0, or a
+        # dated resolution) vs unmeasurable (has resolved items but no
+        # `closed_at` on any of them -- `project_activity`'s own honest-None
+        # case). Excluding the unmeasurable set is what keeps
+        # `resolved_24h_total`/`resolved_7d_total` real instead of a silent
+        # under-count wearing a workspace-wide figure's clothes.
+        measurable = [s for s in ok if s.resolved_24h is not None]
+        resolved_24h_total = sum(s.resolved_24h or 0 for s in measurable)
+        resolved_7d_total = sum(s.resolved_7d or 0 for s in measurable)
+        resolved_measurable_total = sum(s.resolved or 0 for s in measurable)
+        older_than_7d = max(0, resolved_measurable_total - resolved_7d_total)
+        prior6d_total = max(0, resolved_7d_total - resolved_24h_total)
+        prior6d_rate = prior6d_total / 6.0
+        delta_pct = (
+            round((resolved_24h_total / prior6d_rate - 1) * 100) if prior6d_rate > 0 else None
+        )
+        n_with_resolutions = sum(1 for s in ok if (s.resolved or 0) > 0)
+        n_measurable_with_resolutions = sum(1 for s in measurable if (s.resolved or 0) > 0)
+
+        burn_days = round(ready_total / resolved_24h_total, 1) if resolved_24h_total > 0 else None
+
+        hero = _ledger_hero_html(ready_total if readable_count else None, len(names), burn_days)
+        secondary = _secondary_readings_html(
+            concentration, n7d, pct7d, oldest_days, oldest_href, held_total, blocked_total
+        )
+        composition = _workspace_composition_html(
+            {
+                "ready": ready_total,
+                "held": held_total,
+                "blocked": blocked_total,
+                "deferred": deferred_total,
+                "resolved": resolved_total,
+            },
+            reconciled_items,
+        )
+        heartbeat = _heartbeat_html(buckets)
+        throughput = _throughput_html(
+            resolved_24h_total,
+            prior6d_rate,
+            delta_pct,
+            resolved_7d_total,
+            older_than_7d,
+            n_measurable_with_resolutions,
+            n_with_resolutions,
+        )
+
+        rows = "".join(_dashboard_row(s) for s in ordered)
         table = f"""<table class="tbl dense">
-          <colgroup><col><col style="width:232px"><col style="width:70px">
-            <col style="width:70px"><col style="width:70px"><col style="width:78px">
-            <col style="width:150px"><col style="width:150px"></colgroup>
+          <colgroup><col><col style="width:250px"><col style="width:70px">
+            <col style="width:70px"><col style="width:80px"><col style="width:70px"></colgroup>
           <thead><tr>
-            <th>Queue</th>
-            <th class="axis">Oldest unclaimed{T.axis_ruler_html(scale_seconds)}</th>
-            <th class="r">Ready</th><th class="r">Items</th><th class="r">Held</th>
-            <th class="r">Blocked</th><th class="gap">Status</th><th>Last activity</th>
+            <th>Queue</th><th>Composition</th>
+            <th class="r">Total</th><th class="r">Ready</th>
+            <th class="r">Resolved</th><th class="r">Done</th>
           </tr></thead>
           <tbody>{rows}</tbody>
           {_dashboard_totals(summaries)}
@@ -1298,10 +1524,12 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         body = f"""
         {_flash(request)}
         {impaired_banner}
-        <section class="sec heroic">{_hero_html(winner_age, winner_name, oldest_item)}</section>
+        <section class="sec heroic"><div class="hero">{hero}{secondary}</div></section>
+        <div class="hr bleed"></div>
+        <section class="sec tight">{composition}</section>
         <div class="hr bleed"></div>
         <section class="sec tight">
-          <div class="context">{heartbeat}<div class="ledgercol">{ledger}</div></div>
+          <div class="context">{heartbeat}<div class="ledgercol">{throughput}</div></div>
         </section>
         <div class="hr bleed"></div>
         <section class="sec tight">
@@ -1316,10 +1544,9 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         <section class="sec">{_create_project_form()}</section>
         """
         sb_left = ['<span class="s"><span class="dot on"></span>Sweep <b>healthy</b></span>']
-        if winner_age is not None:
-            _wv, _wu = T.duration_words(winner_age)
+        if oldest_days is not None:
             sb_left.append(
-                f'<span class="s">Oldest unclaimed <b class="am">{_wv} {_wu.lower()}</b></span>'
+                f'<span class="s">Oldest waiting <b class="am">{oldest_days}d</b></span>'
             )
         if workspace_last_activity:
             sb_left.append(

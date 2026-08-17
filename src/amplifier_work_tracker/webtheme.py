@@ -341,6 +341,102 @@ a.what:hover{color:var(--amber)}
   letter-spacing:.17em;text-transform:uppercase;color:var(--dim);
   display:block;margin-top:5px}
 
+/* -- A-LEDGER: the workspace overview's ready-count hero + composition ---
+   bar -- see webapp.py's dashboard route module comment for the full
+   rationale. Three new fills only (--st-ready/--st-deferred/--st-resolved);
+   HELD and BLOCKED deliberately reuse --amber/--crimson verbatim rather than
+   minting parallel hues, so a queue's composition bar never disagrees in
+   colour with the same state's marker elsewhere in this app (`.state.warnv`
+   /`.st-blkd`). A zero-count state renders as a 2px --rule-hi seam, not as
+   nothing -- the "alarm lamp present and switched off" convention -- one
+   shared dim tone for every empty slot rather than five bespoke unlit hues
+   (ruthless simplicity: the functional requirement is "visible, not
+   absent", not "each state has its own unlit shade"). */
+:root{
+  --st-ready:#E8E2D6;     /* warm parchment -- neutral backlog, not amber */
+  --st-deferred:#5C574E;
+  --st-resolved:#4A463F;
+  --fig-size-ledger:62px; /* the ready-count hero figure -- 3.8x smaller
+                             than --fig-size (236px), a deliberate demotion:
+                             ready-COUNT is the hero now, not unclaimed AGE */
+}
+
+/* the hero, dialled down: same .hero/.figrow/.fig/.figunit vocabulary as
+   the age hero, at the smaller ledger size, with a serif under-line and a
+   right-aligned trio of quiet secondary readings that never compete with
+   it (`.hstats`, pushed right via margin-left:auto, own font scale). */
+.fig.ledger{font-size:var(--fig-size-ledger);color:var(--ink)}
+.hero .under{font-family:var(--sans);font-size:11.5px;color:var(--quiet);
+  margin-top:14px;letter-spacing:.015em;line-height:1.6}
+.hero .under b{color:var(--ink);font-weight:600}
+.hstats{display:flex;gap:44px;margin-left:auto;padding-bottom:2px;
+  flex-wrap:wrap;align-self:flex-end}
+.hstats .s{min-width:0}
+.hstats .s .k{font-family:var(--sans);font-size:9.5px;font-weight:600;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--dim);
+  display:block;margin-bottom:9px;white-space:nowrap}
+.hstats .s .n{font-family:var(--serif);font-size:27px;font-weight:500;
+  line-height:.9;letter-spacing:-.015em;color:var(--ink);display:block}
+.hstats .s .n.am{color:var(--amber)}
+.hstats .s .sub{font-family:var(--sans);font-size:10.5px;color:var(--dim);
+  margin-top:8px;display:block;line-height:1.45;max-width:150px}
+.hstats .s .sub a{color:inherit;text-decoration:underline;
+  text-decoration-color:var(--link-underline)}
+.hstats .s .sub a:hover{color:var(--amber)}
+
+/* the state bar itself -- shared by the full-width workspace composition
+   and every table row's mini composition, at different heights only. */
+.sbar{display:flex;width:100%;background:#141412;overflow:hidden;
+  border-radius:2px}
+.sbar i{display:block;height:100%}
+.sbar .seam{width:2px;flex:0 0 2px;background:var(--ground);position:relative}
+.sbar .seam::after{content:"";position:absolute;inset:0;background:var(--rule-hi)}
+
+/* "workspace by state" -- the full-width centrepiece. */
+.comp .chead{display:flex;align-items:baseline;gap:16px;margin-bottom:13px;
+  flex-wrap:wrap}
+.comp .chead .rt{margin-left:auto;font-family:var(--sans);font-size:11px;
+  color:var(--quiet);letter-spacing:.02em}
+.comp .chead .rt b{font-family:var(--serif);font-size:15px;color:var(--ink);
+  font-weight:500}
+.comp .sbar{height:40px}
+.comp .legend{display:flex;flex-wrap:wrap;gap:34px;margin-top:11px}
+.comp .legend .li{display:flex;align-items:baseline;gap:11px}
+.comp .legend .sw{width:9px;height:9px;flex:0 0 9px;transform:translateY(-1px);
+  border-radius:1px}
+.comp .legend .n{font-family:var(--serif);font-size:17px;font-weight:500;
+  color:var(--ink)}
+.comp .legend .n.z{color:var(--dim)}
+.comp .legend .l{font-family:var(--sans);font-size:10px;font-weight:500;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+
+/* throughput -- sits in `.context .ledgercol` beside the (unchanged)
+   ready-queue-by-age heartbeat, reusing that flex split verbatim. */
+.thru .bh{display:flex;align-items:baseline;gap:12px;margin-bottom:14px}
+.trow{display:flex;align-items:center;gap:12px;margin-bottom:9px}
+.trow .tn{font-family:var(--serif);font-size:22px;font-weight:500;
+  color:var(--ink);width:38px;flex:0 0 38px;text-align:right;line-height:1}
+.trow .tl{font-family:var(--sans);font-size:10px;font-weight:500;
+  letter-spacing:.15em;text-transform:uppercase;color:var(--dim);
+  width:74px;flex:0 0 74px}
+.trow .tb{height:11px;background:var(--st-ready);display:block;border-radius:1px}
+.trow.prev .tn{color:var(--mid)}
+.trow.prev .tb{background:var(--st-resolved)}
+.thru .tfoot{font-family:var(--sans);font-size:11px;color:var(--quiet);
+  margin-top:13px;line-height:1.6}
+.thru .tfoot b{color:var(--amber);font-weight:600}
+
+/* the per-project queue table's mini composition column. */
+.tbl td.mb{padding:0 22px 0 0}
+.tbl td.mb .sbar{height:9px}
+.tbl td.age.z{font-family:var(--sans);font-size:12px;color:var(--dim)}
+
+/* neutral footnotes (dagger/lozenge markers) -- NOT `.foot .fm`, which is
+   reserved crimson for the broken-queues banner; these are informational,
+   never an alarm. */
+.foot .nm{color:var(--dim);flex:0 0 auto;font-family:var(--sans);
+  font-size:11px;font-weight:600;line-height:1.55}
+
 /* -- CONTROLS: search + filter ------------------------------------------ */
 .controls{display:flex;align-items:center;gap:14px;padding:0 0 8px;flex-wrap:wrap}
 .field{position:relative;flex:1;min-width:240px;max-width:520px;
