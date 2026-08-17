@@ -375,7 +375,18 @@ table.tbl{width:100%;border-collapse:collapse;table-layout:fixed}
 }
 .tbl th.r{text-align:right;padding-right:0}
 .tbl th.gap,.tbl td.gap .c{padding-left:30px}
-.tbl td{padding:0;border-bottom:1px solid var(--rule);vertical-align:middle}
+/* `overflow:hidden` is the structural fix for the id/state collision bug:
+   with `table-layout:fixed`, a column's width is enforced on the <td> box,
+   but a table cell does NOT clip its own content by default -- an
+   over-length single-line value (e.g. a long project-name-prefixed item id)
+   simply paints past the cell boundary and visually collides with whatever
+   column comes next. Clipping at the <td> itself makes that structurally
+   impossible regardless of what any one column's content happens to be;
+   see `.iid` below for the accompanying ellipsis so a clipped id is still
+   legible (never bare mid-character cutoff) and `title=` for the full
+   value. Rows that wrap (e.g. a long Title) are unaffected: their box grows
+   via `min-height` before this ever has anything to clip. */
+.tbl td{padding:0;border-bottom:1px solid var(--rule);vertical-align:middle;overflow:hidden}
 .tbl tbody tr:hover td{background:var(--raise)}
 .tbl .c{min-height:52px;display:flex;align-items:center;padding:10px 16px 10px 0}
 .tbl .c.r{justify-content:flex-end;padding-right:0}
@@ -461,8 +472,15 @@ tr.hidden{display:none}
   font-family:var(--sans);font-weight:700;font-size:15px;color:var(--mid)}
 .ti a:hover::after{color:var(--amber)}
 .idx{font-family:var(--sans);font-size:10.5px;color:var(--dim);letter-spacing:.05em}
+/* `display:inline-block;max-width:100%` + the ellipsis trio is what makes
+   "never collide at any title length" a real guarantee rather than a hope:
+   a project name long enough to outgrow the Id column's width (see the
+   colgroup in webapp.py's project item table) truncates with an ellipsis
+   INSIDE its own cell instead of overflowing into State -- the full id is
+   still one hover away via `title=` on the element this class is applied to. */
 .iid{font-family:var(--sans);font-size:12px;font-weight:600;color:var(--mid);
-  letter-spacing:.05em}
+  letter-spacing:.05em;display:inline-block;max-width:100%;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 .holder{font-family:var(--sans);font-size:12px;color:var(--dim);letter-spacing:.01em}
 .st{font-family:var(--sans);font-size:10px;font-weight:600;letter-spacing:.15em;
   text-transform:uppercase;white-space:nowrap}
@@ -567,6 +585,16 @@ button.secondary:hover,a.btn.secondary:hover{color:var(--ink);border-color:var(-
 button.danger,input.danger,a.btn.danger{background:var(--crimson);
   border-color:var(--crimson);color:#1a0d0b}
 button.danger:hover,a.btn.danger:hover{background:#c44c40}
+/* The shared button rule's `margin-top:0.7rem` above is for a STACKED
+   form (label, field, ..., button below it with real vertical breathing
+   room) -- exactly wrong inside a horizontal `.controls` row (the
+   search/filter bar), where it silently pushes the button ~half its own
+   margin lower than the input/select beside it (`align-items:center`
+   centers each item's OWN margin box, so an asymmetric top-only margin
+   shifts that item's visual center down relative to its zero-margin
+   siblings). Neutralized here, scoped to `.controls`, rather than removed
+   from the shared rule -- stacked forms elsewhere still want the spacing. */
+.controls button,.controls input[type=submit],.controls a.btn{margin-top:0}
 .flash{padding:0.7rem 1rem;border-radius:6px;margin-bottom:1.2rem;font-size:12.5px;
   font-family:var(--sans);letter-spacing:.01em}
 .flash-msg{background:rgba(217,162,83,.12);color:var(--amber);

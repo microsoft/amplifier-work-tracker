@@ -12,6 +12,7 @@ developer's real `~/.amplifier-work-tracker`.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 
 import pytest
@@ -119,7 +120,16 @@ def test_project_view_shows_items_with_holder_and_status(client, shared_bd, uniq
 # ------------------------------------------------------------- write flow
 
 
-def test_full_write_flow_create_add_claim_resolve_remove(client, unique_project_name, unique_actor):
+def test_full_write_flow_create_add_resolve_remove(
+    client, unique_project_name, unique_actor, workspace
+):
+    """The write flow minus claiming: this web UI has no claim affordance at
+    all (agents claim via the `work_claim` tool -- see webapp.py's module
+    docstring and `test_no_claim_affordance_anywhere_in_the_web_ui` below).
+    The item is claimed directly through the adapter here only so the test
+    can reach a HELD item to resolve -- exactly like `unique_actor` claiming
+    it out-of-band before an operator resolves it through the browser.
+    """
     _login(client)
     name = unique_project_name
 
@@ -142,23 +152,19 @@ def test_full_write_flow_create_add_claim_resolve_remove(client, unique_project_
     assert r.status_code == 200
     assert "do the thing" in r.text
 
-    r = client.post(
-        f"/projects/{name}/claim",
-        data={"mode": "next", "actor": unique_actor, "lane": A.LANE_WORK},
-    )
-    assert r.status_code == 303, r.text
-    assert "claimed" in r.headers["location"]
-
-    r = client.get(f"/projects/{name}")
-    assert unique_actor in r.text  # holder column shows the claiming actor
-
-    # Extract the claimed item id from the project listing page (id cells
-    # are the only <td> content matching the project's id prefix).
+    # Extract the item id from the project listing page (id cells are the
+    # only <td> content matching the project's id prefix).
     import re
 
     m = re.search(rf"{re.escape(name)}-\w+", r.text)
     assert m, r.text
     item_id = m.group(0)
+
+    bd = workspace.project(name)
+    bd.claim_item(item_id, actor=unique_actor)  # out-of-band, like a real agent's work_claim
+
+    r = client.get(f"/projects/{name}")
+    assert unique_actor in r.text  # holder column shows the real, current holder
 
     r = client.post(
         f"/projects/{name}/items/{item_id}/resolve",
@@ -209,31 +215,18 @@ def test_remove_requires_typed_name_to_match(client, project_factory):
     assert r.status_code == 200  # still exists
 
 
-def test_directed_claim_by_id(client, project_factory, unique_actor):
+def test_no_claim_route_exists(client, project_factory, unique_actor):
+    """There is no `/projects/{name}/claim` route at all -- claiming is an
+    agent action taken through the `work_claim` tool, never this browser
+    UI. Posting to the old route must 404, not silently do nothing with a
+    200/303."""
     _login(client)
-    name, bd = project_factory("directedproj")
-    item_id = bd.create("directed probe", tags=[A.LANE_WORK])
-
+    name, _bd = project_factory("noclaimrouteproj")
     r = client.post(
         f"/projects/{name}/claim",
-        data={"mode": "id", "actor": unique_actor, "item_id": item_id},
+        data={"mode": "next", "actor": unique_actor, "lane": A.LANE_WORK},
     )
-    assert r.status_code == 303
-    assert "claimed" in r.headers["location"]
-
-    r = client.get(f"/projects/{name}")
-    assert unique_actor in r.text
-
-
-def test_claim_with_no_ready_work_reports_error(client, project_factory, unique_actor):
-    _login(client)
-    name, _bd = project_factory("emptyqueueproj")
-    r = client.post(
-        f"/projects/{name}/claim",
-        data={"mode": "next", "actor": unique_actor, "lane": "lane:nonexistent"},
-    )
-    assert r.status_code == 303
-    assert "error=" in r.headers["location"]
+    assert r.status_code == 404
 
 
 # ----------------------------------------------------------- item detail
@@ -265,14 +258,21 @@ def test_item_detail_reachable_from_project_listing(client, project_factory):
     assert f'href="/projects/{name}/items/{item_id}"' in r.text
 
 
-def test_item_detail_open_item_shows_claim_not_resolve(client, project_factory):
+def test_item_detail_open_item_shows_no_lifecycle_action(client, project_factory):
+    """An open (unclaimed) item has no lifecycle action control at all on
+    this page -- no Claim (agents claim via `work_claim`, never a browser)
+    and no Resolve (only a held item's own holder resolves it)."""
     _login(client)
     name, bd = project_factory("openitemproj")
     item_id = bd.create("unclaimed item", tags=[A.LANE_WORK])
     r = client.get(f"/projects/{name}/items/{item_id}")
     assert r.status_code == 200
-    assert "Claim this item" in r.text
+    assert "Claim this item" not in r.text
+    assert "Claim</button>" not in r.text
     assert "Resolve" not in r.text
+    # But it IS editable -- the save form is present for every status.
+    assert 'action="/projects/' in r.text
+    assert "/update" in r.text
 
 
 def test_item_detail_held_item_shows_resolve_not_claim(client, project_factory, unique_actor):
@@ -302,8 +302,12 @@ def test_item_detail_resolved_item_shows_resolution_and_no_action_controls(
     assert long_resolution in r.text
     assert "Claim this item" not in r.text
     # No resolve control either -- absent, not merely disabled, once resolved.
-    assert "<textarea" not in r.text
+    # The edit form's OWN textareas (description/acceptance/design) are still
+    # present -- a resolved item stays editable, only its lifecycle state
+    # (status/holder/timestamps) is locked -- so the resolve-specific
+    # "reason" field is what must be absent, not every textarea.
     assert 'name="reason"' not in r.text
+    assert f'action="/projects/{name}/items/{item.id}/update"' in r.text
 
 
 def test_item_detail_nonexistent_item_shows_friendly_error(client, shared_project_name):
@@ -314,17 +318,28 @@ def test_item_detail_nonexistent_item_shows_friendly_error(client, shared_projec
     assert ".beads" not in r.text
 
 
-def test_directed_claim_redirects_to_item_detail_page(client, project_factory, unique_actor):
+def test_no_claim_affordance_anywhere_in_the_web_ui(client, project_factory, unique_actor):
+    """Agent-focus regression guard: no page this UI renders offers a way
+    to claim an item from a browser -- not the project listing, not an
+    open item's own detail page, not a held one's. Claiming happens
+    exclusively through the `work_claim` tool."""
     _login(client)
-    name, bd = project_factory("claimredirectproj")
-    item_id = bd.create("directed claim redirect probe", tags=[A.LANE_WORK])
+    name, bd = project_factory("noclaimuiproj")
+    open_id = bd.create("open item, no claim button", tags=[A.LANE_WORK])
+    held_item = bd.claim_next(lane=A.LANE_WORK, actor=unique_actor) or bd.get(open_id)
 
-    r = client.post(
-        f"/projects/{name}/claim",
-        data={"mode": "id", "actor": unique_actor, "item_id": item_id},
-    )
-    assert r.status_code == 303
-    assert r.headers["location"].startswith(f"/projects/{name}/items/{item_id}")
+    # Checked as specific real UI signals, not a blanket "claim" substring
+    # across the whole page -- the page's own embedded base64 font data
+    # legitimately contains that substring by coincidence (gibberish
+    # bytes), which a blanket check would misreport as a claim affordance.
+    forbidden = ("Claim this item", "Claim next", ">Claim<", '/claim"')
+    for text in (
+        client.get(f"/projects/{name}").text,
+        client.get(f"/projects/{name}/items/{open_id}").text,
+        client.get(f"/projects/{name}/items/{held_item.id}").text,
+    ):
+        for phrase in forbidden:
+            assert phrase not in text
 
 
 # --------------------------------------------------- honest dashboard signals
@@ -544,3 +559,266 @@ def test_remove_held_refusal_is_rendered_as_visible_text_on_the_confirm_page(
     assert r2.status_code == 200
     assert "held" in r2.text.lower()
     assert unique_actor in r2.text  # names the actual holder, per Workspace.remove
+
+
+# ------------------------------------------------------- item edit (save)
+
+
+def test_item_detail_edit_form_saves_and_persists_on_reload(client, project_factory):
+    """The real save round-trip: title/description/acceptance/design all
+    change via one POST, and the NEW values are what a fresh GET shows --
+    not just what the redirect claims."""
+    _login(client)
+    name, bd = project_factory("itemeditproj")
+    item_id = bd.create(
+        "original title",
+        tags=[A.LANE_WORK],
+        description="original description",
+        acceptance="original acceptance",
+        design="original design",
+    )
+
+    r = client.post(
+        f"/projects/{name}/items/{item_id}/update",
+        data={
+            "title": "edited title",
+            "description": "edited description",
+            "acceptance": "edited acceptance",
+            "design": "edited design",
+        },
+    )
+    assert r.status_code == 303, r.text
+    assert r.headers["location"] == f"/projects/{name}/items/{item_id}?msg=saved%20{item_id}"
+
+    r2 = client.get(f"/projects/{name}/items/{item_id}")
+    assert r2.status_code == 200
+    assert "edited title" in r2.text
+    assert "original title" not in r2.text
+    assert "edited description" in r2.text
+    assert "edited acceptance" in r2.text
+    assert "edited design" in r2.text
+
+    # And directly against the adapter -- the real persisted record, not
+    # just what the page happens to render.
+    item = bd.get(item_id)
+    assert item.title == "edited title"
+    assert item.description == "edited description"
+    assert item.acceptance == "edited acceptance"
+    assert item.design == "edited design"
+
+
+def test_item_detail_edit_form_is_present_and_prefilled(client, project_factory):
+    name, bd = project_factory("itemeditformproj")
+    item_id = bd.create(
+        "prefill probe",
+        tags=[A.LANE_WORK],
+        description="prefill description",
+        acceptance="prefill acceptance",
+    )
+    _login(client)
+    r = client.get(f"/projects/{name}/items/{item_id}")
+    assert r.status_code == 200
+    assert f'action="/projects/{name}/items/{item_id}/update"' in r.text
+    assert 'name="title"' in r.text
+    assert 'value="prefill probe"' in r.text
+    assert "<textarea" in r.text
+    assert "prefill description" in r.text
+    assert "prefill acceptance" in r.text
+
+
+def test_item_detail_edit_does_not_touch_status_or_holder(client, project_factory, unique_actor):
+    """Status/holder are lifecycle facts, not part of this form -- editing
+    the free-text fields of a HELD item must never change who holds it or
+    what status it is in."""
+    _login(client)
+    name, bd = project_factory("itemeditlifeproj")
+    bd.create("about to be edited while held", tags=[A.LANE_WORK])
+    item = bd.claim_next(lane=A.LANE_WORK, actor=unique_actor)
+
+    r = client.post(
+        f"/projects/{name}/items/{item.id}/update",
+        data={"title": "edited while held", "description": "", "acceptance": "", "design": ""},
+    )
+    assert r.status_code == 303
+
+    fresh = bd.get(item.id)
+    assert fresh.title == "edited while held"
+    assert fresh.status == "held"
+    assert fresh.holder == unique_actor
+
+
+def test_item_detail_edit_blank_fields_leave_existing_values_unchanged(client, project_factory):
+    """Submitting an empty description/acceptance/design does not clear an
+    existing value -- see `Beads.update`'s docstring for why blank means
+    'leave unchanged' here, the same convention `add_item` already uses."""
+    _login(client)
+    name, bd = project_factory("itemeditblankproj")
+    item_id = bd.create(
+        "keep my body text",
+        tags=[A.LANE_WORK],
+        description="keep this description",
+        acceptance="keep this acceptance",
+    )
+
+    r = client.post(
+        f"/projects/{name}/items/{item_id}/update",
+        data={"title": "keep my body text", "description": "", "acceptance": "", "design": ""},
+    )
+    assert r.status_code == 303
+
+    item = bd.get(item_id)
+    assert item.description == "keep this description"
+    assert item.acceptance == "keep this acceptance"
+
+
+def test_item_detail_edit_nonexistent_item_reports_error(client, shared_project_name):
+    """A failed save (nonexistent item) must redirect back to the item page
+    with a safe error, not leak a raw exception or a filesystem path."""
+    _login(client)
+    r = client.post(
+        f"/projects/{shared_project_name}/items/does-not-exist-999/update",
+        data={"title": "x", "description": "", "acceptance": "", "design": ""},
+    )
+    assert r.status_code == 303
+    assert "error=" in r.headers["location"]
+    assert ".beads" not in r.headers["location"]
+
+
+# ---------------------------------------------------------------- rename
+
+
+def test_rename_project_success_redirects_to_new_name(client, project_factory, workspace):
+    _login(client)
+    name, bd = project_factory("renamesrc")
+    bd.create("survives the rename", tags=[A.LANE_WORK])
+    new_name = f"{name}renamed"
+
+    try:
+        r = client.post(f"/projects/{name}/rename", data={"new_name": new_name})
+        assert r.status_code == 303, r.text
+        assert r.headers["location"].startswith(f"/projects/{new_name}")
+
+        r2 = client.get(f"/projects/{new_name}")
+        assert r2.status_code == 200
+        assert "survives the rename" in r2.text
+
+        r3 = client.get(f"/projects/{name}")
+        assert r3.status_code == 200
+        assert "doesn't exist" in r3.text.lower()  # old name no longer resolves
+    finally:
+        # `project_factory`'s own teardown tracks `name`, which no longer
+        # exists on the server once the rename lands (dropping it is then a
+        # safe no-op -- see `drop_project`'s docstring). The LIVE database is
+        # now `new_name`; drop it directly here so the isolated-server
+        # assertion never sees it as an unaccounted-for leak.
+        from tests.conftest import drop_project  # noqa: PLC0415
+
+        drop_project(workspace, new_name)
+
+
+def test_rename_project_rejects_invalid_new_name(client, project_factory):
+    _login(client)
+    name, _bd = project_factory("renameinvalidproj")
+    r = client.post(f"/projects/{name}/rename", data={"new_name": "Not-A-Valid-Name"})
+    assert r.status_code == 303
+    assert f"/projects/{name}" in r.headers["location"]
+    assert "error=" in r.headers["location"]
+
+    # Original project is untouched and still reachable under its old name.
+    r2 = client.get(f"/projects/{name}")
+    assert r2.status_code == 200
+
+
+def test_rename_project_refuses_when_target_name_already_exists(client, project_factory):
+    _login(client)
+    name_a, _bd_a = project_factory("renametargeta")
+    name_b, _bd_b = project_factory("renametargetb")
+
+    r = client.post(f"/projects/{name_a}/rename", data={"new_name": name_b})
+    assert r.status_code == 303
+    assert "error=" in r.headers["location"]
+
+    # Both projects still exist, untouched.
+    assert client.get(f"/projects/{name_a}").status_code == 200
+    assert client.get(f"/projects/{name_b}").status_code == 200
+
+
+def test_rename_project_refuses_while_item_is_held(client, project_factory, unique_actor):
+    _login(client)
+    name, bd = project_factory("renameheldproj")
+    bd.create("holding up the rename", tags=[A.LANE_WORK])
+    bd.claim_next(lane=A.LANE_WORK, actor=unique_actor)
+    new_name = f"{name}renamed"
+
+    r = client.post(f"/projects/{name}/rename", data={"new_name": new_name})
+    assert r.status_code == 303
+    assert f"/projects/{name}" in r.headers["location"]
+    assert "error=" in r.headers["location"]
+
+    # Never renamed -- old name still resolves, new name does not exist.
+    r2 = client.get(f"/projects/{name}")
+    assert r2.status_code == 200
+    assert "holding up the rename" in r2.text
+
+
+def test_danger_zone_has_rename_form_and_no_claim_control(client, project_factory):
+    _login(client)
+    name, _bd = project_factory("dangerzoneproj")
+    r = client.get(f"/projects/{name}")
+    assert r.status_code == 200
+    assert f'action="/projects/{name}/rename"' in r.text
+    assert 'name="new_name"' in r.text
+    assert f'href="/projects/{name}/remove"' in r.text
+    assert "Claim next ready item" not in r.text
+
+
+# --------------------------------------- holder-chip contradiction (regression)
+
+
+def test_resolved_item_row_shows_no_holder_chip_though_it_has_a_stale_assignee(
+    client, project_factory, unique_actor
+):
+    """Regression guard for the reported contradiction: a resolved item
+    keeps its last assignee (`holder`) as a real historical fact, but that
+    is NOT a current custody holder -- the project's `held` stat is (and
+    must stay) 0. The row must show the same honest dash a never-held item
+    shows, never a holder-looking chip."""
+    _login(client)
+    name, bd = project_factory("resolvedholderproj")
+    bd.create("will be claimed then resolved", tags=[A.LANE_WORK])
+    item = bd.claim_next(lane=A.LANE_WORK, actor=unique_actor)
+    bd.resolve(item.id, "done", actor=unique_actor)
+
+    r = client.get(f"/projects/{name}")
+    assert r.status_code == 200
+    # The rendered Holder CELL for this row is the honest dash, not the
+    # item's real (but historical/no-longer-current) assignee. Checked via
+    # the specific `<span class="holder">` cell, not a blanket substring
+    # scan of the whole page -- the row's own `data-t` search-index
+    # attribute legitimately still carries the actor's name for
+    # search-by-holder purposes (see `_item_row`'s `key`), which is a
+    # separate, deliberate concern from what's visibly rendered.
+    holder_cell = re.search(r'<span class="holder">(.*?)</span>', r.text)
+    assert holder_cell, r.text
+    assert unique_actor not in holder_cell.group(1)
+    assert "mdash" in holder_cell.group(1)
+    # The project's own "Held" tally agrees: 0 currently held, even though
+    # this project has exactly one resolved item with a real leftover holder.
+    assert '<div class="v">0</div><span class="k">Held</span>' in r.text
+
+    # And the status filter agrees too: nothing is actually held.
+    held_only = client.get(f"/projects/{name}", params={"status": "held"})
+    assert held_only.status_code == 200
+    assert "No items match" in held_only.text
+
+
+def test_resolved_item_detail_shows_no_held_by_chip(client, project_factory, unique_actor):
+    _login(client)
+    name, bd = project_factory("rhdetailproj")
+    bd.create("will be claimed then resolved (detail)", tags=[A.LANE_WORK])
+    item = bd.claim_next(lane=A.LANE_WORK, actor=unique_actor)
+    bd.resolve(item.id, "done", actor=unique_actor)
+
+    r = client.get(f"/projects/{name}/items/{item.id}")
+    assert r.status_code == 200
+    assert "held by" not in r.text.lower()

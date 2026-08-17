@@ -62,7 +62,6 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Request
@@ -851,7 +850,20 @@ def _item_row(name: str, i: A.Item, idx: int) -> str:
     seconds = _item_lifecycle_seconds(i)
     band = T.age_band_class(seconds) if i.status == "open" else "a0"
     value, unit = T.age_short(seconds)
-    holder = _identity_html(i.holder) if i.holder else '<span class="muted">&mdash;</span>'
+    # `i.holder` is bd's `assignee` field, which is NOT cleared when an item
+    # resolves -- it is left in place as "who last held this," a real and
+    # useful historical fact, but NOT a current custody holder. Rendering it
+    # unconditionally here made a resolved (or blocked/deferred) row look
+    # like it had an active holder while the project's own `held` stat (which
+    # counts `status == "held"` only) correctly read 0 -- the exact
+    # contradiction reported against this table. A holder chip appears here
+    # ONLY when the item is genuinely held right now; every other status
+    # shows the same honest dash a never-held item does.
+    holder = (
+        _identity_html(i.holder)
+        if (i.holder and i.status == "held")
+        else '<span class="muted">&mdash;</span>'
+    )
     href = f"/projects/{_esc(name)}/items/{_esc(i.id)}"
     key = f"{i.id} {i.title} {i.status} {i.holder or ''}".lower()
     age_html = f'<span class="age {band}">{_esc(value)}<span class="u">{_esc(unit)}</span></span>'
@@ -1420,9 +1432,16 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             else _pagination_html(name, status, page, total_pages, result)
         )
         if result.items:
+            # Id widened (64px -> 108px) so a real `<project>-<suffix>` id fits
+            # without truncating in the common case; Holder narrowed (130px ->
+            # 92px) to make room -- it is now a dash for every non-held row
+            # (see `_item_row`), so it never needs to fit more than one short
+            # identity. `.iid`'s own ellipsis+clip (webtheme.py) is what makes
+            # "never collide, at any title length" true even past this width,
+            # not the width itself -- this number only sets the common case.
             table = f"""<table class="tbl">
-              <colgroup><col style="width:46px"><col style="width:64px"><col style="width:82px">
-                <col style="width:70px"><col style="width:130px"><col></colgroup>
+              <colgroup><col style="width:46px"><col style="width:108px"><col style="width:82px">
+                <col style="width:70px"><col style="width:92px"><col></colgroup>
               <thead><tr>
                 <th>#</th><th>Id</th><th>State</th><th>Age</th><th>Holder</th><th>Title</th>
               </tr></thead>
@@ -1501,22 +1520,17 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
               <button type="submit">Add</button>
             </form>
           </div>
-          <div class="formsec">
-            <span class="flegend">Claim next ready item</span>
-            <form method="post" action="/projects/{_esc(name)}/claim">
-              <input type="hidden" name="mode" value="next">
-              <label for="lane">Lane</label>
-              <input type="text" id="lane" name="lane" value="{_esc(A.LANE_WORK)}">
-              <label for="claim_actor">Actor</label>
-              <input type="text" id="claim_actor" name="actor"
-                     value="{_esc(_identity(request))}" required>
-              <p class="field-hint">Claims the next open item in this lane and takes you to it.
-                To claim a specific item instead, open it and use the Claim button there.</p>
-              <button type="submit">Claim next</button>
-            </form>
-          </div>
           <div class="formsec danger">
             <span class="flegend">Danger zone</span>
+            <form method="post" action="/projects/{_esc(name)}/rename" style="margin-bottom:20px">
+              <label for="new_name">Rename this project to</label>
+              <input type="text" id="new_name" name="new_name"
+                     pattern="[a-z][a-z0-9_]{{1,30}}" required placeholder="new_project_name">
+              <p class="field-hint">Lowercase letters, digits, underscores; must start with a
+                letter. The item id prefix and every existing item's id stay exactly as they
+                are -- only the project's name changes.</p>
+              <button type="submit" class="danger">Rename</button>
+            </form>
             <a class="btn danger" href="/projects/{_esc(name)}/remove">Remove this
               project&hellip;</a>
           </div>
@@ -1560,45 +1574,12 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             return _redirect(f"/projects/{name}", error=_public_error_message(e))
         return _redirect(f"/projects/{name}/items/{new_id}", msg=f"added {new_id}")
 
-    @app.post("/projects/{name}/claim")
-    async def claim(  # type: ignore[no-untyped-def]
-        name: str,
-        mode: Literal["next", "id"] = Form("next"),
-        actor: str = Form(...),
-        lane: str = Form(A.LANE_WORK),
-        item_id: str = Form(""),
-    ):
-        try:
-            bd = workspace.project(name)
-            if mode == "id":
-                if not item_id:
-                    return _redirect(
-                        f"/projects/{name}", error="directed claim requires an item id"
-                    )
-                item = bd.claim_item(item_id, actor=actor)
-            else:
-                item = bd.claim_next(lane=lane, actor=actor)
-        except A.BeadsError as e:
-            # A directed claim already knows which item it was trying for --
-            # send the failure back to that item's own page instead of the
-            # listing, so context isn't lost. "next" mode has no item id to
-            # return to, so it falls back to the project listing.
-            target = (
-                f"/projects/{name}/items/{item_id}"
-                if mode == "id" and item_id
-                else f"/projects/{name}"
-            )
-            return _redirect(target, error=_public_error_message(e))
-        if item is None:
-            return _redirect(f"/projects/{name}", error=f"no ready work in lane '{lane}'")
-        # Land on the claimed item's own page -- the whole point of claiming
-        # something is to start reading/working it, and everything needed
-        # for that (description, acceptance criteria, a resolve control) now
-        # lives there, not back on the listing.
-        return _redirect(
-            f"/projects/{name}/items/{item.id}",
-            msg=f"{actor} claimed {item.id} ({item.title})",
-        )
+    # There is deliberately no `/projects/{name}/claim` route. Claiming is an
+    # agent action taken through the `work_claim` tool (the atomic
+    # claim/custody primitive) -- see this module's docstring. The route and
+    # its two forms (project-level "claim next", item-level "Claim this
+    # item") were removed together, rather than left as dead-but-reachable
+    # endpoints, so there is no browser-facing way to race an agent's claim.
 
     # --------------------------------------------------------- item detail
 
@@ -1624,20 +1605,15 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         # ------------------------------------------------ contextual action
         # Exactly one action control, chosen by the item's own status --
         # never rendered for a status it doesn't apply to.
-        if item.status == "open":
-            action_html = f"""
-            <div class="formsec">
-              <span class="flegend">Claim this item</span>
-              <form method="post" action="/projects/{_esc(name)}/claim">
-                <input type="hidden" name="mode" value="id">
-                <input type="hidden" name="item_id" value="{_esc(item.id)}">
-                <label for="claim_actor">Actor</label>
-                <input type="text" id="claim_actor" name="actor" value="{identity_val}" required>
-                <button type="submit">Claim</button>
-              </form>
-            </div>
-            """
-        elif item.status == "held":
+        #
+        # There is deliberately no "Claim" control here (or anywhere else in
+        # this web UI): claiming is an agent action taken through the
+        # `work_claim` tool, which enforces the atomic claim/custody
+        # machinery this browser has no business racing against. An open
+        # item therefore has no action control at all on this page -- it is
+        # readable, editable (see the form below), but not claimable from a
+        # browser.
+        if item.status == "held":
             action_html = f"""
             <div class="formsec">
               <span class="flegend">Resolve</span>
@@ -1693,21 +1669,20 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
                 f'<div class="content-block">{_esc(item.resolution)}</div>'
             )
 
-        description_html = (
-            _esc(item.description)
-            if item.description
-            else '<span class="muted">No description provided.</span>'
-        )
-        acceptance_html = (
-            _esc(item.acceptance)
-            if item.acceptance
-            else '<span class="muted">No acceptance criteria provided.</span>'
-        )
-
+        # Read-only facts use `_fact_value_html` -- explicitly non-interactive
+        # (`cursor:default`, no border/background) so they read as inert data
+        # sitting beside the genuinely editable title/body fields below, not
+        # as more form fields. "Queue" and "Reported by" keep their own
+        # existing treatment (a real link; a humanized identity span) --
+        # neither looks like an input either, so the distinction holds for
+        # them too.
         facts = [
             ("Queue", f'<a href="/projects/{_esc(name)}">{_esc(name)}</a>'),
-            ("Kind", _esc(item.kind or "--")),
-            ("Priority", _esc(str(item.priority) if item.priority is not None else "--")),
+            ("Kind", _fact_value_html(item.kind or "--")),
+            (
+                "Priority",
+                _fact_value_html(str(item.priority) if item.priority is not None else "--"),
+            ),
         ]
         owner = item.raw.get("owner")
         if owner:
@@ -1728,12 +1703,29 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             for k, v in time_kv_parts
         )
 
+        # Same rule as `_item_row`'s Holder column: `item.holder` (bd's
+        # `assignee`) survives resolution as a historical "who last held
+        # this" fact -- real, but not a current custody holder. A "held by"
+        # chip next to a RESOLVED/blocked/deferred status badge read as a
+        # live contradiction (this project's `held` stat says 0). Only show
+        # it when the item is genuinely held right now.
         held_chip = (
             f'<span class="chip">held by {_identity_html(item.holder)}</span>'
-            if item.holder
+            if (item.holder and item.status == "held")
             else ""
         )
 
+        # Title is styled to read at the same visual weight the old plain
+        # `<h1>` had (26px/500), but AS an input -- the shared input rule's
+        # visible border + `--raise` background is what signals "editable"
+        # here, deliberately distinct from the plain, borderless
+        # `_fact_value_html`/`.kv` text beside it (Kind, Priority, Status,
+        # Holder, timestamps -- all lifecycle/read-only, never in this form).
+        title_input_style = (
+            "font-family:var(--sans);font-size:20px;font-weight:500;"
+            "letter-spacing:-.008em;color:var(--ink);max-width:900px;min-height:52px"
+        )
+        textarea_style = "max-width:80ch;min-height:7rem"
         body = f"""
         {_flash(request)}
         <section class="sec">
@@ -1742,19 +1734,38 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             {_item_state_html(item.status)}
             {held_chip}
           </div>
-          <h1 style="font-family:var(--sans);font-size:26px;font-weight:500;line-height:1.32;
-                     letter-spacing:-.013em;color:var(--ink);max-width:900px;margin:12px 0 22px">
-            {_esc(item.title)}</h1>
-          <div class="kv">{facts_kv}</div>
-          <div class="kv" style="margin-top:10px">{time_kv}</div>
-        </section>
-        <div class="hr bleed"></div>
-        <section class="sec">
-          <span class="eyebrow">Description</span>
-          <div class="content-block">{description_html}</div>
+          <form method="post" action="/projects/{_esc(name)}/items/{_esc(item.id)}/update"
+                style="margin-top:18px">
+            <label for="title">Title</label>
+            <input type="text" id="title" name="title" required
+                   value="{_esc(item.title)}" style="{title_input_style}">
 
-          <span class="eyebrow" style="display:block;margin-top:30px">Acceptance criteria</span>
-          <div class="content-block">{acceptance_html}</div>
+            <div class="kv" style="margin-top:18px">{facts_kv}</div>
+            <div class="kv" style="margin-top:10px">{time_kv}</div>
+
+            <label for="description" class="eyebrow" style="display:block;margin:30px 0 0">
+              Description</label>
+            <textarea id="description" name="description" rows="6"
+                      placeholder="No description provided."
+                      style="{textarea_style}">{_esc(item.description or "")}</textarea>
+
+            <label for="acceptance" class="eyebrow" style="display:block;margin:20px 0 0">
+              Acceptance criteria</label>
+            <textarea id="acceptance" name="acceptance" rows="4"
+                      placeholder="No acceptance criteria provided."
+                      style="{textarea_style}">{_esc(item.acceptance or "")}</textarea>
+
+            <label for="design" class="eyebrow" style="display:block;margin:20px 0 0">
+              Design notes</label>
+            <textarea id="design" name="design" rows="4"
+                      placeholder="No design notes provided."
+                      style="{textarea_style}">{_esc(item.design or "")}</textarea>
+
+            <p class="field-hint">Title, description, acceptance criteria and design notes are
+              editable here and persist on Save. Status, holder and the timestamps above are
+              lifecycle facts, not free-edit -- they change only through claim/resolve.</p>
+            <button type="submit">Save changes</button>
+          </form>
 
           {resolution_html}
           {links_html}
@@ -1768,6 +1779,39 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             crumb_html=_crumb(("/", "All projects"), (f"/projects/{name}", name), ("", item.id)),
         )
 
+    @app.post("/projects/{name}/items/{item_id}/update")
+    async def update_item(  # type: ignore[no-untyped-def]
+        name: str,
+        item_id: str,
+        title: str = Form(...),
+        description: str = Form(""),
+        acceptance: str = Form(""),
+        design: str = Form(""),
+    ):
+        """The item-detail edit form's save action -- title/description/
+        acceptance/design only. Status, holder, and every timestamp are
+        rendered read-only on that page and have no field here at all: this
+        route cannot touch lifecycle state, only content, mirroring
+        `Beads.update`'s own narrow scope (see its docstring).
+
+        A blank textarea is NOT how a caller clears a field -- see
+        `Beads.update`'s docstring for why `None`/"leave unchanged" is this
+        seam's convention, matching `add_item`'s own `description or None`
+        just above. A field that already has a value and is submitted empty
+        (e.g. a stray form reset) is therefore left as it was, never wiped.
+        """
+        try:
+            item = workspace.project(name).update(
+                item_id,
+                title=title,
+                description=description or None,
+                acceptance=acceptance or None,
+                design=design or None,
+            )
+        except A.BeadsError as e:
+            return _redirect(f"/projects/{name}/items/{item_id}", error=_public_error_message(e))
+        return _redirect(f"/projects/{name}/items/{item.id}", msg=f"saved {item.id}")
+
     @app.post("/projects/{name}/items/{item_id}/resolve")
     async def resolve(  # type: ignore[no-untyped-def]
         name: str, item_id: str, reason: str = Form(...), actor: str = Form(...)
@@ -1777,6 +1821,31 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         except A.BeadsError as e:
             return _redirect(f"/projects/{name}/items/{item_id}", error=_public_error_message(e))
         return _redirect(f"/projects/{name}/items/{item.id}", msg=f"resolved {item.id}")
+
+    # ------------------------------------------------------------ rename
+
+    @app.post("/projects/{name}/rename")
+    async def rename_project(name: str, new_name: str = Form(...)):  # type: ignore[no-untyped-def]
+        """The Danger Zone's Rename control -- a thin wrapper over the same
+        `Workspace.rename` the CLI's `rename` subcommand calls (see its
+        docstring for the full contract: directory + shared-server database
+        + bd's local metadata renamed together, atomically, refused while any
+        item is HELD). `new_name` validation (the `NAME_RE` pattern, the
+        "already taken" / "currently HELD" refusals) all happen inside
+        `Workspace.rename` itself -- this route does not duplicate any of
+        it, only translates the result into a redirect."""
+        try:
+            report = workspace.rename(name, new_name)
+        except A.BeadsError as e:
+            # `Workspace.rename`'s own refusal messages (invalid name, name
+            # taken, HELD items, split state) are already safe and specific
+            # -- surfaced verbatim, same treatment `remove_project` gives
+            # `Workspace.remove`'s refusals, and for the same reason.
+            return _redirect(f"/projects/{name}", error=str(e))
+        return _redirect(
+            f"/projects/{report.new}",
+            msg=f"renamed project '{report.old}' to '{report.new}' ({report.item_count} items)",
+        )
 
     # ------------------------------------------------------------ removal
 

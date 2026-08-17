@@ -1089,6 +1089,63 @@ class Beads:
             raise BeadsError(f"create failed: {_clean_bd_error(p.stderr or p.stdout)}")
         return new_id
 
+    def update(
+        self,
+        item_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        acceptance: str | None = None,
+        design: str | None = None,
+        actor: str | None = None,
+    ) -> Item:
+        """Edit an item's own free-text fields -- title, description,
+        acceptance criteria, design notes -- via `bd update`'s matching
+        flags. Deliberately narrow: this is content editing, not lifecycle
+        (status/holder/claim/resolve all have their own dedicated,
+        FENCED methods above and are never touched here).
+
+        Every argument is `None`-means-"leave unchanged" (bd's own
+        semantics for these flags: passing none of them is a no-op update,
+        and passing one only touches that one field) -- there is no way to
+        CLEAR a field to empty through this method, only to set it to new
+        non-empty text, matching `create`'s own optional-field convention
+        and the web form this backs (which always submits every field, so
+        "leave unchanged" in practice only matters for a caller that
+        doesn't).
+
+        Verifies the write landed by reading the item back, the same
+        discipline `resolve` applies ("exit code is not proof") -- a
+        successful `bd update` exit with a title that didn't actually
+        change would otherwise look identical to a silent no-op.
+        """
+        args = ["update", item_id]
+        if title is not None:
+            args += ["--title", title]
+        if description is not None:
+            args += ["--description", description]
+        if acceptance is not None:
+            args += ["--acceptance", acceptance]
+        if design is not None:
+            args += ["--design", design]
+        if len(args) == 2:  # nothing to change -- avoid a no-op `bd update` call/verify
+            return self.get(item_id)
+        p = self._run(args, actor=actor)
+        if p.returncode != 0:
+            raise BeadsError(f"update {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
+        back = self.get(item_id)
+        if (
+            (title is not None and back.title != title)
+            or (description is not None and back.description != description)
+            or (acceptance is not None and back.acceptance != acceptance)
+            or (design is not None and back.design != design)
+        ):
+            raise BeadsError(
+                f"update {item_id} reported success but the change did not land -- "
+                f"exit code is not proof; see this method's docstring."
+            )
+        return back
+
     def claim_next(self, *, lane: str = LANE_WORK, actor: str) -> Item | None:
         """THE claim. Single atomic operation, never read-then-write.
 
