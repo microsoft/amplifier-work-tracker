@@ -12,6 +12,8 @@ at module scope.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 pytest.importorskip("fastapi", reason="the 'web' extra is not installed")
@@ -21,7 +23,7 @@ from amplifier_work_tracker import webapp as W  # noqa: E402
 
 
 def _summary(name: str, **kwargs) -> A.ProjectSummary:
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         status=A.STATUS_OK,
         total=0,
         ready=0,
