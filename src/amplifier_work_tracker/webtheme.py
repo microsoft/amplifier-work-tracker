@@ -800,11 +800,41 @@ def page(title: str, body: str, *, js: str = "", measure_px: int = 620) -> str:
         "<!doctype html>\n"
         '<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        f"{_PWA_HEAD_HTML}"
         f"<title>{_esc(title)}</title><style>\n{_FONT_FACE_CSS}{CSS}\n"
         f":root{{--measure:{measure_px}px}}\n</style></head><body>\n"
         '<a class="skip" href="#main">Skip to content</a>\n'
         f"{body}\n" + (f"<script>{js}</script>\n" if js else "") + "</body></html>\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# PWA head tags -- manifest link, theme-color, iOS home-screen chrome, and
+# the service-worker registration script, on every page. Ported in shape
+# from muxplex's `frontend/index.html` (per explicit request); the actual
+# manifest/service-worker content lives in `webpwa.py`, served by routes in
+# `webapp.py` (all five PWA asset paths are auth-exempt -- a browser must
+# be able to fetch them before/without a login for install to work at all).
+#
+# `theme-color` below is `--ground` (`#0D0D0C`) written as a literal, kept
+# in sync with `webpwa.GROUND_HEX` and `CSS`'s own `--ground` by comment,
+# not by cross-module import -- this file already owns its palette as a
+# self-contained visual system (see this module's own docstring); the same
+# comment-based-sync convention this codebase already uses elsewhere (see
+# `webapp.py`'s `_item_search_key` docstring).
+# ---------------------------------------------------------------------------
+
+_PWA_HEAD_HTML = (
+    '<meta name="theme-color" content="#0D0D0C">'
+    '<meta name="apple-mobile-web-app-capable" content="yes">'
+    '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">'
+    '<meta name="apple-mobile-web-app-title" content="Work Tracker">'
+    '<link rel="manifest" href="/manifest.json">'
+    '<link rel="apple-touch-icon" href="/apple-touch-icon.png">'
+    "<script>"
+    "if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js');}"
+    "</script>"
+)
 
 
 def top_bar(*, crumb_html: str = "", right_html: str = "") -> str:

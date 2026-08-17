@@ -71,6 +71,7 @@ from starlette.responses import Response
 
 from . import adapter as A
 from . import webauth as WA
+from . import webpwa as PWA
 from . import webtheme as T
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,22 @@ logger = logging.getLogger(__name__)
 # Exact-path auth-exempt set -- never prefix matching. See webauth's module
 # docstring / muxplex's own incident for why a path *starting with* or
 # *ending in* something is not a safe basis for an auth exemption.
-_AUTH_EXEMPT_PATHS = {"/login", "/auth/logout", "/healthz"}
+#
+# The five PWA asset paths are exempt for the same reason muxplex exempts
+# its own manifest/service-worker/icons: a browser must be able to fetch
+# them (to show the install prompt, register the service worker, and paint
+# the home-screen icon) before -- and independent of -- any login. None of
+# these bytes are sensitive; the dashboard content itself stays behind PAM.
+_AUTH_EXEMPT_PATHS = {
+    "/login",
+    "/auth/logout",
+    "/healthz",
+    "/manifest.json",
+    "/sw.js",
+    "/pwa-192.png",
+    "/pwa-512.png",
+    "/apple-touch-icon.png",
+}
 
 SESSION_TTL_SECONDS = 12 * 3600
 
@@ -1439,6 +1455,57 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
     @app.get("/healthz")
     async def healthz():  # type: ignore[no-untyped-def]
         return {"status": "ok"}
+
+    # ---------------------------------------------------------------- pwa
+    #
+    # Manifest, service worker, and icons -- see webpwa.py's module
+    # docstring for what these are and why the service worker caches
+    # nothing. All five are auth-exempt (see `_AUTH_EXEMPT_PATHS` above)
+    # and served `Cache-Control: no-cache` -- every one of them must
+    # revalidate on every fetch, same policy muxplex applies to its whole
+    # PWA surface, for the same reason (a stale service worker or a stale
+    # manifest is exactly the class of bug a monitoring dashboard cannot
+    # afford).
+
+    @app.get("/manifest.json")
+    async def pwa_manifest():  # type: ignore[no-untyped-def]
+        return Response(
+            PWA.MANIFEST_JSON,
+            media_type="application/manifest+json",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    @app.get("/sw.js")
+    async def pwa_service_worker():  # type: ignore[no-untyped-def]
+        return Response(
+            PWA.SERVICE_WORKER_JS,
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    @app.get("/pwa-192.png")
+    async def pwa_icon_192():  # type: ignore[no-untyped-def]
+        return Response(
+            PWA.icon_bytes("pwa-192.png"),
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    @app.get("/pwa-512.png")
+    async def pwa_icon_512():  # type: ignore[no-untyped-def]
+        return Response(
+            PWA.icon_bytes("pwa-512.png"),
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    @app.get("/apple-touch-icon.png")
+    async def pwa_apple_touch_icon():  # type: ignore[no-untyped-def]
+        return Response(
+            PWA.icon_bytes("apple-touch-icon.png"),
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     # ----------------------------------------------------------------- auth
 
