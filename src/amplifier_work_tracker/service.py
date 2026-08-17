@@ -165,6 +165,20 @@ _WEB_EXTRA_INSTALL_REMEDY = (
 )
 
 
+class TlsConfigError(RuntimeError):
+    """Raised by `service_install(..., web_tls_cert=..., web_tls_key=...)`
+    when the TLS cert/key are only partially given, or don't exist on disk.
+
+    Refuses BEFORE writing any unit file -- the same fail-loud-before-install
+    philosophy `WebExtraNotImportableError` applies to the 'web' extra,
+    applied here to TLS: a unit baked with a broken `--web-tls-cert`/
+    `--web-tls-key` pair would come up with the web dashboard task crashing
+    on every restart, discovered only after the fact. Naming the exact
+    missing/incomplete path here, before systemd/launchd ever sees it, is
+    strictly better.
+    """
+
+
 class WebExtraNotImportableError(RuntimeError):
     """Raised by `service_install(..., web_port=...)` when the 'web' extra
     (fastapi/uvicorn/itsdangerous) cannot be verified importable in the
@@ -410,6 +424,53 @@ def resolve_console_script() -> tuple[str | None, str | None]:
     return resolved, fix
 
 
+def resolve_web_tls(
+    web_tls_cert: str | None, web_tls_key: str | None
+) -> tuple[str | None, str | None]:
+    """Resolve the TLS cert/key paths to bake into the installed unit's
+    `--web-tls-cert`/`--web-tls-key` ExecStart arguments.
+
+    Mirrors `webapp._resolve_tls`'s resolution order exactly (both modules
+    must agree on what "TLS is configured" means, or `service install`
+    could bake in a different answer than `serve`/`web` would resolve at
+    runtime) -- but raises `TlsConfigError`, matching this module's own
+    exception vocabulary, rather than `webapp.WebConfigError` (this module
+    deliberately never imports `webapp` -- see its own module docstring on
+    probing the 'web' extra via subprocess rather than importing it
+    directly).
+
+      1. Both explicit -> validated (both exist) and returned as-is.
+         Either missing -> `TlsConfigError` naming the exact path(s).
+      2. Exactly one explicit -> `TlsConfigError` (both-or-neither).
+      3. Neither explicit -> auto-detect the `setup-tls`-generated
+         defaults (`webtls.default_cert_path()`/`default_key_path()`).
+         Both present on disk -> use them. Otherwise -> `(None, None)`
+         (no TLS baked in -- unchanged pre-TLS behavior).
+    """
+    if web_tls_cert is not None or web_tls_key is not None:
+        if web_tls_cert is None or web_tls_key is None:
+            raise TlsConfigError(
+                "--web-tls-cert and --web-tls-key must both be given together "
+                f"(got web_tls_cert={web_tls_cert!r}, web_tls_key={web_tls_key!r})"
+            )
+        missing = [p for p in (web_tls_cert, web_tls_key) if not Path(p).is_file()]
+        if missing:
+            raise TlsConfigError(
+                f"TLS cert/key not found: {', '.join(missing)}. Run "
+                f"'amplifier-work-tracker setup-tls' to generate a certificate, or "
+                f"check the paths given to --web-tls-cert/--web-tls-key."
+            )
+        return web_tls_cert, web_tls_key
+
+    from . import webtls as T
+
+    default_cert = T.default_cert_path()
+    default_key = T.default_key_path()
+    if default_cert.is_file() and default_key.is_file():
+        return str(default_cert), str(default_key)
+    return None, None
+
+
 def _serve_argv_tail(
     root: Path,
     *,
@@ -420,6 +481,8 @@ def _serve_argv_tail(
     web_public: bool = False,
     web_auth_mode: str | None = None,
     web_session_ttl: int | None = None,
+    web_tls_cert: str | None = None,
+    web_tls_key: str | None = None,
 ) -> list[str]:
     """The `serve` subcommand and its arguments, explicit and absolute --
     never an environment variable a service manager might not propagate.
@@ -431,6 +494,10 @@ def _serve_argv_tail(
     matching `serve`'s own contract that the web dashboard is off by
     default and the installed unit's behavior is unchanged unless an
     operator explicitly opts in via `service install --web-port`.
+
+    `web_tls_cert`/`web_tls_key` are ALREADY RESOLVED (via `resolve_web_tls`)
+    by the time they reach this function -- this function only decides
+    whether to emit the flags, never re-validates the paths.
     """
     argv = ["serve", "--root", str(root)]
     if dolt_host is not None:
@@ -447,6 +514,8 @@ def _serve_argv_tail(
             argv += ["--web-auth-mode", web_auth_mode]
         if web_session_ttl is not None:
             argv += ["--web-session-ttl", str(web_session_ttl)]
+        if web_tls_cert is not None and web_tls_key is not None:
+            argv += ["--web-tls-cert", web_tls_cert, "--web-tls-key", web_tls_key]
     return argv
 
 
@@ -473,6 +542,8 @@ def _systemd_unit_content(
     web_public: bool = False,
     web_auth_mode: str | None = None,
     web_session_ttl: int | None = None,
+    web_tls_cert: str | None = None,
+    web_tls_key: str | None = None,
 ) -> str:
     """Render the systemd unit's text, and nothing else -- pure and directly
     testable (e.g. with `systemd-analyze verify` against the rendered text)
@@ -503,6 +574,8 @@ def _systemd_unit_content(
             web_public=web_public,
             web_auth_mode=web_auth_mode,
             web_session_ttl=web_session_ttl,
+            web_tls_cert=web_tls_cert,
+            web_tls_key=web_tls_key,
         ),
     ]
     exec_start = shlex.join(exec_argv)
@@ -570,6 +643,8 @@ def _systemd_install(
     web_public: bool = False,
     web_auth_mode: str | None = None,
     web_session_ttl: int | None = None,
+    web_tls_cert: str | None = None,
+    web_tls_key: str | None = None,
 ) -> None:
     unit_content = _systemd_unit_content(
         root,
@@ -580,6 +655,8 @@ def _systemd_install(
         web_public=web_public,
         web_auth_mode=web_auth_mode,
         web_session_ttl=web_session_ttl,
+        web_tls_cert=web_tls_cert,
+        web_tls_key=web_tls_key,
     )
 
     _SYSTEMD_UNIT_DIR.mkdir(parents=True, exist_ok=True)
@@ -762,6 +839,8 @@ def _launchd_install(
     web_public: bool = False,
     web_auth_mode: str | None = None,
     web_session_ttl: int | None = None,
+    web_tls_cert: str | None = None,
+    web_tls_key: str | None = None,
 ) -> None:
     bin_tokens = _resolve_bin_tokens()
     argv = bin_tokens + _serve_argv_tail(
@@ -773,6 +852,8 @@ def _launchd_install(
         web_public=web_public,
         web_auth_mode=web_auth_mode,
         web_session_ttl=web_session_ttl,
+        web_tls_cert=web_tls_cert,
+        web_tls_key=web_tls_key,
     )
     # Each argv token is its own <string> element. launchd does NOT
     # shell-split inside a <string>, so the whole command must NEVER be put
@@ -905,6 +986,8 @@ def service_install(
     web_public: bool = False,
     web_auth_mode: str | None = None,
     web_session_ttl: int | None = None,
+    web_tls_cert: str | None = None,
+    web_tls_key: str | None = None,
 ) -> ServiceInfo:
     """Install (or re-install) the supervisor service unit for the current
     user and start it.
@@ -913,10 +996,18 @@ def service_install(
     rebake and restart the unit against it. The same applies to `web_port`:
     re-running with a new value (or omitting it) rebakes and restarts the
     unit's `--web-port`/`--web-host`/`--web-public`/`--web-auth-mode`/
-    `--web-session-ttl` flags exactly like `--dolt-host`/`--dolt-port`
-    always have -- see `_serve_argv_tail`. `web_port=None` (the default)
-    omits every `--web-*` flag entirely: the installed unit's behavior is
-    unchanged unless an operator explicitly opts in.
+    `--web-session-ttl`/`--web-tls-cert`/`--web-tls-key` flags exactly like
+    `--dolt-host`/`--dolt-port` always have -- see `_serve_argv_tail`.
+    `web_port=None` (the default) omits every `--web-*` flag entirely: the
+    installed unit's behavior is unchanged unless an operator explicitly
+    opts in.
+
+    `web_tls_cert`/`web_tls_key`: both given -> validated and baked in as-is.
+    Exactly one given -> `TlsConfigError` (both-or-neither). Neither given
+    -> auto-detected from `setup-tls`'s well-known output location
+    (`webtls.default_cert_path()`/`default_key_path()`); baked in only if
+    BOTH exist, else the unit serves plain http exactly as before TLS
+    support existed. See `resolve_web_tls`.
 
     Transactional: if `systemctl`/`launchctl` fails partway through (unit
     written but never enabled/loaded), the unit file written by THIS call is
@@ -929,6 +1020,7 @@ def service_install(
 
     if _is_windows():
         raise ServiceUnsupportedError(_WINDOWS_UNSUPPORTED_DETAIL)
+    resolved_tls_cert, resolved_tls_key = (None, None)
     if web_port is not None:
         # Refuse BEFORE writing/enabling anything -- see
         # `WebExtraNotImportableError`'s docstring for the incident (a unit
@@ -936,6 +1028,9 @@ def service_install(
         # silently never bound because the target environment's 'web'
         # extra was never verified) this preflight exists to prevent.
         _ensure_web_extra_importable_or_raise()
+        # Same fail-loud-before-install philosophy, applied to TLS -- see
+        # `TlsConfigError`'s docstring.
+        resolved_tls_cert, resolved_tls_key = resolve_web_tls(web_tls_cert, web_tls_key)
     if _is_darwin():
         _launchd_install(
             resolved_root,
@@ -946,6 +1041,8 @@ def service_install(
             web_public=web_public,
             web_auth_mode=web_auth_mode,
             web_session_ttl=web_session_ttl,
+            web_tls_cert=resolved_tls_cert,
+            web_tls_key=resolved_tls_key,
         )
         return _launchd_describe()
     if _have_systemctl():
@@ -958,6 +1055,8 @@ def service_install(
             web_public=web_public,
             web_auth_mode=web_auth_mode,
             web_session_ttl=web_session_ttl,
+            web_tls_cert=resolved_tls_cert,
+            web_tls_key=resolved_tls_key,
         )
         return _systemd_describe()
     raise ServiceUnsupportedError(_no_systemctl_detail())

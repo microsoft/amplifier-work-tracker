@@ -919,6 +919,155 @@ def _root_parent_parser() -> argparse.ArgumentParser:
     return parent
 
 
+def cmd_setup_tls(a):
+    """Generate a TLS certificate for `web` / `serve --web-port` and record it
+    at the well-known location those commands auto-detect (`webtls.
+    default_cert_path()`/`default_key_path()`) -- no separate settings file,
+    the fixed path IS the record. Ported from muxplex's `setup-tls` (see
+    `webtls.py`'s module docstring for exactly what was kept/adapted).
+
+    Auto-detection chain (method='auto'): Tailscale -> self-signed. Use
+    `--method` to force a specific certificate source. `--method ca`
+    generates (or reuses) a persistent local CA under `webtls.
+    default_ca_dir()` and signs a short-lived leaf with it -- install the CA
+    on each client to get browser-trusted HTTPS without Tailscale or a
+    public domain.
+
+    Requires the `web` extra (`cryptography` lives there -- see pyproject.toml);
+    a clear ImportError is what a caller sees if it isn't installed, same
+    contract as `cmd_web`.
+    """
+    try:
+        from . import webtls as T
+    except ImportError as e:
+        die(
+            f"TLS support requires the 'web' extra: {e}\n"
+            f"Install it with: pip install amplifier-work-tracker[web]"
+        )
+        return
+
+    cert_path = T.default_cert_path()
+    key_path = T.default_key_path()
+
+    if cert_path.exists() and key_path.exists():
+        info = T.get_cert_info(cert_path)
+        if info is not None:
+            print(f"TLS already configured (expires {str(info['expires'])[:10]}).")
+        try:
+            answer = input("Regenerate? [y/N] ")
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        if answer.lower() not in ("y", "yes"):
+            print("Keeping existing certificates.")
+            return
+
+    result = None
+    method = a.method
+
+    # Step 1: Try Tailscale.
+    if method in ("auto", "tailscale"):
+        tailscale_info = T.detect_tailscale()
+        if tailscale_info:
+            hostname = tailscale_info["hostname"]
+            print(f"  Detected Tailscale: {hostname}")
+            result = T.generate_tailscale(cert_path, key_path, hostname)
+            if result:
+                print("  Tailscale certificate obtained")
+            else:
+                print("  Tailscale certificate generation failed")
+        if method == "tailscale" and result is None:
+            die("Tailscale not available or certificate generation failed")
+
+    # Step 2: Try self-signed, with the SAME SAN richness (LAN IP, tailnet
+    # name) --method ca gets, so a self-signed cert isn't thinner than a
+    # CA-signed leaf for the identical host.
+    if result is None and method in ("auto", "selfsigned"):
+        leaf_hostnames, leaf_ips = T.default_leaf_sans()
+        result = T.generate_self_signed(
+            cert_path, key_path, hostnames=leaf_hostnames, ip_addresses=leaf_ips
+        )
+
+    # Step 3: Local CA (explicit opt-in only -- not part of "auto").
+    if result is None and method == "ca":
+        ca_cert_path = T.default_ca_cert_path()
+        ca_key_path = T.default_ca_key_path()
+
+        ca_info = T.generate_local_ca(ca_cert_path, ca_key_path)
+        if ca_info["regenerated"]:
+            print(f"  Generated local CA at {ca_cert_path}")
+        else:
+            print(f"  Reusing existing local CA at {ca_cert_path}")
+
+        leaf_hostnames, leaf_ips = T.default_leaf_sans()
+        result = T.generate_leaf_signed_by_ca(
+            ca_cert_path,
+            ca_key_path,
+            cert_path,
+            key_path,
+            hostnames=leaf_hostnames,
+            ip_addresses=leaf_ips,
+        )
+        result["ca_cert_path"] = str(ca_cert_path)
+        result["ca_regenerated"] = ca_info["regenerated"]
+
+    if result is None:
+        die("TLS certificate generation failed with all methods")
+
+    hostnames_str = ", ".join(result["hostnames"])
+    expiry_str = (
+        result["expires"].strftime("%Y-%m-%d")
+        if hasattr(result["expires"], "strftime")
+        else str(result["expires"])
+    )
+
+    print("TLS setup complete")
+    print(f"  Certificate: {result['cert_path']}")
+    print(f"  Key:         {result['key_path']}")
+    print(f"  Hostnames:   {hostnames_str}")
+    print(f"  Expires:     {expiry_str}")
+    print()
+
+    method_used = result.get("method", "")
+    if method_used == "selfsigned":
+        print("  Note: Browsers will show a security warning for self-signed certificates.")
+        print("  Consider --method ca (or --method tailscale, if available) for a trusted")
+        print("  certificate.")
+        print()
+    elif method_used == "tailscale":
+        print("  Note: Tailscale certificates expire after 90 days.")
+        print("  Run 'amplifier-work-tracker setup-tls' to renew.")
+        print()
+    elif method_used == "ca":
+        print(f"  Local CA:    {result.get('ca_cert_path', '')}")
+        print()
+        print("  Install the CA on each client to eliminate browser warnings.")
+        print("  The leaf rotates without re-trusting; the CA is what you trust.")
+        print()
+        print("  Windows (PowerShell, no admin needed):")
+        print(
+            "    Import-Certificate -FilePath <path-to-ca.crt> "
+            "-CertStoreLocation Cert:\\CurrentUser\\Root"
+        )
+        print()
+        print("  macOS:")
+        print(
+            "    sudo security add-trusted-cert -d -r trustRoot "
+            "-k /Library/Keychains/System.keychain <path-to-ca.crt>"
+        )
+        print()
+        print("  Linux (system-wide):")
+        print("    sudo cp <path-to-ca.crt> /usr/local/share/ca-certificates/")
+        print("    sudo update-ca-certificates")
+        print()
+        print("  Leaf cert rotates yearly -- re-run 'amplifier-work-tracker setup-tls --method ca'")
+        print("  to generate a fresh leaf signed by the same CA (no client re-trust).")
+        print()
+
+    print(f"  {cert_path} / {key_path} are auto-detected by `web` and `serve --web-port`")
+    print("  (no --tls-cert/--tls-key or --web-tls-cert/--web-tls-key needed).")
+    print("  Restart the service to apply: amplifier-work-tracker service restart")
+
+
 def cmd_web(a):
     """Serve the web dashboard + full interaction UI as an ADDITIONAL client
     of the same shared dolt server the CLI and background service use.
@@ -941,6 +1090,8 @@ def cmd_web(a):
             port=a.port,
             auth_mode=a.auth_mode,
             session_ttl=a.session_ttl,
+            tls_cert=a.tls_cert,
+            tls_key=a.tls_key,
         )
     except webapp.WebConfigError as e:
         die(str(e))
@@ -948,8 +1099,9 @@ def cmd_web(a):
     for m in messages:
         print(f"amplifier-work-tracker web: {m}", file=sys.stderr)
     ws = _ws(a)
+    scheme = "https" if config.tls_cert else "http"
     print(
-        f"amplifier-work-tracker web: listening on http://{config.host}:{config.port} "
+        f"amplifier-work-tracker web: listening on {scheme}://{config.host}:{config.port} "
         f"(root={ws.root})"
     )
     return webapp.run(ws, config)
@@ -976,6 +1128,8 @@ def cmd_serve(a):
             port=a.web_port,
             auth_mode=a.web_auth_mode,
             session_ttl=a.web_session_ttl,
+            tls_cert=a.web_tls_cert,
+            tls_key=a.web_tls_key,
         )
     return SV.serve(
         root,
@@ -1001,8 +1155,10 @@ def cmd_service_install(a):
             web_public=a.web_public,
             web_auth_mode=a.web_auth_mode,
             web_session_ttl=a.web_session_ttl,
+            web_tls_cert=a.web_tls_cert,
+            web_tls_key=a.web_tls_key,
         )
-    except (S.ServiceUnsupportedError, S.WebExtraNotImportableError) as e:
+    except (S.ServiceUnsupportedError, S.WebExtraNotImportableError, S.TlsConfigError) as e:
         die(str(e))
     print(f"Installed and started the {S.SERVICE_NAME} service ({info.platform}).")
     print(f"  Unit: {info.unit_path}")
@@ -1345,7 +1501,40 @@ def main():
             "server-side expiry); ignored unless --web-port is given"
         ),
     )
+    p.add_argument(
+        "--web-tls-cert",
+        default=None,
+        help=(
+            "path to a TLS certificate PEM file for the web dashboard (pairs with "
+            "--web-tls-key); serves https instead of http. If omitted, auto-uses the "
+            "certificate generated by `setup-tls`, if present. Ignored unless --web-port "
+            "is given"
+        ),
+    )
+    p.add_argument(
+        "--web-tls-key",
+        default=None,
+        help="path to the TLS certificate's private key PEM file (pairs with --web-tls-cert)",
+    )
     p.set_defaults(fn=cmd_serve)
+
+    p = sub.add_parser(
+        "setup-tls",
+        help="generate a TLS certificate so `web`/`serve --web-port` can serve https",
+    )
+    p.add_argument(
+        "--method",
+        choices=["auto", "selfsigned", "ca", "tailscale"],
+        default="auto",
+        help=(
+            "'auto' (default) tries Tailscale, then falls back to a self-signed cert. "
+            "'selfsigned' forces a self-signed cert. 'ca' generates/reuses a persistent "
+            "local CA and signs a short-lived leaf with it (install the CA once per "
+            "client for browser-trusted HTTPS with no public domain). 'tailscale' "
+            "requires Tailscale HTTPS certs to be enabled, or fails loud"
+        ),
+    )
+    p.set_defaults(fn=cmd_setup_tls)
 
     p = sub.add_parser(
         "web",
@@ -1385,6 +1574,20 @@ def main():
         type=int,
         default=12 * 3600,
         help="session cookie lifetime in seconds (default 12h; 0 = no server-side expiry)",
+    )
+    p.add_argument(
+        "--tls-cert",
+        default=None,
+        help=(
+            "path to a TLS certificate PEM file (pairs with --tls-key); serves https "
+            "instead of http. If omitted, auto-uses the certificate generated by "
+            "`setup-tls`, if present"
+        ),
+    )
+    p.add_argument(
+        "--tls-key",
+        default=None,
+        help="path to the TLS certificate's private key PEM file (pairs with --tls-cert)",
     )
     p.set_defaults(fn=cmd_web)
 
@@ -1431,6 +1634,20 @@ def main():
         help=(
             "bake `--web-session-ttl` into the installed unit; ignored unless --web-port is given"
         ),
+    )
+    p.add_argument(
+        "--web-tls-cert",
+        default=None,
+        help=(
+            "bake `--web-tls-cert` into the installed unit (pairs with --web-tls-key); "
+            "serves https instead of http. If omitted, auto-uses the certificate generated "
+            "by `setup-tls`, if present. Ignored unless --web-port is given"
+        ),
+    )
+    p.add_argument(
+        "--web-tls-key",
+        default=None,
+        help="bake `--web-tls-key` into the installed unit (pairs with --web-tls-cert)",
     )
     p.set_defaults(fn=cmd_service_install)
 

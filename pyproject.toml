@@ -41,6 +41,7 @@ web = [
     "python-multipart>=0.0.9",  # required by FastAPI's Form(...) parsing
     "python-pam>=2.0.2",
     "six>=1.16.0",  # undeclared dep of python-pam on some platforms -- see muxplex/pyproject.toml
+    "cryptography>=42.0",  # TLS cert generation -- webtls.py's `setup-tls` command
 ]
 
 [tool.hatch.build.targets.wheel]
