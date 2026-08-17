@@ -604,15 +604,19 @@ def import_web_modules():
 @dataclass
 class WebIntegrationConfig:
     """`serve --web-port`'s web-specific inputs -- the same shape `cmd_web`
-    accepts (`--host`/`--public`/`--port`/`--auth-mode`/`--session-ttl`),
-    just carried as one value so `_async_serve`'s signature gains a single
-    new optional parameter instead of five."""
+    accepts (`--host`/`--public`/`--port`/`--auth-mode`/`--session-ttl`/
+    `--tls-cert`/`--tls-key`, the latter two named `--web-tls-cert`/
+    `--web-tls-key` on `serve` to distinguish them from the bare
+    `--dolt-*` flags), just carried as one value so `_async_serve`'s
+    signature gains a single new optional parameter instead of seven."""
 
     host: str | None
     public: bool
     port: int
     auth_mode: str
     session_ttl: int
+    tls_cert: str | None = None
+    tls_key: str | None = None
 
 
 class WebServerStartupError(RuntimeError):
@@ -699,18 +703,33 @@ async def web_server_loop(
             port=web.port,
             auth_mode=web.auth_mode,
             session_ttl=web.session_ttl,
+            tls_cert=web.tls_cert,
+            tls_key=web.tls_key,
         )
     except webapp.WebConfigError as e:
         raise WebServerStartupError(str(e)) from e
 
     for m in messages:
         logger.info("web: %s", m)
+    # Scheme is derived from whether resolve_web_config actually resolved a
+    # TLS cert/key pair -- never hardcoded -- so this log line can't drift
+    # from what uvicorn is about to be handed below.
+    scheme = "https" if config.tls_cert else "http"
     logger.info(
-        "web dashboard listening on http://%s:%s (root=%s)", config.host, config.port, ws.root
+        "web dashboard listening on %s://%s:%s (root=%s)",
+        scheme,
+        config.host,
+        config.port,
+        ws.root,
     )
 
     app = webapp.create_app(ws, config.auth)
-    uv_config = uvicorn.Config(app, host=config.host, port=config.port, log_level="info")
+    ssl_kwargs: dict = {}
+    if config.tls_cert and config.tls_key:
+        ssl_kwargs = {"ssl_certfile": config.tls_cert, "ssl_keyfile": config.tls_key}
+    uv_config = uvicorn.Config(
+        app, host=config.host, port=config.port, log_level="info", **ssl_kwargs
+    )
     server = uvicorn.Server(uv_config)
 
     watcher = asyncio.create_task(_web_stop_watcher(server, stop_event))

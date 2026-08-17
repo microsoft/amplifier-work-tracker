@@ -62,6 +62,7 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Request
@@ -73,6 +74,7 @@ from . import adapter as A
 from . import webauth as WA
 from . import webpwa as PWA
 from . import webtheme as T
+from . import webtls as WT
 
 logger = logging.getLogger(__name__)
 
@@ -2346,13 +2348,21 @@ class WebServerConfig:
     host: str
     port: int
     auth: WA.AuthConfig
+    # Both set (never just one -- see resolve_web_config) means "serve
+    # https"; both None (the default -- no TLS configured/found) means
+    # "serve http", exactly as before TLS support existed.
+    tls_cert: str | None = None
+    tls_key: str | None = None
 
 
 def run(workspace: A.Workspace, config: WebServerConfig) -> int:
     import uvicorn
 
     app = create_app(workspace, config.auth)
-    uvicorn.run(app, host=config.host, port=config.port, log_level="info")
+    ssl_kwargs: dict = {}
+    if config.tls_cert and config.tls_key:
+        ssl_kwargs = {"ssl_certfile": config.tls_cert, "ssl_keyfile": config.tls_key}
+    uvicorn.run(app, host=config.host, port=config.port, log_level="info", **ssl_kwargs)
     return 0
 
 
@@ -2389,6 +2399,58 @@ class WebConfigError(RuntimeError):
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
+def _resolve_tls(tls_cert: str | None, tls_key: str | None) -> tuple[str | None, str | None]:
+    """Resolve `--tls-cert`/`--tls-key` (or `--web-tls-cert`/`--web-tls-key`)
+    into the pair uvicorn should actually be given, or `(None, None)` for
+    plain http -- shared by `resolve_web_config` so `web` and `serve
+    --web-port` can never diverge on what "TLS is configured" means.
+
+    Resolution order, fail-loud throughout (never a silent fallback to
+    http for an operator-supplied path -- see `WebConfigError`'s own
+    docstring on this function's caller):
+
+      1. Both given explicitly: validated (both exist, both readable) and
+         returned as-is. Either missing or unreadable -> `WebConfigError`
+         naming the exact path(s) and `setup-tls` as the fix.
+      2. Exactly one given: `WebConfigError` -- `--tls-cert`/`--tls-key`
+         (or their `--web-*` equivalents) are a pair, never independent.
+      3. Neither given: auto-detect the `setup-tls`-generated defaults
+         (`webtls.default_cert_path()`/`default_key_path()`). Both present
+         on disk -> use them (TLS on). Otherwise -> `(None, None)` (TLS
+         off), identical to every `web`/`serve` invocation before TLS
+         support existed.
+    """
+    import os
+
+    if tls_cert is not None or tls_key is not None:
+        if tls_cert is None or tls_key is None:
+            raise WebConfigError(
+                "--tls-cert and --tls-key must both be given together "
+                f"(got --tls-cert={tls_cert!r} --tls-key={tls_key!r})"
+            )
+        cert_p = Path(tls_cert)
+        key_p = Path(tls_key)
+        missing = [str(p) for p in (cert_p, key_p) if not p.is_file()]
+        if missing:
+            raise WebConfigError(
+                f"TLS cert/key not found: {', '.join(missing)}. Run "
+                f"'amplifier-work-tracker setup-tls' to generate a certificate, or "
+                f"check the paths given to --tls-cert/--tls-key."
+            )
+        unreadable = [str(p) for p in (cert_p, key_p) if not os.access(p, os.R_OK)]
+        if unreadable:
+            raise WebConfigError(
+                f"TLS cert/key not readable: {', '.join(unreadable)}. Check file permissions."
+            )
+        return str(cert_p), str(key_p)
+
+    default_cert = WT.default_cert_path()
+    default_key = WT.default_key_path()
+    if default_cert.is_file() and default_key.is_file():
+        return str(default_cert), str(default_key)
+    return None, None
+
+
 def resolve_web_config(
     *,
     host: str | None,
@@ -2396,23 +2458,28 @@ def resolve_web_config(
     port: int,
     auth_mode: str,
     session_ttl: int,
+    tls_cert: str | None = None,
+    tls_key: str | None = None,
 ) -> tuple[WebServerConfig, list[str]]:
-    """Resolve `--host`/`--public`/`--port`/`--auth-mode`/`--session-ttl`
-    into a runnable `WebServerConfig`, applying the SAME non-loopback safety
-    gate and auth-mode defaulting `cmd_web` has always applied -- factored
-    out here so `serve --web-port` cannot silently diverge from `web`'s own
-    rules.
+    """Resolve `--host`/`--public`/`--port`/`--auth-mode`/`--session-ttl`/
+    `--tls-cert`/`--tls-key` into a runnable `WebServerConfig`, applying the
+    SAME non-loopback safety gate, auth-mode defaulting, and TLS resolution
+    `cmd_web` has always applied -- factored out here so `serve --web-port`
+    cannot silently diverge from `web`'s own rules.
 
     Returns `(config, messages)`. `messages` is an ordered list of
     human-readable startup lines (the password reveal or PAM sign-in
-    instructions, plus a non-loopback-bind warning when applicable) --
-    returned rather than printed/logged here, since one caller wants
-    `print(..., file=sys.stderr)` (`cmd_web`) and the other wants
-    `logger.info` (the supervisor's `web_server_loop`).
+    instructions, a non-loopback-bind warning, and a TLS-enabled note, each
+    when applicable) -- returned rather than printed/logged here, since one
+    caller wants `print(..., file=sys.stderr)` (`cmd_web`) and the other
+    wants `logger.info` (the supervisor's `web_server_loop`).
 
     Raises `WebConfigError` -- never exits the process -- for a
-    non-loopback `host` without `public=True`, or an `auth_mode` that
-    cannot be satisfied.
+    non-loopback `host` without `public=True`, an `auth_mode` that cannot
+    be satisfied, or a `tls_cert`/`tls_key` pair that is incomplete,
+    missing, or unreadable (see `_resolve_tls`) -- NEVER a silent fallback
+    to http for an operator-supplied TLS path, matching this module's
+    fail-loud contract everywhere else (`WebServerStartupError`, etc.).
     """
     if host is not None and host not in _LOOPBACK_HOSTS and not public:
         raise WebConfigError(
@@ -2453,7 +2520,20 @@ def resolve_web_config(
             "(see webauth.py's module docstring)."
         )
 
-    return WebServerConfig(host=effective_host, port=port, auth=auth_config), messages
+    resolved_tls_cert, resolved_tls_key = _resolve_tls(tls_cert, tls_key)
+    if resolved_tls_cert:
+        messages.append(f"TLS enabled -- serving https (cert: {resolved_tls_cert}).")
+
+    return (
+        WebServerConfig(
+            host=effective_host,
+            port=port,
+            auth=auth_config,
+            tls_cert=resolved_tls_cert,
+            tls_key=resolved_tls_key,
+        ),
+        messages,
+    )
 
 
 __all__ = [

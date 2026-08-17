@@ -142,6 +142,167 @@ def test_systemd_unit_content_omits_web_flags_when_web_port_not_given(monkeypatc
     assert "--web-" not in exec_start_line
 
 
+# ---------------------------------------------------------------------------
+# TLS: resolve_web_tls -- the install-time resolution `service install`
+# applies BEFORE baking `--web-tls-cert`/`--web-tls-key` into ExecStart.
+# Mirrors `webapp._resolve_tls`'s resolution order exactly; see
+# `resolve_web_tls`'s own docstring on why the two must agree.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_web_tls_returns_none_none_when_neither_given_and_no_default_cert(
+    monkeypatch, tmp_path
+):
+    fake_home = tmp_path / "home-empty"
+    fake_home.mkdir()
+
+    import amplifier_work_tracker.webtls as webtls_mod
+
+    monkeypatch.setattr(webtls_mod.Path, "home", classmethod(lambda cls: fake_home))
+
+    cert, key = S.resolve_web_tls(None, None)
+    assert (cert, key) == (None, None)
+
+
+def test_resolve_web_tls_auto_detects_setup_tls_defaults_when_present(monkeypatch, tmp_path):
+    import amplifier_work_tracker.webtls as webtls_mod
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(webtls_mod.Path, "home", classmethod(lambda cls: fake_home))
+
+    default_cert = webtls_mod.default_cert_path()
+    default_key = webtls_mod.default_key_path()
+    default_cert.write_text("cert", encoding="utf-8")
+    default_key.write_text("key", encoding="utf-8")
+
+    cert, key = S.resolve_web_tls(None, None)
+    assert cert == str(default_cert)
+    assert key == str(default_key)
+
+
+def test_resolve_web_tls_validates_explicit_paths_exist(tmp_path):
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    cert_path.write_text("cert", encoding="utf-8")
+    key_path.write_text("key", encoding="utf-8")
+
+    cert, key = S.resolve_web_tls(str(cert_path), str(key_path))
+    assert (cert, key) == (str(cert_path), str(key_path))
+
+
+def test_resolve_web_tls_raises_for_missing_explicit_cert(tmp_path):
+    key_path = tmp_path / "key.pem"
+    key_path.write_text("key", encoding="utf-8")
+    with pytest.raises(S.TlsConfigError, match="not found"):
+        S.resolve_web_tls(str(tmp_path / "nope.crt"), str(key_path))
+
+
+def test_resolve_web_tls_raises_when_only_cert_given():
+    with pytest.raises(S.TlsConfigError, match="must both be given together"):
+        S.resolve_web_tls("/some/cert.pem", None)
+
+
+def test_resolve_web_tls_raises_when_only_key_given():
+    with pytest.raises(S.TlsConfigError, match="must both be given together"):
+        S.resolve_web_tls(None, "/some/key.pem")
+
+
+# ---------------------------------------------------------------------------
+# TLS: _serve_argv_tail / _systemd_unit_content -- baking already-resolved
+# --web-tls-cert/--web-tls-key into ExecStart.
+# ---------------------------------------------------------------------------
+
+
+def test_serve_argv_tail_bakes_web_tls_flags_when_given():
+    argv = S._serve_argv_tail(
+        Path("/abs/root"),
+        web_port=8095,
+        web_tls_cert="/certs/cert.pem",
+        web_tls_key="/certs/key.pem",
+    )
+    assert argv == [
+        "serve",
+        "--root",
+        "/abs/root",
+        "--web-port",
+        "8095",
+        "--web-tls-cert",
+        "/certs/cert.pem",
+        "--web-tls-key",
+        "/certs/key.pem",
+    ]
+
+
+def test_serve_argv_tail_omits_web_tls_flags_when_not_given():
+    argv = S._serve_argv_tail(Path("/abs/root"), web_port=8095)
+    assert "--web-tls-cert" not in argv
+    assert "--web-tls-key" not in argv
+
+
+def test_serve_argv_tail_omits_web_tls_flags_even_with_web_port_none():
+    """TLS flags, like every other --web-*, are still gated on web_port --
+    passing only web_tls_cert/web_tls_key without web_port must not leak
+    them into argv (matches every other --web-* flag's own contract)."""
+    argv = S._serve_argv_tail(
+        Path("/abs/root"), web_tls_cert="/certs/cert.pem", web_tls_key="/certs/key.pem"
+    )
+    assert "--web-tls-cert" not in argv
+    assert "--web-tls-key" not in argv
+
+
+def test_systemd_unit_content_bakes_web_tls_flags_into_exec_start(monkeypatch, tmp_path):
+    _force_console_script_present(monkeypatch, tmp_path)
+    root = tmp_path / "workspace-root"
+    unit = S._systemd_unit_content(
+        root,
+        dolt_host=None,
+        dolt_port=None,
+        web_port=8095,
+        web_tls_cert="/certs/cert.pem",
+        web_tls_key="/certs/key.pem",
+    )
+    exec_start_line = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+    assert "--web-tls-cert /certs/cert.pem" in exec_start_line
+    assert "--web-tls-key /certs/key.pem" in exec_start_line
+
+
+@pytest.mark.skipif(not _HAVE_SYSTEMD_ANALYZE, reason="systemd-analyze not on PATH")
+def test_systemd_analyze_verify_clean_with_web_tls_flags_baked_in(monkeypatch, tmp_path):
+    """The TLS-integrated ExecStart must still be a systemd-valid unit."""
+    _force_console_script_present(monkeypatch, tmp_path)
+    root = tmp_path / "workspace-root"
+    unit = S._systemd_unit_content(
+        root,
+        dolt_host="127.0.0.1",
+        dolt_port=3308,
+        web_port=8095,
+        web_tls_cert="/certs/cert.pem",
+        web_tls_key="/certs/key.pem",
+    )
+    unit_path = tmp_path / f"{S.SERVICE_NAME}.service"
+    unit_path.write_text(unit, encoding="utf-8")
+
+    result = subprocess.run(
+        ["systemd-analyze", "verify", str(unit_path)], capture_output=True, text=True
+    )
+    assert result.returncode == 0, (
+        f"systemd-analyze verify failed with TLS flags baked in:\n"
+        f"unit:\n{unit}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+
+def test_service_install_raises_tls_config_error_for_incomplete_tls_pair(monkeypatch, tmp_path):
+    """service install must refuse BEFORE writing/enabling anything -- same
+    fail-loud-before-install philosophy `WebExtraNotImportableError` gives
+    the 'web' extra check, applied here to TLS."""
+    monkeypatch.setattr(S.sys, "platform", "linux")
+    monkeypatch.setattr(S, "_have_systemctl", lambda: True)
+    monkeypatch.setattr(S, "_ensure_web_extra_importable_or_raise", lambda: None)
+    with pytest.raises(S.TlsConfigError):
+        S.service_install(tmp_path, web_port=8095, web_tls_cert="/only/cert.pem")
+
+
 @pytest.mark.skipif(not _HAVE_SYSTEMD_ANALYZE, reason="systemd-analyze not on PATH")
 def test_systemd_analyze_verify_clean_with_web_flags_baked_in(monkeypatch, tmp_path):
     """The web-integrated ExecStart must still be a systemd-valid unit --

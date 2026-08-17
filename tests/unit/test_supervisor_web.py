@@ -164,6 +164,75 @@ def test_web_server_loop_serves_a_reachable_dashboard_and_drains_on_stop_event(t
     asyncio.run(run())
 
 
+def test_web_server_loop_serves_https_when_tls_cert_and_key_are_given(tmp_path):
+    """The integrated `serve --web-port` path must thread `tls_cert`/
+    `tls_key` all the way to uvicorn -- proven by actually connecting over
+    TLS (a self-signed cert, verified with `ssl._create_unverified_context`
+    the way a `curl -k` would), not just asserting the config object."""
+    from amplifier_work_tracker import webtls as WT
+
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    WT.generate_self_signed(cert_path, key_path)
+
+    ws = A.Workspace(tmp_path / "root")
+    port = _free_port()
+    web = SV.WebIntegrationConfig(
+        host=None,
+        public=False,
+        port=port,
+        auth_mode="password",
+        session_ttl=3600,
+        tls_cert=str(cert_path),
+        tls_key=str(key_path),
+    )
+    stop_event = asyncio.Event()
+
+    async def run():
+        task = asyncio.create_task(SV.web_server_loop(ws, web, stop_event=stop_event))
+        try:
+            await _wait_until_https_reachable(port)
+        finally:
+            stop_event.set()
+            await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(run())
+
+
+async def _wait_until_https_reachable(
+    port: int, *, attempts: int = 50, delay: float = 0.05
+) -> None:
+    """Same polling shape as `_wait_until_reachable`, but over TLS with
+    verification disabled (self-signed cert, no CA) -- the moral
+    equivalent of `curl -k`."""
+    import ssl
+
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    def _https_get() -> int:
+        # Explicitly close the response (a `with` block) -- an unclosed
+        # keep-alive connection left dangling by `urlopen` is exactly what
+        # made uvicorn's graceful shutdown ("waiting for connections to
+        # close") hang past this test's own wait_for(5) budget.
+        with urllib.request.urlopen(  # noqa: S310 -- fixed https://127.0.0.1 test URL
+            f"https://127.0.0.1:{port}/healthz", timeout=1.0, context=ctx
+        ) as resp:
+            return resp.status
+
+    last_err: Exception | None = None
+    for _ in range(attempts):
+        try:
+            status = await asyncio.to_thread(_https_get)
+            assert status == 200
+            return
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+            last_err = e
+            await asyncio.sleep(delay)
+    raise AssertionError(f"https://127.0.0.1:{port} never became reachable: {last_err}")
+
+
 def test_web_server_loop_raises_web_server_startup_error_for_rejected_config(tmp_path):
     """A non-loopback host without public=True is `webapp.WebConfigError` --
     must surface here as `WebServerStartupError`, the SAME exception a real
