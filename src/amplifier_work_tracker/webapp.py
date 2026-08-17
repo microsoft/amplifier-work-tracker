@@ -867,9 +867,18 @@ def _item_row(name: str, i: A.Item, idx: int) -> str:
     href = f"/projects/{_esc(name)}/items/{_esc(i.id)}"
     key = f"{i.id} {i.title} {i.status} {i.holder or ''}".lower()
     age_html = f'<span class="age {band}">{_esc(value)}<span class="u">{_esc(unit)}</span></span>'
+    # On a project page every id shares the same `<project>-` prefix, so the
+    # prefix is pure redundancy -- and when the project name is long
+    # (`amplifier_feedback-quj`) it pushes the UNIQUE suffix out of the fixed
+    # Id column and gets ellipsis-truncated away, hiding the only part that
+    # distinguishes one row from another. Show the suffix as the primary token;
+    # keep the full id one hover (and copy) away via `title`. Fall back to the
+    # full id if it doesn't carry this project's prefix.
+    _prefix = f"{name}-"
+    id_shown = i.id[len(_prefix) :] if i.id.startswith(_prefix) else i.id
     return f"""<tr data-t="{_esc(key)}">
   <td><span class="c"><span class="idx">{idx:03d}</span></span></td>
-  <td><span class="c"><span class="iid">{_esc(i.id)}</span></span></td>
+  <td><span class="c"><span class="iid" title="{_esc(i.id)}">{_esc(id_shown)}</span></span></td>
   <td><span class="c">{_item_state_html(i.status)}</span></td>
   <td><span class="c">{age_html}</span></td>
   <td><span class="c"><span class="holder">{holder}</span></span></td>

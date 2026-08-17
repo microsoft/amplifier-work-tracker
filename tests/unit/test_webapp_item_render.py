@@ -155,12 +155,14 @@ def test_item_row_never_concatenates_id_and_title_without_a_separator():
     item = _make_item("cortex-i2u", "cortexthing")
     row = _item_row("cortex", item, 1)
     assert f"{item.id}{item.title}" not in row
-    assert f'<span class="iid">{_esc(item.id)}</span>' in row
+    # On the project view, show the suffix as primary; keep full id on hover via title
+    assert f'<span class="iid" title="{_esc(item.id)}">i2u</span>' in row
     assert f">{_esc(item.title)}<" in row
 
 
 def test_item_row_has_separate_id_and_title_cells():
     item = _make_item("proj-abcd", "some title")
     row = _item_row("proj", item, 3)
-    assert '<td><span class="c"><span class="iid">proj-abcd</span></span></td>' in row
+    # On the project view, show the suffix as primary; keep full id on hover via title
+    assert '<td><span class="c"><span class="iid" title="proj-abcd">abcd</span></span></td>' in row
     assert '<td class="ti"><a href="/projects/proj/items/proj-abcd">some title</a></td>' in row
