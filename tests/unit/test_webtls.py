@@ -301,3 +301,55 @@ def test_generate_tailscale_returns_none_when_binary_absent(monkeypatch, tmp_pat
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = T.generate_tailscale(tmp_path / "c.crt", tmp_path / "c.key", "host.example.ts.net")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# get_cert_info -- issuer_common_name / self_signed (added for /setup's TLS
+# status card, which classifies an on-disk cert as self-signed / local-CA /
+# external without re-deriving these checks inline).
+# ---------------------------------------------------------------------------
+
+
+def test_get_cert_info_reports_self_signed_true_for_a_self_signed_cert(tmp_path):
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    T.generate_self_signed(cert_path, key_path)
+    info = T.get_cert_info(cert_path)
+    assert info is not None
+    assert info["self_signed"] is True
+
+
+def test_get_cert_info_reports_self_signed_false_for_a_ca_signed_leaf(tmp_path):
+    ca_cert, ca_key = tmp_path / "ca.crt", tmp_path / "ca.key"
+    leaf_cert, leaf_key = tmp_path / "leaf.crt", tmp_path / "leaf.key"
+    T.generate_local_ca(ca_cert, ca_key)
+    T.generate_leaf_signed_by_ca(ca_cert, ca_key, leaf_cert, leaf_key, hostnames=["myhost"])
+    info = T.get_cert_info(leaf_cert)
+    assert info is not None
+    assert info["self_signed"] is False
+    assert info["issuer_common_name"]  # the CA's CN, non-empty
+
+
+# ---------------------------------------------------------------------------
+# is_signed_by_ca -- the display-classification chain check.
+# ---------------------------------------------------------------------------
+
+
+def test_is_signed_by_ca_true_for_a_real_matching_chain(tmp_path):
+    ca_cert, ca_key = tmp_path / "ca.crt", tmp_path / "ca.key"
+    leaf_cert, leaf_key = tmp_path / "leaf.crt", tmp_path / "leaf.key"
+    T.generate_local_ca(ca_cert, ca_key)
+    T.generate_leaf_signed_by_ca(ca_cert, ca_key, leaf_cert, leaf_key, hostnames=["myhost"])
+    assert T.is_signed_by_ca(leaf_cert, ca_cert) is True
+
+
+def test_is_signed_by_ca_false_for_a_self_signed_cert_against_an_unrelated_ca(tmp_path):
+    cert_path, key_path = tmp_path / "cert.pem", tmp_path / "key.pem"
+    ca_cert, ca_key = tmp_path / "ca.crt", tmp_path / "ca.key"
+    T.generate_self_signed(cert_path, key_path)
+    T.generate_local_ca(ca_cert, ca_key)
+    assert T.is_signed_by_ca(cert_path, ca_cert) is False
+
+
+def test_is_signed_by_ca_returns_false_never_raises_for_missing_files(tmp_path):
+    assert T.is_signed_by_ca(tmp_path / "nope.crt", tmp_path / "nope-ca.crt") is False

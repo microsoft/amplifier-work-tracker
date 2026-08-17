@@ -373,6 +373,11 @@ def _identity_right(request: Request) -> str:
     identity = _identity(request)
     if identity:
         segments.append(_esc(identity))
+        # Subtle, not shouting -- a plain chrome link alongside Logout, same
+        # visual weight, reachable from every authenticated page. `/setup`
+        # itself is authenticated (see create_app), so this never appears
+        # for a signed-out visitor who couldn't follow it anyway.
+        segments.append('<a href="/setup">Setup</a>')
         segments.append('<a href="/auth/logout">Logout</a>')
     return f"{dot} " + " &middot; ".join(s for s in segments if s)
 
@@ -1340,6 +1345,305 @@ def _fact_value_html(value: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# /setup -- TLS certificate status + method options for whoever deploys this.
+#
+# Follow-on to PR #24 (TLS/HTTPS support, ported from muxplex): that work
+# gave `setup-tls` a real `--method` chain (auto/selfsigned/ca/tailscale)
+# but no in-app surface for a deployer to discover or act on it short of a
+# terminal. This section renders that surface -- read-only status plus,
+# where the host genuinely supports it, a real in-process generate action
+# (see `create_app`'s `/setup/tls` route) -- entirely from `webtls.py`'s
+# existing functions; it adds no new certificate-generation LOGIC of its
+# own, only a browser-reachable front end for logic that already exists.
+#
+# Deliberately does NOT offer an `mkcert` option: despite this task's own
+# framing suggesting one (and a `detect_mkcert()` probe), neither exists
+# anywhere in this codebase -- `cli.py`'s own `setup-tls --method` choices
+# are exactly `auto`/`selfsigned`/`ca`/`tailscale` (see `cmd_setup_tls`).
+# Presenting a fourth option this repo cannot actually act on would be
+# worse than omitting it silently would be -- see this module's `docs/
+# ISSUE_HANDLING.md`-inherited "never fabricate a satisfied requirement"
+# principle. The three real methods are presented below, ordered the way
+# the task asked (trusted-with-no-client-step first, down to
+# works-everywhere-with-a-warning last).
+# ---------------------------------------------------------------------------
+
+# A certificate inside this window is flagged in the status card (amber),
+# not just a bare date -- an operator glancing at /setup should not have to
+# do date arithmetic to notice a Tailscale cert (90-day validity) about to
+# lapse. 30 days comfortably covers a human's next login even for a
+# once-a-month spot-check.
+_CERT_EXPIRY_WARN_DAYS = 30
+
+
+def _tls_status_html(request: Request) -> str:
+    """The TLS STATUS card: derives the active scheme from THIS REQUEST
+    (`request.url.scheme`, what the ASGI server actually received -- never
+    assumed from whether a cert happens to exist on disk), then -- if a
+    cert/key pair exists at the well-known `webtls.default_cert_path()` /
+    `default_key_path()` -- reports its issuer classification, SAN
+    coverage, and expiry (flagged if within `_CERT_EXPIRY_WARN_DAYS` or
+    already past).
+
+    A cert can exist on disk while the request nonetheless arrived over
+    plain HTTP (freshly generated via `/setup/tls` below, but the running
+    uvicorn process cannot hot-swap its own TLS material -- see that
+    route's docstring): that mismatch is surfaced explicitly rather than
+    silently preferring one signal over the other.
+    """
+    scheme = request.url.scheme
+    cert_path = WT.default_cert_path()
+    key_path = WT.default_key_path()
+    info = WT.get_cert_info(cert_path) if cert_path.exists() and key_path.exists() else None
+
+    if info is None:
+        return (
+            '<div class="formsec">'
+            '<span class="flegend">TLS status</span>'
+            '<p class="subtle" style="margin-top:10px">Serving over '
+            '<b style="color:var(--ink)">HTTP</b> &mdash; not a secure origin. Installing this '
+            "dashboard as an app (&ldquo;Add to Home Screen&rdquo;) needs HTTPS. Pick a method "
+            "below, generate a certificate, then restart the service to serve it.</p>"
+            "</div>"
+        )
+
+    ca_cert_path = WT.default_ca_cert_path()
+    ca_signed = ca_cert_path.exists() and WT.is_signed_by_ca(cert_path, ca_cert_path)
+    if info["self_signed"]:
+        issuer_label = "Self-signed"
+    elif ca_signed:
+        issuer_label = "Local CA &mdash; browser-trusted once the CA is installed (see below)"
+    else:
+        issuer_label = f"External CA ({_esc(info['issuer_common_name'] or 'unknown issuer')})"
+
+    days_left = (info["expires"] - datetime.now(UTC)).total_seconds() / 86400
+    if days_left < 0:
+        expiry_cls, expiry_note = "am", " &mdash; EXPIRED"
+    elif days_left < _CERT_EXPIRY_WARN_DAYS:
+        expiry_cls, expiry_note = "am", f" &mdash; expires in {int(days_left)}d"
+    else:
+        expiry_cls, expiry_note = "", ""
+
+    scheme_cls = "" if scheme == "https" else "am"
+    stale_note = (
+        ""
+        if scheme == "https"
+        else (
+            '<p class="subtle" style="color:var(--amber);margin-top:8px">A certificate exists '
+            "on disk, but this server is currently serving plain HTTP &mdash; a running server "
+            "cannot hot-swap its own TLS material. Restart the service to pick it up.</p>"
+        )
+    )
+    hostnames_str = ", ".join(_esc(h) for h in info["hostnames"])
+    expires_str = _esc(info["expires"].strftime("%Y-%m-%d"))
+    scheme_html = f'<span class="v {scheme_cls}">{_esc(scheme.upper())}</span>'
+    expires_html = f'<span class="v {expiry_cls}">{expires_str}{expiry_note}</span>'
+
+    return f"""
+    <div class="formsec">
+      <span class="flegend">TLS status</span>
+      <div class="kv" style="margin-top:10px">
+        <div><span class="k">Scheme</span>{scheme_html}</div>
+        <div><span class="k">Issuer</span><span class="v">{issuer_label}</span></div>
+        <div><span class="k">Expires</span>{expires_html}</div>
+      </div>
+      <p class="subtle" style="margin-top:10px">Covers <span class="mono">{hostnames_str}</span></p>
+      {stale_note}
+    </div>
+    """
+
+
+def _setup_method_row(
+    *,
+    method: str,
+    title: str,
+    description: str,
+    when_to_pick: str,
+    availability_html: str,
+    command: str,
+    disabled: bool,
+    disabled_reason: str = "",
+) -> str:
+    """One METHOD OPTIONS row: what it gives you, when to pick it, whether
+    it's actually usable on THIS host right now, the exact CLI equivalent
+    (copy-pasteable, matching `cmd_setup_tls`'s own flags verbatim), and a
+    real generate button wired to `POST /setup/tls`.
+
+    `disabled` grays the button out (with `disabled_reason` as its title
+    tooltip) instead of omitting it -- an operator should see every method
+    that EXISTS, and understand why one isn't available right now, rather
+    than have it vanish silently. The POST route refuses an unavailable
+    method the same way regardless of whether this button was disabled
+    (see that route's docstring) -- disabling here is a UI courtesy, not
+    the enforcement point.
+    """
+    btn = (
+        f'<button type="submit" class="secondary" disabled '
+        f'style="opacity:.4;cursor:not-allowed" title="{_esc(disabled_reason)}">Generate</button>'
+        if disabled
+        else '<button type="submit" class="secondary">Generate</button>'
+    )
+    return f"""
+    <div class="formsec">
+      <span class="flegend">{_esc(title)}</span>
+      <p class="subtle" style="margin-top:8px">{description}</p>
+      <p class="subtle" style="margin-top:6px">
+        <b style="color:var(--ink)">When to pick this:</b> {when_to_pick}</p>
+      <p class="subtle" style="margin-top:6px">{availability_html}</p>
+      <p class="subtle" style="margin-top:8px">CLI equivalent: <code>{_esc(command)}</code></p>
+      <form method="post" action="/setup/tls" style="margin-top:10px">
+        <input type="hidden" name="method" value="{_esc(method)}">
+        {btn}
+      </form>
+    </div>
+    """
+
+
+def _setup_method_options_html() -> str:
+    """METHOD OPTIONS: Tailscale (browser-trusted, tailnet name only) ->
+    local CA (trusted after installing the CA once per device; covers LAN
+    IP + hostname + tailnet -- best default for a LAN deployment) ->
+    self-signed (works everywhere, browser warning) -- the ordering the
+    task itself specified. Availability is PROBED live on every render
+    (`WT.detect_tailscale()`), never assumed or cached -- Tailscale's own
+    connection state can change between one page load and the next.
+    """
+    tailscale_info = WT.detect_tailscale()
+    if tailscale_info:
+        ts_availability = (
+            '<span style="color:var(--ink)">Available</span> &mdash; tailnet host '
+            f'<span class="mono">{_esc(tailscale_info["hostname"])}</span>'
+        )
+        ts_disabled, ts_reason = False, ""
+    else:
+        ts_availability = (
+            '<span class="muted">Not available on this host</span> &mdash; Tailscale is not '
+            "installed, or this host is not connected to a tailnet"
+        )
+        ts_disabled = True
+        ts_reason = "Tailscale is not installed or not connected on this host"
+
+    rows = [
+        _setup_method_row(
+            method="tailscale",
+            # A plain apostrophe, not the `&rsquo;` named entity -- this
+            # title is passed through `_esc()` (see `_setup_method_row`),
+            # which escapes literal `&` and would otherwise turn a named
+            # entity into visible garbage (`&amp;rsquo;`) rather than a
+            # curly quote. `_esc()` renders a plain `'` as the numeric
+            # reference `&#x27;`, which every browser resolves correctly.
+            title="Tailscale (Let's Encrypt)",
+            description=(
+                "A real, publicly-trusted certificate for this host's tailnet name, issued via "
+                "Tailscale's own certificate service. No browser warning, on any device, anywhere."
+            ),
+            when_to_pick=(
+                "you and every user are already on the same tailnet, and a clean install "
+                "experience matters (e.g. installing this dashboard on a phone)."
+            ),
+            availability_html=ts_availability,
+            command="amplifier-work-tracker setup-tls --method tailscale",
+            disabled=ts_disabled,
+            disabled_reason=ts_reason,
+        ),
+        _setup_method_row(
+            method="ca",
+            title="Local CA",
+            description=(
+                "Generates (or reuses) a persistent local certificate authority and signs a "
+                "leaf certificate covering this host's hostname, LAN IP, and tailnet name (if "
+                "any). Trusted after the CA is installed once on each client device -- see the "
+                "download and per-OS install steps below once one is active."
+            ),
+            when_to_pick=(
+                "you're serving more than one user/device on your LAN and want a clean install "
+                "without depending on Tailscale."
+            ),
+            availability_html='<span style="color:var(--ink)">Always available</span>',
+            command="amplifier-work-tracker setup-tls --method ca",
+            disabled=False,
+        ),
+        _setup_method_row(
+            method="selfsigned",
+            title="Self-signed",
+            description=(
+                "A single self-signed certificate covering this host's hostname, LAN IP, and "
+                "tailnet name (if any). Works everywhere, on every device, with no install step."
+            ),
+            when_to_pick=(
+                "you just want HTTPS quickly and can tolerate (or click through) a one-time "
+                "browser security warning on each device."
+            ),
+            availability_html='<span style="color:var(--ink)">Always available</span>',
+            command="amplifier-work-tracker setup-tls --method selfsigned",
+            disabled=False,
+        ),
+    ]
+    return "".join(rows)
+
+
+def _setup_ca_download_html() -> str:
+    """CA download + per-OS install instructions -- rendered ONLY when a
+    local CA is actually configured on this host (`WT.default_ca_cert_path
+    ().exists()`); otherwise there is nothing to install and this section
+    is simply absent, never a dead link.
+
+    The install commands are copied verbatim from `cli.py`'s own
+    `cmd_setup_tls` (`--method ca` branch) so the terminal and the browser
+    never give a deployer two different sets of instructions for the same
+    action.
+    """
+    if not WT.default_ca_cert_path().exists():
+        return ""
+    return """
+    <div class="formsec">
+      <span class="flegend">Install the local CA</span>
+      <p class="subtle" style="margin-top:8px">A local CA is configured on this host. Install it
+        once on each client device to eliminate the browser warning for the Local CA certificate
+        above. The leaf certificate rotates yearly without re-trusting anything -- the CA is the
+        one thing you install.</p>
+      <p style="margin-top:10px"><a class="btn secondary" href="/setup/ca.crt">Download CA
+        certificate</a></p>
+      <p class="subtle" style="margin-top:16px">
+        <b style="color:var(--ink)">Windows</b> (PowerShell, no admin needed):</p>
+      <p class="subtle"><code>Import-Certificate -FilePath &lt;path-to-ca.crt&gt;
+        -CertStoreLocation Cert:\\CurrentUser\\Root</code></p>
+      <p class="subtle" style="margin-top:12px"><b style="color:var(--ink)">macOS</b>:</p>
+      <p class="subtle"><code>sudo security add-trusted-cert -d -r trustRoot -k
+        /Library/Keychains/System.keychain &lt;path-to-ca.crt&gt;</code></p>
+      <p class="subtle" style="margin-top:12px">
+        <b style="color:var(--ink)">Linux</b> (system-wide):</p>
+      <p class="subtle"><code>sudo cp &lt;path-to-ca.crt&gt;
+        /usr/local/share/ca-certificates/ &amp;&amp; sudo update-ca-certificates</code></p>
+      <p class="subtle" style="margin-top:12px"><b style="color:var(--ink)">iOS</b>: open the
+        downloaded file to install the profile, then enable full trust for it under
+        Settings &rsaquo; General &rsaquo; About &rsaquo; Certificate Trust Settings.</p>
+    </div>
+    """
+
+
+def _setup_body(request: Request) -> str:
+    heading_style = (
+        "font-family:var(--sans);font-size:24px;font-weight:500;color:var(--ink);margin:20px 0 4px"
+    )
+    return f"""
+    {_flash(request)}
+    <h1 style="{heading_style}">Setup</h1>
+    <p class="subtle">TLS/HTTPS configuration for this deployment.</p>
+    {_tls_status_html(request)}
+    {_setup_method_options_html()}
+    {_setup_ca_download_html()}
+    """
+
+
+# The only three methods `webtls.py`/`cli.py`'s `setup-tls --method` can
+# actually act on -- see this section's own module-level comment for why
+# there is deliberately no fourth (`mkcert`) entry. `POST /setup/tls`
+# refuses anything else with a 400, never a silent no-op.
+_SETUP_TLS_METHODS = frozenset({"tailscale", "ca", "selfsigned"})
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
@@ -1621,6 +1925,117 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         resp = RedirectResponse(url="/login", status_code=303)
         resp.delete_cookie(WA.SESSION_COOKIE_NAME)
         return resp
+
+    # ---------------------------------------------------------------- setup
+    #
+    # Authenticated deployer-facing TLS status + method options -- see this
+    # module's own "/setup" section (above, module-level render helpers) for
+    # the full design rationale. Deliberately NOT in `_AUTH_EXEMPT_PATHS`:
+    # unlike the PWA assets, none of this needs to be reachable before login
+    # -- it exists for whoever is already operating this deployment.
+
+    @app.get("/setup", response_class=HTMLResponse)
+    async def setup_page(request: Request):  # type: ignore[no-untyped-def]
+        return _page(
+            request,
+            "Setup",
+            _setup_body(request),
+            crumb_html=_crumb(("/", "All projects"), ("", "Setup")),
+        )
+
+    @app.get("/setup/ca.crt")
+    async def setup_ca_download():  # type: ignore[no-untyped-def]
+        """Serve the local CA certificate generated by `--method ca`, if one
+        exists on this host. Authenticated like the rest of `/setup` (not
+        auth-exempt) -- the bytes aren't secret (a CA cert is public by
+        design), but gating it behind the same session as the rest of this
+        page is the simplest correct answer and costs nothing real."""
+        ca_path = WT.default_ca_cert_path()
+        if not ca_path.exists():
+            return JSONResponse(
+                {"detail": "no local CA certificate is configured on this host"}, status_code=404
+            )
+        return Response(
+            ca_path.read_bytes(),
+            media_type="application/x-x509-ca-cert",
+            headers={"Content-Disposition": 'attachment; filename="amplifier-work-tracker-ca.crt"'},
+        )
+
+    @app.post("/setup/tls")
+    async def setup_generate_tls(method: str = Form(...)):  # type: ignore[no-untyped-def]
+        """Generate a TLS certificate at the well-known default path,
+        IN-PROCESS via `webtls.py`'s own generation functions -- never by
+        shelling out to the `setup-tls` CLI (this process already has
+        everything that command has: the same functions, the same default
+        paths).
+
+        Refuses (400, JSON, never a silent no-op) for an unknown method or
+        one that is not actually available on this host right now (e.g.
+        `tailscale` requested but not connected) -- the SAME refusal
+        whether or not `/setup`'s own button for that method happened to be
+        rendered disabled; that rendering is a UI courtesy, this is the
+        real gate.
+
+        On success, redirects back to `/setup` with a flash summarizing the
+        new certificate (method, SAN coverage, expiry) and, honestly, that
+        a restart is required -- this running uvicorn process cannot
+        hot-swap the TLS material it already bound to at startup. The
+        freshly-rendered TLS STATUS card on that reload reads the new file
+        straight off disk, so the file-level change is visible immediately
+        even though the live scheme will not flip until the service is
+        actually restarted.
+        """
+        if method not in _SETUP_TLS_METHODS:
+            return JSONResponse({"detail": f"unknown TLS method '{method}'"}, status_code=400)
+
+        cert_path = WT.default_cert_path()
+        key_path = WT.default_key_path()
+
+        if method == "tailscale":
+            tailscale_info = WT.detect_tailscale()
+            if tailscale_info is None:
+                return JSONResponse(
+                    {
+                        "detail": (
+                            "Tailscale is not installed or not connected on this host -- "
+                            "cannot generate a Tailscale certificate."
+                        )
+                    },
+                    status_code=400,
+                )
+            result = WT.generate_tailscale(cert_path, key_path, tailscale_info["hostname"])
+            if result is None:
+                return JSONResponse(
+                    {"detail": "Tailscale certificate generation failed -- see server logs."},
+                    status_code=400,
+                )
+        elif method == "ca":
+            ca_cert_path = WT.default_ca_cert_path()
+            ca_key_path = WT.default_ca_key_path()
+            WT.generate_local_ca(ca_cert_path, ca_key_path)
+            leaf_hostnames, leaf_ips = WT.default_leaf_sans()
+            result = WT.generate_leaf_signed_by_ca(
+                ca_cert_path,
+                ca_key_path,
+                cert_path,
+                key_path,
+                hostnames=leaf_hostnames,
+                ip_addresses=leaf_ips,
+            )
+        else:  # "selfsigned" -- the only remaining member of _SETUP_TLS_METHODS
+            leaf_hostnames, leaf_ips = WT.default_leaf_sans()
+            result = WT.generate_self_signed(
+                cert_path, key_path, hostnames=leaf_hostnames, ip_addresses=leaf_ips
+            )
+
+        hostnames_str = ", ".join(result["hostnames"])
+        expires = result["expires"]
+        expires_str = expires.strftime("%Y-%m-%d") if hasattr(expires, "strftime") else str(expires)
+        msg = (
+            f"Generated a {method} certificate (covers {hostnames_str}; expires {expires_str}). "
+            "Restart the service to serve it: amplifier-work-tracker service restart"
+        )
+        return _redirect("/setup", msg=msg)
 
     # ------------------------------------------------------------ dashboard
 
