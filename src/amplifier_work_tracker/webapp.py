@@ -82,6 +82,22 @@ _AUTH_EXEMPT_PATHS = {"/login", "/auth/logout", "/healthz"}
 
 SESSION_TTL_SECONDS = 12 * 3600
 
+# The overview and project-view pages sit on a monitor for hours, unattended --
+# see webapp.py's module docstring's own framing and this repo's dashboard-monitor
+# goal. Auto-refresh is what turns a calm 0/0/0 -> a real alarm into something
+# that surfaces on its own instead of waiting for someone to click Refresh.
+# 20s: frequent enough that a held/blocked item shows up "soon" on a screen
+# nobody is actively watching, infrequent enough that it is not a meaningful
+# load on the shared dolt server (this route already does a handful of `bd`
+# reads per request; every real project on every tick, sized for a human
+# glancing at a second monitor, not a tight polling loop).
+#
+# Deliberately NEVER passed to the item-detail edit page's `_page(...)` call
+# (or any page with a live, unsaved form the auto-refresh's own in-flight-typing
+# guard cannot see across a page it never loads on) -- see `_page`'s own
+# docstring and T.auto_refresh_js's for the guard mechanism.
+_AUTO_REFRESH_MS = 20_000
+
 
 # ---------------------------------------------------------------------------
 # Auth middleware
@@ -356,10 +372,29 @@ def _page(
     crumb_html: str = "",
     statusbar_html: str = "",
     js: str = "",
+    auto_refresh_ms: int | None = None,
 ) -> HTMLResponse:
+    """The one page shell every route renders through.
+
+    `auto_refresh_ms`, when given, appends `T.auto_refresh_js` to the
+    page's script -- a self-polling monitor that keeps the OVERVIEW and
+    PROJECT-VIEW pages current without anyone touching Refresh (see
+    `_AUTO_REFRESH_MS`'s own comment for why and for how often).
+
+    Every caller decides for itself whether to pass it; there is no
+    workspace-wide default here. In particular `item_detail` NEVER passes
+    it -- that page is a live, unsaved-edit form (title/description/
+    acceptance/design inputs), and no in-flight-typing guard is worth
+    trusting over simply never shipping the poller to a page a silent
+    DOM replacement could clobber. Omitting the parameter (its default,
+    `None`) is itself the guard for every other non-monitor page (login,
+    the remove confirmation form, item detail) -- the safest guard is not
+    emitting the mechanism at all, not a client-side check.
+    """
     top = T.top_bar(crumb_html=crumb_html, right_html=_identity_right(request))
     full_body = f'{top}<main class="wrap" id="main">{body}</main>{statusbar_html}'
-    return HTMLResponse(T.page(f"{title} \u00b7 amplifier-work-tracker", full_body, js=js))
+    combined_js = js + (T.auto_refresh_js(auto_refresh_ms) if auto_refresh_ms else "")
+    return HTMLResponse(T.page(f"{title} \u00b7 amplifier-work-tracker", full_body, js=combined_js))
 
 
 def _flash(request: Request) -> str:
@@ -606,6 +641,17 @@ _STATE_FILL = {
     "resolved": "var(--st-resolved)",
 }
 
+# The three states that must never render as a mere hairline once they go
+# non-zero -- see `_state_bar_html`'s own comment for why the hue alone
+# (already correct: held/blocked already reuse the app's amber/crimson
+# escalation hues) is not enough on a workspace with hundreds of items.
+_ALARM_STATES = frozenset({"held", "blocked", "deferred"})
+# A real alarm segment's floor width -- bigger than the calm seam's 3px
+# (`--st-empty`, see webtheme.py), small enough it never dominates a
+# genuinely large count (flex-grow still wins once the real proportional
+# width would exceed this floor; this only ever WIDENS a would-be sliver).
+_ALARM_MIN_PX = 16
+
 
 def _state_counts(s: A.ProjectSummary) -> dict[str, int]:
     """The fixed five-slot state breakdown for one project, `0` (never
@@ -631,12 +677,28 @@ def _state_bar_html(counts: dict[str, int]) -> str:
     a hollow outline was rejected in favour of a solid, dimmed seam, and
     for why the seam's fill is its own token rather than a reuse of the
     app's generic `--rule-hi` divider colour (too close to the fills a
-    seam is most often rendered directly beside)."""
+    seam is most often rendered directly beside).
+
+    ALARM floor -- a non-zero held/blocked/deferred segment (`_ALARM_STATES`)
+    additionally carries a `min-width:{_ALARM_MIN_PX}px` alongside its
+    proportional `flex-grow`. Colour alone (held/blocked already reuse the
+    app's amber/crimson escalation hues verbatim) is not enough on a
+    workspace with hundreds of items: a real single HELD item among them
+    would otherwise be allocated a sub-pixel sliver of flex-grow and
+    render as a functionally invisible hairline -- the opposite of "catches
+    your eye from across the room." The floor only ever WIDENS a
+    would-be-tiny segment; a genuinely large count still gets its full
+    proportional width once that exceeds the floor. Ready/resolved never
+    get this floor -- they are not alarm states, and in a real workspace
+    they are rarely tiny enough to need one."""
     parts = []
     for key in _STATE_ORDER:
         n = counts[key]
         if n > 0:
-            parts.append(f'<i style="flex:{n} 1 0;background:{_STATE_FILL[key]}"></i>')
+            style = f"flex:{n} 1 0;background:{_STATE_FILL[key]}"
+            if key in _ALARM_STATES:
+                style += f";min-width:{_ALARM_MIN_PX}px"
+            parts.append(f'<i style="{style}"></i>')
         else:
             parts.append('<span class="seam"></span>')
     return f'<div class="sbar">{"".join(parts)}</div>'
@@ -684,6 +746,47 @@ def _workspace_composition_html(counts: dict[str, int], total: int) -> str:
   {bar}
   {legend}
 </div>"""
+
+
+def _attention_signal_html(held: int, blocked: int, deferred: int) -> str:
+    """The dashboard's one genuinely optional top-level alarm: "N items need
+    attention", rendered ONLY when the workspace actually has something to
+    flag (`held + blocked + deferred > 0`) -- absent entirely, not a dimmed
+    zero, on a calm workspace.
+
+    This is deliberately NOT the same convention `_state_bar_html`'s seams
+    use. The composition bar is a fixed five-slot GAUGE -- every slot keeps
+    its place, visibly, even at zero ("the alarm lamp present and switched
+    off"). This banner is a genuine ALERT, not a gauge: there is no
+    meaningful "off" rendering of an alarm that isn't sounding, and a
+    banner reading "0 items need attention" at the very top of a calm page
+    would itself become the thing trained eyes learn to ignore -- exactly
+    the failure mode a giant, ever-present hero number caused before (see
+    this module's own docstring).
+
+    Reuses the app's existing `.flash` vocabulary rather than inventing a
+    new CSS class -- `flash-error` (crimson) when anything is BLOCKED (the
+    more severe case, same escalation ordering `_dashboard_row` uses),
+    `flash-msg` (amber) when only held/deferred are nonzero. Both are
+    already measured against `--ground` for contrast (see webtheme.py's
+    token comments), so this needs no new contrast check of its own.
+    """
+    total = held + blocked + deferred
+    if total <= 0:
+        return ""
+    parts = []
+    if blocked:
+        parts.append(f"{_pluralize(blocked, 'item')} blocked")
+    if held:
+        parts.append(f"{_pluralize(held, 'item')} held")
+    if deferred:
+        parts.append(f"{_pluralize(deferred, 'item')} deferred")
+    cls = "flash-error" if blocked else "flash-msg"
+    return (
+        f'<div class="flash {cls}" role="alert">'
+        f"<strong>{total}</strong> {_pluralize(total, 'item')} need attention "
+        f"&mdash; {', '.join(parts)}.</div>"
+    )
 
 
 _BUCKET_HEIGHT = {"0-1": 12, "2-3": 22, "4-6": 34, "7+": 44}
@@ -872,8 +975,29 @@ def _dashboard_row(s: A.ProjectSummary) -> str:
     resolved_shown = str(resolved) if resolved else "\u2014"
     resolved_cls = "n hi" if resolved else "n z"
     pct_cls = "r n hi" if resolved else "r n z"
-    key = f"{s.name} {'held' if s.held else 'healthy'}".lower()
-    return f"""<tr data-t="{_esc(key)}">
+
+    # Alarm escalation -- this project's own row must be tellable apart from
+    # a calm, all-ready-or-resolved queue at a glance, not only via its own
+    # (now correctly weighted, see `_state_bar_html`) mini composition bar,
+    # which a viewer scanning the table might not zoom in on. Same
+    # escalation ordering as everywhere else in this file (blocked outranks
+    # held/deferred in the accent chosen) -- never a competing hue, and a
+    # visibly quieter tint (.08 alpha) than the broken-row treatment above
+    # (.12 alpha), since "this queue has a stuck item" is real attention,
+    # not "this queue's backend cannot be read."
+    alarm_active = bool(counts["held"] or counts["blocked"] or counts["deferred"])
+    row_style = ""
+    if alarm_active:
+        accent = "var(--crimson)" if counts["blocked"] else "var(--amber)"
+        tint = "rgba(224,101,90,.08)" if counts["blocked"] else "rgba(217,162,83,.08)"
+        row_style = f' style="background:{tint};box-shadow:inset 4px 0 0 {accent}"'
+
+    key_bits = [s.name]
+    key_bits += [state for state in ("held", "blocked", "deferred") if counts[state]]
+    if not alarm_active:
+        key_bits.append("healthy")
+    key = " ".join(key_bits).lower()
+    return f"""<tr data-t="{_esc(key)}"{row_style}>
   <td class="link-cell"><a href="/projects/{_esc(s.name)}">{_esc(s.name)}</a></td>
   <td class="mb">{mini_bar}</td>
   <td class="r"><span class="c r"><span class="n">{total}</span></span></td>
@@ -1403,7 +1527,9 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
                 f'<section class="sec">{_create_project_form()}</section>'
             )
             sb = T.statusbar('<span class="s"><span class="dot on"></span>No projects yet</span>')
-            return _page(request, "Dashboard", body, statusbar_html=sb)
+            return _page(
+                request, "Dashboard", body, statusbar_html=sb, auto_refresh_ms=_AUTO_REFRESH_MS
+            )
 
         ordered = sorted(summaries, key=_dashboard_sort_key)
         buckets = _aggregate_buckets(summaries)
@@ -1427,6 +1553,7 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
 
         impaired = [(s.name, lbl) for s in summaries if (lbl := _impairment_label(s.name, s))]
         impaired_banner = _impairment_banner(impaired)
+        attention_signal = _attention_signal_html(held_total, blocked_total, deferred_total)
 
         # F2 -- concentration: the single biggest ready queue, so a
         # workspace-wide READY total never hides one queue quietly
@@ -1530,6 +1657,7 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
         body = f"""
         {_flash(request)}
         {impaired_banner}
+        {attention_signal}
         <section class="sec heroic"><div class="hero">{hero}{secondary}</div></section>
         <div class="hr bleed"></div>
         <section class="sec tight">{composition}</section>
@@ -1568,6 +1696,7 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             body,
             statusbar_html=sb,
             js=T.search_js(len(summaries), "QUEUES", "tbody tr[data-t]"),
+            auto_refresh_ms=_AUTO_REFRESH_MS,
         )
 
     @app.post("/projects")
@@ -1795,6 +1924,7 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
             body,
             crumb_html=crumb,
             statusbar_html=sb,
+            auto_refresh_ms=_AUTO_REFRESH_MS,
         )
 
     @app.post("/projects/{name}/items")

@@ -208,6 +208,12 @@ a{color:inherit}
    "live" is carried by the breathing motion + the word beside it, not colour. */
 .dot.on{background:var(--live);animation:breathe 4s ease-in-out infinite}
 @keyframes breathe{0%,100%{opacity:1}50%{opacity:.35}}
+/* a quiet, one-shot confirmation that an auto-refresh tick actually landed --
+   see webtheme.py's `auto_refresh_js`. Automatically neutralised by the
+   `prefers-reduced-motion` block below (it resets EVERY animation's duration
+   to ~0), so this needs no separate reduced-motion rule of its own. */
+.dot.refreshed{animation:dotpulse .6s ease}
+@keyframes dotpulse{0%{transform:scale(1)}40%{transform:scale(1.7)}100%{transform:scale(1)}}
 
 /* -- content ------------------------------------------------------------ */
 .wrap{padding:0 var(--pad);max-width:1440px;margin:0 auto}
@@ -837,6 +843,19 @@ def search_js(total: int, noun: str, row_sel: str = "[data-t]", field_id: str = 
     with a truthful `N OF total NOUN` counter -- ported verbatim (logic
     unchanged) from the reference's `shell.search_js`, which claims.py
     verified filters truthfully on all five reference screens.
+
+    Re-invocation safe: `auto_refresh_js` re-executes this same script
+    (via a fresh `<script>` element, since a `.innerHTML` swap never runs
+    the scripts it inserts) every time it replaces the page body, so every
+    element lookup below happens fresh at call time rather than being
+    captured once in a stale closure -- the whole point is that it binds
+    to whatever `{field_id}`/`{row_sel}` elements exist RIGHT NOW, old or
+    freshly swapped-in. The one exception is the `document`-level keydown
+    shortcut (`/` and Cmd/Ctrl-K): `document` itself is never replaced by
+    the body swap, so re-registering that listener on every re-invocation
+    would silently accumulate one duplicate per refresh tick forever --
+    guarded by a `window`-level flag so it is attached exactly once for
+    the life of the page, however many times this function itself reruns.
     """
     return f"""
 (function(){{
@@ -844,10 +863,11 @@ def search_js(total: int, noun: str, row_sel: str = "[data-t]", field_id: str = 
       out=document.getElementById('qc'),
       rows=[].slice.call(document.querySelectorAll('{row_sel}')),
       groups=[].slice.call(document.querySelectorAll('tr.grp'));
+  if(!q) return;
   var TOTAL={total};
   function apply(){{
     var v=q.value.trim().toLowerCase();
-    field.classList.toggle('typed', v.length>0);
+    if(field) field.classList.toggle('typed', v.length>0);
     var n=0;
     rows.forEach(function(r){{
       var hit = !v || (r.getAttribute('data-t')||'').indexOf(v)>-1;
@@ -869,11 +889,112 @@ def search_js(total: int, noun: str, row_sel: str = "[data-t]", field_id: str = 
   }}
   q.addEventListener('input', apply);
   q.addEventListener('keydown', function(e){{ if(e.key==='Escape'){{ q.value=''; apply(); }} }});
-  document.addEventListener('keydown', function(e){{
-    if(e.key==='/' && document.activeElement!==q){{ e.preventDefault(); q.focus(); }}
-    if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='k'){{ e.preventDefault(); q.focus(); }}
-  }});
+  if(!window.__wtSearchShortcutBound){{
+    window.__wtSearchShortcutBound = true;
+    document.addEventListener('keydown', function(e){{
+      var el=document.getElementById('{field_id}');
+      if(!el) return;
+      if(e.key==='/' && document.activeElement!==el){{ e.preventDefault(); el.focus(); }}
+      if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='k'){{ e.preventDefault(); el.focus(); }}
+    }});
+  }}
   apply();
+}})();
+"""
+
+
+def auto_refresh_js(interval_ms: int) -> str:
+    """A self-polling monitor: every `interval_ms`, silently re-fetch the
+    CURRENT page and swap `document.body` in place -- refreshing hero
+    figures, the workspace composition bar's alarm treatment, every queue
+    row, and the status bar -- without a hard navigation (no browser
+    loading flash, no scroll-to-top, no lost place). This is what makes a
+    calm-to-alarm transition (a held/blocked item appearing) show up on a
+    screen nobody is touching, which is the entire reason this dashboard
+    exists (see `webapp.py`'s `_AUTO_REFRESH_MS`).
+
+    Two independent guards, checked every tick; either one skips this
+    tick only -- it tries again next interval, it never stops polling:
+      - the tab is hidden (`document.hidden`): no point fetching for a
+        backgrounded tab, and no risk of surprising whoever isn't looking.
+      - the user is mid-input ANYWHERE on the page: `document.activeElement`
+        is an INPUT/TEXTAREA/SELECT (focused, dirty or not), or the `#q`
+        field (both the dashboard's client-side filter and the project
+        view's server-side search box use this id) already has a typed,
+        unsubmitted value. A silent body swap would otherwise destroy
+        focus and whatever was typed -- see `webapp.py`'s `_page` for why
+        the item-detail edit page instead never receives this script at
+        all rather than leaning on this guard alone.
+
+    A single `window`-level flag makes the whole poller idempotent: the
+    fetched body's own markup includes this exact script again (every
+    page render goes through the same `_page`/`page` shell), so without
+    the guard each successful refresh would re-execute this IIFE and
+    register a second, competing `setInterval` -- compounding on every
+    tick. `window` itself is never replaced by a body swap, so the flag
+    holds for the life of the page.
+
+    The refetch URL drops `msg`/`error` query params: those are one-time
+    flash notices from whatever redirected here, and re-fetching the
+    exact same URL forever would otherwise re-display the same flash on
+    every tick instead of letting it be transient.
+
+    Every script tag in the freshly-swapped body is re-created (not left
+    as inert markup -- `.innerHTML` never executes the `<script>` tags it
+    inserts) so `search_js`'s own re-invocation-safe binding above
+    actually reruns against the new DOM.
+    """
+    return f"""
+(function(){{
+  if(window.__wtAutoRefreshStarted) return;
+  window.__wtAutoRefreshStarted = true;
+  var INTERVAL={interval_ms};
+  var inFlight=false;
+  function isGuarded(){{
+    if(document.hidden) return true;
+    var el=document.activeElement, tag=el && el.tagName;
+    if(tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT') return true;
+    var q=document.getElementById('q');
+    if(q && q.value) return true;
+    return false;
+  }}
+  function refetchUrl(){{
+    var u=new URL(location.href);
+    u.searchParams.delete('msg');
+    u.searchParams.delete('error');
+    return u.pathname + (u.search || '');
+  }}
+  function pulse(){{
+    var dots=document.querySelectorAll('.dot.on');
+    dots.forEach(function(d){{
+      d.classList.remove('refreshed');
+      void d.offsetWidth;
+      d.classList.add('refreshed');
+    }});
+  }}
+  function tick(){{
+    if(inFlight || isGuarded()) return;
+    inFlight=true;
+    fetch(refetchUrl(), {{credentials:'same-origin',
+      headers:{{'X-Requested-With':'wt-auto-refresh'}}}})
+      .then(function(r){{ return r.ok ? r.text() : null; }})
+      .then(function(html){{
+        if(!html) return;
+        var doc=new DOMParser().parseFromString(html, 'text/html');
+        if(!doc.body) return;
+        document.body.innerHTML = doc.body.innerHTML;
+        var scripts=[].slice.call(document.body.querySelectorAll('script'));
+        scripts.forEach(function(old){{
+          var s=document.createElement('script');
+          s.textContent = old.textContent;
+          old.replaceWith(s);
+        }});
+        pulse();
+      }})
+      .catch(function(){{ /* silent -- next tick tries again */ }})
+      .finally(function(){{ inFlight=false; }});
+  }}
+  setInterval(tick, INTERVAL);
 }})();
 """
 
@@ -1047,6 +1168,7 @@ __all__ = [
     "age_band_class",
     "age_cell_html",
     "age_short",
+    "auto_refresh_js",
     "axis_ruler_html",
     "bar_html",
     "duration_words",

@@ -82,6 +82,38 @@ def test_state_legend_nonzero_states_use_their_dedicated_fill():
     assert "var(--crimson)" in html  # blocked reuses the app-wide escalation hue
 
 
+# ------------------------------------------------------- alarm floor width
+
+
+def test_state_bar_calm_zero_alarm_states_have_no_min_width_floor():
+    """A calm workspace's seams are plain 3px seams -- the alarm floor is
+    never applied to a zero-count state (only to a REAL non-zero
+    held/blocked/deferred segment)."""
+    counts = {"ready": 5, "held": 0, "blocked": 0, "deferred": 0, "resolved": 3}
+    html = W._state_bar_html(counts)  # noqa: SLF001
+    assert "min-width" not in html
+
+
+def test_state_bar_tiny_held_count_among_huge_total_still_gets_alarm_floor():
+    """The exact failure mode this deliverable exists to fix: 1 held item
+    out of a huge total must not render as a proportional (and therefore
+    near-invisible) sliver -- it must carry the alarm floor width."""
+    counts = {"ready": 998, "held": 1, "blocked": 0, "deferred": 0, "resolved": 1}
+    html = W._state_bar_html(counts)  # noqa: SLF001
+    assert f"flex:1 1 0;background:var(--amber);min-width:{W._ALARM_MIN_PX}px" in html  # noqa: SLF001
+    # the calm ready/resolved segments never get the floor -- they are not
+    # alarm states and routinely carry large real counts of their own.
+    assert "flex:998 1 0;background:var(--st-ready)" in html
+    assert "min-width" not in html.split("var(--st-ready)")[1].split("<i")[0]
+
+
+def test_state_bar_blocked_and_deferred_also_get_the_alarm_floor():
+    counts = {"ready": 1, "held": 0, "blocked": 2, "deferred": 3, "resolved": 0}
+    html = W._state_bar_html(counts)  # noqa: SLF001
+    assert f"flex:2 1 0;background:var(--crimson);min-width:{W._ALARM_MIN_PX}px" in html  # noqa: SLF001
+    assert f"flex:3 1 0;background:var(--st-deferred);min-width:{W._ALARM_MIN_PX}px" in html  # noqa: SLF001
+
+
 # ------------------------------------------------------------- sort order
 
 
@@ -242,6 +274,40 @@ def test_dashboard_row_real_resolved_shows_count_and_percent():
     assert "93%" in html
 
 
+def test_dashboard_row_calm_project_has_no_alarm_styling():
+    """A healthy queue (no held/blocked/deferred) gets a plain row -- no
+    left-edge accent, no tint -- so the flag below is a real signal, not
+    background noise on every row."""
+    s = _summary("calmq", total=10, ready=10)
+    html = W._dashboard_row(s)  # noqa: SLF001
+    assert "box-shadow" not in html
+    assert "healthy" in html  # data-t search key still names the calm state
+
+
+def test_dashboard_row_held_item_flags_the_row_amber():
+    s = _summary("heldq", total=5, ready=4, held=1)
+    html = W._dashboard_row(s)  # noqa: SLF001
+    assert "box-shadow:inset 4px 0 0 var(--amber)" in html
+    assert "held" in html.split('data-t="')[1].split('"')[0]
+
+
+def test_dashboard_row_blocked_item_flags_the_row_crimson_outranking_held():
+    """Blocked outranks held in the accent chosen -- same escalation
+    ordering used everywhere else in this file (`_secondary_readings_html`,
+    `_state_bar_html`'s own hue assignment)."""
+    s = _summary("stuckq", total=5, ready=3, held=1, blocked=1)
+    html = W._dashboard_row(s)  # noqa: SLF001
+    assert "box-shadow:inset 4px 0 0 var(--crimson)" in html
+    assert "var(--amber)" not in html.split("box-shadow")[0][-40:]
+
+
+def test_dashboard_row_deferred_item_also_flags_the_row():
+    s = _summary("deferredq", total=5, ready=4, deferred=1)
+    html = W._dashboard_row(s)  # noqa: SLF001
+    assert "box-shadow:inset 4px 0 0 var(--amber)" in html
+    assert "deferred" in html.split('data-t="')[1].split('"')[0]
+
+
 def test_dashboard_totals_sums_every_readable_project():
     a = _summary("a", total=10, ready=5, resolved=5)
     b = _summary("b", total=20, ready=15, resolved=5)
@@ -250,4 +316,35 @@ def test_dashboard_totals_sums_every_readable_project():
     assert ">30<" in html  # total
     assert ">20<" in html  # ready
     assert ">10<" in html  # resolved
-    assert "All 3 queues" in html
+
+
+# ------------------------------------------------- top-level attention signal
+
+
+def test_attention_signal_absent_entirely_when_calm():
+    """Calm (0/0/0) renders NOTHING -- not a dimmed zero, not hidden via
+    CSS, genuinely absent -- unlike the composition bar's always-present
+    seams. A permanent 'need attention' banner reading 0 would itself
+    become the thing a trained eye learns to ignore."""
+    assert W._attention_signal_html(0, 0, 0) == ""  # noqa: SLF001
+
+
+def test_attention_signal_present_and_amber_when_only_held():
+    html = W._attention_signal_html(2, 0, 0)  # noqa: SLF001
+    assert html != ""
+    assert "flash-msg" in html
+    assert "flash-error" not in html
+    assert ">2<" in html
+    assert "2 items held" in html
+
+
+def test_attention_signal_crimson_when_anything_is_blocked():
+    """Blocked outranks held/deferred for the banner's accent -- the same
+    escalation ordering used throughout this file."""
+    html = W._attention_signal_html(1, 1, 1)  # noqa: SLF001
+    assert "flash-error" in html
+    assert "flash-msg" not in html
+    assert ">3<" in html
+    assert "1 item blocked" in html
+    assert "1 item held" in html
+    assert "1 item deferred" in html

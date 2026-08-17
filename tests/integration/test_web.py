@@ -831,3 +831,58 @@ def test_resolved_item_detail_shows_no_held_by_chip(client, project_factory, uni
     r = client.get(f"/projects/{name}/items/{item.id}")
     assert r.status_code == 200
     assert "held by" not in r.text.lower()
+
+
+# ------------------------------------------------------------- auto-refresh
+#
+# `webtheme.auto_refresh_js` is JS -- these tests cannot execute it (no JS
+# engine in `TestClient`'s ASGI transport). What they DO pin, with real
+# server responses, is the mechanism's most safety-critical property: which
+# pages ship the poller and which never do. A real, browser-driven
+# demonstration of the poller actually firing (and the alarm treatment it
+# reveals) lives outside this suite -- see the goal's own verification notes.
+
+_AUTO_REFRESH_MARKER = "__wtAutoRefreshStarted"
+
+
+def test_dashboard_includes_auto_refresh_script(client, shared_project_name):
+    _login(client)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert _AUTO_REFRESH_MARKER in r.text
+    assert str(webapp._AUTO_REFRESH_MS) in r.text  # noqa: SLF001 -- pinning the real interval
+
+
+def test_project_view_includes_auto_refresh_script(client, shared_project_name):
+    _login(client)
+    r = client.get(f"/projects/{shared_project_name}")
+    assert r.status_code == 200
+    assert _AUTO_REFRESH_MARKER in r.text
+
+
+def test_item_detail_never_includes_auto_refresh_script(client, project_factory):
+    """The hard requirement: the edit page (live, unsaved title/description/
+    acceptance/design inputs) must NEVER ship the poller at all -- not
+    guarded, not conditionally, absent. The safest guard against clobbering
+    an in-progress edit is not shipping the mechanism to this page."""
+    _login(client)
+    name, bd = project_factory("noautorefreshproj")
+    new_id = bd.create("edit page must never auto-refresh", tags=[A.LANE_WORK])
+    r = client.get(f"/projects/{name}/items/{new_id}")
+    assert r.status_code == 200
+    assert _AUTO_REFRESH_MARKER not in r.text
+    assert "setInterval" not in r.text
+
+
+def test_login_page_never_includes_auto_refresh_script(client):
+    r = client.get("/login")
+    assert r.status_code == 200
+    assert _AUTO_REFRESH_MARKER not in r.text
+
+
+def test_remove_confirm_page_never_includes_auto_refresh_script(client, project_factory):
+    _login(client)
+    name, _bd = project_factory("norefreshrmproj")
+    r = client.get(f"/projects/{name}/remove")
+    assert r.status_code == 200
+    assert _AUTO_REFRESH_MARKER not in r.text
