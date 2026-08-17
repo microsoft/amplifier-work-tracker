@@ -624,11 +624,14 @@ def _state_bar_html(counts: dict[str, int]) -> str:
     five-slot order, always -- shared by the full-width workspace bar and
     every table row's mini bar (`.comp .sbar` / `.tbl td.mb .sbar` set the
     height only; this draws the same object either way, so the two can
-    never visually disagree). A zero-count state renders as a 2px neutral
-    seam rather than nothing, so the eye learns the five slots and a
-    segment appearing for the first time (a queue's first-ever HELD item)
-    is instantly legible -- see webtheme.py's module comment for why a
-    hollow outline was rejected in favour of a solid, dimmed seam."""
+    never visually disagree). A zero-count state renders as a 3px
+    `--st-empty` seam rather than nothing, so the eye learns the five slots
+    and a segment appearing for the first time (a queue's first-ever HELD
+    item) is instantly legible -- see webtheme.py's module comment for why
+    a hollow outline was rejected in favour of a solid, dimmed seam, and
+    for why the seam's fill is its own token rather than a reuse of the
+    app's generic `--rule-hi` divider colour (too close to the fills a
+    seam is most often rendered directly beside)."""
     parts = []
     for key in _STATE_ORDER:
         n = counts[key]
@@ -645,11 +648,14 @@ def _state_legend_html(counts: dict[str, int]) -> str:
     real number (a zero IS a reading, never whispered to invisibility),
     just in the quieter `.n.z` tone -- the "alarm lamp present and
     switched off" convention: every state keeps its slot, visibly, even
-    at zero."""
+    at zero. The swatch uses the SAME `--st-empty` token the bar's own
+    zero-count seam uses (`_state_bar_html`), never `--rule-hi` -- one
+    shared "this slot is off" colour for both, not two that could drift
+    apart."""
     items = []
     for key in _STATE_ORDER:
         n = counts[key]
-        swatch = _STATE_FILL[key] if n else "var(--rule-hi)"
+        swatch = _STATE_FILL[key] if n else "var(--st-empty)"
         cls = "n" if n else "n z"
         items.append(
             f'<div class="li"><span class="sw" style="background:{swatch}"></span>'

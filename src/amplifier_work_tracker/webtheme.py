@@ -347,15 +347,33 @@ a.what:hover{color:var(--amber)}
    HELD and BLOCKED deliberately reuse --amber/--crimson verbatim rather than
    minting parallel hues, so a queue's composition bar never disagrees in
    colour with the same state's marker elsewhere in this app (`.state.warnv`
-   /`.st-blkd`). A zero-count state renders as a 2px --rule-hi seam, not as
+   /`.st-blkd`). A zero-count state renders as a 3px --st-empty seam, not as
    nothing -- the "alarm lamp present and switched off" convention -- one
    shared dim tone for every empty slot rather than five bespoke unlit hues
    (ruthless simplicity: the functional requirement is "visible, not
-   absent", not "each state has its own unlit shade"). */
+   absent", not "each state has its own unlit shade").
+
+   --st-empty is its OWN token, not a reuse of --rule-hi (the app's generic
+   hairline-divider colour): --rule-hi (#333330) sits only ~20 RGB units
+   from --st-resolved (#4A463F) and --st-deferred (#5C574E) -- the two
+   fills a seam is most often rendered directly beside, since HELD/BLOCKED/
+   DEFERRED are commonly all-zero at once and their three seams land in a
+   contiguous run right before RESOLVED. At that low a delta the seam reads
+   as part of the neighbouring RESOLVED segment instead of its own dimmed
+   marker -- measured directly off a real render, not eyeballed. --st-empty
+   is lighter than every state fill it can possibly sit beside (ready,
+   held/amber, blocked/crimson, deferred, resolved) so the seam always
+   reads as a distinct, dimmed sliver rather than disappearing into
+   whichever real colour happens to be next to it. */
 :root{
   --st-ready:#E8E2D6;     /* warm parchment -- neutral backlog, not amber */
   --st-deferred:#5C574E;
   --st-resolved:#4A463F;
+  --st-empty:#928E85;     /* == --dim (5.95:1 vs --ground) -- deliberately
+                             reused rather than a new arbitrary hex, since
+                             --dim is already the app's measured "quietest
+                             legible step"; see the comment above for why
+                             this can't just be --rule-hi. */
   --fig-size-ledger:62px; /* the ready-count hero figure -- 3.8x smaller
                              than --fig-size (236px), a deliberate demotion:
                              ready-COUNT is the hero now, not unclaimed AGE */
@@ -389,8 +407,8 @@ a.what:hover{color:var(--amber)}
 .sbar{display:flex;width:100%;background:#141412;overflow:hidden;
   border-radius:2px}
 .sbar i{display:block;height:100%}
-.sbar .seam{width:2px;flex:0 0 2px;background:var(--ground);position:relative}
-.sbar .seam::after{content:"";position:absolute;inset:0;background:var(--rule-hi)}
+.sbar .seam{width:3px;flex:0 0 3px;background:var(--ground);position:relative}
+.sbar .seam::after{content:"";position:absolute;inset:0;background:var(--st-empty)}
 
 /* "workspace by state" -- the full-width centrepiece. */
 .comp .chead{display:flex;align-items:baseline;gap:16px;margin-bottom:13px;
