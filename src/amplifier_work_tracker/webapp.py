@@ -82,10 +82,12 @@ logger = logging.getLogger(__name__)
 # docstring / muxplex's own incident for why a path *starting with* or
 # *ending in* something is not a safe basis for an auth exemption.
 #
-# The five PWA asset paths are exempt for the same reason muxplex exempts
-# its own manifest/service-worker/icons: a browser must be able to fetch
-# them (to show the install prompt, register the service worker, and paint
-# the home-screen icon) before -- and independent of -- any login. None of
+# The PWA asset paths are exempt for the same reason muxplex exempts its
+# own manifest/service-worker/icons: a browser must be able to fetch them
+# (to show the install prompt, register the service worker, and paint the
+# home-screen icon) before -- and independent of -- any login. The favicon
+# and Open Graph card are exempt for the same shape of reason -- a browser
+# tab / link-preview scraper fetches them unauthenticated too. None of
 # these bytes are sensitive; the dashboard content itself stays behind PAM.
 _AUTH_EXEMPT_PATHS = {
     "/login",
@@ -96,6 +98,9 @@ _AUTH_EXEMPT_PATHS = {
     "/pwa-192.png",
     "/pwa-512.png",
     "/apple-touch-icon.png",
+    "/favicon.ico",
+    "/favicon-32.png",
+    "/og-dark.png",
 }
 
 SESSION_TTL_SECONDS = 12 * 3600
@@ -1505,6 +1510,45 @@ def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
     async def pwa_apple_touch_icon():  # type: ignore[no-untyped-def]
         return Response(
             PWA.icon_bytes("apple-touch-icon.png"),
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    # Favicons -- same rationale/policy as the five PWA routes above (auth-
+    # exempt, no-cache): a browser fetches the tab icon before/independent
+    # of any login. `favicon.ico` bundles 16/32/48 in one multi-resolution
+    # file (`<link rel="icon" href="/favicon.ico" sizes="any">`);
+    # `favicon-32.png` is the modern PNG variant browsers prefer when both
+    # are offered (`<link rel="icon" type="image/png" href="/favicon-32.png">`).
+    # See `scripts/gen_pwa_icons.py` for how both are generated from the
+    # same brand source as the PWA icons.
+
+    @app.get("/favicon.ico")
+    async def favicon_ico():  # type: ignore[no-untyped-def]
+        return Response(
+            PWA.icon_bytes("favicon.ico"),
+            media_type="image/x-icon",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    @app.get("/favicon-32.png")
+    async def favicon_32():  # type: ignore[no-untyped-def]
+        return Response(
+            PWA.icon_bytes("favicon-32.png"),
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    # Open Graph / social-preview card -- optional, but cheap: lets a link
+    # to this dashboard render a real preview image (chat apps, Slack,
+    # issue trackers) instead of a blank/generic card. Same auth-exempt +
+    # no-cache policy; scrapers fetch it unauthenticated, same as the PWA
+    # assets above.
+
+    @app.get("/og-dark.png")
+    async def og_card():  # type: ignore[no-untyped-def]
+        return Response(
+            PWA.icon_bytes("og-dark.png"),
             media_type="image/png",
             headers={"Cache-Control": "no-cache"},
         )
