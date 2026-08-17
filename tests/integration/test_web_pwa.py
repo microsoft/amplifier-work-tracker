@@ -1,6 +1,7 @@
 """Integration tests for the PWA surface (`webpwa.py`'s content, served by
-the five routes `webapp.create_app` wires: `/manifest.json`, `/sw.js`,
-`/pwa-192.png`, `/pwa-512.png`, `/apple-touch-icon.png`).
+the eight routes `webapp.create_app` wires: `/manifest.json`, `/sw.js`,
+`/pwa-192.png`, `/pwa-512.png`, `/apple-touch-icon.png`, `/favicon.ico`,
+`/favicon-32.png`, `/og-dark.png`).
 
 Same isolation model as `test_web.py`: real `bd` + the shared (isolated)
 dolt server via `conftest.py`'s session-scoped `workspace` fixture, driven
@@ -64,7 +65,16 @@ def _login(client: TestClient) -> None:
 
 @pytest.mark.parametrize(
     "path",
-    ["/manifest.json", "/sw.js", "/pwa-192.png", "/pwa-512.png", "/apple-touch-icon.png"],
+    [
+        "/manifest.json",
+        "/sw.js",
+        "/pwa-192.png",
+        "/pwa-512.png",
+        "/apple-touch-icon.png",
+        "/favicon.ico",
+        "/favicon-32.png",
+        "/og-dark.png",
+    ],
 )
 def test_pwa_asset_is_reachable_without_authentication(client, path):
     resp = client.get(path)
@@ -155,6 +165,96 @@ def test_icon_is_a_real_png_with_correct_content_type_and_cache_header(client, p
     assert resp.content.startswith(magic)
 
 
+# --------------------------------------------------------- favicon / OG card
+
+
+def test_favicon_ico_content_type_cache_header_and_real_ico_magic(client):
+    resp = client.get("/favicon.ico")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] in ("image/x-icon", "image/vnd.microsoft.icon")
+    assert resp.headers["cache-control"] == "no-cache"
+    # ICO magic: 2 reserved zero bytes, type=1 (icon), then an image count.
+    assert resp.content[:4] == b"\x00\x00\x01\x00"
+
+
+def _ico_frame_sizes(data: bytes) -> set[tuple[int, int]]:
+    """Parse an ICO file's directory (no image library required): a 6-byte
+    header (reserved=0, type=1, frame count) followed by one 16-byte
+    ICONDIRENTRY per frame, whose first two bytes are width/height (0
+    means 256, per the format spec)."""
+    import struct
+
+    _reserved, _type, count = struct.unpack_from("<HHH", data, 0)
+    sizes = set()
+    for i in range(count):
+        width, height = struct.unpack_from("<BB", data, 6 + i * 16)
+        sizes.add((width or 256, height or 256))
+    return sizes
+
+
+def test_favicon_ico_bundles_all_three_resolutions(client):
+    """Load-bearing: this must be a real multi-resolution .ico (16/32/48),
+    not a single 48px frame masquerading under the legacy filename -- see
+    `scripts/gen_pwa_icons.py` for how it's built. Parsed by hand (no
+    image library) so this test runs without Pillow installed."""
+    resp = client.get("/favicon.ico")
+    assert _ico_frame_sizes(resp.content) == {(16, 16), (32, 32), (48, 48)}
+
+
+def test_favicon_32_png_is_a_real_png_with_correct_content_type_and_cache_header(client):
+    resp = client.get("/favicon-32.png")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.headers["cache-control"] == "no-cache"
+    assert resp.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_og_card_is_a_real_png_with_correct_content_type_and_cache_header(client):
+    resp = client.get("/og-dark.png")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.headers["cache-control"] == "no-cache"
+    assert resp.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_pwa_512_and_apple_touch_icon_are_opaque_maskable_safe_renders(client):
+    """`pwa-512.png` serves both `purpose: maskable` and `purpose: any` in
+    the manifest, and `apple-touch-icon.png` is shown on iOS home screens
+    where the OS renders alpha=0 as solid black, not transparent -- both
+    must therefore be fully opaque (no transparency at all), unlike
+    `pwa-192.png` which keeps the source icon's own transparent rounded
+    corners. See `scripts/gen_pwa_icons.py`'s `_flatten`.
+
+    Pillow is a dev/build-only tool (see that script's docstring), not a
+    project dependency, so this richer pixel-content assertion is skipped
+    -- rather than failing the suite -- where it isn't installed.
+    """
+    import io
+
+    Image = pytest.importorskip("PIL.Image", reason="Pillow not installed (dev/build-only tool)")
+
+    for path in ("/pwa-512.png", "/apple-touch-icon.png"):
+        resp = client.get(path)
+        im = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+        alpha_channel = im.split()[-1]
+        assert alpha_channel.getextrema() == (255, 255), (
+            f"{path} must be fully opaque (maskable/apple-touch-icon requirement)"
+        )
+
+
+def test_pwa_192_keeps_the_source_icons_native_transparent_corners(client):
+    """See the test above re: Pillow being an optional/dev-only check."""
+    import io
+
+    Image = pytest.importorskip("PIL.Image", reason="Pillow not installed (dev/build-only tool)")
+
+    resp = client.get("/pwa-192.png")
+    im = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+    alpha_channel = im.split()[-1]
+    lo, _hi = alpha_channel.getextrema()
+    assert lo == 0, "pwa-192.png (purpose: any) should keep the icon's own rounded-corner shape"
+
+
 # ------------------------------------------------------------- page head
 
 
@@ -165,6 +265,9 @@ def test_authenticated_dashboard_head_includes_pwa_tags(client):
     assert '<link rel="manifest" href="/manifest.json">' in resp.text
     assert 'name="theme-color"' in resp.text
     assert '<link rel="apple-touch-icon" href="/apple-touch-icon.png">' in resp.text
+    assert '<link rel="icon" href="/favicon.ico" sizes="any">' in resp.text
+    assert '<link rel="icon" type="image/png" href="/favicon-32.png">' in resp.text
+    assert 'property="og:image" content="/og-dark.png"' in resp.text
     assert "navigator.serviceWorker.register('/sw.js')" in resp.text
 
 

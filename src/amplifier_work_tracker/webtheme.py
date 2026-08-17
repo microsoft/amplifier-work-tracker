@@ -809,19 +809,37 @@ def page(title: str, body: str, *, js: str = "", measure_px: int = 620) -> str:
 
 
 # ---------------------------------------------------------------------------
-# PWA head tags -- manifest link, theme-color, iOS home-screen chrome, and
-# the service-worker registration script, on every page. Ported in shape
-# from muxplex's `frontend/index.html` (per explicit request); the actual
-# manifest/service-worker content lives in `webpwa.py`, served by routes in
-# `webapp.py` (all five PWA asset paths are auth-exempt -- a browser must
-# be able to fetch them before/without a login for install to work at all).
+# PWA head tags -- manifest link, theme-color, iOS home-screen chrome, the
+# favicon, an Open Graph preview image, and the service-worker registration
+# script, on every page. Ported in shape from muxplex's
+# `frontend/index.html` (per explicit request); the actual manifest/
+# service-worker/icon/favicon content lives in `webpwa.py`, served by
+# routes in `webapp.py` (every asset path referenced below is auth-exempt
+# -- a browser must be able to fetch them before/without a login for
+# install, the tab icon, and link previews to work at all).
+#
+# Two `<link rel="icon">` tags, not one -- `favicon.ico` (multi-resolution
+# 16/32/48, `sizes="any"`) covers browsers that only ever look for that
+# legacy filename; `favicon-32.png` is the modern PNG variant browsers
+# prefer when both are offered. Both are generated from the same brand
+# source as the PWA/apple-touch icons -- see `scripts/gen_pwa_icons.py`.
 #
 # `theme-color` below is `--ground` (`#0D0D0C`) written as a literal, kept
 # in sync with `webpwa.GROUND_HEX` and `CSS`'s own `--ground` by comment,
 # not by cross-module import -- this file already owns its palette as a
 # self-contained visual system (see this module's own docstring); the same
 # comment-based-sync convention this codebase already uses elsewhere (see
-# `webapp.py`'s `_item_search_key` docstring).
+# `webapp.py`'s `_item_search_key` docstring). Deliberately NOT the brand
+# icon's own internal ground colour (~#00051a, see
+# `scripts/gen_pwa_icons.py`'s `ICON_GROUND`) -- `theme-color` should match
+# the actual app chrome a user sees, not the icon artwork's own padding;
+# the two near-blacks are close enough that this is not visually jarring.
+#
+# `og:image` intentionally uses a relative URL, same as every other asset
+# link here -- most scrapers resolve it against the page URL they fetched,
+# though the OG spec technically wants an absolute one. A deployer serving
+# this behind a stable public hostname who wants guaranteed social-preview
+# rendering everywhere should override it with an absolute URL.
 # ---------------------------------------------------------------------------
 
 _PWA_HEAD_HTML = (
@@ -829,7 +847,11 @@ _PWA_HEAD_HTML = (
     '<meta name="apple-mobile-web-app-capable" content="yes">'
     '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">'
     '<meta name="apple-mobile-web-app-title" content="Work Tracker">'
+    '<meta property="og:title" content="Amplifier Work Tracker">'
+    '<meta property="og:image" content="/og-dark.png">'
     '<link rel="manifest" href="/manifest.json">'
+    '<link rel="icon" href="/favicon.ico" sizes="any">'
+    '<link rel="icon" type="image/png" href="/favicon-32.png">'
     '<link rel="apple-touch-icon" href="/apple-touch-icon.png">'
     "<script>"
     "if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js');}"
