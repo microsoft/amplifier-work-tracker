@@ -678,11 +678,16 @@ def get_cert_info(cert_path) -> dict | None:
         cert_path: Path to the PEM certificate file.
 
     Returns:
-        dict with expires, not_before, hostnames (DNS names + IPs from SANs), serial.
+        dict with expires, not_before, hostnames (DNS names + IPs from SANs),
+        serial, issuer_common_name (the issuer's CN, or None if it has none),
+        and self_signed (True when issuer == subject -- the same check
+        `generate_self_signed` itself produces, since that function sets
+        both Names to the identical `x509.Name` object).
         Returns None if the file is missing or cannot be parsed.
     """
     from cryptography import x509
     from cryptography.x509.extensions import ExtensionNotFound
+    from cryptography.x509.oid import NameOID
 
     cert_path = Path(cert_path)
 
@@ -717,12 +722,44 @@ def get_cert_info(cert_path) -> dict | None:
     except AttributeError:
         not_before = cert.not_valid_before  # type: ignore[attr-defined]
 
+    try:
+        issuer_cn = cert.issuer.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+    except IndexError:
+        issuer_cn = None
+
     return {
         "expires": expires,
         "not_before": not_before,
         "hostnames": hostnames,
         "serial": cert.serial_number,
+        "issuer_common_name": issuer_cn,
+        "self_signed": cert.issuer == cert.subject,
     }
+
+
+def is_signed_by_ca(cert_path, ca_cert_path) -> bool:
+    """Return True if the certificate at `cert_path` was signed by the CA at
+    `ca_cert_path` -- i.e. its issuer Name matches the CA's subject Name.
+
+    The same real chain check `tests/unit/test_webtls.py`'s own
+    `test_generate_leaf_signed_by_ca_produces_a_cert_chained_to_the_ca`
+    already performs by hand (`leaf_x509.issuer == ca_x509.subject`),
+    promoted to a first-class helper so a display surface (`/setup`'s TLS
+    status card) can classify an on-disk certificate without re-deriving
+    that comparison inline. This is a DISPLAY classification, not a
+    cryptographic verification of the chain (no signature is checked) --
+    returns False (never raises) if either file is missing or unparseable.
+    """
+    from cryptography import x509
+
+    cert_path = Path(cert_path)
+    ca_cert_path = Path(ca_cert_path)
+    try:
+        cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+        ca_cert = x509.load_pem_x509_certificate(ca_cert_path.read_bytes())
+    except (FileNotFoundError, PermissionError, OSError, ValueError):
+        return False
+    return cert.issuer == ca_cert.subject
 
 
 __all__ = [
@@ -739,4 +776,5 @@ __all__ = [
     "generate_self_signed",
     "generate_tailscale",
     "get_cert_info",
+    "is_signed_by_ca",
 ]
