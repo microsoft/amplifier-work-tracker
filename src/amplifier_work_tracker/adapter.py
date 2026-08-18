@@ -24,6 +24,7 @@ import shutil
 import signal
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -139,6 +140,44 @@ LINK_DISCOVERED_FROM = "discovered-from"
 # expected response -- not a fallback masking a failure.
 _RETRYABLE = ("1213", "1205", "serialization failure", "try restarting transaction")
 _MAX_RETRIES = 8
+
+# Transient dolt/mysql CONNECTION-transport failures -- a different category
+# from the serialization conflicts above, and from any bd DOMAIN error: the
+# dolt server was momentarily unreachable, the socket dropped, or a pooled
+# connection went bad. Retrying is the correct, expected response for these
+# for exactly the same reason it is for a serialization conflict -- a real
+# agent (not just the test suite) hitting a momentary dolt blip on ANY bd
+# call should ride through it, not fail hard. `bd` today has no internal
+# reconnect for this: it surfaces a connection drop as a plain non-zero exit,
+# and `_run`'s serialization-only retry above passed that straight through.
+#
+# Matched conservatively against transport-layer signatures that can never
+# appear in a legitimate bd domain result (a validation/not-found/logic
+# error), so this can never turn a genuine failure into a false success --
+# a persistent outage still exhausts the bounded retries below and surfaces
+# the same non-zero result as before, just a couple of seconds later.
+# "dolt server unreachable" + "connection refused" are bd 1.1.2's OWN
+# captured wording for an unreachable server (measured directly, see
+# fix/flaky-tests); the rest are the standard Go database/sql +
+# go-sql-driver/mysql transient-connection strings dolt surfaces beneath bd.
+_RETRYABLE_CONNECTION = (
+    "dolt server unreachable",
+    "connection refused",
+    "connection reset",
+    "broken pipe",
+    "bad connection",
+    "invalid connection",
+    "i/o timeout",
+    "server has gone away",
+)
+# Connection retries are bounded MUCH tighter than serialization retries: a
+# transient blip clears in well under a second, whereas a genuinely-down
+# server must fail FAST (a couple of seconds), not after 8 exponential
+# backoffs (~40s) of hammering a server that isn't coming back. A few
+# attempts, short capped backoff -- a few-second ceiling in total.
+_MAX_CONNECTION_RETRIES = 4
+_CONNECTION_RETRY_BACKOFF_CAP = 0.5
+
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,30}$")
 
 # --------------------------------------------------------------------------
@@ -678,6 +717,50 @@ def _parse_bd_timestamp(v: object) -> datetime | None:
         return None
 
 
+def _uuid7_timestamp(v: object) -> datetime | None:
+    """The millisecond-precision creation instant embedded in a UUIDv7
+    identifier (RFC 9562: the first 48 bits are a big-endian Unix-epoch
+    millisecond count) -- or `None` if *v* isn't a parseable UUIDv7.
+
+    Why this exists: `bd comments --json`'s own `created_at` is truncated
+    to whole SECONDS (the same precision gap `_history_events` works
+    around for `created_at`/`closed_at` via `CommitDate` -- see its
+    docstring), and empirically it isn't even a clean floor of the real
+    time -- measured against bd 1.1.2, a comment created at 44.523s was
+    reported `created_at` of the NEXT whole second (45), landing it AFTER
+    a resolve whose `CommitDate` was 44.79s, i.e. inverting the real
+    order. That is the residual this closes: in `Beads.activity`'s
+    combined, reverse-chronological feed a comment that genuinely happened
+    BEFORE a resolve would sort as if it happened after, because its
+    coarse `created_at` rounded up past the resolve's millisecond
+    `CommitDate`.
+
+    bd's comment `id` is independently a UUIDv7 (verified against bd
+    1.1.2's real output), and its embedded millisecond timestamp landed
+    inside the true request/response window in every trial -- a real,
+    precise clock reading `created_at` does not reliably give us. This is
+    a bd-specific assumption (comment ids happen to be UUIDv7), so it
+    lives here, in the one module allowed to know bd's exact shapes -- see
+    AGENTS.md's "adapter seam." Falls back to `None` (never raises, never
+    guesses) for anything that isn't a valid version-7 UUID, so an id
+    shape change in a future bd release degrades to the coarser
+    `created_at` rather than breaking.
+    """
+    if not isinstance(v, str):
+        return None
+    try:
+        parsed = uuid.UUID(v)
+    except (ValueError, AttributeError, TypeError):
+        return None
+    if parsed.version != 7:
+        return None
+    ms = int.from_bytes(parsed.bytes[0:6], "big")
+    try:
+        return datetime.fromtimestamp(ms / 1000, tz=UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 @dataclass
 class Item:
     """One unit of work or one user report, in OUR vocabulary."""
@@ -802,6 +885,17 @@ def _active_blockers(item: Item) -> list[dict]:
 def _retryable(blob: str) -> bool:
     low = blob.lower()
     return any(t.lower() in low for t in _RETRYABLE)
+
+
+def _connection_retryable(blob: str) -> bool:
+    """True if *blob* (a bd call's combined stdout+stderr) names a transient
+    dolt/mysql CONNECTION-transport failure -- see `_RETRYABLE_CONNECTION`'s
+    note for why these, and only these, are safe to ride through with a
+    bounded retry. Deliberately distinct from `_retryable` (serialization
+    conflicts) so the two retry budgets in `Beads._run` stay independent.
+    """
+    low = blob.lower()
+    return any(t in low for t in _RETRYABLE_CONNECTION)
 
 
 STATUS_ERROR_MAX = 300  # see `truncate_status` -- was 120/70 at two call sites, severing hints
@@ -1192,12 +1286,45 @@ class Beads:
         return e
 
     def _run(self, args: list[str], actor: str | None = None) -> subprocess.CompletedProcess:
+        """Run one `bd` subprocess, riding through two distinct classes of
+        transient, retryable failure (see the module-level `_RETRYABLE` /
+        `_RETRYABLE_CONNECTION` notes for why each is a real, expected blip
+        rather than a masked failure):
+
+          - Dolt SERIALIZATION conflicts (Beads manufactures these so claims
+            serialize): up to `_MAX_RETRIES` attempts, exponential backoff,
+            then RAISE `BeadsError` -- unchanged, load-bearing behavior.
+          - Dolt CONNECTION-transport blips (server momentarily unreachable,
+            socket dropped): a much tighter bounded retry (`_MAX_CONNECTION_
+            RETRIES`, short capped backoff, few-second ceiling), then RETURN
+            the failed process as-is -- so a genuinely-down server surfaces
+            exactly the same non-zero result callers already handle today,
+            never a new exception type, just a couple of seconds later.
+
+        The two budgets are independent counters: a connection blip must not
+        silently eat the serialization-retry budget (or vice versa), and the
+        connection path must fail FAST on a persistent outage rather than
+        inheriting the serialization path's ~40s exponential ceiling.
+        """
         last = None
-        for attempt in range(_MAX_RETRIES):
+        serialization_attempt = 0
+        connection_attempt = 0
+        while True:
             p = _run_bounded(["bd", *args], env=self._env(actor))
             last = p
-            if _retryable((p.stdout or "") + (p.stderr or "")):
-                time.sleep(0.15 * (2**attempt) * (0.5 + os.urandom(1)[0] / 255))
+            blob = (p.stdout or "") + (p.stderr or "")
+            if p.returncode != 0 and _connection_retryable(blob):
+                if connection_attempt >= _MAX_CONNECTION_RETRIES:
+                    return p  # transient-connection budget spent -- surface it, as before
+                backoff = min(_CONNECTION_RETRY_BACKOFF_CAP, 0.1 * (2**connection_attempt))
+                time.sleep(backoff * (0.5 + os.urandom(1)[0] / 255))
+                connection_attempt += 1
+                continue
+            if _retryable(blob):
+                if serialization_attempt >= _MAX_RETRIES - 1:
+                    break
+                time.sleep(0.15 * (2**serialization_attempt) * (0.5 + os.urandom(1)[0] / 255))
+                serialization_attempt += 1
                 continue
             return p
         raise BeadsError(
@@ -1491,7 +1618,7 @@ class Beads:
                 for c in comments:
                     if not isinstance(c, dict):
                         continue
-                    at = _parse_bd_timestamp(c.get("created_at"))
+                    at = _uuid7_timestamp(c.get("id")) or _parse_bd_timestamp(c.get("created_at"))
                     if at is None:
                         continue
                     events.append(
