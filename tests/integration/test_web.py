@@ -318,6 +318,128 @@ def test_item_detail_nonexistent_item_shows_friendly_error(client, shared_projec
     assert ".beads" not in r.text
 
 
+# ---------------------------------------------- item detail: blocker chain
+
+
+def test_item_detail_shows_blocked_by_chain_with_status_and_holder(
+    client, project_factory, unique_actor
+):
+    """The headline finding for Beadbox idea #7: a blocked item's detail
+    page names its blocker's id/title, status, and who holds it."""
+    _login(client)
+    name, bd = project_factory("blockerchainproj")
+    blocker_id = bd.create("upstream blocker item", tags=[A.LANE_WORK])
+    blocked_id = bd.create("downstream blocked item", tags=[A.LANE_WORK])
+    r = bd._run(["dep", blocker_id, "--blocks", blocked_id])  # noqa: SLF001 -- test setup
+    assert r.returncode == 0, r.stderr
+    bd.claim_item(blocker_id, actor=unique_actor)
+
+    resp = client.get(f"/projects/{name}/items/{blocked_id}")
+    assert resp.status_code == 200
+    assert "Blocked by" in resp.text
+    assert blocker_id in resp.text
+    assert "upstream blocker item" in resp.text
+    assert "blocker-item unsatisfied" in resp.text
+    assert unique_actor in resp.text  # held-by owner
+
+
+def test_item_detail_blocker_chain_clears_once_blocker_resolved(
+    client, project_factory, unique_actor
+):
+    _login(client)
+    name, bd = project_factory("blockerclearsproj")
+    blocker_id = bd.create("clears: blocker item", tags=[A.LANE_WORK])
+    blocked_id = bd.create("clears: blocked item", tags=[A.LANE_WORK])
+    r = bd._run(["dep", blocker_id, "--blocks", blocked_id])  # noqa: SLF001
+    assert r.returncode == 0, r.stderr
+
+    before = client.get(f"/projects/{name}/items/{blocked_id}")
+    assert "blocker-item unsatisfied" in before.text
+
+    bd.claim_item(blocker_id, actor=unique_actor)
+    bd.resolve(blocker_id, "cleared", actor=unique_actor)
+
+    after = client.get(f"/projects/{name}/items/{blocked_id}")
+    assert after.status_code == 200
+    assert "blocker-item satisfied" in after.text
+    assert "blocker-item unsatisfied" not in after.text
+    assert "&#10003;" in after.text  # the check mark on the cleared chain
+
+
+def test_item_detail_shows_discovered_from_provenance(client, project_factory):
+    _login(client)
+    name, bd = project_factory("discoveredproj")
+    origin_id = bd.create("origin report", tags=[A.LANE_WORK])
+    found_id = bd.create(
+        "discovered while working origin", tags=[A.LANE_WORK], discovered_from=[origin_id]
+    )
+    resp = client.get(f"/projects/{name}/items/{found_id}")
+    assert resp.status_code == 200
+    assert "Discovered while working" in resp.text
+    assert origin_id in resp.text
+    # A discovered-from link never blocks -- must never render as a blocker.
+    # Checks the actual rendered HEADING/ATTRIBUTE markup, not a bare
+    # substring: both "Blocked by" and "blocker-item" also appear inside
+    # webtheme.py's own CSS (a comment, and the `.blocker-item.unsatisfied`/
+    # `.blocker-item.satisfied` selectors respectively) which is present on
+    # every page via the shared <style> block, so a bare substring check
+    # would false-positive on the stylesheet rather than real content. A
+    # rendered `<li>` always carries `class="blocker-item ..."` (a space,
+    # not the CSS selector's dot) -- that's the precise, unambiguous signal.
+    assert '<h2 class="eyebrow am" style="display:block;margin-top:30px">Blocked by</h2>' not in (
+        resp.text
+    )
+    assert 'class="blocker-item' not in resp.text
+
+
+def test_item_detail_shows_blocks_inverse(client, project_factory):
+    _login(client)
+    name, bd = project_factory("blocksinverseproj")
+    blocker_id = bd.create("inverse: blocker", tags=[A.LANE_WORK])
+    blocked_id = bd.create("inverse: blocked", tags=[A.LANE_WORK])
+    r = bd._run(["dep", blocker_id, "--blocks", blocked_id])  # noqa: SLF001
+    assert r.returncode == 0, r.stderr
+
+    resp = client.get(f"/projects/{name}/items/{blocker_id}")
+    assert resp.status_code == 200
+    assert "Blocks" in resp.text
+    assert blocked_id in resp.text
+
+
+# ---------------------------------------------- item detail: activity feed
+
+
+def test_item_detail_shows_activity_feed_with_real_events(client, project_factory, unique_actor):
+    _login(client)
+    name, bd = project_factory("activityfeedproj")
+    item_id = bd.create("activity feed probe", tags=[A.LANE_WORK])
+    bd.claim_item(item_id, actor=unique_actor)
+    r = bd._run(["comment", item_id, "a very specific comment body"])  # noqa: SLF001
+    assert r.returncode == 0, r.stderr
+    bd.resolve(item_id, "a very specific resolution reason", actor=unique_actor)
+
+    resp = client.get(f"/projects/{name}/items/{item_id}")
+    assert resp.status_code == 200
+    assert "Activity" in resp.text
+    assert "Created" in resp.text
+    assert "Claimed" in resp.text
+    assert "Comment" in resp.text
+    assert "a very specific comment body" in resp.text
+    assert "Resolved" in resp.text
+
+
+def test_item_detail_fresh_item_activity_feed_shows_only_created(client, project_factory):
+    _login(client)
+    name, bd = project_factory("activityfreshproj")
+    item_id = bd.create("fresh activity probe", tags=[A.LANE_WORK])
+    resp = client.get(f"/projects/{name}/items/{item_id}")
+    assert resp.status_code == 200
+    assert "Activity" in resp.text
+    assert "Created" in resp.text
+    assert "Comment" not in resp.text
+    assert "Resolved" not in resp.text
+
+
 def test_no_claim_affordance_anywhere_in_the_web_ui(client, project_factory, unique_actor):
     """Agent-focus regression guard: no page this UI renders offers a way
     to claim an item from a browser -- not the project listing, not an

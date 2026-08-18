@@ -781,6 +781,42 @@ button.danger:hover,a.btn.danger:hover{background:#c44c40}
   text-decoration-color:var(--link-underline)}
 .links-list a:hover{color:var(--amber)}
 
+/* -- blocker chain (item-detail, webapp.py's `_dependency_sections_html`) --
+   The blocked-by list is the one dependency-graph section that spends the
+   reserved --crimson accent, and ONLY on an entry that is a still-open
+   `blocks` dependency (`.unsatisfied` -- the exact same `blocking` flag
+   `claim_item` itself refuses on, so this can never show a chain as clear
+   when a real claim would still be blocked). A satisfied (resolved)
+   blocker is neutral plus a quiet check mark -- the chain clearing, not a
+   second alarm. The inverse and fallback sections reuse the plain
+   `.links-list` look above: they describe what this item affects, not an
+   escalation about this item. */
+.blocker-list{list-style:none;margin:0.2rem 0 1rem;padding:0;font-size:13px}
+.blocker-list li{padding:6px 0;border-bottom:1px solid var(--rule);
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;color:var(--mid)}
+.blocker-list li:last-child{border-bottom:0}
+.blocker-list a{color:var(--mid);text-decoration:underline;
+  text-decoration-color:var(--link-underline)}
+.blocker-list a:hover{color:var(--amber)}
+.blocker-item.unsatisfied{color:var(--ink)}
+.blocker-item.satisfied{color:var(--dim)}
+.blocker-item .check{color:var(--dim);font-weight:700}
+
+/* -- activity feed (item-detail, webapp.py's `_activity_feed_html`) --------
+   Reverse-chronological, real events only (`adapter.Beads.activity`). Kept
+   neutral by construction: age reuses the SAME `.age`/age-band classes as
+   every other timestamp in this app (`_item_age_html`), never a bespoke
+   third age vocabulary, and nothing here spends --amber/--crimson -- an
+   activity log is a record, not an alarm. */
+.activity-list{list-style:none;margin:0.2rem 0 1rem;padding:0;font-size:13px}
+.activity-list li{padding:7px 0;border-bottom:1px solid var(--rule);
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;color:var(--mid)}
+.activity-list li:last-child{border-bottom:0}
+.activity-list .ak{font-family:var(--sans);font-weight:600;color:var(--ink);
+  font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
+.activity-list .adetail{flex-basis:100%;color:var(--mid);font-size:13px;
+  white-space:pre-wrap;word-break:break-word}
+
 /* -- pagination ----------------------------------------------------------- */
 .pagination{display:flex;justify-content:space-between;align-items:center;
   flex-wrap:wrap;gap:0.5rem 1rem;margin:-0.25rem 0 1.25rem;font-size:11.5px;

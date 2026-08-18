@@ -164,6 +164,98 @@ def test_active_blockers_handles_missing_dependencies_key():
     assert A._active_blockers(item) == []
 
 
+# --------------------------------------------------------- _map_status
+
+
+def test_map_status_translates_every_known_bd_status():
+    assert A._map_status("open") == "open"
+    assert A._map_status("in_progress") == "held"
+    assert A._map_status("closed") == "resolved"
+    assert A._map_status("blocked") == "blocked"
+    assert A._map_status("deferred") == "deferred"
+
+
+def test_map_status_passes_through_unknown_value_rather_than_coercing():
+    assert A._map_status("some_new_bd_status") == "some_new_bd_status"
+
+
+def test_map_status_handles_none_and_empty():
+    assert A._map_status(None) == "unknown"
+    assert A._map_status("") == "unknown"
+
+
+# ----------------------------------------------------- _is_active_blocker
+
+
+def test_is_active_blocker_true_only_for_open_blocks_type():
+    assert A._is_active_blocker("blocks", "open") is True
+    assert A._is_active_blocker("blocks", "blocked") is True
+    assert A._is_active_blocker("blocks", "deferred") is True
+
+
+def test_is_active_blocker_false_for_closed_blocks_type():
+    assert A._is_active_blocker("blocks", "closed") is False
+
+
+def test_is_active_blocker_false_for_non_blocks_type_regardless_of_status():
+    assert A._is_active_blocker("discovered-from", "open") is False
+    assert A._is_active_blocker("related", "open") is False
+    assert A._is_active_blocker(None, "open") is False
+
+
+# ------------------------------------------------- Beads.get link enrichment
+
+
+def test_get_enriched_links_include_title_status_holder_for_forward_direction():
+    """The `from` direction (this item's own `dependencies`) embeds the
+    FULL referenced item in bd's own payload -- title/status/holder/
+    created_by/blocking must all come through translated."""
+    raw = {
+        "id": "proj-b",
+        "status": "open",
+        "dependencies": [
+            {
+                "id": "proj-a",
+                "title": "Blocker A",
+                "status": "in_progress",
+                "assignee": "agent-zero",
+                "created_by": "reporter-1",
+                "dependency_type": "blocks",
+            }
+        ],
+    }
+    item = A.Item.from_beads(raw)
+
+    def _link(x: dict, direction: str) -> dict:
+        raw_status = x.get("status")
+        return {
+            "id": x.get("id"),
+            "direction": direction,
+            "type": x.get("dependency_type"),
+            "title": x.get("title"),
+            "status": A._map_status(raw_status) if raw_status else None,
+            "holder": x.get("assignee"),
+            "created_by": x.get("created_by"),
+            "blocking": A._is_active_blocker(x.get("dependency_type"), raw_status),
+        }
+
+    item.links = [_link(x, "from") for x in raw["dependencies"]]
+    (link,) = item.links
+    assert link["id"] == "proj-a"
+    assert link["title"] == "Blocker A"
+    assert link["status"] == "held"  # in_progress -> held, our vocabulary
+    assert link["holder"] == "agent-zero"
+    assert link["created_by"] == "reporter-1"
+    assert link["blocking"] is True
+
+
+def test_get_enriched_links_satisfied_blocker_is_not_blocking():
+    raw_status = "closed"
+    blocking = A._is_active_blocker("blocks", raw_status)
+    assert blocking is False
+    assert A._map_status(raw_status) == "resolved"
+
+
 # ------------------------------------------------------------ project names
 
 
@@ -586,3 +678,112 @@ def test_list_bounded_negative_offset_clamps_to_zero(tmp_path, monkeypatch):
     result = bd.list_bounded(limit=2, offset=-100)
     assert result.offset == 0
     assert [i.id for i in result.items] == ["x-0", "x-1"]
+
+
+# ------------------------------------------------------- _history_events
+#
+# Pure diffing logic over a synthetic `bd history --json`-shaped payload --
+# no bd, no dolt. Fixtures mirror the REAL shape measured against bd 1.1.2
+# (see adapter.py's `_history_events` docstring): newest-first input, each
+# entry a full Issue snapshot, `CommitDate` an ISO-8601 string.
+
+
+def _hist_entry(*, status: str, commit_date: str, assignee: str | None = None, **extra) -> dict:
+    issue = {"id": "x-1", "status": status, "assignee": assignee, **extra}
+    return {
+        "CommitHash": commit_date,
+        "Committer": "beads",
+        "CommitDate": commit_date,
+        "Issue": issue,
+    }
+
+
+def test_history_events_oldest_entry_becomes_created():
+    history = [
+        _hist_entry(
+            status="open",
+            commit_date="2026-01-01T00:00:00Z",
+            created_at="2026-01-01T00:00:00Z",
+            created_by="alice",
+        ),
+    ]
+    events = A._history_events(history)
+    assert len(events) == 1
+    assert events[0].kind == "created"
+    assert events[0].actor == "alice"
+
+
+def test_history_events_collapses_consecutive_identical_signatures():
+    """A comment adds a new dolt commit without changing the issue's own
+    status/assignee -- those duplicate entries must produce NO extra
+    event, never a fabricated 'status changed' row for nothing."""
+    history = [
+        _hist_entry(
+            status="open", commit_date="2026-01-01T00:00:00Z", created_at="2026-01-01T00:00:00Z"
+        ),
+        _hist_entry(
+            status="in_progress", commit_date="2026-01-01T01:00:00Z", assignee="agent-zero"
+        ),
+        # Two comment commits: identical (status, assignee) to the entry above.
+        _hist_entry(
+            status="in_progress", commit_date="2026-01-01T01:05:00Z", assignee="agent-zero"
+        ),
+        _hist_entry(
+            status="in_progress", commit_date="2026-01-01T01:10:00Z", assignee="agent-zero"
+        ),
+        _hist_entry(
+            status="closed",
+            commit_date="2026-01-01T02:00:00Z",
+            assignee="agent-zero",
+            closed_at="2026-01-01T02:00:00Z",
+            close_reason="all done",
+        ),
+    ]
+    events = A._history_events(history)
+    kinds = [e.kind for e in events]
+    assert kinds == ["created", "status", "resolved"]  # exactly 3, not 5
+    claimed = events[1]
+    assert claimed.summary == "Claimed"
+    assert claimed.actor == "agent-zero"
+    resolved = events[2]
+    assert resolved.detail == "all done"
+    assert resolved.actor == "agent-zero"
+
+
+def test_history_events_generic_transition_names_both_states():
+    history = [
+        _hist_entry(status="open", commit_date="2026-01-01T00:00:00Z"),
+        _hist_entry(status="blocked", commit_date="2026-01-01T01:00:00Z"),
+    ]
+    events = A._history_events(history)
+    assert events[-1].kind == "status"
+    assert "open" in events[-1].summary
+    assert "blocked" in events[-1].summary
+
+
+def test_history_events_sorted_ascending_regardless_of_input_order():
+    """bd itself returns history newest-first; `_history_events` must not
+    assume the caller already sorted it."""
+    history = [
+        _hist_entry(
+            status="closed",
+            commit_date="2026-01-01T02:00:00Z",
+            assignee="agent-zero",
+            closed_at="2026-01-01T02:00:00Z",
+        ),
+        _hist_entry(status="open", commit_date="2026-01-01T00:00:00Z"),
+        _hist_entry(
+            status="in_progress", commit_date="2026-01-01T01:00:00Z", assignee="agent-zero"
+        ),
+    ]
+    events = A._history_events(history)
+    assert [e.kind for e in events] == ["created", "status", "resolved"]
+
+
+def test_history_events_skips_entries_with_no_commit_date():
+    history = [{"CommitHash": "x", "Committer": "beads", "Issue": {"status": "open"}}]
+    assert A._history_events(history) == []
+
+
+def test_history_events_empty_input_returns_empty():
+    assert A._history_events([]) == []
