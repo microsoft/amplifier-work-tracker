@@ -59,10 +59,11 @@ from __future__ import annotations
 import html
 import logging
 import math
+import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -729,6 +730,11 @@ def _sidebar_html(names: list[str], summaries: list[A.ProjectSummary], current: 
         s = by_name.get(n)
         ot = _sidebar_open_total(s)
         badge = f"{ot[0]}/{ot[1]}" if ot is not None else "\u2014"
+        # Spell the denominator out on hover so the `open/total` badge can
+        # never be misread as another of the overview's counts (goal item 4:
+        # one vocabulary). The label stays the compact `open/total` a scan
+        # wants; the title carries the units.
+        badge_title = f"{ot[0]} open of {ot[1]} items" if ot is not None else "counts unavailable"
         current_cls = " current" if n == current else ""
         aria = ' aria-current="page"' if n == current else ""
         rows.append(
@@ -736,7 +742,7 @@ def _sidebar_html(names: list[str], summaries: list[A.ProjectSummary], current: 
             f'href="/projects/{_esc(n)}"{aria}>'
             '<span class="sb-dot"></span>'
             f'<span class="sb-name">{_esc(n)}</span>'
-            f'<span class="sb-badge">{_esc(badge)}</span>'
+            f'<span class="sb-badge" title="{_esc(badge_title)}">{_esc(badge)}</span>'
             "</a></li>"
         )
     rollup_cls = " current" if current is None else ""
@@ -1030,37 +1036,28 @@ def _workspace_composition_html(counts: dict[str, int], total: int) -> str:
 
 
 def _attention_signal_html(held: int, blocked: int, deferred: int, held_stale: int = 0) -> str:
-    """The dashboard's one genuinely optional top-level alarm: "N items need
-    attention", rendered ONLY when the workspace actually has something to
-    flag (`held + blocked + deferred > 0`) -- absent entirely, not a dimmed
-    zero, on a calm workspace.
+    """A per-project attention banner: "N items need attention", rendered ONLY
+    when the project actually has something to flag (`held + blocked +
+    deferred > 0`) -- absent entirely, not a dimmed zero, when calm.
 
-    This is deliberately NOT the same convention `_state_bar_html`'s seams
-    use. The composition bar is a fixed five-slot GAUGE -- every slot keeps
-    its place, visibly, even at zero ("the alarm lamp present and switched
-    off"). This banner is a genuine ALERT, not a gauge: there is no
-    meaningful "off" rendering of an alarm that isn't sounding, and a
-    banner reading "0 items need attention" at the very top of a calm page
-    would itself become the thing trained eyes learn to ignore -- exactly
-    the failure mode a giant, ever-present hero number caused before (see
-    this module's own docstring).
+    Still used by the per-PROJECT page (`project_view`) as its own attention
+    banner. The OVERVIEW no longer renders this; it uses the ranked
+    needs-you queue + verdict line below instead (goal wtv2/overview), which
+    ranks across projects rather than summing one project's raw counts.
 
-    Reuses the app's existing `.flash` vocabulary rather than inventing a
-    new CSS class -- `flash-error` (crimson) when anything is BLOCKED (the
-    more severe case, same escalation ordering `_dashboard_row` uses),
-    `flash-msg` (amber) when only held/deferred are nonzero. Both are
-    already measured against `--ground` for contrast (see webtheme.py's
-    token comments), so this needs no new contrast check of its own.
+    Reuses the app's existing `.flash` vocabulary -- `flash-error` (crimson)
+    when anything is BLOCKED (the more severe case, same escalation ordering
+    `_dashboard_row` uses), `flash-msg` (amber) when only held/deferred are
+    nonzero. Both are already measured against `--ground` for contrast, so
+    this needs no new contrast check of its own.
 
-    `held_stale` (default 0, every pre-existing caller's behavior byte-
-    identical) is the SUBSET of `held` currently reclaim-eligible per
-    `custody.reclaim_eligible` (see `adapter.ProjectSummary.held_stale`) --
-    never additive to the total, since a stale hold is still one held item,
-    not a second one. Rendered as a parenthetical on the "held" clause only
-    when nonzero ("3 items held (1 stale)"), never a dimmed "(0 stale)" --
-    same "absent, not a zero" convention as the rest of this banner. Stays
-    within the SAME amber tier as a plain held clause -- a stale hold does
-    not escalate this banner to crimson; only a genuinely BLOCKED item does.
+    `held_stale` (default 0) is the SUBSET of `held` currently reclaim-
+    eligible per `custody.reclaim_eligible` -- never additive to the total,
+    since a stale hold is still one held item. Rendered as a parenthetical
+    on the "held" clause only when nonzero ("3 items held (1 stale)"), never
+    a dimmed "(0 stale)". Stays within the SAME amber tier as a plain held
+    clause -- a stale hold does not escalate to crimson; only a genuinely
+    BLOCKED item does.
     """
     total = held + blocked + deferred
     if total <= 0:
@@ -1080,6 +1077,353 @@ def _attention_signal_html(held: int, blocked: int, deferred: int, held_stale: i
         f'<div class="flash {cls}" role="alert">'
         f"<strong>{total}</strong> {_pluralize(total, 'item')} need attention "
         f"&mdash; {', '.join(parts)}.</div>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The "needs-you" overview: a verdict line, a RANKED cross-project attention
+# queue, and a dispatch affordance -- the answer to "is anything wrong, and
+# what first?" rather than "how many items exist." Everything below reads
+# ONLY the counts `project_summary` already computed (custody-TTL breach via
+# `held_stale`, stale blocker via `blocked_stale`, genuine blocked, aged
+# waiting via `ready_age_buckets["7+"]`) -- no second `bd` call, no second
+# derivation of a number rendered elsewhere on the page.
+#
+# Design firewall (goal wtv2/overview): the two reserved status hues are the
+# ONLY colors that carry meaning -- amber = ALARM, crimson = BLOCKED. A calm
+# screen shows neither. State is never color-only: every condition pairs its
+# hue with an icon/shape + text (via `T.state_html`, kind "warn"=amber /
+# "bad"=crimson). The verdict line is flat data-ink, neutral when calm; the
+# gloss license does NOT travel to it.
+# ---------------------------------------------------------------------------
+
+# How long the workspace may show no measurable movement before "calm" is
+# reclassified as "stalled" -- a first-class absence alarm, so a dead/idle
+# fleet never renders as a serene "all clear." Overridable for tests/tuning.
+_STALL_HOURS = float(os.environ.get("AMPLIFIER_WORK_TRACKER_STALL_HOURS", "12"))
+
+# The four attention conditions, in the goal's ranked order of urgency:
+# custody-TTL breach > stale blocker > genuine blocked > age. Lower priority
+# integer = more urgent = sorts first. Each carries the reserved status hue
+# it renders in ("warn" = amber alarm, "bad" = crimson blocked).
+_COND_CUSTODY = 0
+_COND_STALE_BLOCKER = 1
+_COND_BLOCKED = 2
+_COND_AGED = 3
+_COND_KIND = {
+    _COND_CUSTODY: "warn",
+    _COND_STALE_BLOCKER: "bad",
+    _COND_BLOCKED: "bad",
+    _COND_AGED: "warn",
+}
+_COND_LABEL = {
+    _COND_CUSTODY: "custody lapsed",
+    _COND_STALE_BLOCKER: "needlessly blocked",
+    _COND_BLOCKED: "blocked",
+    _COND_AGED: "waiting 7d+",
+}
+
+
+@dataclass(frozen=True)
+class _Condition:
+    """One live attention condition on one project: which of the four kinds,
+    how many items, and how long it has been true (`since_seconds`, `None`
+    when no honest duration exists for this kind)."""
+
+    cond: int
+    count: int
+    since_seconds: float | None
+
+
+@dataclass(frozen=True)
+class _Attention:
+    """One project that currently needs a human, with every live condition on
+    it (already sorted most-urgent-first). `primary` is that first condition
+    -- it drives the row's rank, left-bar hue, and lead icon. `has_blocked`
+    records whether any crimson (blocked) condition is present, so the fleet
+    verdict can escalate to crimson on real evidence."""
+
+    project: str
+    conditions: tuple[_Condition, ...]
+
+    @property
+    def primary(self) -> _Condition:
+        return self.conditions[0]
+
+    @property
+    def total(self) -> int:
+        return sum(c.count for c in self.conditions)
+
+    @property
+    def has_blocked(self) -> bool:
+        return any(c.cond in (_COND_STALE_BLOCKER, _COND_BLOCKED) for c in self.conditions)
+
+
+def _attention_for(s: A.ProjectSummary) -> _Attention | None:
+    """Build one project's `_Attention`, or `None` when nothing needs a human
+    there. Reads only the fields `project_summary` already computed; a
+    non-`ok` project has `None` counts and so surfaces no condition here
+    (broken/creating projects are flagged by the impairment banner, a
+    different, louder channel). Conditions are returned most-urgent-first."""
+    if s.status != A.STATUS_OK:
+        return None
+    custody = s.held_stale or 0
+    sblock = s.blocked_stale or 0
+    gblock = max(0, (s.blocked or 0) - sblock)
+    aged = (s.ready_age_buckets or {}).get("7+", 0)
+    conds: list[_Condition] = []
+    if custody:
+        conds.append(_Condition(_COND_CUSTODY, custody, s.held_stale_oldest_age_seconds))
+    if sblock:
+        conds.append(_Condition(_COND_STALE_BLOCKER, sblock, None))
+    if gblock:
+        conds.append(_Condition(_COND_BLOCKED, gblock, None))
+    if aged:
+        conds.append(_Condition(_COND_AGED, aged, s.oldest_unclaimed_age_seconds))
+    if not conds:
+        return None
+    conds.sort(key=lambda c: c.cond)
+    return _Attention(project=s.name, conditions=tuple(conds))
+
+
+def _attention_entries(summaries: list[A.ProjectSummary]) -> list[_Attention]:
+    """The ranked cross-project needs-you queue. Ordered by the goal's real-
+    urgency ranking -- each project by its most-urgent condition (custody-TTL
+    breach > stale blocker > blocked > age), ties broken by how much is
+    stuck, then by how long, then by name -- so the "N projects in alarm at
+    once" moment is an ORDERED queue, never a flat undifferentiated list."""
+    entries = [a for s in summaries if (a := _attention_for(s)) is not None]
+    entries.sort(
+        key=lambda a: (
+            a.primary.cond,
+            -a.total,
+            -(a.primary.since_seconds or 0.0),
+            a.project,
+        )
+    )
+    return entries
+
+
+def _dur_label(seconds: float) -> str:
+    """A compact age like `5d` / `3h` / `12m`, in the SAME vocabulary the
+    item table's Age column uses (`T.age_short`); sub-minute reads `now`."""
+    value, unit = T.age_short(max(0.0, seconds))
+    return "now" if (value, unit) == ("0", "m") else f"{value}{unit}"
+
+
+def _since_iso(rendered_at: datetime, seconds: float | None) -> str | None:
+    """The ISO instant a condition became true, `rendered_at - seconds` --
+    the machine-readable `data-since` anchor that makes time-to-notice
+    computable. `None` (never a fabricated stamp) when the condition carries
+    no honest duration."""
+    if seconds is None:
+        return None
+    return (rendered_at - timedelta(seconds=seconds)).isoformat()
+
+
+def _condition_chip(c: _Condition, rendered_at: datetime) -> str:
+    """One condition rendered as an icon+shape+text marker (`T.state_html`, so
+    it is legible beyond hue alone) plus its count, and -- when the condition
+    carries an honest duration -- a quiet `for {age}` with a `data-since`
+    time-to-notice anchor."""
+    label = f"{_COND_LABEL[c.cond]} \u00b7 {c.count}"
+    marker = T.state_html(_COND_KIND[c.cond], label)
+    since_iso = _since_iso(rendered_at, c.since_seconds)
+    dur = ""
+    if c.since_seconds is not None and since_iso is not None:
+        word = "oldest" if c.cond == _COND_AGED else "for"
+        dur = (
+            f'<span class="nfor" data-since="{_esc(since_iso)}">'
+            f"{word} {_esc(_dur_label(c.since_seconds))}</span>"
+        )
+    return f'<span class="ncond">{marker}{dur}</span>'
+
+
+def _needs_you_html(entries: list[_Attention], rendered_at: datetime) -> str:
+    """The ranked needs-you queue: one glass-chrome row per project (flat-ink
+    content), left bar + lead icon in the primary condition's reserved hue,
+    every live condition shown as its own coloured marker, and a dispatch
+    verb (`\u2192 open {project}`) pointing where to send the next agent.
+    Absent entirely when nothing needs a human -- the verdict/absence line
+    above carries the calm state, so there is no empty "0 rows" table here."""
+    if not entries:
+        return ""
+    rows = []
+    for a in entries:
+        p = a.primary
+        sev = "cr" if p.cond in (_COND_STALE_BLOCKER, _COND_BLOCKED) else "am"
+        lead = T.state_html(_COND_KIND[p.cond], "")
+        chips = "".join(_condition_chip(c, rendered_at) for c in a.conditions)
+        rows.append(
+            f'<li class="needs-row sev-{sev}">'
+            f'<span class="nlead">{lead}</span>'
+            f'<a class="nproj" href="/projects/{_esc(a.project)}">{_esc(a.project)}</a>'
+            f'<span class="nconds">{chips}</span>'
+            f'<a class="ndispatch" href="/projects/{_esc(a.project)}">'
+            f"\u2192 open {_esc(a.project)}</a>"
+            "</li>"
+        )
+    return (
+        '<div class="needs">'
+        '<div class="nhead"><span class="eyebrow">Needs you \u2014 ranked</span>'
+        '<span class="nsub">most urgent first \u00b7 custody &gt; blocked &gt; aging</span></div>'
+        f'<ul class="needs-list">{"".join(rows)}</ul>'
+        "</div>"
+    )
+
+
+def _hours_since(ts: str | None, now: datetime) -> float | None:
+    """Hours since an ISO timestamp, or `None` when there is nothing to
+    measure from -- the honest gap `project_activity`/`_relative_time`
+    already draw, reused here so an absence alarm never fabricates a
+    duration."""
+    dt = _parse_iso(ts)
+    if dt is None:
+        return None
+    return (now - dt).total_seconds() / 3600.0
+
+
+# Verdict levels -> the ONE sentence's meaning + reserved hue. `clear` is
+# neutral flat ink (no status hue at all); `idle`/`alarm` are amber; `blocked`
+# is crimson. A calm fleet is `clear`; a fleet with NOTHING running while work
+# waits is `idle` (a first-class absence alarm, never a serene "all clear").
+_VERDICT_CLEAR = "clear"
+_VERDICT_IDLE = "idle"
+_VERDICT_ALARM = "alarm"
+_VERDICT_BLOCKED = "blocked"
+
+
+def _verdict(
+    entries: list[_Attention],
+    *,
+    ready_total: int,
+    held_total: int,
+    resolved_24h_total: int,
+    n_measurable: int,
+    workspace_last_activity: str | None,
+    now: datetime,
+) -> tuple[str, str, str]:
+    """The one-sentence verdict: `(level, keyword, detail)`.
+
+    A verdict, not a statistic. When something needs a human it says how many
+    projects and why; when nothing does, it distinguishes a genuinely calm
+    fleet from a DEAD one -- `held == 0` while work waits is `FLEET IDLE`
+    (amber), never `ALL CLEAR`. Zero throughput today and no movement in
+    `_STALL_HOURS` are first-class absence alarms too, so an idle or stalled
+    fleet can never wear a serene all-clear.
+    """
+    if entries:
+        level = _VERDICT_BLOCKED if any(a.has_blocked for a in entries) else _VERDICT_ALARM
+        n = len(entries)
+        keyword = "1 NEEDS YOU" if n == 1 else f"{n} NEED YOU"
+        totals = {c: 0 for c in _COND_LABEL}
+        for a in entries:
+            for cond in a.conditions:
+                totals[cond.cond] += cond.count
+        parts = [f"{totals[cond]} {_COND_LABEL[cond]}" for cond in sorted(totals) if totals[cond]]
+        return level, keyword, " \u00b7 ".join(parts)
+
+    # -- no project needs a human: is the fleet calm, or dead? --
+    hours_idle = _hours_since(workspace_last_activity, now)
+    no_recent = hours_idle is not None and hours_idle >= _STALL_HOURS
+    zero_throughput = n_measurable > 0 and resolved_24h_total == 0
+
+    if ready_total > 0 and held_total == 0:
+        detail = f"{_pluralize(ready_total, 'item')} ready, nothing in progress"
+        if zero_throughput:
+            detail += " \u00b7 0 resolved today"
+        elif no_recent:
+            detail += f" \u00b7 last movement {_relative_time(workspace_last_activity)}"
+        return _VERDICT_IDLE, "FLEET IDLE", detail
+
+    if ready_total > 0 and no_recent:
+        hh = int(hours_idle) if hours_idle is not None else 0
+        detail = f"no movement in {hh}h \u00b7 {_pluralize(ready_total, 'item')} ready"
+        if zero_throughput:
+            detail += " \u00b7 0 resolved today"
+        return _VERDICT_IDLE, "STALLED", detail
+
+    if ready_total == 0 and held_total == 0:
+        return _VERDICT_CLEAR, "ALL CLEAR", "no open work anywhere"
+    parts = []
+    if held_total:
+        parts.append(f"{_pluralize(held_total, 'item')} in progress")
+    if ready_total:
+        parts.append(f"{ready_total} ready")
+    return _VERDICT_CLEAR, "ALL CLEAR", ", ".join(parts) + " \u2014 nothing stuck"
+
+
+def _verdict_html(level: str, keyword: str, detail: str, now: datetime) -> str:
+    """The verdict line, FLAT data-ink -- no glass, no gradient (the gloss
+    license does not travel here). Neutral when calm; the reserved hue
+    (amber `idle`/`alarm`, crimson `blocked`) appears ONLY when the alarm is
+    real, on the icon + keyword + a hairline accent. The `data-rendered-at`
+    stamp + visible "as of" is the time-to-notice/act anchor (goal item 5):
+    every duration on this page is measured against this one instant."""
+    kind = {
+        _VERDICT_CLEAR: "ok",
+        _VERDICT_IDLE: "warn",
+        _VERDICT_ALARM: "warn",
+        _VERDICT_BLOCKED: "bad",
+    }.get(level, "ok")
+    icon = T.state_html(kind, "")
+    as_of = now.strftime("%H:%M UTC")
+    return (
+        f'<section class="sec tight verdict-sec">'
+        f'<div class="verdict v-{_esc(level)}" role="status">'
+        f'<span class="vicon">{icon}</span>'
+        f'<span class="vword">{_esc(keyword)}</span>'
+        f'<span class="vdetail">{_esc(detail)}</span>'
+        f'<span class="vasof" data-rendered-at="{_esc(now.isoformat())}">as of {_esc(as_of)}</span>'
+        "</div></section>"
+    )
+
+
+def _dispatch_pick(summaries: list[A.ProjectSummary]) -> A.ProjectSummary | None:
+    """Which project most warrants the NEXT agent -- surfaced from inputs the
+    app already computes: aged backlog (`ready_age_buckets["7+"]`), ready
+    depth, and oldest-waiting age (concentration + waiting-7d+ + ready-by-age,
+    the goal's named inputs). Prefers a queue whose work is rotting (7d+
+    items) and deep, oldest-first. `None` when nothing is ready anywhere --
+    there is nothing to dispatch. No drag-to-change-state kanban: this reads
+    the queue, it never mutates custody."""
+    ranked = [s for s in summaries if s.status == A.STATUS_OK and (s.ready or 0) > 0]
+    if not ranked:
+        return None
+    return max(
+        ranked,
+        key=lambda s: (
+            (s.ready_age_buckets or {}).get("7+", 0),
+            s.ready or 0,
+            s.oldest_unclaimed_age_seconds or 0.0,
+        ),
+    )
+
+
+def _dispatch_html(summaries: list[A.ProjectSummary]) -> str:
+    """The dispatch affordance: "where do I point the next agent?" plus the
+    verb. Reads the ready queue only (never mutates), so it composes with
+    machine-owned custody instead of fighting it. Absent when nothing is
+    ready to pick up."""
+    pick = _dispatch_pick(summaries)
+    if pick is None:
+        return ""
+    ready = pick.ready or 0
+    bits = [f"{_pluralize(ready, 'item')} ready"]
+    aged = (pick.ready_age_buckets or {}).get("7+", 0)
+    if aged:
+        bits.append(f"{aged} waiting 7d+")
+    if pick.oldest_unclaimed_age_seconds:
+        bits.append(f"oldest {_dur_label(pick.oldest_unclaimed_age_seconds)}")
+    detail = " \u00b7 ".join(bits)
+    return (
+        '<div class="dispatch">'
+        '<span class="eyebrow">Dispatch next</span>'
+        f'<span class="dtext">Point the next agent at '
+        f'<a href="/projects/{_esc(pick.name)}">{_esc(pick.name)}</a> \u2014 {detail}</span>'
+        f'<a class="dbtn" href="/projects/{_esc(pick.name)}">\u2192 claim next in '
+        f"{_esc(pick.name)}</a>"
+        "</div>"
     )
 
 
@@ -1406,6 +1750,22 @@ def _dashboard_totals(summaries: list[A.ProjectSummary]) -> str:
   <td class="r"><span class="c r"><span class="n">{t_resolved}</span></span></td>
   <td class="r"><span class="c r"><span class="n">{pct_done}</span></span></td>
 </tr></tfoot>"""
+
+
+def _units_legend_html() -> str:
+    """One shared vocabulary for every count on the overview (goal item 4), so
+    TOTAL / READY / RESOLVED / DONE% and the sidebar's `open/total` badge can
+    never be read as different, colliding denominators. A queue is a project;
+    every count is ITEMS unless marked `%`. Rendered as flat data-ink under
+    the queue table -- a glossary, not a control."""
+    return (
+        '<div class="units" aria-label="What the counts mean">'
+        "<b>Queue</b> = one project &middot; every count is <b>items</b> &middot; "
+        "<b>Ready</b> claimable &middot; <b>Held</b> in progress &middot; "
+        "<b>Blocked</b> waiting on a dependency &middot; <b>Resolved</b> done &middot; "
+        "<b>Done&nbsp;%</b> = resolved &divide; total"
+        "</div>"
+    )
 
 
 def _create_project_form() -> str:
@@ -2826,7 +3186,6 @@ def create_app(
         reconciled_items = sum(s.total or 0 for s in ok)
         ready_total = sum(s.ready or 0 for s in ok)
         held_total = sum(s.held or 0 for s in ok)
-        held_stale_total = sum(s.held_stale or 0 for s in ok)
         blocked_total = sum(s.blocked or 0 for s in ok)
         deferred_total = sum(s.deferred or 0 for s in ok)
         resolved_total = sum(s.resolved or 0 for s in ok)
@@ -2835,9 +3194,6 @@ def create_app(
 
         impaired = [(s.name, lbl) for s in summaries if (lbl := _impairment_label(s.name, s))]
         impaired_banner = _impairment_banner(impaired)
-        attention_signal = _attention_signal_html(
-            held_total, blocked_total, deferred_total, held_stale_total
-        )
 
         # F2 -- concentration: the single biggest ready queue, so a
         # workspace-wide READY total never hides one queue quietly
@@ -2887,6 +3243,30 @@ def create_app(
 
         burn_days = round(ready_total / resolved_24h_total, 1) if resolved_24h_total > 0 else None
 
+        # The needs-you overview -- one render instant (`rendered_at`) anchors
+        # every duration and the time-to-notice/act stamp. The verdict reads
+        # the throughput/activity figures above so a DEAD/IDLE fleet cannot
+        # wear a serene "all clear."
+        rendered_at = datetime.now(UTC)
+        attention_entries = _attention_entries(ok)
+        verdict_level, verdict_word, verdict_detail = _verdict(
+            attention_entries,
+            ready_total=ready_total,
+            held_total=held_total,
+            resolved_24h_total=resolved_24h_total,
+            n_measurable=len(measurable),
+            workspace_last_activity=workspace_last_activity,
+            now=rendered_at,
+        )
+        verdict = _verdict_html(verdict_level, verdict_word, verdict_detail, rendered_at)
+        needs_you = _needs_you_html(attention_entries, rendered_at)
+        dispatch = _dispatch_html(ok)
+        needs_block = (
+            f'<section class="sec tight nsec">{needs_you}{dispatch}</section>'
+            if (needs_you or dispatch)
+            else ""
+        )
+
         hero = _ledger_hero_html(ready_total if readable_count else None, len(names), burn_days)
         secondary = _secondary_readings_html(
             concentration, n7d, pct7d, oldest_days, oldest_href, held_total, blocked_total
@@ -2913,17 +3293,23 @@ def create_app(
         )
 
         rows = "".join(_dashboard_row(s) for s in ordered)
-        table = f"""<table class="tbl dense">
+        # `.tbl-scroll` is inert on desktop (a plain full-width block, no visual
+        # change) and, below 600px, gives the fixed-colgroup queue table its OWN
+        # horizontal scroll instead of overflowing the whole page -- the same
+        # mechanism the project page's item table already uses (webtheme.py's
+        # <=600px block). Without it the ~540px colgroup forced a body-wide
+        # horizontal overflow at phone width, breaking the shipped mobile reflow.
+        table = f"""<div class="tbl-scroll"><table class="tbl dense">
           <colgroup><col><col style="width:250px"><col style="width:70px">
             <col style="width:70px"><col style="width:80px"><col style="width:70px"></colgroup>
           <thead><tr>
             <th>Queue</th><th>Composition</th>
             <th class="r">Total</th><th class="r">Ready</th>
-            <th class="r">Resolved</th><th class="r">Done</th>
+            <th class="r">Resolved</th><th class="r">Done&nbsp;%</th>
           </tr></thead>
           <tbody>{rows}</tbody>
           {_dashboard_totals(summaries)}
-        </table>"""
+        </table></div>"""
 
         broken_foot = ""
         if broken:
@@ -2941,7 +3327,9 @@ def create_app(
         body = f"""
         {_flash(request)}
         {impaired_banner}
-        {attention_signal}
+        {verdict}
+        {needs_block}
+        <div class="hr bleed"></div>
         <section class="sec heroic"><div class="hero">{hero}{secondary}</div></section>
         <div class="hr bleed"></div>
         <section class="sec tight">{composition}</section>
@@ -2957,6 +3345,7 @@ def create_app(
             {T.density_toggle_html()}
           </div>
           {table}
+          {_units_legend_html()}
           {broken_foot}
         </section>
         <div class="hr bleed"></div>

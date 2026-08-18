@@ -447,6 +447,23 @@ a{color:inherit}
   .sidebar .sb-toggle-input:checked ~ .sb-toggle-label::after{content:"\25b4"}
 }
 
+/* Phone-width reflow for the needs-you overview's own rows. Every one of
+   these already `flex-wrap`s; the only thing that can still push past a
+   narrow viewport is a right-pinned (`margin-left:auto`), `white-space:nowrap`
+   affordance -- the verdict "as of" stamp, a row's dispatch link, the dispatch
+   button. Below 600px those un-pin and take the full row width, so a long
+   "claim next in <project>" label has room to sit rather than run off the
+   right edge. Additive: desktop layout is untouched. */
+@media (max-width:600px){
+  .verdict{gap:8px}
+  .verdict .vasof{margin-left:0;flex-basis:100%}
+  .needs-row{gap:8px}
+  .needs-row .nconds{gap:10px}
+  .needs-row .ndispatch{margin-left:0;flex-basis:100%}
+  .dispatch{gap:8px}
+  .dispatch .dbtn{margin-left:0;flex-basis:100%;text-align:center}
+}
+
 .eyebrow{font-family:var(--sans);font-size:10px;font-weight:500;
   letter-spacing:.26em;text-transform:uppercase;color:var(--mid);line-height:1.5}
 .eyebrow.am{color:var(--amber)}
@@ -1082,6 +1099,76 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
   border:1px solid var(--alarm)}
 .flash-error{background:var(--blocked-surface);color:var(--blocked-ink-on-surface);
   border:1px solid var(--blocked)}
+
+/* =========================================================================
+   NEEDS-YOU OVERVIEW (goal wtv2/overview): verdict line, ranked attention
+   queue, dispatch affordance. Firewall: amber = alarm, crimson = blocked are
+   the ONLY status hues; a calm screen shows neither. State never color-only
+   (every condition pairs its hue with an icon/shape + text via `.state`).
+   ========================================================================= */
+
+/* -- verdict: FLAT data-ink, neutral when calm. The gloss license does NOT
+   travel here -- no glass, no gradient, no backdrop-filter; a real alarm gets
+   a flat rgba tint + a solid left accent + the reserved hue on word & icon. */
+.verdict-sec{padding-top:26px;padding-bottom:4px}
+.verdict{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:14px 18px;border-radius:var(--radius-md);
+  border:1px solid var(--rule-hi);background:transparent}
+.verdict .vicon{display:inline-flex;flex:0 0 auto}
+.verdict .vword{font-family:var(--sans);font-weight:800;font-size:15px;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--ink)}
+.verdict .vdetail{font-family:var(--sans);font-size:12.5px;color:var(--mid);min-width:0}
+.verdict .vasof{margin-left:auto;font-family:var(--mono);font-size:10.5px;
+  color:var(--dim);white-space:nowrap}
+.verdict.v-clear{border-color:var(--rule-hi)}
+.verdict.v-idle,.verdict.v-alarm{background:var(--alarm-surface);
+  border-color:var(--alarm);box-shadow:inset 3px 0 0 var(--alarm)}
+.verdict.v-idle .vword,.verdict.v-alarm .vword{color:var(--alarm-ink-on-surface)}
+.verdict.v-blocked{background:var(--blocked-surface);
+  border-color:var(--blocked);box-shadow:inset 3px 0 0 var(--blocked)}
+.verdict.v-blocked .vword{color:var(--blocked-ink-on-surface)}
+
+/* -- ranked needs-you queue: glass CHROME behind flat-ink data, a solid left
+   bar in the primary condition's reserved hue. */
+.nsec{padding-top:14px}
+.needs{margin-top:2px}
+.nhead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+.nhead .nsub{font-family:var(--sans);font-size:10.5px;color:var(--dim)}
+.needs-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.needs-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:12px 14px;border-radius:var(--radius-md);
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur))}
+.needs-row.sev-am{box-shadow:inset 4px 0 0 var(--alarm)}
+.needs-row.sev-cr{box-shadow:inset 4px 0 0 var(--blocked)}
+.needs-row .nlead{flex:0 0 auto;display:inline-flex}
+.needs-row .nproj{font-family:var(--sans);font-weight:700;font-size:13px;
+  color:var(--ink);text-decoration:none;letter-spacing:-.01em}
+.needs-row .nproj:hover{color:var(--brand-cyan-ink)}
+.needs-row .nconds{display:flex;gap:16px;flex-wrap:wrap;min-width:0;align-items:center}
+.ncond{display:inline-flex;align-items:center;gap:6px}
+.ncond .nfor{font-family:var(--mono);font-size:10.5px;color:var(--dim);white-space:nowrap}
+.needs-row .ndispatch{margin-left:auto;font-family:var(--sans);font-size:11.5px;
+  font-weight:600;color:var(--brand-cyan-ink);text-decoration:none;white-space:nowrap}
+.needs-row .ndispatch:hover{text-decoration:underline}
+
+/* -- dispatch affordance: reads the ready queue, points the next agent; the
+   verb button is a brand-accent CHROME control (never a status hue). */
+.dispatch{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:10px;
+  padding:12px 14px;border-radius:var(--radius-md);
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft)}
+.dispatch .dtext{font-family:var(--sans);font-size:12.5px;color:var(--mid);min-width:0}
+.dispatch .dtext a{color:var(--ink);font-weight:700;text-decoration:none}
+.dispatch .dtext a:hover{color:var(--brand-cyan-ink)}
+.dispatch .dbtn{margin-left:auto;font-family:var(--sans);font-size:11.5px;font-weight:700;
+  color:var(--ink-on-solid);background:var(--brand-gradient-solid);
+  padding:7px 14px;border-radius:var(--radius-pill);text-decoration:none;white-space:nowrap}
+.dispatch .dbtn:hover{filter:brightness(1.08)}
+
+/* -- one shared count vocabulary under the queue table (flat dim data-ink). */
+.units{margin-top:14px;font-family:var(--sans);font-size:10.5px;color:var(--dim);
+  line-height:1.7}
+.units b{color:var(--mid);font-weight:600}
 .muted{color:var(--dim);font-size:12px}
 .empty-state{border:1px dashed var(--rule-hi);border-radius:var(--radius-md);padding:1.5rem;
   color:var(--quiet);margin:0.75rem 0 1.25rem;background:var(--raise);
