@@ -60,6 +60,7 @@ import html
 import logging
 import math
 import re
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -71,6 +72,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from . import adapter as A
+from . import custody as CU
 from . import webauth as WA
 from . import webpwa as PWA
 from . import webtheme as T
@@ -355,6 +357,135 @@ def _identity_html(raw: str | None) -> str:
     if humanized == text:
         return _esc(text)
     return f'<span title="{_esc(text)}">{_esc(humanized)}</span>'
+
+
+# ---------------------------------------------------------------------------
+# held-item custody reading -- claim-age + staleness, on real data only.
+#
+# `Item.meta["custody"]` (see `custody.py`) is OUR OWN liveness record, not
+# bd's. `started_at` is when custody was first taken (a real claim-time
+# signal -- what "held 4h" actually measures); `last_seen` is when it was
+# last RENEWED, and is what decides staleness. Both come straight off the
+# item this route already fetched -- no second `bd` call, no polling.
+#
+# Staleness is never re-derived here: `custody.reclaim_eligible` is called
+# VERBATIM, the exact function `supervisor.reap_project` uses to decide what
+# it actually reclaims. This is read/display only -- it never releases
+# anything, renews anything, or otherwise touches the real reap policy; it
+# just shows, honestly, what that policy would currently decide. Two paths
+# make a hold "stale" for display, and both mean the same thing they mean to
+# the real reaper: the renewal genuinely lapsed, or a *fresh* `awaiting_human`
+# hold rode past the escalation ceiling (see `custody.reclaim_eligible`'s own
+# docstring) -- `declared_state` never buys exemption from either, here or
+# there.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CustodyReading:
+    """What this dashboard actually knows about one held item's custody --
+    never fabricated. `age_seconds` is `None` only when there is truly no
+    timestamp to show one from (no custody record AND no `updated_at`);
+    `proxy=True` means `age_seconds` is `item.updated_at` (last bd write),
+    NOT a true claim/renewal time -- see `_custody_reading`'s docstring for
+    when that degradation happens and why it is named rather than hidden."""
+
+    holder: str
+    stale: bool
+    reason: str
+    declared_state: str
+    age_seconds: float | None
+    proxy: bool
+
+
+def _custody_reading(item: A.Item, *, now: float | None = None) -> CustodyReading | None:
+    """The one place a held item's custody record is turned into a display
+    reading. Returns `None` for anything not currently `held` -- there is no
+    custody signal to show for an open/blocked/deferred/resolved item, same
+    guard `_item_row`'s holder cell already uses and for the same reason
+    (bd's `assignee` outlives the hold; `status == "held"` is the only
+    honest gate on "is this a CURRENT holder").
+
+    Two real-data shapes, both handled honestly:
+      - A real `custody` record exists (the normal path -- `work_claim`
+        establishes one atomically). `age_seconds` is `started_at`'s age --
+        total hold duration, a true signal. Staleness comes from
+        `custody.reclaim_eligible` on the record's own `last_seen`.
+      - No custody record at all (the item was claimed by something that
+        bypassed `work_claim`/the CLI's custody-establishing path -- see the
+        `claiming-work-safely` skill's "never touch bd directly" rule).
+        `custody.reclaim_eligible(None)` already says this is reclaim-
+        eligible NOW ("no custody record"), so it is rendered stale here
+        too -- never silently "fine" just because we have less data. There
+        is no true claim-time signal in this shape, so `age_seconds` falls
+        back to `item.updated_at` (bd's own last-write time) with
+        `proxy=True` -- an honestly-labeled proxy, never presented as if it
+        were a real custody duration.
+    """
+    if item.status != "held":
+        return None
+    cust = item.meta.get(CU.CUSTODY_KEY) if isinstance(item.meta, dict) else None
+    eligible, reason = CU.reclaim_eligible(cust, now=now)
+    if isinstance(cust, dict) and cust.get("holder"):
+        declared = str(cust.get("declared_state") or CU.STATE_WORKING)
+        started = str(cust.get("started_at") or "")
+        age_seconds = CU.age_seconds(started, now=now) if started else None
+        proxy = False
+    else:
+        declared = CU.STATE_WORKING
+        proxy = item.updated_at is not None
+        age_seconds = (
+            max(0.0, (now if now is not None else time.time()) - item.updated_at.timestamp())
+            if item.updated_at is not None
+            else None
+        )
+    return CustodyReading(
+        holder=item.holder or "",
+        stale=eligible,
+        reason=reason,
+        declared_state=declared,
+        age_seconds=age_seconds,
+        proxy=proxy,
+    )
+
+
+def _custody_html(reading: CustodyReading | None) -> str:
+    """The compact `held <age> &middot; <holder>` reading (e.g. `held 4h
+    &middot; agent-spark-1-106784`), amber and flagged only when the real
+    reclaim policy (`custody.reclaim_eligible`, called by `_custody_reading`)
+    says this hold is currently stale -- a fresh, actively-renewed hold
+    stays neutral, exactly like any other quiet fact in this app (see
+    webtheme.py's SIGNAL COLOURS comment: amber is spent on attention, never
+    on good news). Returns "" for a non-held item (`reading is None`).
+
+    An `awaiting_human`-declared hold that is still FRESH is rendered
+    honestly, not as "paused" or "fine": the label carries a quiet note,
+    on hover, that the TTL clock still runs -- `declared_state` suppresses
+    the notification, never the staleness check (see `custody.py`'s module
+    docstring)."""
+    if reading is None:
+        return ""
+    holder_html = (
+        _identity_html(reading.holder)
+        if reading.holder
+        else '<span class="muted">unknown holder</span>'
+    )
+    if reading.age_seconds is None:
+        age_label = "held"
+    else:
+        value, unit = T.age_short(reading.age_seconds)
+        age_label = "held now" if (value, unit) == ("0", "m") else f"held {value}{unit}"
+    if reading.proxy:
+        age_label += " (last update, no custody record)"
+    label = f"{age_label} &middot; {holder_html}"
+    if reading.stale:
+        title = _esc(reading.reason or "custody is stale")
+        return f'<span class="held-custody stale" title="{title}">{label}</span>'
+    extra = ""
+    if reading.declared_state == CU.STATE_AWAITING_HUMAN:
+        note = "Suppresses the attention notification only -- the custody TTL clock still runs."
+        extra = f' <span class="muted" title="{_esc(note)}">awaiting human</span>'
+    return f'<span class="held-custody fresh">{label}</span>{extra}'
 
 
 _STATE_LABEL = {
@@ -800,7 +931,7 @@ def _workspace_composition_html(counts: dict[str, int], total: int) -> str:
 </div>"""
 
 
-def _attention_signal_html(held: int, blocked: int, deferred: int) -> str:
+def _attention_signal_html(held: int, blocked: int, deferred: int, held_stale: int = 0) -> str:
     """The dashboard's one genuinely optional top-level alarm: "N items need
     attention", rendered ONLY when the workspace actually has something to
     flag (`held + blocked + deferred > 0`) -- absent entirely, not a dimmed
@@ -822,6 +953,16 @@ def _attention_signal_html(held: int, blocked: int, deferred: int) -> str:
     `flash-msg` (amber) when only held/deferred are nonzero. Both are
     already measured against `--ground` for contrast (see webtheme.py's
     token comments), so this needs no new contrast check of its own.
+
+    `held_stale` (default 0, every pre-existing caller's behavior byte-
+    identical) is the SUBSET of `held` currently reclaim-eligible per
+    `custody.reclaim_eligible` (see `adapter.ProjectSummary.held_stale`) --
+    never additive to the total, since a stale hold is still one held item,
+    not a second one. Rendered as a parenthetical on the "held" clause only
+    when nonzero ("3 items held (1 stale)"), never a dimmed "(0 stale)" --
+    same "absent, not a zero" convention as the rest of this banner. Stays
+    within the SAME amber tier as a plain held clause -- a stale hold does
+    not escalate this banner to crimson; only a genuinely BLOCKED item does.
     """
     total = held + blocked + deferred
     if total <= 0:
@@ -830,7 +971,10 @@ def _attention_signal_html(held: int, blocked: int, deferred: int) -> str:
     if blocked:
         parts.append(f"{_pluralize(blocked, 'item')} blocked")
     if held:
-        parts.append(f"{_pluralize(held, 'item')} held")
+        held_clause = f"{_pluralize(held, 'item')} held"
+        if held_stale:
+            held_clause += f" ({_pluralize(held_stale, 'stale', 'stale')})"
+        parts.append(held_clause)
     if deferred:
         parts.append(f"{_pluralize(deferred, 'item')} deferred")
     cls = "flash-error" if blocked else "flash-msg"
@@ -1366,7 +1510,12 @@ def _item_row(name: str, i: A.Item, idx: int) -> str:
     # contradiction reported against this table. A holder chip appears here
     # ONLY when the item is genuinely held right now; every other status
     # shows the same honest dash a never-held item does.
-    holder = (
+    #
+    # When it IS genuinely held, the cell upgrades from a bare identity to
+    # the claim-age + staleness reading (`held 4h &middot; holder`, amber
+    # only when `custody.reclaim_eligible` says this hold is stale right
+    # now) -- see `_custody_reading`/`_custody_html`.
+    holder = _custody_html(_custody_reading(i)) or (
         _identity_html(i.holder)
         if (i.holder and i.status == "held")
         else '<span class="muted">&mdash;</span>'
@@ -2401,6 +2550,7 @@ def create_app(
         reconciled_items = sum(s.total or 0 for s in ok)
         ready_total = sum(s.ready or 0 for s in ok)
         held_total = sum(s.held or 0 for s in ok)
+        held_stale_total = sum(s.held_stale or 0 for s in ok)
         blocked_total = sum(s.blocked or 0 for s in ok)
         deferred_total = sum(s.deferred or 0 for s in ok)
         resolved_total = sum(s.resolved or 0 for s in ok)
@@ -2409,7 +2559,9 @@ def create_app(
 
         impaired = [(s.name, lbl) for s in summaries if (lbl := _impairment_label(s.name, s))]
         impaired_banner = _impairment_banner(impaired)
-        attention_signal = _attention_signal_html(held_total, blocked_total, deferred_total)
+        attention_signal = _attention_signal_html(
+            held_total, blocked_total, deferred_total, held_stale_total
+        )
 
         # F2 -- concentration: the single biggest ready queue, so a
         # workspace-wide READY total never hides one queue quietly
@@ -2652,7 +2804,12 @@ def create_app(
         # broken/mid-creation project already gets `impaired_banner` above
         # and has no real held/blocked/deferred counts to show here.
         attention_banner = (
-            _attention_signal_html(summary.held or 0, summary.blocked or 0, summary.deferred or 0)
+            _attention_signal_html(
+                summary.held or 0,
+                summary.blocked or 0,
+                summary.deferred or 0,
+                summary.held_stale or 0,
+            )
             if summary.status == A.STATUS_OK
             else ""
         )
@@ -2958,11 +3115,20 @@ def create_app(
         # this" fact -- real, but not a current custody holder. A "held by"
         # chip next to a RESOLVED/blocked/deferred status badge read as a
         # live contradiction (this project's `held` stat says 0). Only show
-        # it when the item is genuinely held right now.
+        # it when the item is genuinely held right now -- and, when it is,
+        # show the SAME claim-age + staleness reading the row does (see
+        # `_custody_reading`/`_custody_html`), not a bare identity, so the
+        # detail page and the table row can never disagree about whether
+        # this hold is stale.
+        custody_html = _custody_html(_custody_reading(item))
         held_chip = (
-            f'<span class="chip">held by {_identity_html(item.holder)}</span>'
-            if (item.holder and item.status == "held")
-            else ""
+            f'<span class="chip">{custody_html}</span>'
+            if custody_html
+            else (
+                f'<span class="chip">held by {_identity_html(item.holder)}</span>'
+                if (item.holder and item.status == "held")
+                else ""
+            )
         )
 
         # Title is styled to read at the same visual weight the old plain

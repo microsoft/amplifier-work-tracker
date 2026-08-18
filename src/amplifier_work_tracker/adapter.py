@@ -2167,6 +2167,18 @@ class ProjectSummary:
     for how these are used). `held_by` is the sorted, deduplicated list of
     current holders -- who to go ask, not just how many.
 
+    `held_stale` is the subset of `held` whose custody signal is currently
+    RECLAIM-ELIGIBLE -- computed via `custody.reclaim_eligible` verbatim,
+    the EXACT function `supervisor.reap_project` calls to decide what it
+    actually reclaims. This is a read-only reuse of that same policy, at
+    zero extra `bd` cost (derived from the SAME `held_items` this function
+    already builds from its one `list()` call) -- never a second,
+    independently-guessed staleness rule that could drift from what the
+    real reaper does. A subset of `held`, not additive to it: a stale hold
+    is still a held item, just one whose renewal has lapsed (or that has
+    no custody record at all -- see `custody.reclaim_eligible`'s own
+    "no custody record" path, which counts as stale here too).
+
     `last_activity` is `project_activity`'s field verbatim -- the most recent
     activity timestamp of ANY kind (`updated_at`/`closed_at`/`created_at`)
     across every item, as an ISO string. There used to be a SECOND,
@@ -2204,6 +2216,7 @@ class ProjectSummary:
     blocked: int | None = None
     resolved: int | None = None
     deferred: int | None = None
+    held_stale: int | None = None
     held_by: list[str] = field(default_factory=list)
     last_activity: str | None = None
     oldest_unclaimed_age_seconds: float | None = None
@@ -2226,6 +2239,29 @@ def _ready_age_bucket_label(days: float) -> str:
         if hi is None or days < hi:
             return label
     return READY_AGE_BUCKETS[-1][0]  # unreachable: the last band's hi is None
+
+
+def _held_stale_count(held_items: list[Item]) -> int:
+    """How many of `held_items` (already filtered to `status == "held"`) are
+    currently RECLAIM-ELIGIBLE, per `custody.reclaim_eligible` -- called
+    verbatim, never re-derived, so this can never disagree with what
+    `supervisor.reap_project` would actually reclaim right now. A pure
+    function of already-fetched items (same "derive from the one list this
+    caller already read" discipline as `_ready_age_buckets`/
+    `project_activity` below), so `project_summary` costs no second `bd`
+    call to learn it.
+
+    `i.meta.get(custody.CUSTODY_KEY)` is `None` for an item that was never
+    given a custody record at all (e.g. claimed by something that bypassed
+    `work_claim`/the CLI's custody path) -- `reclaim_eligible(None)` already
+    reports that shape as eligible ("no custody record"), so it is counted
+    stale here too, not silently skipped for lack of data.
+    """
+    return sum(
+        1
+        for i in held_items
+        if C.reclaim_eligible(i.meta.get(C.CUSTODY_KEY) if isinstance(i.meta, dict) else None)[0]
+    )
 
 
 def _ready_age_buckets(items: list[Item]) -> dict[str, int]:
@@ -2292,6 +2328,7 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
         return ProjectSummary(name=name, status=truncate_status(f"ERROR: {e}"))
     held_items = [i for i in items if i.status == "held"]
     activity = project_activity(items)
+    held_stale = _held_stale_count(held_items)
     return ProjectSummary(
         name=name,
         status=STATUS_OK,
@@ -2302,6 +2339,7 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
         blocked=sum(1 for i in items if i.status == "blocked"),
         resolved=sum(1 for i in items if i.status == "resolved"),
         deferred=sum(1 for i in items if i.status == "deferred"),
+        held_stale=held_stale,
         held_by=sorted({i.holder for i in held_items if i.holder}),
         last_activity=activity["last_activity"],
         oldest_unclaimed_age_seconds=activity["oldest_unclaimed_age_seconds"],
