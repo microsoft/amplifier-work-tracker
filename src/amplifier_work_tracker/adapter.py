@@ -2607,6 +2607,29 @@ class ProjectSummary:
     `items` list this function already read; `None` when the project's
     database could not be read (same "unreadable, not empty" convention as
     every other field here).
+
+    `blocked_stale` is the subset of `blocked` that is NEEDLESSLY blocked --
+    an item whose status is `blocked` yet which has NO still-active `blocks`
+    dependency left (`_active_blockers` is empty: every upstream blocker is
+    already resolved, or none was ever recorded). This is the "stale blocker
+    chain" signal a ranked attention queue treats as MORE urgent than a
+    genuinely-blocked item: it needs nothing but an unblock. Derived from the
+    SAME `items` list (each item's `raw["dependencies"]` carries the edge
+    type + upstream status `bd list` already returns), at zero extra `bd`
+    cost. A subset of `blocked`, never additive to it. Safe by construction:
+    a `blocks` edge whose upstream status could not be read counts as still
+    active (`_is_active_blocker`), so an item is only ever called stale on
+    real evidence, never on missing data.
+
+    `held_stale_oldest_age_seconds` instruments HOW LONG the worst custody
+    breach has gone unattended: the maximum "seconds since last renewal"
+    (`custody.age_seconds(last_seen)`) among the `held_stale` holds that
+    actually carry a custody record. `None` when nothing is stale, or when
+    the only stale holds have no custody record at all (the "claimed but
+    never renewed" path -- reclaim-eligible, but with no `last_seen` to age
+    from, so no honest duration exists). This is the time-to-notice anchor
+    for the top-tier alarm: a custody breach's age is the clock a human's
+    notice is measured against.
     """
 
     name: str
@@ -2625,6 +2648,8 @@ class ProjectSummary:
     resolved_24h: int | None = None
     resolved_7d: int | None = None
     ready_age_buckets: dict[str, int] | None = None
+    blocked_stale: int | None = None
+    held_stale_oldest_age_seconds: float | None = None
 
 
 def _ready_age_bucket_label(days: float) -> str:
@@ -2664,6 +2689,52 @@ def _held_stale_count(held_items: list[Item]) -> int:
         for i in held_items
         if C.reclaim_eligible(i.meta.get(C.CUSTODY_KEY) if isinstance(i.meta, dict) else None)[0]
     )
+
+
+def _held_stale_oldest_age_seconds(held_items: list[Item]) -> float | None:
+    """The longest time-since-last-renewal among the reclaim-eligible holds
+    that carry a custody record -- the age of the WORST custody breach, in
+    seconds. `None` when nothing is stale, or when every stale hold lacks a
+    custody record entirely (the "claimed but never renewed" path: eligible,
+    but with no `last_seen` to age from -- no honest duration exists, so we
+    report none rather than fabricate one).
+
+    A pure function of the already-fetched `held_items` (same discipline as
+    `_held_stale_count`, computed from the SAME list), so it costs no second
+    `bd` call. This is the time-to-notice anchor for a ranked attention
+    queue's top tier: a custody breach's age is the clock a human's notice
+    is measured against.
+    """
+    ages: list[float] = []
+    for i in held_items:
+        meta = i.meta.get(C.CUSTODY_KEY) if isinstance(i.meta, dict) else None
+        if not C.reclaim_eligible(meta)[0]:
+            continue
+        # Only a record with a real `last_seen` can be aged. A stale hold with
+        # no custody record at all (dict-less) is eligible but un-ageable --
+        # skipped here, never coerced to a fabricated 0-second breach.
+        if isinstance(meta, dict) and meta.get("last_seen"):
+            ages.append(C.age_seconds(meta["last_seen"]))
+    return max(ages) if ages else None
+
+
+def _blocked_stale_count(blocked_items: list[Item]) -> int:
+    """How many of `blocked_items` (already filtered to `status == "blocked"`)
+    are NEEDLESSLY blocked -- blocked in status yet with NO still-active
+    `blocks` dependency left (`_active_blockers` empty: every upstream
+    blocker already resolved, or none was ever recorded). These are the
+    "stale blocker chain" a ranked attention queue treats as MORE urgent
+    than a genuinely-blocked item, because they need nothing but an unblock.
+
+    Derived from the SAME `items` list `project_summary` already read (each
+    item's `raw["dependencies"]` carries the edge type + upstream status
+    `bd list` returns), so it costs no second `bd` call. Safe by
+    construction: `_is_active_blocker` counts a `blocks` edge whose upstream
+    status is anything but `closed` (a missing/unreadable status included) as
+    still active, so an item is only ever called stale on real evidence that
+    its blockers are cleared -- never on absent data.
+    """
+    return sum(1 for i in blocked_items if not _active_blockers(i))
 
 
 def _ready_age_buckets(items: list[Item]) -> dict[str, int]:
@@ -2729,6 +2800,7 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
     except BeadsError as e:
         return ProjectSummary(name=name, status=truncate_status(f"ERROR: {e}"))
     held_items = [i for i in items if i.status == "held"]
+    blocked_items = [i for i in items if i.status == "blocked"]
     activity = project_activity(items)
     held_stale = _held_stale_count(held_items)
     return ProjectSummary(
@@ -2748,6 +2820,8 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
         resolved_24h=activity["resolved_24h"],
         resolved_7d=activity["resolved_7d"],
         ready_age_buckets=_ready_age_buckets(items),
+        blocked_stale=_blocked_stale_count(blocked_items),
+        held_stale_oldest_age_seconds=_held_stale_oldest_age_seconds(held_items),
     )
 
 
