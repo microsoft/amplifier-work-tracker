@@ -299,6 +299,30 @@ def _abs_and_rel(ts: str | None) -> str:
     return f'<span title="{_esc(ts)}">{_esc(_relative_time(ts))}</span>'
 
 
+def _item_age_html(dt: datetime | None) -> str:
+    """Render `dt` (an already-parsed `Item` timestamp) with the SAME
+    compact age vocabulary the item table's own Age column uses
+    (`T.age_short`/`T.age_band_class`) -- one age format across the whole
+    app, not the coarser "12m ago" phrasing `_relative_time` produces for
+    a second, independent reading of the same kind of value. `None` gets
+    the same empty-value glyph every other age reading in this module
+    falls back to; a real timestamp is always one hover away via `title`,
+    exactly like `_abs_and_rel`.
+
+    Values under a minute read as "now" (matching the ready-queue/Beads-
+    dashboard convention of a fresh item reading as immediate, not "0m")
+    -- the one case `age_short` itself renders as `(\"0\", \"m\")`, reinterpreted
+    here rather than changed in the shared helper, which every row in the
+    item table also calls and must keep reading "0m" nowhere else."""
+    if dt is None:
+        return f'<span class="muted">{_EMPTY_GLYPH}</span>'
+    seconds = max(0.0, (datetime.now(UTC) - dt).total_seconds())
+    band = T.age_band_class(seconds)
+    value, unit = T.age_short(seconds)
+    label = "now" if (value, unit) == ("0", "m") else f"{value}{unit}"
+    return f'<span class="age {band}" title="{_esc(dt.isoformat())}">{_esc(label)}</span>'
+
+
 # GitHub's own noreply commit-identity format: `<numeric-id>+<username>@users.
 # noreply.github.com` -- e.g. the Amplifier co-author trailer every automated
 # commit/item carries. The ONE pattern actually observed leaking verbatim
@@ -817,6 +841,87 @@ def _attention_signal_html(held: int, blocked: int, deferred: int) -> str:
     )
 
 
+# `value` is the `?status=` query value each tab links to (`None` for ALL --
+# no status param at all); `key` looks up this tab's count below. Ready's
+# `key` reads "ready" (matching `ProjectSummary.ready`) even though the
+# real filter value underneath is bd's "open" -- the tab is labelled the
+# way a person reads the queue, not the way bd spells the status.
+_STATUS_TABS: tuple[tuple[str | None, str, str], ...] = (
+    (None, "all", "All"),
+    ("open", "ready", "Ready"),
+    ("held", "held", "Held"),
+    ("blocked", "blocked", "Blocked"),
+    ("deferred", "deferred", "Deferred"),
+    ("resolved", "resolved", "Resolved"),
+)
+
+# Only HELD and BLOCKED turn their reserved escalation colour when
+# non-zero -- the SAME amber/crimson hues `_STATE_FILL`/`.st-held`/
+# `.st-blkd` already use for these two statuses elsewhere in this app.
+# Ready/Resolved/Deferred/All stay neutral no matter their count: a large,
+# healthy ready backlog is not something to alarm-colour.
+_TAB_ALARM_CLASS = {"held": "am", "blocked": "cr"}
+
+
+def _status_tab_counts(summary: A.ProjectSummary) -> dict[str, int]:
+    """Real per-project counts keyed by `_STATUS_TABS`' tab keys -- reuses
+    the EXACT fields `project_summary` already computed for this page; no
+    second, independently-derived count is taken anywhere in this
+    function. Every field is `0` (never fabricated) when the project
+    itself is unreadable (mid-creation/broken) -- see `ProjectSummary`'s
+    own docstring for why those states carry `None` counts."""
+    if summary.status != A.STATUS_OK:
+        return dict.fromkeys(("all", "ready", "held", "blocked", "deferred", "resolved"), 0)
+    return {
+        "all": summary.total or 0,
+        "ready": summary.ready or 0,
+        "held": summary.held or 0,
+        "blocked": summary.blocked or 0,
+        "deferred": summary.deferred or 0,
+        "resolved": summary.resolved or 0,
+    }
+
+
+def _tab_href(name: str, value: str | None, q: str) -> str:
+    """`?status=`/`q=` for one status tab -- an active search carries
+    through unchanged, the same way the existing pagination/clear-search
+    links already preserve it."""
+    parts = []
+    if value:
+        parts.append(f"status={quote(value)}")
+    if q:
+        parts.append(f"q={quote(q)}")
+    return f"/projects/{_esc(name)}" + (f"?{'&'.join(parts)}" if parts else "")
+
+
+def _status_tabs_html(name: str, status: str | None, q: str, counts: dict[str, int]) -> str:
+    """The per-project status-tab counter row: one server-linked tab per
+    status plus ALL, each showing this project's REAL count. A zero count
+    stays visible, dimmed (`.tcount.z`) -- the same "lamp present, switched
+    off" convention `_state_legend_html` already uses -- so the full set
+    of statuses is legible even on a project with nothing held/blocked/
+    deferred right now, rather than a shorter row that silently omits them.
+
+    Every tab is a plain `<a href="?status=...">`; clicking one is an
+    ordinary navigation the existing route already handles (`status =
+    request.query_params.get("status")`) -- no new client-side filtering
+    logic anywhere, and the existing free-text search composes with it
+    via `_tab_href`'s carried-through `q`.
+    """
+    tabs = []
+    for value, key, label in _STATUS_TABS:
+        n = counts[key]
+        href = _tab_href(name, value, q)
+        active = " active" if status == value else ""
+        cls = "tcount" if n else "tcount z"
+        if n and key in _TAB_ALARM_CLASS:
+            cls += f" {_TAB_ALARM_CLASS[key]}"
+        tabs.append(
+            f'<a class="tab{active}" href="{href}">{_esc(label)}<span class="{cls}">{n}</span></a>'
+        )
+    return f'<nav class="tabs" aria-label="Filter items by status">{"".join(tabs)}</nav>'
+
+
 _BUCKET_HEIGHT = {"0-1": 12, "2-3": 22, "4-6": 34, "7+": 44}
 _BUCKET_BAND = {"0-1": "t0", "2-3": "t1", "4-6": "t2", "7+": "t3"}
 
@@ -1188,6 +1293,66 @@ def _item_lifecycle_seconds(i: A.Item) -> float | None:
     return max(0.0, (now - basis).total_seconds())
 
 
+# bd's priority scale (`bd priority --help`): 0=Critical .. 4=Backlog,
+# default 2=Medium. Encoded here as BRIGHTNESS on this app's existing
+# neutral text ramp rather than a new hue -- --amber and --crimson are
+# each already reserved for exactly one job elsewhere (age/attention,
+# and blocked/escalation; see webtheme.py's SIGNAL COLOURS comment), and
+# a static severity tag is neither of those. This keeps the bar subtle by
+# construction: it can never compete with the amber age accent or a real
+# crimson blocked marker, because it never borrows either hue.
+_PRIORITY_BAR_COLOR = {
+    0: "var(--ink)",
+    1: "var(--mid)",
+    2: "var(--quiet)",
+    3: "var(--dim)",
+    4: "var(--rule-hi)",
+}
+_PRIORITY_LABEL = {
+    0: "P0 \u2013 critical",
+    1: "P1 \u2013 high",
+    2: "P2 \u2013 medium",
+    3: "P3 \u2013 low",
+    4: "P4 \u2013 backlog",
+}
+
+
+def _priority_bar_html(priority: int | None) -> str:
+    """The row's left-edge priority bar. An unrecognized/missing priority
+    (`None`, or any value outside bd's documented 0-4 range) degrades
+    HONESTLY to the same faint `--rule-hi` neutral already used for P4,
+    titled \"priority unknown\" -- never a guessed rank."""
+    if priority is not None and priority in _PRIORITY_BAR_COLOR:
+        color = _PRIORITY_BAR_COLOR[priority]
+        title = _PRIORITY_LABEL[priority]
+    else:
+        color = "var(--rule-hi)"
+        title = "priority unknown"
+    return f'<span class="pribar" style="background:{color}" title="{_esc(title)}"></span>'
+
+
+# Which `ICONS` glyph each status renders in the row gutter -- see
+# webtheme.py's `ICONS` dict for the shapes themselves.
+_STATUS_ICON_KEY = {
+    "open": "ready",
+    "held": "held",
+    "blocked": "blocked",
+    "deferred": "deferred",
+    "resolved": "resolved",
+}
+
+
+def _status_icon_html(status: str) -> str:
+    """The row's small per-status glyph -- reuses the EXACT `st-*` colour
+    classes `_item_state_html`'s text badge already uses (`_STATE_CSS`),
+    so an icon and its row's status text can never disagree in colour."""
+    cls = _STATE_CSS.get(status, "open")
+    icon_key = _STATUS_ICON_KEY.get(status, "ready")
+    icon = T.ICONS.get(icon_key, T.ICONS["ready"])
+    label = _STATE_LABEL.get(status, status.title())
+    return f'<span class="stico st-{cls}" title="{_esc(label)}">{icon}</span>'
+
+
 def _item_row(name: str, i: A.Item, idx: int) -> str:
     seconds = _item_lifecycle_seconds(i)
     band = T.age_band_class(seconds) if i.status == "open" else "a0"
@@ -1218,7 +1383,12 @@ def _item_row(name: str, i: A.Item, idx: int) -> str:
     # full id if it doesn't carry this project's prefix.
     _prefix = f"{name}-"
     id_shown = i.id[len(_prefix) :] if i.id.startswith(_prefix) else i.id
+    # Two dimensions in ~20px, no new WIDE column: a priority bar (colour)
+    # and a status icon (shape), both in the row's leading gutter cell --
+    # see `_priority_bar_html`/`_status_icon_html`.
+    gutter = _priority_bar_html(i.priority) + _status_icon_html(i.status)
     return f"""<tr data-t="{_esc(key)}">
+  <td><span class="c gutter">{gutter}</span></td>
   <td><span class="c"><span class="idx">{idx:03d}</span></span></td>
   <td><span class="c"><span class="iid" title="{_esc(i.id)}">{_esc(id_shown)}</span></span></td>
   <td><span class="c">{_item_state_html(i.status)}</span></td>
@@ -2475,10 +2645,23 @@ def create_app(
         impaired_label = _impairment_label(name, summary)
         impaired_banner = _impairment_banner([(name, impaired_label)] if impaired_label else [])
 
-        status_options = "".join(
-            f'<option value="{_esc(s)}"{" selected" if s == status else ""}>{_esc(s)}</option>'
-            for s in A.STATUSES
+        # Per-project analogue of the dashboard's own attention signal --
+        # same function, same "absent when calm, never a dimmed zero"
+        # convention (see `_attention_signal_html`'s docstring). `None`-safe
+        # counts only ever come from a healthy (`STATUS_OK`) summary; a
+        # broken/mid-creation project already gets `impaired_banner` above
+        # and has no real held/blocked/deferred counts to show here.
+        attention_banner = (
+            _attention_signal_html(summary.held or 0, summary.blocked or 0, summary.deferred or 0)
+            if summary.status == A.STATUS_OK
+            else ""
         )
+
+        # D5 -- the status-tab counter row: real per-project counts, reused
+        # verbatim from the same `summary` this route already computed
+        # above (never a second, independently-derived count).
+        tab_counts = _status_tab_counts(summary)
+        tabs_html = _status_tabs_html(name, status, q, tab_counts)
 
         rows = "".join(
             _item_row(name, i, result.offset + n + 1) for n, i in enumerate(result.items)
@@ -2497,10 +2680,12 @@ def create_app(
             # "never collide, at any title length" true even past this width,
             # not the width itself -- this number only sets the common case.
             table = f"""<table class="tbl">
-              <colgroup><col style="width:46px"><col style="width:108px"><col style="width:82px">
-                <col style="width:70px"><col style="width:92px"><col></colgroup>
+              <colgroup><col style="width:20px"><col style="width:46px"><col style="width:108px">
+                <col style="width:82px"><col style="width:70px"><col style="width:92px">
+                <col></colgroup>
               <thead><tr>
-                <th>#</th><th>Id</th><th>State</th><th>Age</th><th>Holder</th><th>Title</th>
+                <th aria-label="Priority and status"></th><th>#</th><th>Id</th><th>State</th>
+                <th>Age</th><th>Holder</th><th>Title</th>
               </tr></thead>
               <tbody>{rows}</tbody>
             </table>"""
@@ -2524,11 +2709,12 @@ def create_app(
             table = '<div class="empty-state"><p>No items yet. Add the first one below.</p></div>'
 
         # D2 -- a real server-side search control. It is a GET form so the URL
-        # carries the query, the status select submits WITH it (preserving an
-        # active search), and the count below is the honest server figure --
-        # not a client-side recount over only the current page's rows. The
-        # count reads "matches OF project-total" while searching, else the
-        # plain project total.
+        # carries the query, a hidden `status` input submits WITH it
+        # (preserving the tab row's active filter -- see `_status_tabs_html`
+        # above, which is now the sole status-filter control), and the count
+        # below is the honest server figure -- not a client-side recount over
+        # only the current page's rows. The count reads "matches OF
+        # project-total" while searching, else the plain project total.
         search_hint = "Search titles, ids, holders and state"
         clear_search = ""
         if q:
@@ -2538,17 +2724,17 @@ def create_app(
             f"{result.total_count} OF {project_total} ITEMS" if q else f"{result.total_count} ITEMS"
         )
         typed_cls = " typed" if q else ""
+        status_hidden = (
+            f'<input type="hidden" name="status" value="{_esc(status)}">' if status else ""
+        )
         controls = f"""<form method="get" action="/projects/{_esc(name)}" class="controls">
+            {status_hidden}
             <div class="field{typed_cls}" id="field">
               <span class="mag">{T.ICONS["mag"]}</span>
               <input id="q" name="q" type="search" autocomplete="off" spellcheck="false"
                      value="{_esc(q)}" placeholder="{_esc(search_hint)}"
                      aria-label="{_esc(search_hint)}">
             </div>
-            <select name="status" style="max-width:180px;height:44px" onchange="this.form.submit()">
-              <option value="">(all statuses)</option>
-              {status_options}
-            </select>
             <button type="submit">Search</button>
             {clear_search}
             <span class="count" id="qc">{qc_text}</span>
@@ -2556,9 +2742,11 @@ def create_app(
         body = f"""
         {_flash(request)}
         {impaired_banner}
+        {attention_banner}
         <section class="sec">{_project_hero_html(name, summary, oldest_item)}</section>
         <div class="hr bleed"></div>
         <section class="sec tight">
+          {tabs_html}
           {controls}
           {table}
           {pagination_html}
@@ -2750,12 +2938,16 @@ def create_app(
             for k, v in facts
         )
 
+        # D2/#2 -- the SAME compact relative-age vocabulary the item table's
+        # own Age column uses (`_item_age_html`), not a second, coarser
+        # "12m ago" format for the same kind of value -- see that helper's
+        # docstring.
         time_kv_parts = [
-            ("Created", _abs_and_rel(item.created_at.isoformat() if item.created_at else None)),
-            ("Updated", _abs_and_rel(item.updated_at.isoformat() if item.updated_at else None)),
+            ("Created", _item_age_html(item.created_at)),
+            ("Updated", _item_age_html(item.updated_at)),
         ]
         if item.status == "resolved" and item.closed_at:
-            time_kv_parts.append(("Resolved", _abs_and_rel(item.closed_at.isoformat())))
+            time_kv_parts.append(("Resolved", _item_age_html(item.closed_at)))
         time_kv = "".join(
             f'<div><span class="k">{_esc(k)}</span><span class="v serif">{v}</span></div>'
             for k, v in time_kv_parts

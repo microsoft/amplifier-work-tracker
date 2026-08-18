@@ -886,3 +886,148 @@ def test_remove_confirm_page_never_includes_auto_refresh_script(client, project_
     r = client.get(f"/projects/{name}/remove")
     assert r.status_code == 200
     assert _AUTO_REFRESH_MARKER not in r.text
+
+
+# ------------------------------------------------ list polish: status tabs
+
+
+def test_project_view_status_tabs_show_real_counts(client, project_factory, unique_lane):
+    """The tab row's counts are the real per-project state -- not a
+    fabricated/placeholder reading."""
+    _login(client)
+    name, bd = project_factory("tabcountsproj")
+    bd.create("ready one", tags=[unique_lane, A.LANE_WORK])
+    bd.create("ready two", tags=[unique_lane, A.LANE_WORK])
+
+    r = client.get(f"/projects/{name}")
+    assert r.status_code == 200
+    assert 'class="tabs"' in r.text
+    assert ">Ready<" in r.text
+    assert ">Held<" in r.text
+    assert ">Blocked<" in r.text
+    assert ">Deferred<" in r.text
+    assert ">Resolved<" in r.text
+    # Two real ready items, everything else genuinely zero and dimmed.
+    assert '<span class="tcount">2</span>' in r.text
+    assert '<span class="tcount z">0</span>' in r.text
+
+
+def test_project_view_clicking_a_status_tab_filters_the_list(client, project_factory, unique_lane):
+    """Note: the ready-queue HERO (`_project_hero_html`, "oldest unclaimed
+    in this queue") legitimately names this item's title regardless of the
+    table's own status filter -- it is a project-wide reading, not part of
+    the filtered list. So the filtering assertion is scoped to the item
+    TABLE itself (absent entirely -- an honest empty-state -- once
+    filtered to a status this item doesn't have), not a blanket "title
+    appears nowhere on the page" check."""
+    _login(client)
+    name, bd = project_factory("tabfilterproj")
+    bd.create("only an open item", tags=[unique_lane, A.LANE_WORK])
+
+    all_view = client.get(f"/projects/{name}")
+    assert "only an open item" in all_view.text
+    assert 'class="tbl"' in all_view.text
+
+    filtered = client.get(f"/projects/{name}", params={"status": "blocked"})
+    assert filtered.status_code == 200
+    assert 'class="tbl"' not in filtered.text  # no rows -- filtered to nothing
+    assert "No items match status" in filtered.text
+    assert f'href="/projects/{name}?status=blocked"' in filtered.text
+    assert 'class="tab active"' in filtered.text
+
+
+def test_project_view_no_longer_ships_a_status_select_dropdown(client, shared_project_name):
+    """The tab row replaces the old `<select name="status">` control
+    entirely -- one status-filter widget, not two."""
+    _login(client)
+    r = client.get(f"/projects/{shared_project_name}")
+    assert r.status_code == 200
+    assert '<select name="status"' not in r.text
+
+
+# ------------------------------------------ list polish: per-project health banner
+
+
+def test_project_view_health_banner_absent_when_calm(client, project_factory, unique_lane):
+    """A project with nothing held/blocked/deferred shows NO banner at
+    all -- never a dimmed '0 blocked' (see `_attention_signal_html`)."""
+    _login(client)
+    name, bd = project_factory("calmprojbanner")
+    bd.create("a perfectly calm ready item", tags=[unique_lane, A.LANE_WORK])
+
+    r = client.get(f"/projects/{name}")
+    assert r.status_code == 200
+    assert "need attention" not in r.text
+
+
+def test_project_view_health_banner_present_when_blocked(client, project_factory, unique_actor):
+    _login(client)
+    name, bd = project_factory("blockedprojbanner")
+    item_id = bd.create("an item that will be blocked", tags=[A.LANE_WORK])
+    # No public adapter method sets bd's raw status directly (by design --
+    # see adapter.py's `update` docstring: lifecycle changes go through
+    # dedicated, fenced methods, none of which cover a bare status flip).
+    # `_run` is the same private escape hatch test_directed_claim.py
+    # already uses for setup the public seam doesn't expose.
+    r_status = bd._run(["update", item_id, "--status", "blocked"], actor=unique_actor)  # noqa: SLF001
+    assert r_status.returncode == 0, r_status.stderr
+
+    r = client.get(f"/projects/{name}")
+    assert r.status_code == 200
+    assert "need attention" in r.text
+    assert "flash-error" in r.text
+    assert "1 item blocked" in r.text
+
+
+def test_project_view_health_banner_present_when_held(client, project_factory, unique_actor):
+    _login(client)
+    name, bd = project_factory("heldprojbanner")
+    item_id = bd.create("an item to hold", tags=[A.LANE_WORK])
+    bd.claim_item(item_id, actor=unique_actor)
+
+    r = client.get(f"/projects/{name}")
+    assert r.status_code == 200
+    assert "need attention" in r.text
+    assert "flash-msg" in r.text
+    assert "1 item held" in r.text
+
+
+# --------------------------------------------------- list polish: row gutter
+
+
+def test_project_view_item_rows_include_priority_bar_and_status_icon(
+    client, project_factory, unique_lane
+):
+    _login(client)
+    name, bd = project_factory("gutterproj")
+    bd.create("gutter probe item", tags=[unique_lane, A.LANE_WORK])
+
+    r = client.get(f"/projects/{name}")
+    assert r.status_code == 200
+    assert 'class="c gutter"' in r.text
+    assert "pribar" in r.text
+    assert "stico" in r.text
+
+
+# ------------------------------------------------- list polish: item-detail age
+
+
+def test_item_detail_created_and_updated_use_the_compact_age_format(client, project_factory):
+    """Created/Updated on the item-detail page use the SAME compact
+    relative-age vocabulary the item table's Age column uses (`age`/`age
+    a0..a3` bands) -- not the coarser '12m ago' phrasing. Scoped to the
+    exact fact rows rather than a blanket "'ago' not in the whole page"
+    check -- the page also embeds base64 font data, where an incidental
+    'ago' substring is not meaningful."""
+    _login(client)
+    name, bd = project_factory("itemagedetailproj")
+    new_id = bd.create("fresh item for age check", tags=[A.LANE_WORK])
+
+    r = client.get(f"/projects/{name}/items/{new_id}")
+    assert r.status_code == 200
+    assert '<span class="k">Created</span><span class="v serif">' in r.text
+    assert '<span class="k">Updated</span><span class="v serif">' in r.text
+    assert ">now<" in r.text
+    assert "m ago" not in r.text
+    assert "h ago" not in r.text
+    assert "d ago" not in r.text
