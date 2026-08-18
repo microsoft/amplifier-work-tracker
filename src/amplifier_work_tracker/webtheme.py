@@ -57,91 +57,186 @@ DEVIATIONS FROM THE REFERENCE, DELIBERATE, EACH WITH A REASON
 
 from __future__ import annotations
 
-import base64
 import html
-import pathlib
 
 # ---------------------------------------------------------------------------
-# Fonts -- embedded as base64 data URIs, exactly like the reference. No CDN,
-# no network fetch at view time: this process may serve a LAN with no
-# internet egress at all (see webauth.py's module docstring -- explicitly a
-# multi-person LAN service). Read and encoded ONCE at import time.
+# Fonts -- the v2 ("blend-3") design system's own token set (`--font-sans`/
+# `--font-mono`, see the token block below) is a system-font stack ONLY
+# (`-apple-system`, `Segoe UI`, `Roboto`, `ui-monospace`, ...), never a
+# custom embedded face -- see the approved DESIGN-SYSTEM.md's own section 7
+# ("no network dependency... the fallback stack here is intentionally a
+# close visual match"). This retires the previous J-editorial-dark round's
+# embedded Bodoni Moda / Archivo `@font-face` (base64, ~81KB on every page
+# load) -- no replacement font is embedded, following the approved system
+# verbatim rather than re-adding a bespoke face it deliberately omitted. The
+# `.woff2` files remain in `webfonts/` (harmless, unreferenced) in case a
+# future round wants to self-host Inter per that same section's recommendation.
 # ---------------------------------------------------------------------------
 
-_FONTS_DIR = pathlib.Path(__file__).parent / "webfonts"
-
-
-def _font_b64(name: str) -> str:
-    return base64.b64encode((_FONTS_DIR / name).read_bytes()).decode()
-
-
-_FONT_FACE_CSS = (
-    "@font-face{font-family:'Bodoni Moda';font-style:normal;font-weight:400 900;"
-    "font-display:block;src:url(data:font/woff2;base64,"
-    + _font_b64("BodoniModa-var.woff2")
-    + ") format('woff2');}\n"
-    "@font-face{font-family:'Archivo';font-style:normal;font-weight:100 900;"
-    "font-display:block;src:url(data:font/woff2;base64,"
-    + _font_b64("Archivo-var.woff2")
-    + ") format('woff2');}\n"
-)
-
 # ---------------------------------------------------------------------------
-# CSS -- ported from the reference `shell.py`'s CSS, trimmed to what this
-# app's real routes use (no fixed rail, no alarm-band, no clock faces) and
-# extended with a form vocabulary the reference never needed (it was a
-# read-mostly mockup; this app writes).
+# CSS -- v2 ("blend-3"): tokens ported verbatim from the approved design
+# system (`.amplifier/design-gauntlet/wt-v3/design-system/tokens.css`),
+# component rules restyled in place to match that system's gallery
+# (`design-system.html`) and firewall (`DESIGN-SYSTEM.md`). Class names,
+# ids, and structural/layout rules (flex/grid math, breakpoints, the
+# `--pad`/`--u`/`TRACK_W` layout constants) are UNCHANGED from the prior
+# J-editorial-dark round on purpose -- this is a re-skin, not a
+# re-architecture; `webapp.py` needed zero structural changes as a result.
 # ---------------------------------------------------------------------------
 
 CSS = r"""
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+/*
+  ---------------------------------------------------------------------------
+  DESIGN TOKENS -- ported VERBATIM from the approved design system
+  (.amplifier/design-gauntlet/wt-v3/design-system/tokens.css). Every
+  color/space/type/radius/motion value below, under its ORIGINAL name
+  (--color-ground, --ink-primary, --alarm, --brand-cyan-ink, ...), is copied
+  unchanged -- not re-derived -- from that file. See its own DESIGN-SYSTEM.md
+  for the full contrast math (worst-case text 5.45:1 dark / 4.90:1 light)
+  and the firewall it encodes (glass/gradient = chrome only; amber=alarm and
+  crimson=blocked are the ONLY status hues; a calm screen shows neither).
+
+  COMPATIBILITY ALIASES, at the end of this same block, map this app's
+  *existing* internal role names (--ground, --ink, --amber, --serif, ...)
+  onto the tokens just defined above -- so every component rule further
+  down in this file (class names, layout math: `--pad`/`--u`/`TRACK_W`/
+  `_grad_x` are UNCHANGED, this is a re-skin not a re-architecture) picks up
+  the new palette/typography/radius automatically. Only the alias TARGETS
+  are new token values; nothing consuming them was rewritten from scratch.
+  ---------------------------------------------------------------------------
+*/
 :root{
-  --ground:#0D0D0C;
-  --raise:#151513;    /* the only lighter surface text ever sits on (hovered
-                         rows, fields, chips, content blocks) -- every text
-                         token below is checked against BOTH --ground and this */
-  --sink:#070706;
+  color-scheme:dark;
 
-  /* NEUTRAL TEXT RAMP -- four steps, each a real measured contrast. Even the
-     quietest step (--dim) clears WCAG AA (4.5:1) with margin against --ground
-     AND against a hovered row (--raise), at the small sizes this UI uses. No
-     content-bearing text ever drops below this floor. */
-  --ink:#F2EEE6;      /* 16.80:1  -- primary text */
-  --mid:#A6A199;      /*  7.57:1  -- secondary: chrome, labels, holders, ids */
-  --quiet:#9C978F;    /*  6.70:1  -- tertiary: prose, footnotes, counts */
-  --dim:#928E85;      /*  5.95:1  (5.60:1 on --raise) -- quietest legible step.
-                         Lifted off the previous 5.29/4.98 floor so small print
-                         (resolved status, row ids, axis numerals) reads as
-                         quiet, never as functionally-invisible. */
+  /* ---------- GROUND (dark, default) ---------- */
+  --color-ground:#05070f;
+  --color-ground-elevated:#0b0f1a;
+  --color-ground-sunken:#020308;
 
-  /* SIGNAL COLOURS -- exactly three, each with ONE job, never decorative.
-     The accent (--amber) is spent on ATTENTION only; good news stays neutral
-     (--live); a broken queue gets its own unmistakable hue (--alarm). */
-  --amber:#D9A253;    /*  8.56:1  -- ATTENTION, and nothing else: accumulating
-                         time / the one thing to look at (hero age, the a3 stale
-                         band, oldest-unclaimed emphasis) and the interactive
-                         accent that confirms it (hover, focus, caret, selection).
-                         NOT good news. NOT alarm. This is the single referent. */
-  --alarm:#FF6A45;    /*  6.85:1  -- BROKEN: a project the backend cannot read.
-                         A distinct hot hue, brighter and more saturated than
-                         both amber (warm gold) and crimson (soft coral), so a
-                         broken queue is unmissable and never read as ordinary
-                         attention or item-level escalation. Render lanes apply
-                         it via `state_html("alarm", ...)` / `.state.alarm`. */
-  --crimson:#E0655A;  /*  5.72:1  -- ESCALATION: a blocked item, a destructive
-                         action. Item-level and reversible-with-care, distinct
-                         from a whole-project --alarm. Never decorative. */
-  --live:#A6A199;     /*  neutral (== --mid) -- "healthy / live" is GOOD NEWS and
-                         is kept QUIET on purpose: the breathing status dot, no
-                         accent. Good news must never spend the one accent. */
+  /* ---------- GLASS (chrome only -- see DESIGN-SYSTEM.md's firewall) ---------- */
+  --glass-fill:rgba(255,255,255,.06);
+  --glass-fill-strong:rgba(255,255,255,.10);
+  --glass-fill-row-hover:rgba(255,255,255,.08);
+  --glass-fill-row-selected:rgba(34,211,238,.10);
+  --glass-blur:24px;
+  --glass-blur-strong:40px;
+  --glass-hairline:rgba(255,255,255,.14);
+  --glass-hairline-soft:rgba(255,255,255,.08);
+  --glass-shadow:0 8px 32px rgba(2,6,15,.45),inset 0 1px 0 rgba(255,255,255,.06);
+  --glass-shadow-float:0 24px 64px rgba(2,6,15,.55),inset 0 1px 0 rgba(255,255,255,.08);
 
-  --rule:#1F1F1D;
-  --rule-hi:#333330;
-  --link-underline:#333330;  /* the resting affordance for INLINE prose links --
-                                see "AFFORDANCE GRAMMAR" note below the tokens */
-  --serif:'Bodoni Moda',Georgia,serif;
-  --sans:'Archivo','Helvetica Neue',sans-serif;
-  --mono:ui-monospace,'SFMono-Regular','JetBrains Mono',Menlo,Consolas,'Liberation Mono',monospace;
+  /* Brand rim/glow gradient -- BORDERS, GLOWS, and the LOGOTYPE only, never
+     reading copy (WCAG SC 1.4.3 logotype exemption -- see DESIGN-SYSTEM.md
+     sec 3b). Brand solid gradient -- TEXT-BEARING fills (buttons); darker
+     stops so white text clears 4.5:1 at every point. Two gradients, one
+     family, different jobs. */
+  --brand-gradient-rim:linear-gradient(135deg,#22d3ee 0%,#6366f1 55%,#a855f7 100%);
+  --brand-gradient-glow:radial-gradient(circle at 100% 100%,rgba(217,70,239,.35),transparent 60%);
+  --brand-gradient-solid:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);
+
+  /* ---------- INK (data + copy; flat, never glass, never gradient) ---------- */
+  --ink-primary:#f8fafc;
+  --ink-secondary:#d6dee8;
+  --ink-tertiary:#aeb8c9;
+  --ink-quiet:#7c8798;
+  --ink-on-solid:#f8fafc;
+  --ink-on-ground-inverse:#05070f;
+
+  /* ---------- BRAND ACCENTS (chrome/interaction ONLY -- never a status color) ---------- */
+  --brand-cyan:#22d3ee;
+  --brand-blue:#3b82f6;
+  --brand-indigo:#6366f1;
+  --brand-purple:#a855f7;
+  --brand-magenta:#d946ef;
+  /* text/icon-SAFE brand variants -- use these, never the raw --brand-*
+     above, wherever a brand hue becomes reading copy or a meaningful icon. */
+  --brand-cyan-ink:#22d3ee;
+  --brand-purple-ink:#c084fc;
+
+  /* ---------- RESERVED STATUS (ONLY these two hues carry status meaning) ---------- */
+  --alarm:#f59e0b;
+  --alarm-surface:rgba(245,158,11,.14);
+  --alarm-ink-on-surface:#fcd34d;
+  --blocked:#ef4444;
+  --blocked-surface:rgba(239,68,68,.14);
+  --blocked-ink-on-surface:#fca5a5;
+  --calm-ink:var(--ink-secondary);  /* "all clear" / resolved = NEUTRAL, not colored */
+
+  /* ---------- TYPE ---------- */
+  --font-sans:"Inter var","Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+    "Helvetica Neue",Arial,sans-serif;
+  --font-mono:ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",Menlo,Consolas,
+    "Liberation Mono",monospace;
+
+  /* ---------- SPACE (4px base) ---------- */
+  --space-1:.25rem;--space-2:.5rem;--space-3:.75rem;--space-4:1rem;--space-5:1.25rem;
+  --space-6:1.5rem;--space-8:2rem;--space-10:2.5rem;--space-12:3rem;--space-16:4rem;
+
+  /* ---------- RADIUS (rounded/squircle, matches icon + glass language) ---------- */
+  --radius-sm:.5rem;   /* 8px  -- small chips, inner controls */
+  --radius-md:1rem;    /* 16px -- rows, fields */
+  --radius-lg:1.5rem;  /* 24px -- major panels */
+  --radius-pill:999px; /* buttons, tabs, badges */
+
+  --hairline-width:1px;
+  --hairline-color:var(--glass-hairline-soft);
+
+  /* ---------- MOTION ---------- */
+  --duration-fast:120ms;--duration-base:200ms;--duration-slow:320ms;
+  --ease-standard:cubic-bezier(.2,0,0,1);--ease-emphasized:cubic-bezier(.3,0,.1,1);
+
+  /* =====================================================================
+     COMPATIBILITY ALIASES -- old internal role name -> ported token. Every
+     component rule below this point in the file still reads --ground /
+     --ink / --amber / --serif / etc; these lines are the ONLY reason the
+     rest of this stylesheet is now on the v2 system.
+     ===================================================================== */
+  --ground:var(--color-ground);
+  --raise:var(--glass-fill-strong);  /* the "lighter surface" role (hovered rows,
+                                         fields, chips, panels) IS the design
+                                         system's own chrome-surface token */
+  --sink:var(--color-ground-sunken);
+
+  --ink:var(--ink-primary);
+  --mid:var(--ink-secondary);
+  --quiet:var(--ink-tertiary);
+  --dim:var(--ink-tertiary);  /* the prior 4-step ramp's two quietest, still-
+                                  legible-small-print steps (--quiet/--dim)
+                                  collapse onto the ONE new ink token verified
+                                  >=4.5:1 in BOTH schemes (light worst case
+                                  4.90:1) -- see DESIGN-SYSTEM.md sec 5. The
+                                  system's own --ink-quiet is NOT used here:
+                                  it is documented decorative/disabled-only,
+                                  not guaranteed >=4.5:1 in light mode, and
+                                  every --dim call site in this file renders
+                                  real, required-legible small print (ids,
+                                  holders, counts, timestamps). */
+
+  --amber:var(--alarm);
+  --crimson:var(--blocked);
+  /* the prior THIRD hue for a broken/unreadable project (its own --alarm,
+     distinct from both amber and crimson) folds into --blocked: the new
+     system reserves exactly two status hues, never three, and "the whole
+     project is unreadable" is squarely an escalation, the same family as
+     a blocked item -- see `.state.alarm` below and webapp.py's broken-row
+     rendering, both already routed through --crimson/--blocked before this
+     port (there was nothing left referencing the old distinct hue). */
+  --live:var(--calm-ink);  /* "healthy" stays neutral, never an accent -- unchanged doctrine */
+
+  --rule:var(--glass-hairline-soft);
+  --rule-hi:var(--glass-hairline);
+  --link-underline:var(--ink-quiet);
+
+  --serif:var(--font-mono);  /* the numeric/time voice moves from a didone serif
+                                 to tabular monospace, per the approved system's
+                                 own token map ("Ranked row: age --ink-tertiary
+                                 (mono)") -- ages, hero figures, counts, axis
+                                 numerals, throughput figures all read var(--serif)
+                                 unchanged; only what that name RESOLVES to moved. */
+  --sans:var(--font-sans);
+  --mono:var(--font-mono);
+
   --pad:52px;
   --u:44px;           /* WCAG target minimum */
   --hero-opsz:48;
@@ -149,6 +244,38 @@ CSS = r"""
   --fig-size:236px;   /* hero age figure size -- a token so density classes can
                          shrink the heaviest element without restructuring it */
   --fig-unit:32px;    /* the hero figure's unit label (DAYS/HOURS/...) */
+}
+
+/* ================= LIGHT MODE -- full token set, not a filter over dark ================= */
+@media (prefers-color-scheme:light){
+  :root{
+    color-scheme:light;
+    --color-ground:#eef2fb;
+    --color-ground-elevated:#e7ecf7;
+    --color-ground-sunken:#dde4f2;
+    --glass-fill:rgba(11,18,32,.045);
+    --glass-fill-strong:rgba(11,18,32,.07);
+    --glass-fill-row-hover:rgba(11,18,32,.06);
+    --glass-fill-row-selected:rgba(8,145,178,.10);
+    --glass-hairline:rgba(11,18,32,.12);
+    --glass-hairline-soft:rgba(11,18,32,.08);
+    --glass-shadow:0 8px 32px rgba(15,23,42,.10),inset 0 1px 0 rgba(255,255,255,.6);
+    --glass-shadow-float:0 24px 64px rgba(15,23,42,.16),inset 0 1px 0 rgba(255,255,255,.7);
+    --ink-primary:#0b1220;
+    --ink-secondary:#33415a;
+    --ink-tertiary:#526078;
+    --ink-quiet:#7c8ba0;
+    --ink-on-ground-inverse:#f8fafc;
+    /* reserved status hues re-tuned darker so text/icons still clear 4.5:1 on a light ground */
+    --alarm:#92400e;
+    --alarm-surface:rgba(245,158,11,.16);
+    --alarm-ink-on-surface:#7c3009;
+    --blocked:#991b1b;
+    --blocked-surface:rgba(239,68,68,.14);
+    --blocked-ink-on-surface:#7f1d1d;
+    --brand-cyan-ink:#0b6b80;
+    --brand-purple-ink:#7e22ce;
+  }
 }
 
 /* -- AFFORDANCE GRAMMAR (one documented convention) ----------------------
@@ -163,9 +290,13 @@ CSS = r"""
           - INLINE prose links (a link inside a value or sentence):
             an underline in --link-underline (`.prose-link`, `.kv .v a`,
             `.links-list a`, `a.what`).
-     2. --amber is NEVER a resting link colour. Amber appears on a link ONLY
-        on :hover / :focus, as the universal "interactive" confirmation.
-        (Amber text at rest means ATTENTION -- see the token -- not "click me".)
+     2. --amber is NEVER a resting link colour, and -- per the v2 firewall --
+        no longer the HOVER/FOCUS colour either: amber means ONLY alarm/
+        attention now (see the token block above), so the universal
+        "interactive" confirmation moved to brand cyan (`--brand-cyan-ink`
+        for text, `--brand-cyan` for non-text outlines/markers/borders) --
+        the same "cyan wash = interaction, not status" doctrine the design
+        system uses for a selected row (`--glass-fill-row-selected`).
    New inline links should use `.prose-link`; the older selectors above are
    kept as aliases so existing markup keeps its single underline affordance. */
 html{background:var(--ground)}
@@ -176,20 +307,35 @@ body{
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
   padding-bottom:46px;
 }
-::selection{background:var(--amber);color:#000}
+::selection{background:var(--glass-fill-row-selected);color:var(--ink)}
 a{color:inherit}
-:focus-visible{outline:2px solid var(--amber);outline-offset:3px}
+:focus-visible{outline:2px solid var(--brand-cyan);outline-offset:3px}
 
 /* -- top bar ---------------------------------------------------------- */
+/* the nav's own brand rim: a 2px gradient underline via ::after (a solid
+   `background` gradient, not `border-image` -- more reliably rendered
+   across engines) -- per the token map ("Top nav: --glass-fill-strong,
+   --glass-blur-strong, --brand-gradient-rim (rim), brand mark"). A pure
+   backdrop-filter blur reads as "flat, slightly lighter" on a static
+   screenshot with nothing colourful directly behind it to blur; the rim is
+   what actually sells "glass chrome" without depending on scroll content. */
 .top{
   height:74px;display:flex;align-items:center;
-  padding:0 var(--pad);border-bottom:1px solid var(--rule);gap:20px;
-  position:sticky;top:0;background:var(--ground);z-index:30;flex-wrap:wrap;
+  padding:0 var(--pad);gap:20px;
+  position:sticky;top:0;z-index:30;flex-wrap:wrap;
+  background:var(--glass-fill-strong);backdrop-filter:blur(var(--glass-blur-strong));
+  -webkit-backdrop-filter:blur(var(--glass-blur-strong));
+  box-shadow:var(--glass-shadow);
 }
-.top .brand{font-family:var(--serif);font-size:19px;font-weight:600;
-  letter-spacing:.005em;color:var(--ink);text-decoration:none;
+.top::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;
+  background:var(--brand-gradient-rim)}
+.top .brand{font-family:var(--sans);font-size:19px;font-weight:700;
+  letter-spacing:-.01em;color:var(--ink);text-decoration:none;
   display:flex;align-items:center;gap:9px}
-.top .brand .bm{width:7px;height:7px;background:var(--amber);flex:0 0 auto}
+/* the brand mark -- a small squircle carrying the rim gradient, the ONE
+   place besides the wordmark this gradient is allowed near identity chrome. */
+.top .brand .bm{width:9px;height:9px;border-radius:3px;
+  background:var(--brand-gradient-rim);flex:0 0 auto}
 .top h1{font-family:var(--sans);font-size:21px;font-weight:500;
   letter-spacing:-.012em;color:var(--ink);line-height:1.1}
 .top .crumb{font-family:var(--sans);font-size:11px;font-weight:500;
@@ -197,12 +343,12 @@ a{color:inherit}
   display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 .top .crumb a{text-decoration:none;color:var(--mid);display:inline-flex;
   align-items:center;min-height:var(--u)}
-.top .crumb a:hover{color:var(--amber)}
+.top .crumb a:hover{color:var(--brand-cyan-ink)}
 .top .sp{flex:1}
 .top .identity{font-family:var(--sans);font-size:11.5px;color:var(--dim);
   letter-spacing:.02em;display:flex;align-items:center;gap:9px;white-space:nowrap}
 .top .identity a{color:var(--mid);text-decoration:none}
-.top .identity a:hover{color:var(--amber)}
+.top .identity a:hover{color:var(--brand-cyan-ink)}
 .dot{width:6px;height:6px;border-radius:50%;flex:0 0 6px;display:inline-block}
 /* the live/"healthy" pulse is GOOD NEWS -> neutral (--live), never the accent.
    "live" is carried by the breathing motion + the word beside it, not colour. */
@@ -244,16 +390,16 @@ a{color:inherit}
   letter-spacing:.01em}
 .sidebar .sb-rollup .sb-em b{font-family:var(--sans);font-size:20px;font-weight:700;
   color:var(--ink)}
-.sidebar .sb-rollup:hover .sb-em,.sidebar .sb-rollup:hover .sb-em b{color:var(--amber)}
+.sidebar .sb-rollup:hover .sb-em,.sidebar .sb-rollup:hover .sb-em b{color:var(--brand-cyan-ink)}
 .sidebar .sb-rollup.current{cursor:default}
 .sidebar .sb-list{list-style:none;display:flex;flex-direction:column;gap:1px}
 .sidebar .sb-row{display:flex;align-items:center;gap:8px;padding:7px 8px;
-  border-radius:3px;text-decoration:none;color:var(--mid);font-size:12.5px;
+  border-radius:var(--radius-sm);text-decoration:none;color:var(--mid);font-size:12.5px;
   position:relative;min-height:30px}
-.sidebar .sb-row:hover{background:var(--raise);color:var(--ink)}
+.sidebar .sb-row:hover{background:var(--glass-fill-row-hover);color:var(--ink)}
 .sidebar .sb-row.current{background:var(--raise);color:var(--ink);font-weight:600}
 .sidebar .sb-row.current::before{content:"";position:absolute;left:-1px;top:6px;
-  bottom:6px;width:2px;background:var(--amber)}
+  bottom:6px;width:2px;border-radius:1px;background:var(--brand-gradient-rim)}
 .sidebar .sb-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap}
 .sidebar .sb-badge{flex:0 0 auto;font-variant-numeric:tabular-nums;color:var(--dim);
@@ -345,15 +491,15 @@ body.density-compact .holder,body.density-compact .iid{font-size:11px}
 body.density-compact td.link-cell > a{min-height:36px;padding:6px 16px 6px 0}
 
 .density-toggle{display:inline-flex;align-items:center;gap:6px;height:30px;
-  padding:0 12px;border-radius:4px;border:1px solid var(--rule-hi);
+  padding:0 12px;border-radius:var(--radius-pill);border:1px solid var(--rule-hi);
   background:transparent;color:var(--mid);font-family:var(--sans);font-size:11px;
   font-weight:600;letter-spacing:.06em;text-transform:uppercase}
 .density-toggle:hover{color:var(--ink)}
-/* pressed == compact -- amber here is the token's OWN sanctioned second job,
-   "the interactive accent that confirms" a selection (see the --amber token
-   comment above), not a new decorative use. */
-.density-toggle[aria-pressed="true"]{color:var(--ink);border-color:var(--amber);
-  background:rgba(217,162,83,.08)}
+/* pressed == compact -- brand cyan is the "interactive accent that confirms
+   a selection" per the v2 firewall (amber is reserved for alarm only now;
+   the cyan wash is the SAME token a selected list row uses). */
+.density-toggle[aria-pressed="true"]{color:var(--ink);border-color:var(--brand-cyan);
+  background:var(--glass-fill-row-selected)}
 
 /* -- KEYBOARD ROW SELECTION -- `j`/`k` highlight (see `list_controls_js`).
    Neutral (--raise/--rule-hi), same as a mouse :hover, plus a hairline
@@ -361,12 +507,22 @@ body.density-compact td.link-cell > a{min-height:36px;padding:6px 16px 6px 0}
    glance without borrowing amber/crimson for a th ird, non-alarm meaning. */
 .tbl tbody tr.kbd-sel td{background:var(--raise);box-shadow:inset 0 0 0 1px var(--rule-hi)}
 
-/* -- HERO -- age is the biggest thing on the screen --------------------- */
-.hero{display:flex;align-items:flex-end;gap:54px;flex-wrap:wrap}
+/* -- HERO -- age is the biggest thing on the screen ---------------------
+   v2: the figure itself is NEUTRAL ink by default (not an unconditional
+   amber) -- an age is a fact, not automatically an alarm; matches this
+   file's OWN `.fig.ledger` override below and the firewall's "a calm
+   screen shows no amber" rule. Genuine per-item staleness still escalates
+   conditionally elsewhere (`.age.a3`, `.bar.hot`, the heartbeat's "7d+"
+   tier) -- those are real, data-driven alarms, never blanket decoration. */
+.hero{display:flex;align-items:flex-end;gap:54px;flex-wrap:wrap;
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  border-radius:var(--radius-lg);padding:28px 32px;
+  backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));
+  box-shadow:var(--glass-shadow)}
 .hero .lead{min-width:0;flex:0 0 auto}
 .figrow{display:flex;align-items:baseline;gap:12px;margin:26px 0 0}
 .fig{
-  font-family:var(--serif);font-weight:500;color:var(--amber);
+  font-family:var(--serif);font-weight:500;color:var(--ink);
   font-size:var(--fig-size);line-height:.78;letter-spacing:-.035em;
   font-variation-settings:"opsz" var(--hero-opsz);display:block;
 }
@@ -387,9 +543,9 @@ body.density-compact td.link-cell > a{min-height:36px;padding:6px 16px 6px 0}
 .attrib .since{font-weight:400;letter-spacing:.06em;color:var(--quiet)}
 .attrib::after{content:"\203A";font-weight:700;font-size:14px;
   letter-spacing:0;text-transform:none;color:var(--mid)}
-a.attrib:hover{color:var(--amber)}
-a.attrib:hover .since{color:var(--amber)}
-a.attrib:hover::after{color:var(--amber)}
+a.attrib:hover{color:var(--brand-cyan-ink)}
+a.attrib:hover .since{color:var(--brand-cyan-ink)}
+a.attrib:hover::after{color:var(--brand-cyan-ink)}
 
 /* the hero's own pointer to the oldest item (project page): same "prose
    link" grammar as `.kv .v a` / `.links-list a` below -- an inline title,
@@ -397,9 +553,12 @@ a.attrib:hover::after{color:var(--amber)}
    chevron. Made explicit rather than left to the browser's unstyled
    default underline, which happened to look right by accident. */
 a.what{color:inherit;text-decoration:underline;text-decoration-color:var(--link-underline)}
-a.what:hover{color:var(--amber)}
+a.what:hover{color:var(--brand-cyan-ink)}
 
-/* -- HEARTBEAT -- ready items as ticks, placed by age ------------------- */
+/* -- HEARTBEAT -- ready items as ticks, placed by age -------------------
+   Graduated neutral ramp culminating in a REAL amber for the oldest (7d+)
+   tier -- the same "amber only when data says so" rule the tier's own
+   printed number already followed (`_heartbeat_html`'s `num_color`). */
 .beat{width:100%}
 .beat .bhead{display:flex;justify-content:space-between;align-items:baseline;
   gap:24px;margin-bottom:12px;flex-wrap:wrap}
@@ -407,10 +566,10 @@ a.what:hover{color:var(--amber)}
   height:calc(var(--beat-h) + 1px);
   border-bottom:1px solid var(--rule);padding-bottom:0}
 .tick{flex:1 1 auto;min-width:1px;background:var(--rule-hi);border-radius:0}
-.tick.t0{background:#262624}
-.tick.t1{background:#31312E}
-.tick.t2{background:#4A463F}
-.tick.t3{background:#8A6B33}
+.tick.t0{background:var(--glass-hairline-soft)}
+.tick.t1{background:var(--glass-hairline)}
+.tick.t2{background:var(--ink-quiet)}
+.tick.t3{background:var(--alarm)}
 .scale{display:flex;justify-content:space-between;margin-top:8px}
 .scale span{font-family:var(--sans);font-size:10px;font-weight:500;
   letter-spacing:.12em;color:var(--dim);text-transform:uppercase}
@@ -423,8 +582,8 @@ a.what:hover{color:var(--amber)}
 .beat .legend .l{font-family:var(--sans);font-size:10px;font-weight:500;
   letter-spacing:.16em;text-transform:uppercase;color:var(--dim);white-space:nowrap}
 .beat .legend .sw{display:inline-block;width:3px;flex:0 0 3px}
-.beat .legend .sw.s0{height:7px;background:#262624}
-.beat .legend .sw.s3{height:19px;background:#8A6B33}
+.beat .legend .sw.s0{height:7px;background:var(--glass-hairline-soft)}
+.beat .legend .sw.s3{height:19px;background:var(--alarm)}
 
 /* -- CONTEXT BAND -- the histogram, and the counts that qualify it ------ */
 .context{display:flex;align-items:flex-start;gap:54px;flex-wrap:wrap}
@@ -487,14 +646,16 @@ a.what:hover{color:var(--amber)}
    reads as a distinct, dimmed sliver rather than disappearing into
    whichever real colour happens to be next to it. */
 :root{
-  --st-ready:#E8E2D6;     /* warm parchment -- neutral backlog, not amber */
-  --st-deferred:#5C574E;
-  --st-resolved:#4A463F;
-  --st-empty:#928E85;     /* == --dim (5.95:1 vs --ground) -- deliberately
-                             reused rather than a new arbitrary hex, since
-                             --dim is already the app's measured "quietest
-                             legible step"; see the comment above for why
-                             this can't just be --rule-hi. */
+  --st-ready:var(--ink-secondary);    /* brightest neutral -- cool slate, not
+                                          warm parchment; earthtones are gone */
+  --st-deferred:var(--ink-tertiary);
+  --st-resolved:var(--ink-quiet);
+  --st-empty:var(--glass-hairline);   /* a translucent "hairline" gauge mark --
+                                          distinct from the solid ink-quiet/
+                                          ink-tertiary segments it sits beside
+                                          in either colour scheme, without a
+                                          bespoke new hex (composed from the
+                                          same glass tokens chrome uses). */
   --fig-size-ledger:62px; /* the ready-count hero figure -- 3.8x smaller
                              than --fig-size (236px), a deliberate demotion:
                              ready-COUNT is the hero now, not unclaimed AGE */
@@ -521,12 +682,12 @@ a.what:hover{color:var(--amber)}
   margin-top:8px;display:block;line-height:1.45;max-width:150px}
 .hstats .s .sub a{color:inherit;text-decoration:underline;
   text-decoration-color:var(--link-underline)}
-.hstats .s .sub a:hover{color:var(--amber)}
+.hstats .s .sub a:hover{color:var(--brand-cyan-ink)}
 
 /* the state bar itself -- shared by the full-width workspace composition
    and every table row's mini composition, at different heights only. */
-.sbar{display:flex;width:100%;background:#141412;overflow:hidden;
-  border-radius:2px}
+.sbar{display:flex;width:100%;background:var(--color-ground-sunken);overflow:hidden;
+  border-radius:var(--radius-sm)}
 .sbar i{display:block;height:100%}
 .sbar .seam{width:3px;flex:0 0 3px;background:var(--ground);position:relative}
 .sbar .seam::after{content:"";position:absolute;inset:0;background:var(--st-empty)}
@@ -563,7 +724,9 @@ a.what:hover{color:var(--amber)}
 .trow.prev .tb{background:var(--st-resolved)}
 .thru .tfoot{font-family:var(--sans);font-size:11px;color:var(--quiet);
   margin-top:13px;line-height:1.6}
-.thru .tfoot b{color:var(--amber);font-weight:600}
+/* the trend figure is a plain fact (could be a GOOD +20%), never an alarm --
+   emphasis is weight + ink, not the reserved amber. */
+.thru .tfoot b{color:var(--ink);font-weight:700}
 
 /* the per-project queue table's mini composition column. */
 .tbl td.mb{padding:0 22px 0 0}
@@ -580,13 +743,14 @@ a.what:hover{color:var(--amber)}
 .controls{display:flex;align-items:center;gap:14px;padding:0 0 8px;flex-wrap:wrap}
 .field{position:relative;flex:1;min-width:240px;max-width:520px;
   display:flex;align-items:center;height:var(--u);
-  background:var(--raise);border:1px solid var(--rule);border-radius:3px}
-.field:focus-within{border-color:var(--rule-hi)}
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  border-radius:var(--radius-pill)}
+.field:focus-within{border-color:var(--brand-cyan)}
 .field input{
   width:100%;height:var(--u);background:transparent;border:0;outline:0;
-  padding:0 14px 0 40px;color:var(--ink);border-radius:3px;
+  padding:0 14px 0 40px;color:var(--ink);border-radius:var(--radius-pill);
   font-family:var(--sans);font-size:13.5px;font-weight:400;letter-spacing:.01em;
-  caret-color:var(--amber);
+  caret-color:var(--brand-cyan);
 }
 .field .mag{position:absolute;left:14px;top:50%;transform:translateY(-50%);
   color:var(--dim);display:flex;pointer-events:none}
@@ -598,7 +762,7 @@ a.what:hover{color:var(--amber)}
   letter-spacing:.14em;text-transform:uppercase;color:var(--dim);
   white-space:nowrap;margin-left:auto}
 .count b{color:var(--mid);font-weight:600}
-.count.hit b{color:var(--amber)}
+.count.hit b{color:var(--brand-cyan-ink)}
 
 /* -- STATUS TABS: per-project filter row with live counts ---------------
    Server-linked (`?status=...`), so a click is a plain navigation the
@@ -615,7 +779,7 @@ a.what:hover{color:var(--amber)}
   margin-right:24px;font-family:var(--sans);font-size:12.5px;font-weight:600;
   letter-spacing:.03em;color:var(--mid);text-decoration:none;
   border-bottom:2px solid transparent}
-.tabs .tab:hover{color:var(--ink)}
+.tabs .tab:hover{color:var(--brand-cyan-ink)}
 .tabs .tab.active{color:var(--ink);border-bottom-color:var(--ink)}
 .tabs .tcount{font-family:var(--serif);font-size:14px;font-weight:500;
   color:var(--mid);font-variant-numeric:tabular-nums}
@@ -645,7 +809,7 @@ table.tbl{width:100%;border-collapse:collapse;table-layout:fixed}
    value. Rows that wrap (e.g. a long Title) are unaffected: their box grows
    via `min-height` before this ever has anything to clip. */
 .tbl td{padding:0;border-bottom:1px solid var(--rule);vertical-align:middle;overflow:hidden}
-.tbl tbody tr:hover td{background:var(--raise)}
+.tbl tbody tr:hover td{background:var(--glass-fill-row-hover)}
 .tbl .c{min-height:52px;display:flex;align-items:center;padding:10px 16px 10px 0}
 .tbl .c.r{justify-content:flex-end;padding-right:0}
 .tbl td.r{text-align:right}
@@ -665,7 +829,7 @@ tr.hidden{display:none}
 .pname{font-family:var(--sans);font-size:14.5px;font-weight:500;color:var(--ink);
   text-decoration:none;letter-spacing:-.004em;display:flex;align-items:center;
   min-height:var(--u);gap:11px;width:100%}
-.pname:hover{color:var(--amber)}
+.pname:hover{color:var(--brand-cyan-ink)}
 .pname .rank{font-family:var(--sans);font-size:10.5px;font-weight:600;
   color:var(--dim);letter-spacing:.06em;flex:0 0 20px}
 
@@ -677,17 +841,20 @@ tr.hidden{display:none}
 .age.a0{font-size:19px;color:var(--dim)}
 .age.a1{font-size:23px;color:var(--mid)}
 .age.a2{font-size:28px;color:var(--ink)}
-.age.a3{font-size:33px;color:var(--amber)}
-.age.a3 .u{color:var(--amber)}
+.age.a3{font-size:33px;color:var(--alarm)}
+.age.a3 .u{color:var(--alarm)}
 .age.none{font-size:23px;color:var(--dim);font-family:var(--serif);
   letter-spacing:0;font-weight:400}
 
 /* the age bar: length == age / current workspace max. literal encoding. */
 .track{width:96px;flex:0 0 96px;margin-right:18px;height:6px;
-  align-self:center;position:relative;background:#1B1B19}
-.bar{height:6px;background:#4A463F;position:absolute;left:0;top:0}
-.bar.hot{background:#7A6438}
-.grad{position:absolute;top:0;bottom:0;width:1px;background:rgba(242,238,230,.28)}
+  align-self:center;position:relative;background:var(--color-ground-sunken);
+  border-radius:var(--radius-sm)}
+.bar{height:6px;background:var(--ink-quiet);position:absolute;left:0;top:0;
+  border-radius:var(--radius-sm)}
+.bar.hot{background:var(--alarm)}
+.grad{position:absolute;top:0;bottom:0;width:1px;
+  background:color-mix(in srgb,var(--ink-primary) 28%,transparent)}
 .tbl th.axis{white-space:normal;padding-right:0}
 .rul{position:relative;display:block;width:96px;height:9px;margin-top:6px}
 .rul i{position:absolute;top:0;font-style:normal;font-family:var(--sans);
@@ -707,16 +874,19 @@ tr.hidden{display:none}
   display:inline-flex;align-items:center;gap:9px;white-space:nowrap}
 .state .sq{width:5px;height:5px;flex:0 0 5px;background:var(--mid)}
 .state.ok{color:var(--dim);font-weight:500}
-.state.ok .sq{background:#5C5851}
+.state.ok .sq{background:var(--ink-quiet)}
 /* HELD -- legible beyond hue: heavier weight AND a taller filled marker, so it
    is told apart from "healthy" (a small dim square) by shape, not just amber. */
 .state.warnv{color:var(--amber);font-weight:700}
 .state.warnv .sq{background:var(--amber);height:11px}
-/* BROKEN -- the loudest marker: the distinct --alarm hue + bold + an oversized
-   block. `state_html("alarm", ...)` renders this; render lanes mark broken
-   projects with it (a broken queue must never look like a healthy empty one). */
-.state.alarm{color:var(--alarm);font-weight:700}
-.state.alarm .sq{background:var(--alarm);width:9px;height:9px}
+/* the v2 firewall reserves exactly TWO status hues (amber=alarm,
+   crimson=blocked), never a third -- an unreadable/broken project is an
+   escalation, the same family as a blocked item, so `.state.alarm` (kept
+   for callers that still pass `kind="alarm"` to `state_html`) now renders
+   with --crimson too, distinguished from BLOCKED by its own oversized
+   marker + bold weight, never a bespoke third hue. */
+.state.alarm{color:var(--crimson);font-weight:700}
+.state.alarm .sq{background:var(--crimson);width:9px;height:9px}
 .state.bad{color:var(--crimson);font-weight:700}
 .state.bad .sq{background:var(--crimson);width:7px;height:7px}
 
@@ -725,10 +895,10 @@ tr.hidden{display:none}
   padding-right:24px}
 .ti a{color:inherit;text-decoration:none;display:flex;align-items:center;
   width:100%;min-height:var(--u);padding:7px 0}
-.ti a:hover{color:var(--amber)}
+.ti a:hover{color:var(--brand-cyan-ink)}
 .ti a::after{content:"\203A";margin-left:auto;padding-left:14px;
   font-family:var(--sans);font-weight:700;font-size:15px;color:var(--mid)}
-.ti a:hover::after{color:var(--amber)}
+.ti a:hover::after{color:var(--brand-cyan-ink)}
 .idx{font-family:var(--sans);font-size:10.5px;color:var(--dim);letter-spacing:.05em}
 /* `display:inline-block;max-width:100%` + the ellipsis trio is what makes
    "never collide at any title length" a real guarantee rather than a hope:
@@ -782,17 +952,17 @@ tr.hidden{display:none}
 td.link-cell{padding:0}
 td.link-cell > a{display:flex;align-items:center;width:100%;min-height:52px;
   padding:10px 16px 10px 0;text-decoration:none;color:inherit}
-td.link-cell > a:hover{color:var(--amber)}
+td.link-cell > a:hover{color:var(--brand-cyan-ink)}
 td.link-cell > a::after{content:"\203A";margin-left:auto;padding-left:14px;
   font-family:var(--sans);font-weight:700;font-size:15px;color:var(--mid)}
-td.link-cell > a:hover::after{color:var(--amber)}
+td.link-cell > a:hover::after{color:var(--brand-cyan-ink)}
 
 /* -- PROSE --------------------------------------------------------------- */
 .prose{font-size:16.5px;line-height:1.66;color:var(--ink);font-weight:400;
   letter-spacing:.0015em;max-width:var(--measure,620px)}
 .prose p + p{margin-top:1.1em}
 .content-block{white-space:pre-wrap;word-break:break-word;background:var(--raise);
-  border:1px solid var(--rule);border-radius:6px;padding:0.9rem 1rem;
+  border:1px solid var(--rule);border-radius:var(--radius-md);padding:0.9rem 1rem;
   font-size:15px;line-height:1.6;color:var(--ink);margin:0.3rem 0 0}
 /* MONOSPACE face for content whose alignment is meaningful -- ASCII tables,
    code, fixed-width output. Proportional Archivo destroys column alignment, so
@@ -802,10 +972,11 @@ td.link-cell > a:hover::after{color:var(--amber)}
 .mono{font-family:var(--mono);font-variant-ligatures:none;
   font-variant-numeric:tabular-nums}
 /* the single INLINE-link resting affordance: an underline in --link-underline,
-   amber only on hover (never amber at rest -- amber at rest means attention). */
+   brand cyan only on hover -- interaction confirmation, per the v2 firewall
+   (amber means attention/alarm only now, never a resting OR hover link colour). */
 .prose-link{color:inherit;text-decoration:underline;
   text-decoration-color:var(--link-underline);text-underline-offset:2px}
-.prose-link:hover{color:var(--amber);text-decoration-color:var(--amber)}
+.prose-link:hover{color:var(--brand-cyan-ink);text-decoration-color:var(--brand-cyan-ink)}
 
 .foot{margin-top:24px;display:flex;gap:14px;align-items:baseline;
   font-family:var(--sans);font-size:12px;color:var(--quiet);letter-spacing:.015em;
@@ -824,7 +995,7 @@ td.link-cell > a:hover::after{color:var(--amber)}
   margin-bottom:7px}
 .kv .v{font-family:var(--sans);font-size:13.5px;color:var(--ink);letter-spacing:.01em}
 .kv .v a{color:inherit;text-decoration:underline;text-decoration-color:var(--link-underline)}
-.kv .v a:hover{color:var(--amber)}
+.kv .v a:hover{color:var(--brand-cyan-ink)}
 .kv .v.serif{font-family:var(--serif);font-size:20px;font-weight:500}
 .kv .v.am{color:var(--amber)}
 
@@ -853,28 +1024,40 @@ label{display:block;margin:0.7rem 0 0.3rem;font-size:11px;font-weight:600;
 input[type=text],input[type=password],textarea,select{
   width:100%;max-width:480px;padding:0.55rem 0.7rem;box-sizing:border-box;
   font-family:var(--sans);font-size:13.5px;min-height:var(--u);
-  border:1px solid var(--rule);border-radius:4px;background:var(--raise);
+  border:1px solid var(--rule);border-radius:var(--radius-sm);background:var(--raise);
   color:var(--ink);
 }
 input[type=text]:focus,input[type=password]:focus,textarea:focus,select:focus{
-  outline:2px solid var(--amber);outline-offset:1px;border-color:var(--rule-hi);
+  outline:2px solid var(--brand-cyan);outline-offset:1px;border-color:var(--rule-hi);
 }
 textarea{min-height:5.5rem}
 input::placeholder,textarea::placeholder{color:var(--dim);opacity:1}
+/* PRIMARY -- the design system's own solid brand gradient (darker stops than
+   the rim/logo gradient so white text clears >=4.5:1 at every point -- see
+   the token block's own comment on --brand-gradient-solid). */
 button,input[type=submit],a.btn{
   display:inline-flex;align-items:center;justify-content:center;gap:9px;
   min-height:var(--u);padding:0 20px;margin-top:0.7rem;cursor:pointer;
-  border-radius:4px;border:1px solid var(--amber);background:var(--amber);
-  color:#171410;font-family:var(--sans);font-size:12px;font-weight:700;
+  border-radius:var(--radius-pill);border:1px solid transparent;
+  background:var(--brand-gradient-solid);
+  color:var(--ink-on-solid);font-family:var(--sans);font-size:12px;font-weight:700;
   letter-spacing:.08em;text-transform:uppercase;text-decoration:none;
+  transition:filter var(--duration-fast) var(--ease-standard);
 }
-button:hover,input[type=submit]:hover,a.btn:hover{background:#c99244}
+/* DARKEN, not brighten, on hover -- brightening the gradient's already-
+   darkest stop (chosen so white text clears 4.5:1 at its worst point)
+   measurably erodes that margin (5.45:1 -> 4.67:1); darkening only
+   improves it (-> 6.6:1), while still reading as a clear "interactive". */
+button:hover,input[type=submit]:hover,a.btn:hover{filter:brightness(0.88)}
 button.secondary,a.btn.secondary{background:transparent;color:var(--mid);
   border-color:var(--rule)}
-button.secondary:hover,a.btn.secondary:hover{color:var(--ink);border-color:var(--rule-hi)}
-button.danger,input.danger,a.btn.danger{background:var(--crimson);
-  border-color:var(--crimson);color:#1a0d0b}
-button.danger:hover,a.btn.danger:hover{background:#c44c40}
+button.secondary:hover,a.btn.secondary:hover{color:var(--brand-cyan-ink);border-color:var(--rule-hi)}
+/* DANGER -- per the design system's token map: a soft surface (never a
+   solid full-bleed fill) -- background/border/text all drawn from the
+   SAME --blocked-* trio the blocker-chain/flash-error banners use. */
+button.danger,input.danger,a.btn.danger{background:var(--blocked-surface);
+  border-color:var(--blocked);color:var(--blocked-ink-on-surface)}
+button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
 /* The shared button rule's `margin-top:0.7rem` above is for a STACKED
    form (label, field, ..., button below it with real vertical breathing
    room) -- exactly wrong inside a horizontal `.controls` row (the
@@ -885,24 +1068,32 @@ button.danger:hover,a.btn.danger:hover{background:#c44c40}
    siblings). Neutralized here, scoped to `.controls`, rather than removed
    from the shared rule -- stacked forms elsewhere still want the spacing. */
 .controls button,.controls input[type=submit],.controls a.btn{margin-top:0}
-.flash{padding:0.7rem 1rem;border-radius:6px;margin-bottom:1.2rem;font-size:12.5px;
-  font-family:var(--sans);letter-spacing:.01em}
-.flash-msg{background:rgba(217,162,83,.12);color:var(--amber);
-  border:1px solid rgba(217,162,83,.35)}
-.flash-error{background:rgba(224,101,90,.12);color:var(--crimson);
-  border:1px solid rgba(224,101,90,.35)}
+.flash{padding:0.7rem 1rem;border-radius:var(--radius-md);margin-bottom:1.2rem;
+  font-size:12.5px;font-family:var(--sans);letter-spacing:.01em}
+/* Plain confirmations (rename succeeded, item created, ...) are neutral --
+   `_flash()`'s own `?msg=` is used for both these AND (via
+   `_attention_signal_html`) a genuine held/blocked attention banner; the
+   two are told apart by that banner's own `role="alert"` attribute, so the
+   escalated amber styling below applies ONLY to the real alert, never to
+   an ordinary success notice. */
+.flash-msg{background:var(--glass-fill-strong);color:var(--ink-secondary);
+  border:1px solid var(--glass-hairline)}
+.flash[role="alert"].flash-msg{background:var(--alarm-surface);color:var(--alarm-ink-on-surface);
+  border:1px solid var(--alarm)}
+.flash-error{background:var(--blocked-surface);color:var(--blocked-ink-on-surface);
+  border:1px solid var(--blocked)}
 .muted{color:var(--dim);font-size:12px}
-.empty-state{border:1px dashed var(--rule-hi);border-radius:8px;padding:1.5rem;
+.empty-state{border:1px dashed var(--rule-hi);border-radius:var(--radius-md);padding:1.5rem;
   color:var(--quiet);margin:0.75rem 0 1.25rem;background:var(--raise);
   font-family:var(--sans);font-size:13px;line-height:1.6}
-.chip{display:inline-block;padding:0.15rem 0.6rem;border-radius:999px;
+.chip{display:inline-block;padding:0.15rem 0.6rem;border-radius:var(--radius-pill);
   font-size:11px;background:var(--raise);color:var(--ink);
   border:1px solid var(--rule-hi);margin:0 0.2rem 0.2rem 0;font-family:var(--sans)}
 .links-list{margin:0.2rem 0 1rem;padding-left:1.2rem;font-size:13px;
   color:var(--mid)}
 .links-list a{color:var(--mid);text-decoration:underline;
   text-decoration-color:var(--link-underline)}
-.links-list a:hover{color:var(--amber)}
+.links-list a:hover{color:var(--brand-cyan-ink)}
 
 /* -- blocker chain (item-detail, webapp.py's `_dependency_sections_html`) --
    The blocked-by list is the one dependency-graph section that spends the
@@ -920,7 +1111,7 @@ button.danger:hover,a.btn.danger:hover{background:#c44c40}
 .blocker-list li:last-child{border-bottom:0}
 .blocker-list a{color:var(--mid);text-decoration:underline;
   text-decoration-color:var(--link-underline)}
-.blocker-list a:hover{color:var(--amber)}
+.blocker-list a:hover{color:var(--brand-cyan-ink)}
 .blocker-item.unsatisfied{color:var(--ink)}
 .blocker-item.satisfied{color:var(--dim)}
 .blocker-item .check{color:var(--dim);font-weight:700}
@@ -945,7 +1136,7 @@ button.danger:hover,a.btn.danger:hover{background:#c44c40}
   flex-wrap:wrap;gap:0.5rem 1rem;margin:-0.25rem 0 1.25rem;font-size:11.5px;
   color:var(--dim);font-family:var(--sans);letter-spacing:.02em}
 .pagination a{color:var(--mid);text-decoration:none}
-.pagination a:hover{color:var(--amber)}
+.pagination a:hover{color:var(--brand-cyan-ink)}
 
 /* -- status bar ----------------------------------------------------------- */
 .statusbar{
@@ -960,9 +1151,11 @@ button.danger:hover,a.btn.danger:hover{background:#c44c40}
 .statusbar .s b.am{color:var(--amber)}
 .statusbar .sp{flex:1}
 
-.skip{position:absolute;left:-9999px;top:8px;z-index:99;background:var(--amber);
-  color:#171410;min-height:var(--u);display:inline-flex;align-items:center;
-  padding:0 20px;font-family:var(--sans);font-size:11px;font-weight:700;
+.skip{position:absolute;left:-9999px;top:8px;z-index:99;
+  background:var(--brand-gradient-solid);color:var(--ink-on-solid);
+  min-height:var(--u);display:inline-flex;align-items:center;
+  padding:0 20px;border-radius:var(--radius-pill);
+  font-family:var(--sans);font-size:11px;font-weight:700;
   letter-spacing:.14em;text-transform:uppercase;text-decoration:none}
 .skip:focus{left:var(--pad)}
 
@@ -1054,7 +1247,7 @@ def page(title: str, body: str, *, js: str = "", measure_px: int = 620) -> str:
         '<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"{_PWA_HEAD_HTML}"
-        f"<title>{_esc(title)}</title><style>\n{_FONT_FACE_CSS}{CSS}\n"
+        f"<title>{_esc(title)}</title><style>\n{CSS}\n"
         f":root{{--measure:{measure_px}px}}\n</style></head><body>\n"
         '<a class="skip" href="#main">Skip to content</a>\n'
         f"{body}\n" + (f"<script>{js}</script>\n" if js else "") + "</body></html>\n"
@@ -1077,16 +1270,17 @@ def page(title: str, body: str, *, js: str = "", measure_px: int = 620) -> str:
 # prefer when both are offered. Both are generated from the same brand
 # source as the PWA/apple-touch icons -- see `scripts/gen_pwa_icons.py`.
 #
-# `theme-color` below is `--ground` (`#0D0D0C`) written as a literal, kept
-# in sync with `webpwa.GROUND_HEX` and `CSS`'s own `--ground` by comment,
-# not by cross-module import -- this file already owns its palette as a
-# self-contained visual system (see this module's own docstring); the same
-# comment-based-sync convention this codebase already uses elsewhere (see
-# `webapp.py`'s `_item_search_key` docstring). Deliberately NOT the brand
-# icon's own internal ground colour (~#00051a, see
-# `scripts/gen_pwa_icons.py`'s `ICON_GROUND`) -- `theme-color` should match
-# the actual app chrome a user sees, not the icon artwork's own padding;
-# the two near-blacks are close enough that this is not visually jarring.
+# `theme-color` below is `--color-ground` (`#05070f`, the v2 dark-mode
+# ground) written as a literal, kept in sync with `webpwa.GROUND_HEX` and
+# `CSS`'s own `--color-ground` by comment, not by cross-module import --
+# this file already owns its palette as a self-contained visual system (see
+# this module's own docstring); the same comment-based-sync convention this
+# codebase already uses elsewhere (see `webapp.py`'s `_item_search_key`
+# docstring). Deliberately NOT the brand icon's own internal ground colour
+# (~#00051a, see `scripts/gen_pwa_icons.py`'s `ICON_GROUND`) -- `theme-color`
+# should match the actual app chrome a user sees, not the icon artwork's own
+# padding; the two near-blacks are close enough that this is not visually
+# jarring.
 #
 # `og:image` intentionally uses a relative URL, same as every other asset
 # link here -- most scrapers resolve it against the page URL they fetched,
@@ -1096,7 +1290,7 @@ def page(title: str, body: str, *, js: str = "", measure_px: int = 620) -> str:
 # ---------------------------------------------------------------------------
 
 _PWA_HEAD_HTML = (
-    '<meta name="theme-color" content="#0D0D0C">'
+    '<meta name="theme-color" content="#05070f">'
     '<meta name="apple-mobile-web-app-capable" content="yes">'
     '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">'
     '<meta name="apple-mobile-web-app-title" content="Work Tracker">'

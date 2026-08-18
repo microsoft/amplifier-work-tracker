@@ -51,13 +51,13 @@ from __future__ import annotations
 import json
 import pathlib
 
-# Must match `webtheme.CSS`'s `--ground` custom property. Kept in sync by
-# comment rather than by importing across modules -- `webtheme.CSS` is a
-# single large raw string this app already treats as a self-contained
-# visual-system module (see that module's own docstring); the same
-# comment-based-sync convention this codebase already uses elsewhere (see
-# `webapp.py`'s `_item_search_key` docstring) applies here.
-GROUND_HEX = "#0D0D0C"
+# Must match `webtheme.CSS`'s `--color-ground` custom property (v2 dark-mode
+# ground). Kept in sync by comment rather than by importing across modules --
+# `webtheme.CSS` is a single large raw string this app already treats as a
+# self-contained visual-system module (see that module's own docstring); the
+# same comment-based-sync convention this codebase already uses elsewhere
+# (see `webapp.py`'s `_item_search_key` docstring) applies here.
+GROUND_HEX = "#05070f"
 
 _ASSETS_DIR = pathlib.Path(__file__).parent / "webassets"
 

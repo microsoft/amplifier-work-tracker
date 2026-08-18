@@ -1324,11 +1324,11 @@ def _dashboard_row(s: A.ProjectSummary) -> str:
         creating = st.lower().startswith(("creating", "provisioning"))
         if creating:
             kind, word, accent = "warn", "Provisioning", "var(--amber)"
-            tint = "rgba(217,162,83,.12)"
+            tint = "var(--alarm-surface)"
             detail = "Being created \u2014 counts appear once its database is ready."
         else:
             kind, word, accent = "bad", "Broken", "var(--crimson)"
-            tint = "rgba(224,101,90,.12)"
+            tint = "var(--blocked-surface)"
             detail = st  # e.g. "ERROR: ..." (already truncated by the adapter)
         # keep the reading width sane: one legible line, full text on hover
         shown = detail if len(detail) <= 120 else detail[:119] + "\u2026"
@@ -1364,7 +1364,7 @@ def _dashboard_row(s: A.ProjectSummary) -> str:
     row_style = ""
     if alarm_active:
         accent = "var(--crimson)" if counts["blocked"] else "var(--amber)"
-        tint = "rgba(224,101,90,.08)" if counts["blocked"] else "rgba(217,162,83,.08)"
+        tint = "var(--blocked-surface)" if counts["blocked"] else "var(--alarm-surface)"
         row_style = f' style="background:{tint};box-shadow:inset 4px 0 0 {accent}"'
 
     key_bits = [s.name]
@@ -1436,12 +1436,12 @@ def _project_hero_html(name: str, summary: A.ProjectSummary, oldest_item: A.Item
         st = summary.status
         creating = st.lower().startswith(("creating", "provisioning"))
         if creating:
-            label, accent, tint = "Provisioning", "var(--amber)", "rgba(217,162,83,.12)"
+            label, accent, tint = "Provisioning", "var(--amber)", "var(--alarm-surface)"
             body = (
                 "This project is still being created. Its counts appear once its database is ready."
             )
         else:
-            label, accent, tint = "Unavailable", "var(--crimson)", "rgba(224,101,90,.12)"
+            label, accent, tint = "Unavailable", "var(--crimson)", "var(--blocked-surface)"
             body = st
         return (
             '<div class="hero alarm" style="display:block">'
