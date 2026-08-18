@@ -1153,3 +1153,132 @@ def test_item_detail_created_and_updated_use_the_compact_age_format(client, proj
     assert "m ago" not in r.text
     assert "h ago" not in r.text
     assert "d ago" not in r.text
+
+
+# ------------------------------------------------ nav/density: sidebar chrome
+
+
+def test_dashboard_includes_the_sidebar_with_a_rollup_and_no_current_project(
+    client, project_factory
+):
+    _login(client)
+    name, _bd = project_factory("navsidebardash")
+
+    r = client.get("/")
+    assert r.status_code == 200
+    assert 'id="sidebar"' in r.text
+    assert "All projects" in r.text
+    assert f'href="/projects/{name}"' in r.text
+    # the roll-up is "current" on the dashboard, no project row is
+    assert 'href="/" aria-current="page"' in r.text
+
+
+def test_project_view_includes_the_sidebar_with_this_project_marked_current(
+    client, project_factory
+):
+    _login(client)
+    name, _bd = project_factory("navsidebarproj")
+
+    r = client.get(f"/projects/{name}")
+    assert r.status_code == 200
+    assert 'id="sidebar"' in r.text
+    assert f'href="/projects/{name}" aria-current="page"' in r.text
+    assert 'href="/" aria-current="page"' not in r.text
+
+
+def test_sidebar_shows_real_open_over_total_counts_for_a_real_project(
+    client, project_factory, unique_lane
+):
+    _login(client)
+    name, bd = project_factory("navsidebarcounts")
+    bd.create("one", tags=[unique_lane, A.LANE_WORK])
+    bd.create("two", tags=[unique_lane, A.LANE_WORK])
+
+    r = client.get("/")
+    assert r.status_code == 200
+    assert '<span class="sb-badge">2/2</span>' in r.text
+
+
+def test_sidebar_marks_a_held_project_with_the_amber_alarm_class(
+    client, project_factory, unique_actor
+):
+    _login(client)
+    name, bd = project_factory("navsidebarheld")
+    item_id = bd.create("an item to hold", tags=[A.LANE_WORK])
+    bd.claim_item(item_id, actor=unique_actor)
+
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "alarm-am" in r.text
+
+
+def test_sidebar_present_on_the_empty_workspace_state_too(client, workspace, unique_project_name):
+    """The 'no projects yet' branch gets a sidebar too (an honest, empty
+    one) -- chrome should not suddenly appear the moment the first project
+    is created. `unique_project_name` (never created here) only keeps the
+    fixture's teardown registered; the empty-state branch itself is
+    exercised directly at the unit level (`_sidebar_html([], [], None)`),
+    since it requires a genuinely-empty workspace this shared `client`
+    fixture (session-scoped `workspace`, populated by every other test in
+    this module) cannot guarantee.
+    """
+    assert unique_project_name
+    _login(client)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert 'id="sidebar"' in r.text
+
+
+# --------------------------------------------- nav/density: search shortcut hint
+
+
+def test_project_view_search_placeholder_carries_the_slash_shortcut_hint(
+    client, shared_project_name
+):
+    _login(client)
+    r = client.get(f"/projects/{shared_project_name}")
+    assert r.status_code == 200
+    assert 'placeholder="Search titles, ids, holders and state  /"' in r.text
+    # the accessible name stays clean -- no "slash" noise for a screen reader
+    assert 'aria-label="Search titles, ids, holders and state"' in r.text
+
+
+def test_dashboard_search_hint_carries_the_slash_shortcut(client, shared_project_name):
+    _login(client)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert '<span class="hint-key"> /</span>' in r.text
+
+
+# --------------------------------------------- nav/density: density + keynav js
+
+
+def test_dashboard_includes_the_density_toggle_and_keynav_script(client, shared_project_name):
+    _login(client)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert 'id="density-toggle"' in r.text
+    assert "window.__wtKeyNavBound" in r.text
+    assert "wt-density" in r.text
+
+
+def test_project_view_includes_the_density_toggle_and_keynav_script(client, project_factory):
+    _login(client)
+    name, _bd = project_factory("navdensityproj")
+    r = client.get(f"/projects/{name}")
+    assert r.status_code == 200
+    assert 'id="density-toggle"' in r.text
+    assert "window.__wtKeyNavBound" in r.text
+    assert "wt-density" in r.text
+
+
+def test_item_detail_never_includes_the_keynav_script(client, project_factory):
+    """Same protected-page convention as `auto_refresh_js`: the item-detail
+    edit form never receives a document-level keydown listener either."""
+    _login(client)
+    name, bd = project_factory("navdensitynoitem")
+    item_id = bd.create("an item", tags=[A.LANE_WORK])
+    r = client.get(f"/projects/{name}/items/{item_id}")
+    assert r.status_code == 200
+    assert "window.__wtKeyNavBound" not in r.text
+    assert 'id="density-toggle"' not in r.text

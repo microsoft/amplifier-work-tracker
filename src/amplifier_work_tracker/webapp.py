@@ -556,6 +556,7 @@ def _page(
     statusbar_html: str = "",
     js: str = "",
     auto_refresh_ms: int | None = None,
+    sidebar_html: str = "",
 ) -> HTMLResponse:
     """The one page shell every route renders through.
 
@@ -573,9 +574,20 @@ def _page(
     `None`) is itself the guard for every other non-monitor page (login,
     the remove confirmation form, item detail) -- the safest guard is not
     emitting the mechanism at all, not a client-side check.
+
+    `sidebar_html`, when given (only the dashboard and `project_view`
+    pass it -- see `_sidebar_html`), wraps `<main>` in `.pagegrid` so the
+    project-navigation column sits beside the content instead of above
+    it. Every other route keeps the plain, unwrapped `<main class="wrap">`
+    it always had -- omitting the parameter (its default, `""`) is itself
+    the "no sidebar" case, the same convention `auto_refresh_ms` already
+    uses above.
     """
     top = T.top_bar(crumb_html=crumb_html, right_html=_identity_right(request))
-    full_body = f'{top}<main class="wrap" id="main">{body}</main>{statusbar_html}'
+    main = f'<main class="wrap" id="main">{body}</main>'
+    if sidebar_html:
+        main = f'<div class="pagegrid">{sidebar_html}{main}</div>'
+    full_body = f"{top}{main}{statusbar_html}"
     combined_js = js + (T.auto_refresh_js(auto_refresh_ms) if auto_refresh_ms else "")
     return HTMLResponse(T.page(f"{title} \u00b7 amplifier-work-tracker", full_body, js=combined_js))
 
@@ -656,6 +668,92 @@ def _pagination_html(
         f"<span>{prev} &middot; {nxt}</span>"
         "</div>"
     )
+
+
+# ---------------------------------------------------------------------------
+# sidebar navigation -- present on both the overview and every project page
+# (see `_page`'s `sidebar_html` param). Every count below is read straight
+# from the SAME `A.ProjectSummary` the dashboard's own ledger table and the
+# per-project status tabs already compute -- never a second, independently
+# derived number (the same discipline `_status_tab_counts` documents).
+# ---------------------------------------------------------------------------
+
+
+def _sidebar_open_total(s: A.ProjectSummary | None) -> tuple[int, int] | None:
+    """(`open`, `total`) for one project, or `None` when it is unreadable
+    (broken/mid-creation, or simply absent from the summaries this caller
+    passed in) -- never a fabricated `0/0` standing in for a real project
+    whose counts could not be read, matching `_status_tab_counts`'s own
+    "no real counts, don't invent any" convention for the same shape of
+    project. `open` is everything not yet resolved (`total - resolved`),
+    the same set `_impairment_label`'s healthy branch already implies."""
+    if s is None or s.status != A.STATUS_OK:
+        return None
+    total = s.total or 0
+    resolved = s.resolved or 0
+    return max(0, total - resolved), total
+
+
+def _sidebar_alarm_class(s: A.ProjectSummary | None) -> str:
+    """`\" alarm-cr\"`, `\" alarm-am\"`, or `\"\"` -- the SAME blocked-outranks-
+    held escalation ordering `_TAB_ALARM_CLASS`/`_dashboard_row` already use,
+    reused here rather than re-derived so a project's sidebar marker can
+    never disagree with its own status tabs about which of the two fired."""
+    if s is None or s.status != A.STATUS_OK:
+        return ""
+    if s.blocked:
+        return " alarm-cr"
+    if s.held:
+        return " alarm-am"
+    return ""
+
+
+def _sidebar_html(names: list[str], summaries: list[A.ProjectSummary], current: str | None) -> str:
+    """The left navigation column: a global \"All projects &mdash; N open\"
+    roll-up (links to `/`) atop an alphabetical list of every project, each
+    row showing its real `open/total` counts plus a subtle alarm marker
+    when it has anything held or blocked right now. `current` (the project
+    name being viewed, or `None` on the dashboard) marks exactly one row
+    -- or the roll-up itself -- as the current page, never both.
+
+    Collapses to a native checkbox-driven disclosure at narrow widths via
+    CSS alone (see webtheme.py's `.sidebar` media query) -- nothing here
+    needs to know the viewport; the same markup renders both states.
+    """
+    by_name = {s.name: s for s in summaries}
+    total_open = sum(
+        ot[0] for n in names if (ot := _sidebar_open_total(by_name.get(n))) is not None
+    )
+    rows = []
+    for n in sorted(names):
+        s = by_name.get(n)
+        ot = _sidebar_open_total(s)
+        badge = f"{ot[0]}/{ot[1]}" if ot is not None else "\u2014"
+        current_cls = " current" if n == current else ""
+        aria = ' aria-current="page"' if n == current else ""
+        rows.append(
+            f'<li><a class="sb-row{current_cls}{_sidebar_alarm_class(s)}" '
+            f'href="/projects/{_esc(n)}"{aria}>'
+            '<span class="sb-dot"></span>'
+            f'<span class="sb-name">{_esc(n)}</span>'
+            f'<span class="sb-badge">{_esc(badge)}</span>'
+            "</a></li>"
+        )
+    rollup_cls = " current" if current is None else ""
+    rollup_aria = ' aria-current="page"' if current is None else ""
+    n_projects = len(names)
+    toggle_label = f"Projects ({n_projects})" if n_projects else "Projects"
+    return f"""<nav class="sidebar" id="sidebar" aria-label="Projects">
+  <input type="checkbox" id="sb-toggle" class="sb-toggle-input">
+  <label for="sb-toggle" class="sb-toggle-label">{_esc(toggle_label)}</label>
+  <div class="sb-body">
+    <a class="sb-rollup{rollup_cls}" href="/"{rollup_aria}>
+      <span class="eyebrow">All projects</span>
+      <span class="sb-em">&mdash; <b>{total_open}</b> open</span>
+    </a>
+    <ul class="sb-list">{"".join(rows)}</ul>
+  </div>
+</nav>"""
 
 
 # ---------------------------------------------------------------------------
@@ -2706,7 +2804,12 @@ def create_app(
             )
             sb = T.statusbar('<span class="s"><span class="dot on"></span>No projects yet</span>')
             return _page(
-                request, "Dashboard", body, statusbar_html=sb, auto_refresh_ms=_AUTO_REFRESH_MS
+                request,
+                "Dashboard",
+                body,
+                statusbar_html=sb,
+                auto_refresh_ms=_AUTO_REFRESH_MS,
+                sidebar_html=_sidebar_html([], [], None),
             )
 
         ordered = sorted(summaries, key=_dashboard_sort_key)
@@ -2851,6 +2954,7 @@ def create_app(
           <div class="controls">
             {T.search_field("Filter queues by name or state")}
             <span class="count" id="qc">{len(summaries)} QUEUES</span>
+            {T.density_toggle_html()}
           </div>
           {table}
           {broken_foot}
@@ -2876,8 +2980,9 @@ def create_app(
             "Dashboard",
             body,
             statusbar_html=sb,
-            js=T.search_js(len(summaries), "QUEUES", "tbody tr[data-t]"),
+            js=T.search_js(len(summaries), "QUEUES", "tbody tr[data-t]") + T.list_controls_js(),
             auto_refresh_ms=_AUTO_REFRESH_MS,
+            sidebar_html=_sidebar_html(names, summaries, None),
         )
 
     @app.post("/projects")
@@ -2965,6 +3070,14 @@ def create_app(
         if summary.status == "ok" and summary.oldest_unclaimed_age_seconds is not None:
             oldest_item = _oldest_ready_item(bd)
 
+        # Sidebar needs every project's summary, not just this one -- reuse
+        # `summary` (already computed, above) for the current project rather
+        # than reading it from `bd` a second time.
+        sidebar_names = workspace.names()
+        sidebar_summaries = [
+            summary if n == name else A.project_summary(workspace, n) for n in sidebar_names
+        ]
+
         # D1 -- a broken/mid-creation project must be unmissable on its own
         # page too, not just on the dashboard.
         impaired_label = _impairment_label(name, summary)
@@ -3009,7 +3122,12 @@ def create_app(
             # identity. `.iid`'s own ellipsis+clip (webtheme.py) is what makes
             # "never collide, at any title length" true even past this width,
             # not the width itself -- this number only sets the common case.
-            table = f"""<table class="tbl">
+            # `.tbl-scroll` is an inert full-width block on desktop (no visual
+            # change), but at phone width its `overflow-x:auto` (see
+            # webtheme.py's <=600px block) gives the fixed-column item table
+            # its OWN horizontal scroll instead of forcing the whole page --
+            # and its full-bleed rules -- wider than the viewport.
+            table = f"""<div class="tbl-scroll"><table class="tbl">
               <colgroup><col style="width:20px"><col style="width:46px"><col style="width:108px">
                 <col style="width:82px"><col style="width:70px"><col style="width:92px">
                 <col></colgroup>
@@ -3018,7 +3136,7 @@ def create_app(
                 <th>Age</th><th>Holder</th><th>Title</th>
               </tr></thead>
               <tbody>{rows}</tbody>
-            </table>"""
+            </table></div>"""
         elif q:
             # A search that matched nothing -- name the search (and any active
             # status), and offer a real one-click way back to the full list.
@@ -3046,6 +3164,11 @@ def create_app(
         # only the current page's rows. The count reads "matches OF
         # project-total" while searching, else the plain project total.
         search_hint = "Search titles, ids, holders and state"
+        # The visible placeholder carries a quiet "  /" shortcut hint (see
+        # webtheme.py's `search_field`, whose `.hint` overlay does the same
+        # for the dashboard); `aria-label` stays the plain hint text -- a
+        # screen reader announcing "...state slash" would be noise.
+        search_placeholder = f"{search_hint}  /"
         clear_search = ""
         if q:
             clear_href = f"/projects/{_esc(name)}" + (f"?status={quote(status)}" if status else "")
@@ -3062,12 +3185,13 @@ def create_app(
             <div class="field{typed_cls}" id="field">
               <span class="mag">{T.ICONS["mag"]}</span>
               <input id="q" name="q" type="search" autocomplete="off" spellcheck="false"
-                     value="{_esc(q)}" placeholder="{_esc(search_hint)}"
+                     value="{_esc(q)}" placeholder="{_esc(search_placeholder)}"
                      aria-label="{_esc(search_hint)}">
             </div>
             <button type="submit">Search</button>
             {clear_search}
             <span class="count" id="qc">{qc_text}</span>
+            {T.density_toggle_html()}
           </form>"""
         body = f"""
         {_flash(request)}
@@ -3121,13 +3245,17 @@ def create_app(
         # (see the `q` handling above), so the count and pagination are the
         # honest server figures rather than a recount over the current page's
         # rows. A client-side re-filter would reintroduce exactly the
-        # under-reporting this deliverable removes.
+        # under-reporting this deliverable removes. `list_controls_js` is
+        # unrelated to that concern -- density + `j`/`k`/`Enter`/`Esc` row
+        # navigation over the ITEM table, never a re-filter.
         return _page(
             request,
             name,
             body,
             crumb_html=crumb,
             statusbar_html=sb,
+            js=T.list_controls_js(),
+            sidebar_html=_sidebar_html(sidebar_names, sidebar_summaries, name),
             auto_refresh_ms=_AUTO_REFRESH_MS,
         )
 
