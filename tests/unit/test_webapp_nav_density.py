@@ -138,13 +138,17 @@ def test_sidebar_html_rollup_excludes_broken_projects_from_the_total():
 def test_sidebar_html_shows_open_over_total_badge_per_row():
     summaries = [_summary("proj", total=32, resolved=2)]
     html = W._sidebar_html(["proj"], summaries, None)  # noqa: SLF001
-    assert '<span class="sb-badge">30/32</span>' in html
+    # The badge stays the compact open/total a scan wants; the denominator is
+    # spelled out on hover so it can never be misread as another count.
+    assert ">30/32</span>" in html
+    assert 'title="30 open of 32 items"' in html
 
 
 def test_sidebar_html_broken_project_badge_is_an_honest_dash():
     summaries = [A.ProjectSummary(name="broken", status=A.STATUS_BROKEN)]
     html = W._sidebar_html(["broken"], summaries, None)  # noqa: SLF001
-    assert '<span class="sb-badge">\u2014</span>' in html
+    assert ">\u2014</span>" in html
+    assert 'title="counts unavailable"' in html
 
 
 def test_sidebar_html_marks_current_project_row_not_the_rollup():

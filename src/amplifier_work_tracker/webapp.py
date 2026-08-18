@@ -730,6 +730,13 @@ def _sidebar_html(names: list[str], summaries: list[A.ProjectSummary], current: 
         s = by_name.get(n)
         ot = _sidebar_open_total(s)
         badge = f"{ot[0]}/{ot[1]}" if ot is not None else "\u2014"
+        # Spell the denominator out on hover so the `open/total` badge can
+        # never be misread as another of the overview's counts (goal item 4:
+        # one vocabulary). The label stays the compact `open/total` a scan
+        # wants; the title carries the units.
+        badge_title = (
+            f"{ot[0]} open of {ot[1]} items" if ot is not None else "counts unavailable"
+        )
         current_cls = " current" if n == current else ""
         aria = ' aria-current="page"' if n == current else ""
         rows.append(
@@ -737,7 +744,7 @@ def _sidebar_html(names: list[str], summaries: list[A.ProjectSummary], current: 
             f'href="/projects/{_esc(n)}"{aria}>'
             '<span class="sb-dot"></span>'
             f'<span class="sb-name">{_esc(n)}</span>'
-            f'<span class="sb-badge">{_esc(badge)}</span>'
+            f'<span class="sb-badge" title="{_esc(badge_title)}">{_esc(badge)}</span>'
             "</a></li>"
         )
     rollup_cls = " current" if current is None else ""
