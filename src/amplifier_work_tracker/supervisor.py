@@ -605,10 +605,11 @@ def import_web_modules():
 class WebIntegrationConfig:
     """`serve --web-port`'s web-specific inputs -- the same shape `cmd_web`
     accepts (`--host`/`--public`/`--port`/`--auth-mode`/`--session-ttl`/
-    `--tls-cert`/`--tls-key`, the latter two named `--web-tls-cert`/
-    `--web-tls-key` on `serve` to distinguish them from the bare
-    `--dolt-*` flags), just carried as one value so `_async_serve`'s
-    signature gains a single new optional parameter instead of seven."""
+    `--tls-cert`/`--tls-key`/`--http-port`, the latter three named
+    `--web-tls-cert`/`--web-tls-key`/`--web-http-port` on `serve` to
+    distinguish them from the bare `--dolt-*` flags), just carried as one
+    value so `_async_serve`'s signature gains a single new optional
+    parameter instead of eight."""
 
     host: str | None
     public: bool
@@ -617,6 +618,11 @@ class WebIntegrationConfig:
     session_ttl: int
     tls_cert: str | None = None
     tls_key: str | None = None
+    # Companion plain-HTTP trust-bootstrap port -- see `webtrust.py`'s
+    # module docstring and `webapp._resolve_http_bootstrap_port`. None (the
+    # default) lets `resolve_web_config` decide (no listener if TLS isn't
+    # active; `port + 1` if it is and this wasn't given explicitly).
+    http_port: int | None = None
 
 
 class WebServerStartupError(RuntimeError):
@@ -705,6 +711,7 @@ async def web_server_loop(
             session_ttl=web.session_ttl,
             tls_cert=web.tls_cert,
             tls_key=web.tls_key,
+            http_port=web.http_port,
         )
     except webapp.WebConfigError as e:
         raise WebServerStartupError(str(e)) from e
@@ -732,16 +739,53 @@ async def web_server_loop(
     )
     server = uvicorn.Server(uv_config)
 
+    # Companion plain-HTTP trust-bootstrap listener -- see `webtrust.py`'s
+    # module docstring. `resolve_web_config` already decided whether this
+    # runs at all (`config.http_port` is None unless TLS is active) and
+    # which port it lands on; this task just brings up a SECOND uvicorn
+    # server for it, sharing this same task/stop_event/fail-loud path --
+    # never a separate top-level supervisor task, so a bind failure on
+    # EITHER listener surfaces through the identical `WebServerStartupError`
+    # handling below.
+    trust_server: Any = None
+    if config.http_port is not None:
+        from . import webtrust as WTR
+
+        trust_app = WTR.create_trust_app(https_port=config.port, tls_cert_path=config.tls_cert)
+        trust_uv_config = uvicorn.Config(
+            trust_app, host=config.host, port=config.http_port, log_level="info"
+        )
+        trust_server = uvicorn.Server(trust_uv_config)
+
     watcher = asyncio.create_task(_web_stop_watcher(server, stop_event))
+    trust_watcher = (
+        asyncio.create_task(_web_stop_watcher(trust_server, stop_event))
+        if trust_server is not None
+        else None
+    )
     try:
-        await server._serve()  # noqa: SLF001 -- see docstring: bypasses uvicorn's own signal capture
+        if trust_server is not None:
+            # noqa: SLF001 for both -- see docstring: bypasses uvicorn's own signal capture
+            await asyncio.gather(server._serve(), trust_server._serve())  # noqa: SLF001
+        else:
+            await server._serve()  # noqa: SLF001 -- see docstring: bypasses uvicorn's own signal capture
     except SystemExit as e:
         raise WebServerStartupError(
-            f"web dashboard failed to start on {config.host}:{config.port} (uvicorn exited "
-            f"during startup, code {e.code}) -- most likely the port is already in use. "
-            f"Check: ss -ltn | grep :{config.port}"
+            f"web dashboard (or its trust-bootstrap companion) failed to start on "
+            f"{config.host}:{config.port}"
+            + (f"/{config.http_port}" if config.http_port is not None else "")
+            + f" (uvicorn exited during startup, code {e.code}) -- most likely a port is "
+            f"already in use. Check: ss -ltn | grep -E ':({config.port}"
+            + (f"|{config.http_port}" if config.http_port is not None else "")
+            + ")'"
         ) from e
     finally:
+        if trust_watcher is not None:
+            trust_watcher.cancel()
+            try:
+                await trust_watcher
+            except asyncio.CancelledError:
+                pass
         watcher.cancel()
         try:
             await watcher

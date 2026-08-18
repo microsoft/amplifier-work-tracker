@@ -1092,6 +1092,7 @@ def cmd_web(a):
             session_ttl=a.session_ttl,
             tls_cert=a.tls_cert,
             tls_key=a.tls_key,
+            http_port=a.http_port,
         )
     except webapp.WebConfigError as e:
         die(str(e))
@@ -1130,6 +1131,7 @@ def cmd_serve(a):
             session_ttl=a.web_session_ttl,
             tls_cert=a.web_tls_cert,
             tls_key=a.web_tls_key,
+            http_port=a.web_http_port,
         )
     return SV.serve(
         root,
@@ -1157,6 +1159,7 @@ def cmd_service_install(a):
             web_session_ttl=a.web_session_ttl,
             web_tls_cert=a.web_tls_cert,
             web_tls_key=a.web_tls_key,
+            web_http_port=a.web_http_port,
         )
     except (S.ServiceUnsupportedError, S.WebExtraNotImportableError, S.TlsConfigError) as e:
         die(str(e))
@@ -1516,6 +1519,18 @@ def main():
         default=None,
         help="path to the TLS certificate's private key PEM file (pairs with --web-tls-cert)",
     )
+    p.add_argument(
+        "--web-http-port",
+        type=int,
+        default=None,
+        help=(
+            "companion plain-HTTP port for the trust-bootstrap listener (see webtrust.py): "
+            "an unauthenticated /trust page + CA download/profile, so a new device can install "
+            "this host's CA before its first HTTPS visit -- no cert warning, no login. Only "
+            "runs when TLS is active; ignored otherwise. Defaults to https port + 1 when TLS "
+            "is active and this is omitted. Ignored unless --web-port is given"
+        ),
+    )
     p.set_defaults(fn=cmd_serve)
 
     p = sub.add_parser(
@@ -1589,6 +1604,18 @@ def main():
         default=None,
         help="path to the TLS certificate's private key PEM file (pairs with --tls-cert)",
     )
+    p.add_argument(
+        "--http-port",
+        type=int,
+        default=None,
+        help=(
+            "companion plain-HTTP port for the trust-bootstrap listener (see webtrust.py): "
+            "an unauthenticated /trust page + CA download/profile, so a new device can install "
+            "this host's CA before its first HTTPS visit -- no cert warning, no login. Only "
+            "runs when TLS is active; ignored otherwise. Defaults to https port + 1 when TLS "
+            "is active and this is omitted"
+        ),
+    )
     p.set_defaults(fn=cmd_web)
 
     svc = sub.add_parser(
@@ -1648,6 +1675,17 @@ def main():
         "--web-tls-key",
         default=None,
         help="bake `--web-tls-key` into the installed unit (pairs with --web-tls-cert)",
+    )
+    p.add_argument(
+        "--web-http-port",
+        type=int,
+        default=None,
+        help=(
+            "bake `--web-http-port` into the installed unit's ExecStart -- the companion "
+            "plain-HTTP trust-bootstrap listener (see webtrust.py). Only runs when TLS is "
+            "active; defaults to https port + 1 when TLS is active and this is omitted. "
+            "Ignored unless --web-port is given"
+        ),
     )
     p.set_defaults(fn=cmd_service_install)
 

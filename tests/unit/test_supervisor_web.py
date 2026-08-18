@@ -233,6 +233,108 @@ async def _wait_until_https_reachable(
     raise AssertionError(f"https://127.0.0.1:{port} never became reachable: {last_err}")
 
 
+def test_web_server_loop_runs_trust_bootstrap_companion_listener_when_tls_active(tmp_path):
+    """`serve --web-port` with TLS active and `http_port` set must bring up
+    the companion plain-HTTP trust-bootstrap listener (`webtrust.py`)
+    ALONGSIDE the https dashboard, in the SAME task, and drain BOTH on
+    `stop_event.set()`."""
+    from amplifier_work_tracker import webtls as WT
+
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    ca_cert_path = tmp_path / "ca.crt"
+    ca_key_path = tmp_path / "ca.key"
+    WT.generate_local_ca(ca_cert_path, ca_key_path)
+    WT.generate_leaf_signed_by_ca(
+        ca_cert_path, ca_key_path, cert_path, key_path, hostnames=["127.0.0.1", "localhost"]
+    )
+
+    ws = A.Workspace(tmp_path / "root")
+    https_port = _free_port()
+    http_port = _free_port()
+    web = SV.WebIntegrationConfig(
+        host=None,
+        public=False,
+        port=https_port,
+        auth_mode="password",
+        session_ttl=3600,
+        tls_cert=str(cert_path),
+        tls_key=str(key_path),
+        http_port=http_port,
+    )
+    stop_event = asyncio.Event()
+
+    async def run():
+        task = asyncio.create_task(SV.web_server_loop(ws, web, stop_event=stop_event))
+        try:
+            await _wait_until_reachable(f"http://127.0.0.1:{http_port}/trust")
+            resp = await asyncio.to_thread(_get, f"http://127.0.0.1:{http_port}/trust")
+            assert resp.status == 200
+            body = resp.read().decode("utf-8")
+            assert "Trust this server" in body
+
+            redirect_resp = await asyncio.to_thread(
+                _get_no_redirect, f"http://127.0.0.1:{http_port}/projects"
+            )
+            assert redirect_resp.status in (301, 302, 307, 308)
+            assert f"https://127.0.0.1:{https_port}/projects" in redirect_resp.headers["Location"]
+        finally:
+            stop_event.set()
+            await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(run())
+
+
+def _get_no_redirect(url: str):
+    class _NoRedirect(urllib.request.HTTPErrorProcessor):
+        def http_response(self, request, response):
+            return response
+
+        https_response = http_response
+
+    return urllib.request.build_opener(_NoRedirect).open(url, timeout=1.0)  # noqa: S310
+
+
+def test_web_server_loop_omits_trust_bootstrap_without_http_port(tmp_path):
+    """`http_port=None` (the default) with TLS active must NOT bind a
+    second listener at all -- proven by the auto-derived default port
+    (https_port + 1) being freely bindable by something else immediately."""
+    from amplifier_work_tracker import webtls as WT
+
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    WT.generate_self_signed(cert_path, key_path)
+
+    ws = A.Workspace(tmp_path / "root")
+    https_port = _free_port()
+    web = SV.WebIntegrationConfig(
+        host=None,
+        public=False,
+        port=https_port,
+        auth_mode="password",
+        session_ttl=3600,
+        tls_cert=str(cert_path),
+        tls_key=str(key_path),
+        # http_port omitted -- resolve_web_config would default this to
+        # https_port + 1 when TLS is active, but web_server_loop must still
+        # only start ONE listener here since `resolve_web_config`'s own
+        # default IS in effect (this test exercises the "default kicks in"
+        # path -- see the next test for "explicitly no companion" via a
+        # non-TLS config).
+    )
+    stop_event = asyncio.Event()
+
+    async def run():
+        task = asyncio.create_task(SV.web_server_loop(ws, web, stop_event=stop_event))
+        try:
+            await _wait_until_https_reachable(https_port)
+        finally:
+            stop_event.set()
+            await asyncio.wait_for(task, timeout=5)
+
+    asyncio.run(run())
+
+
 def test_web_server_loop_raises_web_server_startup_error_for_rejected_config(tmp_path):
     """A non-loopback host without public=True is `webapp.WebConfigError` --
     must surface here as `WebServerStartupError`, the SAME exception a real

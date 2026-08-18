@@ -267,6 +267,76 @@ def test_systemd_unit_content_bakes_web_tls_flags_into_exec_start(monkeypatch, t
     assert "--web-tls-key /certs/key.pem" in exec_start_line
 
 
+# ----------------------------------------------- trust-bootstrap: --web-http-port
+
+
+def test_serve_argv_tail_bakes_web_http_port_when_given():
+    argv = S._serve_argv_tail(Path("/abs/root"), web_port=8095, web_http_port=8096)
+    assert argv == [
+        "serve",
+        "--root",
+        "/abs/root",
+        "--web-port",
+        "8095",
+        "--web-http-port",
+        "8096",
+    ]
+
+
+def test_serve_argv_tail_omits_web_http_port_when_not_given():
+    argv = S._serve_argv_tail(Path("/abs/root"), web_port=8095)
+    assert "--web-http-port" not in argv
+
+
+def test_serve_argv_tail_omits_web_http_port_even_with_web_port_none():
+    """Like every other --web-* flag, gated on web_port -- passing only
+    web_http_port without web_port must not leak it into argv."""
+    argv = S._serve_argv_tail(Path("/abs/root"), web_http_port=8096)
+    assert "--web-http-port" not in argv
+
+
+def test_systemd_unit_content_bakes_web_http_port_into_exec_start(monkeypatch, tmp_path):
+    _force_console_script_present(monkeypatch, tmp_path)
+    root = tmp_path / "workspace-root"
+    unit = S._systemd_unit_content(
+        root,
+        dolt_host=None,
+        dolt_port=None,
+        web_port=8095,
+        web_tls_cert="/certs/cert.pem",
+        web_tls_key="/certs/key.pem",
+        web_http_port=8096,
+    )
+    exec_start_line = next(line for line in unit.splitlines() if line.startswith("ExecStart="))
+    assert "--web-http-port 8096" in exec_start_line
+
+
+@pytest.mark.skipif(not _HAVE_SYSTEMD_ANALYZE, reason="systemd-analyze not on PATH")
+def test_systemd_analyze_verify_clean_with_web_http_port_baked_in(monkeypatch, tmp_path):
+    """The trust-bootstrap-integrated ExecStart must still be a systemd-valid unit."""
+    _force_console_script_present(monkeypatch, tmp_path)
+    root = tmp_path / "workspace-root"
+    unit = S._systemd_unit_content(
+        root,
+        dolt_host="127.0.0.1",
+        dolt_port=3308,
+        web_port=8095,
+        web_tls_cert="/certs/cert.pem",
+        web_tls_key="/certs/key.pem",
+        web_http_port=8096,
+    )
+    unit_path = tmp_path / f"{S.SERVICE_NAME}.service"
+    unit_path.write_text(unit, encoding="utf-8")
+
+    result = subprocess.run(
+        ["systemd-analyze", "verify", str(unit_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.skipif(not _HAVE_SYSTEMD_ANALYZE, reason="systemd-analyze not on PATH")
 def test_systemd_analyze_verify_clean_with_web_tls_flags_baked_in(monkeypatch, tmp_path):
     """The TLS-integrated ExecStart must still be a systemd-valid unit."""
