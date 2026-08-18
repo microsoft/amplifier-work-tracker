@@ -734,9 +734,7 @@ def _sidebar_html(names: list[str], summaries: list[A.ProjectSummary], current: 
         # never be misread as another of the overview's counts (goal item 4:
         # one vocabulary). The label stays the compact `open/total` a scan
         # wants; the title carries the units.
-        badge_title = (
-            f"{ot[0]} open of {ot[1]} items" if ot is not None else "counts unavailable"
-        )
+        badge_title = f"{ot[0]} open of {ot[1]} items" if ot is not None else "counts unavailable"
         current_cls = " current" if n == current else ""
         aria = ' aria-current="page"' if n == current else ""
         rows.append(
@@ -3295,7 +3293,13 @@ def create_app(
         )
 
         rows = "".join(_dashboard_row(s) for s in ordered)
-        table = f"""<table class="tbl dense">
+        # `.tbl-scroll` is inert on desktop (a plain full-width block, no visual
+        # change) and, below 600px, gives the fixed-colgroup queue table its OWN
+        # horizontal scroll instead of overflowing the whole page -- the same
+        # mechanism the project page's item table already uses (webtheme.py's
+        # <=600px block). Without it the ~540px colgroup forced a body-wide
+        # horizontal overflow at phone width, breaking the shipped mobile reflow.
+        table = f"""<div class="tbl-scroll"><table class="tbl dense">
           <colgroup><col><col style="width:250px"><col style="width:70px">
             <col style="width:70px"><col style="width:80px"><col style="width:70px"></colgroup>
           <thead><tr>
@@ -3305,7 +3309,7 @@ def create_app(
           </tr></thead>
           <tbody>{rows}</tbody>
           {_dashboard_totals(summaries)}
-        </table>"""
+        </table></div>"""
 
         broken_foot = ""
         if broken:

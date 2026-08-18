@@ -447,6 +447,23 @@ a{color:inherit}
   .sidebar .sb-toggle-input:checked ~ .sb-toggle-label::after{content:"\25b4"}
 }
 
+/* Phone-width reflow for the needs-you overview's own rows. Every one of
+   these already `flex-wrap`s; the only thing that can still push past a
+   narrow viewport is a right-pinned (`margin-left:auto`), `white-space:nowrap`
+   affordance -- the verdict "as of" stamp, a row's dispatch link, the dispatch
+   button. Below 600px those un-pin and take the full row width, so a long
+   "claim next in <project>" label has room to sit rather than run off the
+   right edge. Additive: desktop layout is untouched. */
+@media (max-width:600px){
+  .verdict{gap:8px}
+  .verdict .vasof{margin-left:0;flex-basis:100%}
+  .needs-row{gap:8px}
+  .needs-row .nconds{gap:10px}
+  .needs-row .ndispatch{margin-left:0;flex-basis:100%}
+  .dispatch{gap:8px}
+  .dispatch .dbtn{margin-left:0;flex-basis:100%;text-align:center}
+}
+
 .eyebrow{font-family:var(--sans);font-size:10px;font-weight:500;
   letter-spacing:.26em;text-transform:uppercase;color:var(--mid);line-height:1.5}
 .eyebrow.am{color:var(--amber)}
