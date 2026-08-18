@@ -625,6 +625,15 @@ tr.hidden{display:none}
   letter-spacing:.05em;display:inline-block;max-width:100%;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 .holder{font-family:var(--sans);font-size:12px;color:var(--dim);letter-spacing:.01em}
+/* held-item claim-age + staleness (webapp.py's `_custody_html`) -- a fresh,
+   actively-renewed hold is a quiet fact (same --dim as `.holder` above);
+   only a STALE one (custody.reclaim_eligible says so) spends the reserved
+   --amber accent. Never a third hue: this is the SAME amber every other
+   "worth a glance" reading in this app uses, never escalated to --crimson
+   (that stays reserved for blocked/destructive, item-level escalation). */
+.held-custody{font-family:var(--sans);font-size:12px;letter-spacing:.01em}
+.held-custody.fresh{color:var(--dim)}
+.held-custody.stale{color:var(--amber);font-weight:600}
 .st{font-family:var(--sans);font-size:10px;font-weight:600;letter-spacing:.15em;
   text-transform:uppercase;white-space:nowrap}
 .st-open{color:var(--ink)}
