@@ -37,8 +37,42 @@ pytest.importorskip("uvicorn", reason="the 'web' extra is not installed")
 
 from amplifier_work_tracker import adapter as A  # noqa: E402
 from amplifier_work_tracker import supervisor as SV  # noqa: E402
+from amplifier_work_tracker import webtls as WT  # noqa: E402
 
 _TEST_PASSWORD = "not-a-real-secret-test-fixture"  # noqa: S105 -- test fixture, not a credential
+
+
+@pytest.fixture(autouse=True)
+def _isolated_home(monkeypatch, tmp_path):
+    """Point `webtls.Path.home()` at an isolated tmp_path for every test in
+    this file -- same pattern as `test_webapp_setup.py`/`test_webapp_tls.py`'s
+    own `_isolated_home` fixture (kept independent here rather than shared,
+    since this file has no import relationship with those two).
+
+    Why this is load-bearing, not just tidy: `webapp._resolve_tls(None,
+    None)` (used by every test here that constructs a `WebIntegrationConfig`
+    WITHOUT explicit `tls_cert`/`tls_key`, i.e. every "plain http" test in
+    this file) auto-detects `webtls.default_cert_path()`/`default_key_path()`
+    -- both `Path.home()`-relative, per `_resolve_tls`'s own docstring -- and
+    uses them (TLS ON) if both happen to exist on disk. On a developer
+    machine (or any CI runner) that has ever run the real `setup-tls`
+    command, those files genuinely exist at the real
+    `~/.config/amplifier-work-tracker/tls/`, and every "no TLS" test here
+    would silently, non-deterministically flip into TLS-plus-trust-
+    bootstrap-companion-listener mode instead -- a second uvicorn server on
+    `port + 1` that no assertion in this file expects, producing exactly
+    the chaotic port-conflict/CancelledError failures this fix addresses
+    (reproduced locally: this exact contamination, from this real box's own
+    `~/.config/amplifier-work-tracker/tls/cert.pem`, left by this session's
+    own earlier `setup-tls` run, made 2-3 of these tests fail on every
+    single invocation -- see fix/flaky-tests). Isolating `Path.home()`
+    removes the dependency on whatever happens to exist on the host
+    entirely, matching what every test here already assumes.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(WT.Path, "home", classmethod(lambda cls: fake_home))
+    return fake_home
 
 
 def _free_port() -> int:
