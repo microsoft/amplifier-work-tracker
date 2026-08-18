@@ -1664,6 +1664,179 @@ def _fact_value_html(value: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# item-detail blocker chain -- Beadbox-inspired enrichment #7.
+#
+# Built entirely from `Item.links` (`adapter.Beads.get`'s enriched
+# id/direction/type/title/status/holder/created_by/blocking dicts -- see
+# that method's own docstring for exactly which fields are real per
+# direction). No new `bd` calls here: `with_links=True` (already the
+# item-detail route's own read) is the only fetch this needs.
+# ---------------------------------------------------------------------------
+
+
+def _link_ref_html(name: str, link: dict) -> str:
+    """`<a href=".../items/ID">ID — Title</a>` for one link entry, or ""
+    if the entry carries no id at all (defensive -- every real bd payload
+    has one)."""
+    ln_id = link.get("id")
+    if not ln_id:
+        return ""
+    href = f"/projects/{_esc(name)}/items/{_esc(ln_id)}"
+    title = link.get("title") or ""
+    suffix = f" &mdash; {_esc(title)}" if title else ""
+    return f'<a href="{href}">{_esc(ln_id)}</a>{suffix}'
+
+
+def _blocker_owner_html(link: dict) -> str:
+    """Who holds/owns the upstream work behind one blocked-by entry:
+    \"held by <holder>\" while it is genuinely held right now, else
+    \"reported by <created_by>\" (the task's own fallback rule). \"\" when
+    neither is known -- honest, not fabricated (the `to`-direction's own
+    lean payload never carries `holder`/`created_by` at all; see
+    `Beads.get`'s docstring)."""
+    if link.get("status") == "held" and link.get("holder"):
+        return f"held by {_identity_html(link['holder'])}"
+    created_by = link.get("created_by")
+    if created_by:
+        return f"reported by {_identity_html(created_by)}"
+    return ""
+
+
+def _blocked_by_list_html(name: str, links: list[dict]) -> str:
+    """The `Blocked by` list: crimson + unstruck for a still-open `blocks`
+    dependency (`link[\"blocking\"]` -- the SAME check `claim_item` uses to
+    refuse a claim, so this can never show a chain as clear when a claim
+    would actually still be refused), a quiet check mark once the upstream
+    item resolves -- \"the chain clearing\", per this feature's own spec."""
+    rows = ""
+    for ln in links:
+        ref = _link_ref_html(name, ln)
+        if not ref:
+            continue
+        status = ln.get("status") or "unknown"
+        owner = _blocker_owner_html(ln)
+        owner_part = f' <span class="muted">{owner}</span>' if owner else ""
+        if ln.get("blocking"):
+            rows += (
+                f'<li class="blocker-item unsatisfied">{ref} '
+                f'<span class="st st-blkd">{_esc(status)}</span>{owner_part}</li>'
+            )
+        else:
+            rows += (
+                f'<li class="blocker-item satisfied">'
+                f'<span class="check" aria-hidden="true">&#10003;</span> {ref} '
+                f'<span class="muted">({_esc(status)})</span></li>'
+            )
+    if not rows:
+        return ""
+    return (
+        '<h2 class="eyebrow am" style="display:block;margin-top:30px">Blocked by</h2>'
+        f'<ul class="blocker-list">{rows}</ul>'
+    )
+
+
+def _cheap_ref_list_html(name: str, heading: str, links: list[dict]) -> str:
+    """A plain, neutral id/title/status list -- used for the inverse
+    `Blocks` direction and the `Other links` fallback bucket. Never
+    crimson: these describe what THIS item affects or relates to, not
+    an escalation about THIS item's own state (that's `Blocked by`'s
+    job, above)."""
+    rows = ""
+    for ln in links:
+        ref = _link_ref_html(name, ln)
+        if not ref:
+            continue
+        status = ln.get("status")
+        status_part = f' <span class="muted">({_esc(status)})</span>' if status else ""
+        rows += f"<li>{ref}{status_part}</li>"
+    if not rows:
+        return ""
+    return (
+        f'<h2 class="eyebrow" style="display:block;margin-top:30px">{_esc(heading)}</h2>'
+        f'<ul class="links-list">{rows}</ul>'
+    )
+
+
+def _discovered_note_html(name: str, links: list[dict], *, label: str) -> str:
+    """A single informational line for a `discovered-from` provenance link
+    -- never crimson (ASSUMPTION link.nonblocking: a discovered-from link
+    never blocks its target, so it never earns the escalation hue)."""
+    refs = [_link_ref_html(name, ln) for ln in links]
+    refs = [r for r in refs if r]
+    if not refs:
+        return ""
+    return f'<p class="muted" style="margin-top:10px">{_esc(label)} {", ".join(refs)}</p>'
+
+
+def _dependency_sections_html(name: str, links: list[dict]) -> str:
+    """All of the item-detail page's dependency-graph sections, in order:
+    Blocked by (escalation), Discovered from (provenance, this item's own
+    origin), Blocks (cheap inverse), Discovered (cheap inverse -- items
+    found while working this one), then a Other links fallback for any
+    dependency type this page has no special treatment for (`related`,
+    `parent-child`, `tracks`, ...) so nothing bd reports is silently
+    dropped."""
+    if not links:
+        return ""
+    from_links = [ln for ln in links if ln.get("direction") == "from"]
+    to_links = [ln for ln in links if ln.get("direction") == "to"]
+
+    blocked_by = [ln for ln in from_links if ln.get("type") == "blocks"]
+    discovered_from = [ln for ln in from_links if ln.get("type") == A.LINK_DISCOVERED_FROM]
+    other_from = [
+        ln for ln in from_links if ln.get("type") not in ("blocks", A.LINK_DISCOVERED_FROM)
+    ]
+
+    blocks = [ln for ln in to_links if ln.get("type") == "blocks"]
+    discovered_here = [ln for ln in to_links if ln.get("type") == A.LINK_DISCOVERED_FROM]
+    other_to = [ln for ln in to_links if ln.get("type") not in ("blocks", A.LINK_DISCOVERED_FROM)]
+
+    out = _blocked_by_list_html(name, blocked_by)
+    out += _discovered_note_html(name, discovered_from, label="Discovered while working")
+    out += _cheap_ref_list_html(name, "Blocks", blocks)
+    out += _discovered_note_html(
+        name, discovered_here, label="Discovered while this item was being worked:"
+    )
+    other = other_from + other_to
+    out += _cheap_ref_list_html(name, "Other links", other)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# item-detail activity feed -- Beadbox-inspired enrichment #11.
+#
+# Built entirely from `adapter.Beads.activity` (real `bd history` diffed
+# transitions + real `bd comments`, nothing synthesized -- see that
+# method's own docstring). Purely a rendering layer: every fact shown here
+# already exists on the `ActivityEvent` it's given.
+# ---------------------------------------------------------------------------
+
+
+def _activity_event_html(ev: A.ActivityEvent) -> str:
+    age_html = _item_age_html(ev.at)
+    actor_html = f' <span class="muted">{_identity_html(ev.actor)}</span>' if ev.actor else ""
+    detail_html = f'<div class="adetail">{_esc(ev.detail)}</div>' if ev.detail else ""
+    return (
+        f'<li>{age_html} <span class="ak">{_esc(ev.summary)}</span>{actor_html}{detail_html}</li>'
+    )
+
+
+def _activity_feed_html(events: list) -> str:
+    """The full `Activity` section: a compact, reverse-chronological list
+    of everything bd itself can substantiate about this item. `events` is
+    already reverse-chronological (`Beads.activity` sorts it) -- this
+    function only renders, never reorders. Returns \"\" for an empty list
+    (a brand-new item with no history yet is not an error)."""
+    if not events:
+        return ""
+    rows = "".join(_activity_event_html(ev) for ev in events)
+    return (
+        '<h2 class="eyebrow" style="display:block;margin-top:30px">Activity</h2>'
+        f'<ul class="activity-list">{rows}</ul>'
+    )
+
+
+# ---------------------------------------------------------------------------
 # /setup -- TLS certificate status + method options for whoever deploys this.
 #
 # Follow-on to PR #24 (TLS/HTTPS support, ported from muxplex): that work
@@ -3035,35 +3208,19 @@ def create_app(
             action_html = ""
 
         # ------------------------------------------------------------ links
-        links_html = ""
-        if item.links:
-            depends_on = [ln for ln in item.links if ln.get("direction") == "from"]
-            required_by = [ln for ln in item.links if ln.get("direction") == "to"]
+        links_html = _dependency_sections_html(name, item.links)
 
-            def _link_items(entries: list[dict]) -> str:
-                out = ""
-                for ln in entries:
-                    ln_id = ln.get("id")
-                    if not ln_id:
-                        continue
-                    ln_type = ln.get("type") or "related"
-                    ln_href = f"/projects/{_esc(name)}/items/{_esc(ln_id)}"
-                    out += (
-                        f'<li><a href="{ln_href}">{_esc(ln_id)}</a> '
-                        f'<span class="muted">({_esc(ln_type)})</span></li>'
-                    )
-                return out
-
-            if depends_on:
-                links_html += (
-                    '<h2 class="eyebrow" style="display:block;margin-top:30px">Depends on</h2>'
-                    f'<ul class="links-list">{_link_items(depends_on)}</ul>'
-                )
-            if required_by:
-                links_html += (
-                    '<h2 class="eyebrow" style="display:block;margin-top:30px">Required by</h2>'
-                    f'<ul class="links-list">{_link_items(required_by)}</ul>'
-                )
+        # --------------------------------------------------------- activity
+        # A page enrichment, not load-bearing: `Beads.activity` already
+        # degrades honestly (comments-only, or empty) if `bd history`
+        # itself errors -- never let a fetch failure here take down the
+        # rest of this page (title/description/acceptance/design/status).
+        try:
+            activity_events = bd.activity(item.id)
+        except A.BeadsError as e:
+            logger.warning("item_detail %s/%s: activity feed unavailable: %s", name, item.id, e)
+            activity_events = []
+        activity_html = _activity_feed_html(activity_events)
 
         resolution_html = ""
         if item.status == "resolved" and item.resolution:
@@ -3185,6 +3342,7 @@ def create_app(
 
           {resolution_html}
           {links_html}
+          {activity_html}
           {action_html}
         </section>
         """

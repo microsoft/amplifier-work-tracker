@@ -106,6 +106,19 @@ _STATUS_MAP = {
 # this is exact, not an approximation.
 _STATUS_MAP_REVERSE = {ours: theirs for theirs, ours in _STATUS_MAP.items()}
 
+
+def _map_status(raw: str | None) -> str:
+    """Translate one raw bd status string into our vocabulary -- the same
+    rule `Item.from_beads` applies to an item's own top-level `status`,
+    factored out so the item-detail blocker chain's dependency/dependent
+    entries (`Beads.get`'s enriched `links`) translate status the exact
+    same way, never a second, drifting copy of `_STATUS_MAP.get(...)`.
+    An unrecognized raw value passes through rather than being coerced --
+    see `_STATUS_MAP`'s own comment."""
+    raw = raw or ""
+    return _STATUS_MAP.get(raw, raw or "unknown")
+
+
 # Public -- the valid `status` values for `list()`/`list_bounded()`, for
 # callers (the CLI's `--status` choices, the `work_list` tool's input schema)
 # that need the vocabulary without reaching into the private reverse map.
@@ -694,7 +707,7 @@ class Item:
         for their, ours in _FIELD_MAP.items():
             if their in d:
                 out[ours] = d[their]
-        out["status"] = _STATUS_MAP.get(d.get("status", ""), d.get("status", "unknown"))
+        out["status"] = _map_status(d.get("status"))
         out.setdefault("tags", [])
         out.setdefault("meta", {})
         out["tags"] = out.get("tags") or []
@@ -753,24 +766,36 @@ class Item:
         return row
 
 
+def _is_active_blocker(dependency_type: str | None, raw_status: str | None) -> bool:
+    """Does one raw bd dependency edge (`dependency_type`/`status` straight
+    off `show --json`'s `dependencies`/`dependents` fields, BEFORE our
+    status-vocabulary translation) count as a still-open `blocks`-type
+    dependency -- i.e. actually blocking `claim_item`, and what the
+    item-detail page's blocker chain (`Beads.get`'s enriched `links`)
+    paints crimson?
+
+    A raw bd status of anything other than `closed` counts as active: a
+    blocker that is itself `blocked` or `deferred` still blocks; only a
+    resolved (closed) one clears the way. Factored out of `_active_blockers`
+    so the claim-refusal check and the item-detail blocker chain can never
+    silently disagree on what \"still blocking\" means.
+    """
+    return dependency_type == "blocks" and raw_status != "closed"
+
+
 def _active_blockers(item: Item) -> list[dict]:
     """Which of `item`'s forward dependencies are still-open `blocks`-type
     links -- i.e. actually blocking `claim_item`.
 
     Read straight from the raw `show` payload's `dependencies` field, which
     IS present without `--include-dependents` (that flag only gates the
-    REVERSE direction -- ASSUMPTION show.dependents). A raw bd status of
-    anything other than `closed` counts as active: a blocker that is
-    itself `blocked` or `deferred` still blocks; only a resolved (closed)
-    one clears the way.
+    REVERSE direction -- ASSUMPTION show.dependents).
     """
     deps = item.raw.get("dependencies") or []
     return [
         d
         for d in deps
-        if isinstance(d, dict)
-        and d.get("dependency_type") == "blocks"
-        and d.get("status") != "closed"
+        if isinstance(d, dict) and _is_active_blocker(d.get("dependency_type"), d.get("status"))
     ]
 
 
@@ -914,6 +939,136 @@ class ListResult:
     limit: int
     requested_limit: int | None
     offset: int = 0
+
+
+# Bound on how many `bd history` commits `Beads.activity` will ever read for
+# one item -- the same defensive-bound discipline `LIST_MAX_LIMIT` applies
+# to `list_bounded`, sized generously (an item touched this many times is
+# already an extreme outlier) rather than tuned to any measured case.
+HISTORY_LIMIT = 200
+
+
+@dataclass(frozen=True)
+class ActivityEvent:
+    """One entry in an item's real activity timeline (`Beads.activity`) --
+    every field here is substantiated by bd itself (a real `bd history`
+    status/custody transition, or a real `bd comments` entry), never
+    synthesized. See `Beads.activity`'s docstring for exactly what bd
+    exposes and the honest gap where it doesn't.
+
+    `kind` is one of `\"created\" | \"status\" | \"comment\" | \"resolved\"` --
+    the item-detail activity feed (webapp.py's `_activity_feed_html`)
+    switches on it for icon/wording only; every kind renders through the
+    same list.
+    """
+
+    kind: str
+    at: datetime
+    actor: str | None
+    summary: str
+    detail: str | None = None
+
+
+def _history_signature(issue: dict) -> tuple[object, object]:
+    """The `(status, assignee)` pair that decides whether two consecutive
+    `bd history` entries represent a REAL transition, or just another dolt
+    commit that happened to touch this item's repo without changing the
+    item itself (see `_history_events`'s docstring for why that happens)."""
+    return (issue.get("status"), issue.get("assignee"))
+
+
+def _history_events(history: list) -> list[ActivityEvent]:
+    """Turn bd's own per-commit `bd history --json` payload into genuine
+    lifecycle events -- never a fabricated row for a commit where nothing
+    about the item actually changed.
+
+    `bd history` is NOT a clean domain-event log: it is one entry per dolt
+    commit that touched this item's repo, each carrying a FULL snapshot of
+    the issue as of that commit (empirically verified against bd 1.1.2 --
+    see this module's own investigation notes / the PR that added this).
+    Adding a comment, for instance, produces a new commit -- and therefore
+    a new history entry -- even though the issue's own status/assignee are
+    unchanged at that commit. Consecutive entries with an IDENTICAL
+    `(status, assignee)` signature are exactly that noise and are collapsed
+    into a single event here, using only the OLDEST entry of each run (so a
+    later, duplicate commit for the same real state is never mistaken for
+    a second occurrence of the same event).
+
+    Entries are read oldest-first so \"the first entry we see\" always means
+    \"the oldest\" (bd itself returns newest-first). The three event shapes
+    this produces:
+
+      - The very first entry becomes a `\"created\"` event, timestamped and
+        attributed from the issue's own `created_at`/`created_by` (real
+        fields on every entry, not inferred).
+      - A transition INTO our `\"held\"` status with a real assignee becomes
+        a `\"status\"` event summarized `\"Claimed\"`, attributed to that
+        assignee -- the best signal bd gives for \"who\"; not literally
+        proof this exact identity ran the claim command, but the item's own
+        real recorded assignee at that snapshot (same convention already
+        established elsewhere in this app for holder-persists-after-
+        resolution).
+      - A transition INTO our `\"resolved\"` status becomes a `\"resolved\"`
+        event, `detail` carrying that snapshot's own `close_reason`.
+      - Any other transition (open<->blocked/deferred, a reassignment that
+        doesn't change status, a held item released back to open, etc.)
+        becomes a generic `\"status\"` event naming the before/after states
+        in OUR vocabulary.
+
+    A history entry with no `CommitDate` at all is skipped (nothing to sort
+    or timestamp it by) rather than guessed at.
+    """
+    entries = [
+        e
+        for e in history
+        if isinstance(e, dict) and isinstance(e.get("Issue"), dict) and e.get("CommitDate")
+    ]
+    entries.sort(key=lambda e: e["CommitDate"])
+
+    events: list[ActivityEvent] = []
+    prev_sig: tuple[object, object] | None = None
+    for entry in entries:
+        issue = entry["Issue"]
+        sig = _history_signature(issue)
+        if sig == prev_sig:
+            continue  # same real state as the previous entry -- comment/no-op commit
+        at = _parse_bd_timestamp(entry.get("CommitDate"))
+        if at is None:
+            prev_sig = sig
+            continue
+        our_status = _map_status(issue.get("status"))
+        assignee = issue.get("assignee")
+        if prev_sig is None:
+            events.append(
+                ActivityEvent(
+                    kind="created",
+                    at=_parse_bd_timestamp(issue.get("created_at")) or at,
+                    actor=issue.get("created_by"),
+                    summary="Created",
+                )
+            )
+        elif our_status == "resolved":
+            events.append(
+                ActivityEvent(
+                    kind="resolved",
+                    at=_parse_bd_timestamp(issue.get("closed_at")) or at,
+                    actor=assignee,
+                    summary="Resolved",
+                    detail=issue.get("close_reason"),
+                )
+            )
+        elif our_status == "held" and assignee:
+            events.append(ActivityEvent(kind="status", at=at, actor=assignee, summary="Claimed"))
+        else:
+            prev_status = _map_status(prev_sig[0]) if isinstance(prev_sig[0], str) else None
+            summary = (
+                f"Status changed: {prev_status} \u2192 {our_status}"
+                if prev_status
+                else f"Status: {our_status}"
+            )
+            events.append(ActivityEvent(kind="status", at=at, actor=assignee, summary=summary))
+        prev_sig = sig
+    return events
 
 
 def project_activity(items: list[Item]) -> dict:
@@ -1216,6 +1371,40 @@ class Beads:
         return Item.from_beads(items[0])
 
     def get(self, item_id: str, *, with_links: bool = False) -> Item:
+        """Read one item, optionally with its dependency graph attached as
+        `Item.links`.
+
+        Each link entry carries `id`/`direction`/`type` (unchanged from
+        before -- `supervisor.notify_project`/`cli.cmd_notify`/`gateway`/
+        `contract` all key off exactly these three fields and nothing
+        else) PLUS `title`/`status`/`holder`/`created_by`/`blocking`, added
+        for the item-detail page's blocker chain (see webapp.py's
+        `_blocker_sections_html`). The two directions carry different
+        depth of real data -- this is bd's own asymmetry, not a choice
+        made here:
+
+          - `direction: "from"` (this item's own `dependencies` -- what it
+            depends on / is blocked by) embeds the FULL referenced item, so
+            `title`/`status`/`holder`/`created_by` are real and populated.
+          - `direction: "to"` (`dependents` -- what depends on THIS item,
+            only present with `--include-dependents`, ASSUMPTION
+            show.dependents) is bd's own deliberately lean cross-reference
+            for exactly this flag (its own `--help` warns it \"may be slow
+            on hub beads\"): `title`/`status` are real, but `holder`/
+            `created_by` are always `None` here -- bd's dependents payload
+            never includes `assignee`/`created_by` at all, and its
+            `created_at`/`updated_at` are zero-value placeholders (verified
+            empirically against bd 1.1.2), so those two are never even
+            attempted. Honest degrade, not a fetch-per-dependent N+1 --
+            see this method's own docstring reference above.
+
+        `blocking` is `True` only for a `direction: \"from\"` entry that is
+        a still-open `blocks`-type dependency (`_is_active_blocker`, the
+        SAME check `claim_item` uses to refuse a claim) -- what the
+        item-detail page paints crimson. Computed for `to`-direction
+        entries too (same helper, same fields), for symmetry; nothing in
+        this app currently colors that direction.
+        """
         args = ["show", item_id]
         if with_links:
             # ASSUMPTION show.dependents -- reverse links are omitted by default.
@@ -1225,14 +1414,84 @@ class Beads:
         if not isinstance(d, dict):
             raise BeadsError(f"show {item_id} returned no object")
         it = Item.from_beads(d)
-        it.links = [
-            {"id": x.get("id"), "direction": "from", "type": x.get("dependency_type")}
-            for x in (d.get("dependencies") or [])
-        ] + [
-            {"id": x.get("id"), "direction": "to", "type": x.get("dependency_type")}
-            for x in (d.get("dependents") or [])
+
+        def _link(x: dict, direction: str) -> dict:
+            raw_status = x.get("status")
+            return {
+                "id": x.get("id"),
+                "direction": direction,
+                "type": x.get("dependency_type"),
+                "title": x.get("title"),
+                "status": _map_status(raw_status) if raw_status else None,
+                "holder": x.get("assignee"),
+                "created_by": x.get("created_by"),
+                "blocking": _is_active_blocker(x.get("dependency_type"), raw_status),
+            }
+
+        it.links = [_link(x, "from") for x in (d.get("dependencies") or [])] + [
+            _link(x, "to") for x in (d.get("dependents") or [])
         ]
         return it
+
+    def activity(self, item_id: str, *, limit: int = HISTORY_LIMIT) -> list[ActivityEvent]:
+        """The real, reverse-chronological activity timeline for one item --
+        for the item-detail page's activity feed (webapp.py's
+        `_activity_feed_html`).
+
+        Two bd reads, both real:
+          - `bd history <id> --json` -- every commit that touched this
+            item's repo, each a full snapshot of the issue at that commit.
+            Diffed into genuine transitions by `_history_events` (see its
+            own docstring for exactly how, and why a naive one-row-per-
+            commit rendering would be dishonest).
+          - `bd comments <id> --json` -- real comments, author/text/
+            timestamp straight from bd, one event each.
+
+        Read-only: never claims, mutates, or touches custody -- same
+        contract as `get_readonly`, just a different bd subcommand pair.
+
+        Degrades honestly rather than failing the whole item-detail page:
+        if `bd history` (or `bd comments`) itself errors -- an unexpected
+        bd failure, not a normal \"nothing happened yet\" empty result --
+        that source is simply omitted from the timeline (logged, not
+        raised) and whatever the other source has is still returned. An
+        activity feed is a page enrichment, not a load-bearing read; a
+        transient bd hiccup on it must never take down title/description/
+        acceptance/design/status, which this same page also renders.
+        """
+        events: list[ActivityEvent] = []
+        try:
+            hist = self._json(["history", item_id, "--limit", str(limit)])
+            if isinstance(hist, list):
+                events += _history_events(hist)
+        except BeadsError:
+            logger.warning(
+                "activity(%s): `bd history` unavailable, degrading to comments only", item_id
+            )
+
+        try:
+            comments = self._json(["comments", item_id])
+            if isinstance(comments, list):
+                for c in comments:
+                    if not isinstance(c, dict):
+                        continue
+                    at = _parse_bd_timestamp(c.get("created_at"))
+                    if at is None:
+                        continue
+                    events.append(
+                        ActivityEvent(
+                            kind="comment",
+                            at=at,
+                            actor=c.get("author"),
+                            summary="Comment",
+                            detail=c.get("text"),
+                        )
+                    )
+        except BeadsError:
+            logger.warning("activity(%s): `bd comments` unavailable", item_id)
+
+        events.sort(key=lambda e: e.at, reverse=True)
+        return events
 
     @property
     def project_name(self) -> str:
