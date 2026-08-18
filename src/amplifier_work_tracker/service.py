@@ -483,6 +483,7 @@ def _serve_argv_tail(
     web_session_ttl: int | None = None,
     web_tls_cert: str | None = None,
     web_tls_key: str | None = None,
+    web_http_port: int | None = None,
 ) -> list[str]:
     """The `serve` subcommand and its arguments, explicit and absolute --
     never an environment variable a service manager might not propagate.
@@ -516,6 +517,8 @@ def _serve_argv_tail(
             argv += ["--web-session-ttl", str(web_session_ttl)]
         if web_tls_cert is not None and web_tls_key is not None:
             argv += ["--web-tls-cert", web_tls_cert, "--web-tls-key", web_tls_key]
+        if web_http_port is not None:
+            argv += ["--web-http-port", str(web_http_port)]
     return argv
 
 
@@ -544,6 +547,7 @@ def _systemd_unit_content(
     web_session_ttl: int | None = None,
     web_tls_cert: str | None = None,
     web_tls_key: str | None = None,
+    web_http_port: int | None = None,
 ) -> str:
     """Render the systemd unit's text, and nothing else -- pure and directly
     testable (e.g. with `systemd-analyze verify` against the rendered text)
@@ -576,6 +580,7 @@ def _systemd_unit_content(
             web_session_ttl=web_session_ttl,
             web_tls_cert=web_tls_cert,
             web_tls_key=web_tls_key,
+            web_http_port=web_http_port,
         ),
     ]
     exec_start = shlex.join(exec_argv)
@@ -645,6 +650,7 @@ def _systemd_install(
     web_session_ttl: int | None = None,
     web_tls_cert: str | None = None,
     web_tls_key: str | None = None,
+    web_http_port: int | None = None,
 ) -> None:
     unit_content = _systemd_unit_content(
         root,
@@ -657,6 +663,7 @@ def _systemd_install(
         web_session_ttl=web_session_ttl,
         web_tls_cert=web_tls_cert,
         web_tls_key=web_tls_key,
+        web_http_port=web_http_port,
     )
 
     _SYSTEMD_UNIT_DIR.mkdir(parents=True, exist_ok=True)
@@ -841,6 +848,7 @@ def _launchd_install(
     web_session_ttl: int | None = None,
     web_tls_cert: str | None = None,
     web_tls_key: str | None = None,
+    web_http_port: int | None = None,
 ) -> None:
     bin_tokens = _resolve_bin_tokens()
     argv = bin_tokens + _serve_argv_tail(
@@ -854,6 +862,7 @@ def _launchd_install(
         web_session_ttl=web_session_ttl,
         web_tls_cert=web_tls_cert,
         web_tls_key=web_tls_key,
+        web_http_port=web_http_port,
     )
     # Each argv token is its own <string> element. launchd does NOT
     # shell-split inside a <string>, so the whole command must NEVER be put
@@ -988,6 +997,7 @@ def service_install(
     web_session_ttl: int | None = None,
     web_tls_cert: str | None = None,
     web_tls_key: str | None = None,
+    web_http_port: int | None = None,
 ) -> ServiceInfo:
     """Install (or re-install) the supervisor service unit for the current
     user and start it.
@@ -1043,6 +1053,7 @@ def service_install(
             web_session_ttl=web_session_ttl,
             web_tls_cert=resolved_tls_cert,
             web_tls_key=resolved_tls_key,
+            web_http_port=web_http_port,
         )
         return _launchd_describe()
     if _have_systemctl():
@@ -1057,6 +1068,7 @@ def service_install(
             web_session_ttl=web_session_ttl,
             web_tls_cert=resolved_tls_cert,
             web_tls_key=resolved_tls_key,
+            web_http_port=web_http_port,
         )
         return _systemd_describe()
     raise ServiceUnsupportedError(_no_systemctl_detail())

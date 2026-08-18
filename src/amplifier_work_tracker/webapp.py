@@ -2812,16 +2812,57 @@ class WebServerConfig:
     # "serve http", exactly as before TLS support existed.
     tls_cert: str | None = None
     tls_key: str | None = None
+    # Set only when TLS is active AND a companion plain-HTTP trust-bootstrap
+    # listener should run alongside it -- see `_resolve_http_bootstrap_port`
+    # and `webtrust.py`'s module docstring for what that listener is and why
+    # it exists. None (the default) means "no companion listener", exactly
+    # like `tls_cert`/`tls_key` being None means "no TLS".
+    http_port: int | None = None
 
 
 def run(workspace: A.Workspace, config: WebServerConfig) -> int:
+    """Run the dashboard, and -- when `config.http_port` is set -- the
+    plain-HTTP trust-bootstrap listener (`webtrust.create_trust_app`)
+    alongside it, on its own companion port.
+
+    `uvicorn.run(...)` (the pre-existing, single-server call) is kept
+    byte-for-byte for the common case (`http_port is None`) so nothing about
+    ordinary http-only or https-only serving changes. Only when a companion
+    listener is actually configured does this switch to running both
+    `uvicorn.Server`s concurrently under one `asyncio.run` -- the same
+    `uvicorn.Config` + `uvicorn.Server(...).serve()` shape
+    `supervisor.web_server_loop` already uses for the integrated `serve
+    --web-port` path, so the two callers never diverge on how a second
+    listener is actually run.
+    """
     import uvicorn
 
     app = create_app(workspace, config.auth)
     ssl_kwargs: dict = {}
     if config.tls_cert and config.tls_key:
         ssl_kwargs = {"ssl_certfile": config.tls_cert, "ssl_keyfile": config.tls_key}
-    uvicorn.run(app, host=config.host, port=config.port, log_level="info", **ssl_kwargs)
+
+    http_port = config.http_port
+    if http_port is None:
+        uvicorn.run(app, host=config.host, port=config.port, log_level="info", **ssl_kwargs)
+        return 0
+
+    import asyncio
+
+    from . import webtrust as WTR
+
+    trust_app = WTR.create_trust_app(https_port=config.port, tls_cert_path=config.tls_cert)
+
+    async def _run_both() -> None:
+        primary = uvicorn.Server(
+            uvicorn.Config(app, host=config.host, port=config.port, log_level="info", **ssl_kwargs)
+        )
+        trust = uvicorn.Server(
+            uvicorn.Config(trust_app, host=config.host, port=http_port, log_level="info")
+        )
+        await asyncio.gather(primary.serve(), trust.serve())
+
+    asyncio.run(_run_both())
     return 0
 
 
@@ -2910,6 +2951,50 @@ def _resolve_tls(tls_cert: str | None, tls_key: str | None) -> tuple[str | None,
     return None, None
 
 
+def _resolve_http_bootstrap_port(
+    http_port: int | None, *, tls_cert: str | None, port: int
+) -> int | None:
+    """Resolve `--http-port`/`--web-http-port` into the port the plain-HTTP
+    trust-bootstrap listener (`webtrust.create_trust_app`) should actually
+    bind, or `None` for "no companion listener" -- shared by
+    `resolve_web_config` so `web` and `serve --web-port` can never diverge
+    on when the bootstrap listener runs or which port it lands on.
+
+    Gated strictly on TLS being active: with no TLS, the dashboard is
+    already plain HTTP -- there is nothing to bootstrap trust FOR, so the
+    listener is unnecessary regardless of what `http_port` was given (an
+    explicit value is silently a no-op in that case; `resolve_web_config`
+    still surfaces this in its returned messages so it is never a silent
+    surprise).
+
+    Resolution order, once TLS IS active:
+      1. `http_port` given explicitly: used as-is, UNLESS it collides with
+         the https `port` itself -- `WebConfigError` naming both ports (a
+         real bind failure a caller could easily mistake for something
+         else, so it is caught here instead).
+      2. `http_port` omitted (`None`, the default): `port + 1`. Deliberately
+         a small, predictable, adjacent offset -- not a "reserved" range or
+         a fixed constant -- so a deployment that already chose its https
+         port to avoid conflicts on this host gets a companion port that is
+         very likely free too, one above it. An operator who needs a
+         specific port passes `--http-port`/`--web-http-port` explicitly;
+         a real collision at bind time still fails loud (uvicorn's own
+         `OSError` -> `WebServerStartupError`/`SystemExit`), this is only a
+         sane default, never a guarantee.
+    """
+    if tls_cert is None:
+        return None
+    if http_port is None:
+        return port + 1
+    if http_port == port:
+        raise WebConfigError(
+            f"--http-port/--web-http-port ({http_port}) must not be the same as the "
+            f"https port ({port}) -- the trust-bootstrap listener and the dashboard "
+            f"need their own ports."
+        )
+    return http_port
+
+
 def resolve_web_config(
     *,
     host: str | None,
@@ -2919,24 +3004,28 @@ def resolve_web_config(
     session_ttl: int,
     tls_cert: str | None = None,
     tls_key: str | None = None,
+    http_port: int | None = None,
 ) -> tuple[WebServerConfig, list[str]]:
     """Resolve `--host`/`--public`/`--port`/`--auth-mode`/`--session-ttl`/
-    `--tls-cert`/`--tls-key` into a runnable `WebServerConfig`, applying the
-    SAME non-loopback safety gate, auth-mode defaulting, and TLS resolution
-    `cmd_web` has always applied -- factored out here so `serve --web-port`
-    cannot silently diverge from `web`'s own rules.
+    `--tls-cert`/`--tls-key`/`--http-port` into a runnable `WebServerConfig`,
+    applying the SAME non-loopback safety gate, auth-mode defaulting, TLS
+    resolution, and trust-bootstrap-port resolution `cmd_web` has always
+    applied -- factored out here so `serve --web-port` cannot silently
+    diverge from `web`'s own rules.
 
     Returns `(config, messages)`. `messages` is an ordered list of
     human-readable startup lines (the password reveal or PAM sign-in
-    instructions, a non-loopback-bind warning, and a TLS-enabled note, each
-    when applicable) -- returned rather than printed/logged here, since one
-    caller wants `print(..., file=sys.stderr)` (`cmd_web`) and the other
-    wants `logger.info` (the supervisor's `web_server_loop`).
+    instructions, a non-loopback-bind warning, a TLS-enabled note, and a
+    trust-bootstrap note, each when applicable) -- returned rather than
+    printed/logged here, since one caller wants `print(..., file=sys.stderr)`
+    (`cmd_web`) and the other wants `logger.info` (the supervisor's
+    `web_server_loop`).
 
     Raises `WebConfigError` -- never exits the process -- for a
     non-loopback `host` without `public=True`, an `auth_mode` that cannot
-    be satisfied, or a `tls_cert`/`tls_key` pair that is incomplete,
-    missing, or unreadable (see `_resolve_tls`) -- NEVER a silent fallback
+    be satisfied, a `tls_cert`/`tls_key` pair that is incomplete, missing,
+    or unreadable (see `_resolve_tls`), or an `http_port` colliding with
+    `port` (see `_resolve_http_bootstrap_port`) -- NEVER a silent fallback
     to http for an operator-supplied TLS path, matching this module's
     fail-loud contract everywhere else (`WebServerStartupError`, etc.).
     """
@@ -2983,6 +3072,21 @@ def resolve_web_config(
     if resolved_tls_cert:
         messages.append(f"TLS enabled -- serving https (cert: {resolved_tls_cert}).")
 
+    resolved_http_port = _resolve_http_bootstrap_port(
+        http_port, tls_cert=resolved_tls_cert, port=port
+    )
+    if resolved_http_port is not None:
+        messages.append(
+            f"Trust bootstrap listening on http://{effective_host}:{resolved_http_port}/trust "
+            "-- plain HTTP, no login, so a new device can install this host's CA before its "
+            "first HTTPS visit. Serves ONLY the CA download/profile + a redirect to https."
+        )
+    elif http_port is not None:
+        messages.append(
+            f"--http-port/--web-http-port {http_port} given but TLS is not active -- ignored. "
+            "There is nothing to bootstrap trust for when already serving plain http."
+        )
+
     return (
         WebServerConfig(
             host=effective_host,
@@ -2990,6 +3094,7 @@ def resolve_web_config(
             auth=auth_config,
             tls_cert=resolved_tls_cert,
             tls_key=resolved_tls_key,
+            http_port=resolved_http_port,
         ),
         messages,
     )

@@ -224,3 +224,120 @@ def test_run_omits_ssl_kwargs_when_no_tls_configured(monkeypatch, tmp_path):
 
     assert "ssl_certfile" not in captured
     assert "ssl_keyfile" not in captured
+
+
+# ------------------------------------------------- trust-bootstrap port resolution
+
+
+def test_resolve_http_bootstrap_port_none_when_no_tls():
+    assert webapp._resolve_http_bootstrap_port(None, tls_cert=None, port=8090) is None
+    assert webapp._resolve_http_bootstrap_port(9000, tls_cert=None, port=8090) is None
+
+
+def test_resolve_http_bootstrap_port_defaults_to_port_plus_one_when_tls_active():
+    assert webapp._resolve_http_bootstrap_port(None, tls_cert="/some/cert.pem", port=8090) == 8091
+
+
+def test_resolve_http_bootstrap_port_uses_explicit_value_when_tls_active():
+    result = webapp._resolve_http_bootstrap_port(9999, tls_cert="/some/cert.pem", port=8090)
+    assert result == 9999
+
+
+def test_resolve_http_bootstrap_port_raises_on_collision_with_https_port():
+    with pytest.raises(webapp.WebConfigError, match="must not be the same"):
+        webapp._resolve_http_bootstrap_port(8090, tls_cert="/some/cert.pem", port=8090)
+
+
+def test_resolve_web_config_no_trust_bootstrap_message_without_tls():
+    config, messages = webapp.resolve_web_config(**_basic_kwargs())
+    assert config.http_port is None
+    assert not any("Trust bootstrap" in m for m in messages)
+
+
+def test_resolve_web_config_defaults_trust_bootstrap_port_when_tls_active(tmp_path):
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    cert_path.write_text("cert", encoding="utf-8")
+    key_path.write_text("key", encoding="utf-8")
+
+    config, messages = webapp.resolve_web_config(
+        **_basic_kwargs(tls_cert=str(cert_path), tls_key=str(key_path))
+    )
+    assert config.http_port == 8091
+    assert any("Trust bootstrap listening on http://" in m for m in messages)
+    assert any(":8091/trust" in m for m in messages)
+
+
+def test_resolve_web_config_uses_explicit_http_port_when_tls_active(tmp_path):
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    cert_path.write_text("cert", encoding="utf-8")
+    key_path.write_text("key", encoding="utf-8")
+
+    config, _messages = webapp.resolve_web_config(
+        **_basic_kwargs(tls_cert=str(cert_path), tls_key=str(key_path), http_port=9500)
+    )
+    assert config.http_port == 9500
+
+
+def test_resolve_web_config_ignores_http_port_without_tls_but_notes_it():
+    config, messages = webapp.resolve_web_config(**_basic_kwargs(http_port=9500))
+    assert config.http_port is None
+    assert any("ignored" in m and "9500" in m for m in messages)
+
+
+def test_resolve_web_config_raises_on_http_port_colliding_with_https_port(tmp_path):
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    cert_path.write_text("cert", encoding="utf-8")
+    key_path.write_text("key", encoding="utf-8")
+
+    with pytest.raises(webapp.WebConfigError, match="must not be the same"):
+        webapp.resolve_web_config(
+            **_basic_kwargs(tls_cert=str(cert_path), tls_key=str(key_path), http_port=8090)
+        )
+
+
+# --------------------------------------------- run() with a companion listener
+
+
+def test_run_starts_both_servers_when_http_port_is_set(monkeypatch, tmp_path):
+    """`run()` must gather TWO uvicorn servers -- the primary app and the
+    trust-bootstrap app -- when `config.http_port` is set, never just the
+    primary one."""
+    from amplifier_work_tracker import adapter as A
+
+    started_ports: list[int] = []
+
+    class _FakeServer:
+        def __init__(self, config):
+            self._config = config
+
+        async def serve(self):
+            started_ports.append(self._config.port)
+
+    class _FakeUvicorn:
+        Config = staticmethod(lambda *a, **k: __import__("types").SimpleNamespace(**k))
+        Server = _FakeServer
+
+        @staticmethod
+        def run(app, **kwargs):
+            raise AssertionError("uvicorn.run must not be called when http_port is set")
+
+    monkeypatch.setitem(__import__("sys").modules, "uvicorn", _FakeUvicorn)
+
+    ws = A.Workspace(tmp_path / "root")
+    auth = WA.AuthConfig(mode="password", secret="s", ttl_seconds=3600, password="p")  # noqa: S106
+    config = webapp.WebServerConfig(
+        host="127.0.0.1",
+        port=8090,
+        auth=auth,
+        tls_cert="/certs/cert.pem",
+        tls_key="/certs/key.pem",
+        http_port=8091,
+    )
+
+    result = webapp.run(ws, config)
+
+    assert result == 0
+    assert sorted(started_ports) == [8090, 8091]
