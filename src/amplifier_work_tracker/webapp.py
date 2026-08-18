@@ -1463,6 +1463,7 @@ def _setup_method_row(
     command: str,
     disabled: bool,
     disabled_reason: str = "",
+    recommended: bool = False,
 ) -> str:
     """One METHOD OPTIONS row: what it gives you, when to pick it, whether
     it's actually usable on THIS host right now, the exact CLI equivalent
@@ -1476,6 +1477,13 @@ def _setup_method_row(
     method the same way regardless of whether this button was disabled
     (see that route's docstring) -- disabling here is a UI courtesy, not
     the enforcement point.
+
+    `recommended` renders a small amber "Recommended" badge next to the
+    title -- amber spent on ATTENTION, per `webtheme.py`'s own token
+    convention, and used nowhere else on this row. The caller
+    (`_setup_method_options_html`) derives which single method (if any)
+    earns it from live host state via `_setup_recommended_method`; this
+    function never decides that itself, it only renders the decision.
     """
     btn = (
         f'<button type="submit" class="secondary" disabled '
@@ -1483,9 +1491,15 @@ def _setup_method_row(
         if disabled
         else '<button type="submit" class="secondary">Generate</button>'
     )
+    badge = (
+        ' <span style="color:var(--amber);font-weight:700;text-transform:none;'
+        'letter-spacing:normal">&bull; Recommended</span>'
+        if recommended
+        else ""
+    )
     return f"""
     <div class="formsec">
-      <span class="flegend">{_esc(title)}</span>
+      <span class="flegend">{_esc(title)}{badge}</span>
       <p class="subtle" style="margin-top:8px">{description}</p>
       <p class="subtle" style="margin-top:6px">
         <b style="color:var(--ink)">When to pick this:</b> {when_to_pick}</p>
@@ -1499,16 +1513,118 @@ def _setup_method_row(
     """
 
 
+def _setup_recommended_method(*, tailscale_available: bool) -> str:
+    """Which method earns the "Recommended" badge, derived from LIVE host
+    state -- never hardcoded, never cached across renders.
+
+    Tailscale when this host can actually reach a tailnet: zero install on
+    any device, browser-trusted with no warning, the best case for
+    personal use. Local CA otherwise: the next-best option, since it is
+    *always* available and covers this host's LAN IP (which a Tailscale
+    cert, scoped to the tailnet name only, never will) -- the one-time
+    per-device install cost is real, but the `/trust` bootstrap page (see
+    `_setup_trust_bootstrap_url`) makes paying it painless.
+
+    Self-signed is never recommended: every host always has a strictly
+    better option available (Local CA is unconditionally available -- see
+    `_setup_method_options_html`), so badging it would misrepresent a real
+    trade-off as a coin flip. Reflects this task's core, hard constraint
+    honestly: a public certificate authority can only vouch for a name it
+    can verify, never a bare LAN IP or a private hostname -- so the
+    "zero-friction" option (Tailscale) is only ever available when this
+    host is actually reachable that way.
+    """
+    return "tailscale" if tailscale_available else "ca"
+
+
+def _setup_friction_spectrum_html(*, recommended: str) -> str:
+    """The FRICTION SPECTRUM: a short, scannable guide -- rendered above
+    the method rows below -- to which TLS method fits how a device
+    actually reaches this server. States the one hard constraint plainly
+    up front (a publicly-trusted certificate can only be issued for a name
+    a public CA can verify -- never a bare LAN IP or a private hostname)
+    so the trade-offs below read as consequences of that constraint, not
+    arbitrary preferences.
+
+    `recommended` (from `_setup_recommended_method`) marks exactly one
+    entry "recommended for personal use" inline -- never self-signed, see
+    that function's docstring for why.
+    """
+
+    def _mark(method: str) -> str:
+        return (
+            ' <span style="color:var(--amber);font-weight:700">&mdash; recommended for '
+            "personal use</span>"
+            if recommended == method
+            else ""
+        )
+
+    return f"""
+    <div class="formsec">
+      <span class="flegend">Which method fits how you reach this server?</span>
+      <p class="subtle" style="margin-top:8px">A publicly-trusted certificate can only be
+        issued for a name a public certificate authority can verify &mdash; never a bare LAN
+        IP or a private hostname. That is a hard constraint, not a preference, and it is what
+        decides the right method below:</p>
+      <p class="subtle" style="margin-top:12px">
+        <b style="color:var(--ink)">Tailscale name</b>{_mark("tailscale")} &mdash;
+        browser-trusted, zero install, works from any device already on your tailnet. Covers
+        only the tailnet name, never the bare LAN IP.</p>
+      <p class="subtle" style="margin-top:8px">
+        <b style="color:var(--ink)">Local CA</b>{_mark("ca")} &mdash; covers the LAN IP,
+        hostname, and tailnet name together, but needs a one-time CA install per device
+        &mdash; painless via the <span class="mono">/trust</span> page (see below once one is
+        configured).</p>
+      <p class="subtle" style="margin-top:8px">
+        <b style="color:var(--ink)">Self-signed</b> &mdash; works anywhere, on any device,
+        with a browser warning every single visit. Best for a quick check, not a device
+        you'll return to.</p>
+    </div>
+    """
+
+
+def _setup_trust_bootstrap_url(request: Request) -> tuple[str, bool]:
+    """The `/trust` bootstrap URL for THIS host, for cross-linking from the
+    Local CA section -- see `webtrust.py`'s module docstring for what that
+    page is and why it exists (installing the CA over plain HTTP, before
+    ever hitting an HTTPS warning).
+
+    Prefers the REAL configured companion port, threaded onto
+    `request.app.state.web_http_port` by `create_app`'s caller (`run()` /
+    `supervisor.py`'s serve loop) from `resolve_web_config`'s own
+    `http_port` -- the exact port the trust-bootstrap listener is actually
+    bound to on this deployment. Falls back to the documented default
+    pattern (https port + 1 -- the same default `_resolve_http_bootstrap_
+    port` itself applies when `--web-http-port` is omitted) when that real
+    value isn't known at render time (e.g. an app built without threading
+    it through, as most of this module's own tests do).
+
+    Returns `(url, is_real)` so the caller can be honest about which case
+    produced it -- never silently presenting a guessed port as certain.
+    """
+    hostname = request.url.hostname or "this-host"
+    configured = getattr(request.app.state, "web_http_port", None)
+    if isinstance(configured, int):
+        return f"http://{hostname}:{configured}/trust", True
+    https_port = request.url.port or (443 if request.url.scheme == "https" else 80)
+    return f"http://{hostname}:{https_port + 1}/trust", False
+
+
 def _setup_method_options_html() -> str:
     """METHOD OPTIONS: Tailscale (browser-trusted, tailnet name only) ->
     local CA (trusted after installing the CA once per device; covers LAN
     IP + hostname + tailnet -- best default for a LAN deployment) ->
-    self-signed (works everywhere, browser warning) -- the ordering the
-    task itself specified. Availability is PROBED live on every render
-    (`WT.detect_tailscale()`), never assumed or cached -- Tailscale's own
-    connection state can change between one page load and the next.
+    self-signed (works everywhere, browser warning) -- the friction
+    ordering itself never changes. What DOES change, live, is which one
+    is badged "Recommended" (see `_setup_recommended_method`) -- fixed
+    friction ranking, floating recommendation, rather than reshuffling the
+    rows underneath whoever is reading them. Availability is PROBED live
+    on every render (`WT.detect_tailscale()`), never assumed or cached --
+    Tailscale's own connection state can change between one page load and
+    the next.
     """
     tailscale_info = WT.detect_tailscale()
+    recommended = _setup_recommended_method(tailscale_available=tailscale_info is not None)
     if tailscale_info:
         ts_availability = (
             '<span style="color:var(--ink)">Available</span> &mdash; tailnet host '
@@ -1545,6 +1661,7 @@ def _setup_method_options_html() -> str:
             command="amplifier-work-tracker setup-tls --method tailscale",
             disabled=ts_disabled,
             disabled_reason=ts_reason,
+            recommended=(recommended == "tailscale"),
         ),
         _setup_method_row(
             method="ca",
@@ -1552,8 +1669,9 @@ def _setup_method_options_html() -> str:
             description=(
                 "Generates (or reuses) a persistent local certificate authority and signs a "
                 "leaf certificate covering this host's hostname, LAN IP, and tailnet name (if "
-                "any). Trusted after the CA is installed once on each client device -- see the "
-                "download and per-OS install steps below once one is active."
+                "any). Trusted after the CA is installed once on each client device -- painless "
+                "via the /trust bootstrap page (no browser warning, no login -- see the "
+                "download and per-OS install steps below once one is active)."
             ),
             when_to_pick=(
                 "you're serving more than one user/device on your LAN and want a clean install "
@@ -1562,6 +1680,7 @@ def _setup_method_options_html() -> str:
             availability_html='<span style="color:var(--ink)">Always available</span>',
             command="amplifier-work-tracker setup-tls --method ca",
             disabled=False,
+            recommended=(recommended == "ca"),
         ),
         _setup_method_row(
             method="selfsigned",
@@ -1577,12 +1696,13 @@ def _setup_method_options_html() -> str:
             availability_html='<span style="color:var(--ink)">Always available</span>',
             command="amplifier-work-tracker setup-tls --method selfsigned",
             disabled=False,
+            recommended=False,
         ),
     ]
-    return "".join(rows)
+    return _setup_friction_spectrum_html(recommended=recommended) + "".join(rows)
 
 
-def _setup_ca_download_html() -> str:
+def _setup_ca_download_html(request: Request) -> str:
     """CA download + per-OS install instructions -- rendered ONLY when a
     local CA is actually configured on this host (`WT.default_ca_cert_path
     ().exists()`); otherwise there is nothing to install and this section
@@ -1592,16 +1712,36 @@ def _setup_ca_download_html() -> str:
     `cmd_setup_tls` (`--method ca` branch) so the terminal and the browser
     never give a deployer two different sets of instructions for the same
     action.
+
+    Leads with a cross-link to the plain-HTTP `/trust` bootstrap page
+    (`webtrust.py`) -- the guided, no-warning, no-login install flow for a
+    NEW device -- before the manual per-OS commands below, since it is the
+    easier path whenever it applies. `request` is needed only to build
+    that URL (`_setup_trust_bootstrap_url`); every other line here is
+    unchanged from before this cross-link existed.
     """
     if not WT.default_ca_cert_path().exists():
         return ""
-    return """
+    trust_url, is_real = _setup_trust_bootstrap_url(request)
+    trust_caveat = (
+        ""
+        if is_real
+        else (
+            ' <span class="muted">(the default companion-port pattern &mdash; confirm the '
+            "exact port if this deployment set <code>--web-http-port</code> explicitly)</span>"
+        )
+    )
+    return f"""
     <div class="formsec">
       <span class="flegend">Install the local CA</span>
       <p class="subtle" style="margin-top:8px">A local CA is configured on this host. Install it
         once on each client device to eliminate the browser warning for the Local CA certificate
         above. The leaf certificate rotates yearly without re-trusting anything -- the CA is the
         one thing you install.</p>
+      <p class="subtle" style="margin-top:12px"><b style="color:var(--ink)">Adding a new
+        device?</b> Skip the manual steps below &mdash; open <code>{_esc(trust_url)}</code> on
+        that device and follow its guided install.{trust_caveat} It needs no login and no
+        browser warning to reach; everything else on that port simply redirects here.</p>
       <p style="margin-top:10px"><a class="btn secondary" href="/setup/ca.crt">Download CA
         certificate</a></p>
       <p class="subtle" style="margin-top:16px">
@@ -1632,7 +1772,7 @@ def _setup_body(request: Request) -> str:
     <p class="subtle">TLS/HTTPS configuration for this deployment.</p>
     {_tls_status_html(request)}
     {_setup_method_options_html()}
-    {_setup_ca_download_html()}
+    {_setup_ca_download_html(request)}
     """
 
 
@@ -1648,9 +1788,27 @@ _SETUP_TLS_METHODS = frozenset({"tailscale", "ca", "selfsigned"})
 # ---------------------------------------------------------------------------
 
 
-def create_app(workspace: A.Workspace, auth: WA.AuthConfig) -> FastAPI:
+def create_app(
+    workspace: A.Workspace, auth: WA.AuthConfig, *, web_http_port: int | None = None
+) -> FastAPI:
+    """Build the dashboard app.
+
+    `web_http_port`, when given, is the port the companion plain-HTTP
+    trust-bootstrap listener (`webtrust.create_trust_app`) is ACTUALLY
+    bound to for this deployment -- the same value `resolve_web_config`
+    computed as `WebServerConfig.http_port` and that `run()` / the
+    integrated `serve --web-port` loop (`supervisor.py`) hand to
+    `webtrust.create_trust_app(https_port=...)` for the real listener.
+    Threaded onto `app.state.web_http_port` so `/setup`'s Local CA section
+    can cross-link the REAL `/trust` URL (see `_setup_trust_bootstrap_url`)
+    instead of only the documented https-port+1 pattern. `None` (the
+    default -- e.g. this app built directly, as most of this module's own
+    tests do) means that real value isn't known here; the render falls
+    back to the pattern honestly rather than guessing.
+    """
     app = FastAPI(title="amplifier-work-tracker", docs_url=None, redoc_url=None)
     app.add_middleware(AuthMiddleware, auth=auth)
+    app.state.web_http_port = web_http_port
 
     # -----------------------------------------------------------------------
     # webapp-routes lane helpers -- route-owned, defined INSIDE create_app so
@@ -2837,7 +2995,7 @@ def run(workspace: A.Workspace, config: WebServerConfig) -> int:
     """
     import uvicorn
 
-    app = create_app(workspace, config.auth)
+    app = create_app(workspace, config.auth, web_http_port=config.http_port)
     ssl_kwargs: dict = {}
     if config.tls_cert and config.tls_key:
         ssl_kwargs = {"ssl_certfile": config.tls_cert, "ssl_keyfile": config.tls_key}
