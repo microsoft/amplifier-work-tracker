@@ -903,6 +903,44 @@ def test_danger_zone_has_rename_form_and_no_claim_control(client, project_factor
     assert "Claim next ready item" not in r.text
 
 
+def test_danger_zone_rename_affordance_is_unambiguous_reveal_save_cancel(client, project_factory):
+    """Regression guard for the reported footgun: clicking "Rename" used to
+    reveal an inline input right above the SAME "Rename" button, with no
+    visible distinction between "open the editor" and "submit it" -- a
+    visitor had to click the identical button twice to find out the second
+    click was the save. The fix is a dedicated `#rename-trigger` (never a
+    submit control -- `type="button"`) that starts the form's `hidden`
+    attribute set, plus an explicit Save (`type="submit"`) and Cancel
+    (`type="button"`, never submits) inside it -- so there is exactly one
+    button that opens the editor and exactly one that saves, never the
+    same element doing both.
+    """
+    _login(client)
+    name, _bd = project_factory("renamereveal")
+    r = client.get(f"/projects/{name}")
+    assert r.status_code == 200
+    text = r.text
+
+    # The trigger that reveals the editor: a plain button, never a submit.
+    assert 'id="rename-trigger"' in text
+    assert 'type="button" id="rename-trigger"' in text
+
+    # The form starts hidden -- the editor is not shown until the trigger
+    # is clicked (see `webtheme.rename_disclosure_js`).
+    assert 'id="rename-form"' in text
+    form_start = text.index('id="rename-form"')
+    form_tag = text[max(0, form_start - 200) : form_start + 120]
+    assert "hidden" in form_tag
+
+    # Exactly one Save (submits) and one Cancel (never submits) inside it.
+    assert '<button type="submit" class="btn danger">Save</button>' in text
+    assert 'id="rename-cancel"' in text
+    assert 'type="button" id="rename-cancel"' in text
+
+    # The reveal/cancel behaviour is real client-side script, not just markup.
+    assert "rename-trigger" in text and "openForm" in text
+
+
 # --------------------------------------- holder-chip contradiction (regression)
 
 
