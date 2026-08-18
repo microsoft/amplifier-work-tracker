@@ -842,6 +842,14 @@ td.link-cell > a:hover::after{color:var(--amber)}
 label{display:block;margin:0.7rem 0 0.3rem;font-size:11px;font-weight:600;
   letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
 .field-hint{font-size:11.5px;color:var(--quiet);margin:0.15rem 0 0.3rem}
+/* a Save/Cancel row for a disclosed inline-edit form (see
+   `rename_disclosure_js`'s docstring) -- the shared button rule's own
+   `margin-top:0.7rem` is right for the ROW as a whole (breathing room
+   below the field-hint above it) but wrong doubled onto every button
+   inside it, so it is neutralized per-button here, the same fix
+   `.controls button` already applies for the horizontal search bar. */
+.form-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:0.7rem}
+.form-actions button{margin-top:0}
 input[type=text],input[type=password],textarea,select{
   width:100%;max-width:480px;padding:0.55rem 0.7rem;box-sizing:border-box;
   font-family:var(--sans);font-size:13.5px;min-height:var(--u);
@@ -1473,6 +1481,69 @@ def list_controls_js() -> str:
       return;
     }
   });
+})();
+"""
+
+
+def rename_disclosure_js() -> str:
+    """The Danger Zone's Rename control -- click-to-reveal, with an
+    unambiguous Save/Cancel pair, replacing what used to be a single
+    always-visible input sitting next to its own submit button (reported
+    footgun: a visitor had to click "Rename" a SECOND time, on the same
+    button, to find out that was actually the submit action).
+
+    Markup contract (`webapp.py`'s `project_view` Danger Zone renders this):
+    a `#rename-trigger` button (`type="button"`, so it can never submit
+    anything itself), a `#rename-form` real `<form method="post">` that
+    starts with the `hidden` boolean attribute set, and a `#rename-cancel`
+    button (also `type="button"`) inside that form. This script does
+    nothing more than toggle `hidden` and move focus -- `#rename-form`'s
+    own `action`/`method`/`name="new_name"` are unchanged from a plain
+    form, so the real POST (and its 303-to-new-name redirect on success,
+    see `webapp.py`'s `rename_project`) is exactly what the browser would
+    do for any other form on this page; nothing here intercepts or
+    fetch()-submits it.
+
+    Cancel both re-hides the form AND clears the typed value -- reopening
+    later must never show a stale, abandoned name from a previous visit to
+    the disclosure. It deliberately does *not* touch any `?msg=`/`?error=`
+    flash already on the page (that flash is `_flash`'s own concern, tied
+    to the URL query string, not to this control's open/closed state).
+
+    No "attach once" `window`-level guard is needed, unlike
+    `list_controls_js`'s keyboard-nav half: every element this script binds
+    to (`#rename-trigger`, `#rename-form`, `#rename-cancel`, `#new_name`) is
+    looked up fresh on each invocation, so a body-swap that recreates this
+    exact script tag (see `auto_refresh_js`'s docstring) simply rebinds to
+    the FRESH elements the swap just produced -- the old elements and their
+    old listeners were destroyed together, the same re-invocation-safe
+    shape `list_controls_js`'s density half already documents. A visitor
+    who has the disclosure open with the field focused is separately
+    protected from ever seeing that body-swap at all -- `auto_refresh_js`'s
+    own `isGuarded()` skips the whole tick while `document.activeElement`
+    is an INPUT.
+    """
+    return """
+(function(){
+  var trigger=document.getElementById('rename-trigger');
+  var form=document.getElementById('rename-form');
+  var cancel=document.getElementById('rename-cancel');
+  var input=document.getElementById('new_name');
+  if(!trigger || !form) return;
+  function openForm(){
+    trigger.hidden=true;
+    form.hidden=false;
+    trigger.setAttribute('aria-expanded','true');
+    if(input) input.focus();
+  }
+  function closeForm(){
+    form.hidden=true;
+    trigger.hidden=false;
+    trigger.setAttribute('aria-expanded','false');
+    if(input) input.value='';
+  }
+  trigger.addEventListener('click', openForm);
+  if(cancel){ cancel.addEventListener('click', closeForm); }
 })();
 """
 

@@ -3221,15 +3221,23 @@ def create_app(
           </div>
           <div class="formsec danger">
             <span class="flegend">Danger zone</span>
-            <form method="post" action="/projects/{_esc(name)}/rename" style="margin-bottom:20px">
-              <label for="new_name">Rename this project to</label>
-              <input type="text" id="new_name" name="new_name"
+            <button type="button" id="rename-trigger" class="btn danger"
+                    aria-expanded="false" aria-controls="rename-form">Rename this
+              project&hellip;</button>
+            <form method="post" action="/projects/{_esc(name)}/rename" id="rename-form"
+                  style="margin-bottom:20px" hidden>
+              <label for="new_name">New project name</label>
+              <input type="text" id="new_name" name="new_name" autocomplete="off"
                      pattern="[a-z][a-z0-9_]{{1,30}}" required placeholder="new_project_name">
               <p class="field-hint">Lowercase letters, digits, underscores; must start with a
                 letter. The item id prefix and every existing item's id stay exactly as they
                 are -- only the project's name changes.</p>
-              <button type="submit" class="danger">Rename</button>
+              <div class="form-actions">
+                <button type="submit" class="btn danger">Save</button>
+                <button type="button" id="rename-cancel" class="btn secondary">Cancel</button>
+              </div>
             </form>
+            <script>{T.rename_disclosure_js()}</script>
             <a class="btn danger" href="/projects/{_esc(name)}/remove">Remove this
               project&hellip;</a>
           </div>
