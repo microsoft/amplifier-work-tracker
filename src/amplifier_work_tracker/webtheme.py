@@ -222,6 +222,72 @@ a{color:inherit}
 .hr{border-top:1px solid var(--rule)}
 .bleed{margin:0 calc(-1 * var(--pad))}
 
+/* -- PAGE LAYOUT: sidebar navigation -------------------------------------
+   Present on the overview and every project page (see webapp.py's
+   `_sidebar_html`) -- navigation BETWEEN projects, not a replacement for
+   the top bar's identity/setup/logout chrome. `.pagegrid` is the outer
+   flex row; `.pagegrid > .wrap` (a direct-child selector, so it only ever
+   overrides `.wrap` when nested here) strips that class's own
+   padding/max-width/margin so the two never double up, and lets the
+   content column flex to fill whatever space the sidebar doesn't use.
+   Pages with no sidebar keep the plain `<main class="wrap">` untouched. */
+.pagegrid{max-width:1440px;margin:0 auto;padding:0 var(--pad);
+  display:flex;gap:40px;align-items:flex-start}
+.pagegrid > .wrap{padding:0;max-width:none;margin:0;flex:1 1 auto;min-width:0}
+.sidebar{flex:0 0 200px;width:200px;padding:28px 0 40px}
+.sidebar .sb-toggle-input{position:absolute;left:-9999px}
+.sidebar .sb-toggle-label{display:none}
+.sidebar .sb-rollup{display:block;padding:0 0 14px;margin-bottom:14px;
+  border-bottom:1px solid var(--rule);text-decoration:none}
+.sidebar .sb-rollup .eyebrow{display:block;margin-bottom:6px}
+.sidebar .sb-rollup .sb-em{font-family:var(--sans);font-size:14px;color:var(--mid);
+  letter-spacing:.01em}
+.sidebar .sb-rollup .sb-em b{font-family:var(--sans);font-size:20px;font-weight:700;
+  color:var(--ink)}
+.sidebar .sb-rollup:hover .sb-em,.sidebar .sb-rollup:hover .sb-em b{color:var(--amber)}
+.sidebar .sb-rollup.current{cursor:default}
+.sidebar .sb-list{list-style:none;display:flex;flex-direction:column;gap:1px}
+.sidebar .sb-row{display:flex;align-items:center;gap:8px;padding:7px 8px;
+  border-radius:3px;text-decoration:none;color:var(--mid);font-size:12.5px;
+  position:relative;min-height:30px}
+.sidebar .sb-row:hover{background:var(--raise);color:var(--ink)}
+.sidebar .sb-row.current{background:var(--raise);color:var(--ink);font-weight:600}
+.sidebar .sb-row.current::before{content:"";position:absolute;left:-1px;top:6px;
+  bottom:6px;width:2px;background:var(--amber)}
+.sidebar .sb-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.sidebar .sb-badge{flex:0 0 auto;font-variant-numeric:tabular-nums;color:var(--dim);
+  font-size:11px}
+.sidebar .sb-dot{width:5px;height:5px;border-radius:50%;flex:0 0 5px;background:transparent}
+/* alarm marker -- SAME reserved amber/crimson escalation hues everywhere else
+   in this app spends them (held / blocked); a calm row stays a transparent
+   dot (no third neutral hue invented for "fine"). Blocked outranks held,
+   same ordering as `_TAB_ALARM_CLASS`/`_dashboard_row`'s own escalation. */
+.sidebar .sb-row.alarm-am .sb-dot{background:var(--amber)}
+.sidebar .sb-row.alarm-cr .sb-dot{background:var(--crimson)}
+
+/* Narrow-width collapse -- a pure CSS/HTML checkbox toggle, no JS: the
+   sidebar becomes a full-width, closed-by-default disclosure ABOVE the
+   main content rather than a fixed column, so a phone-width visit never
+   pushes the real page content below a wall of project names. Works with
+   JS entirely off (a native checkbox + label + sibling selector), and
+   needs no coordination with the auto-refresh body-swap or the keyboard/
+   density script below -- nothing here is JS-driven. */
+@media (max-width:860px){
+  .pagegrid{flex-direction:column;gap:0}
+  .sidebar{position:static;width:100%;flex:1 1 auto;padding:6px 0 18px}
+  .sidebar .sb-toggle-label{display:flex;align-items:center;justify-content:space-between;
+    cursor:pointer;padding:12px 2px;font-family:var(--sans);font-size:11px;font-weight:600;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--mid);
+    border-bottom:1px solid var(--rule)}
+  .sidebar .sb-toggle-label:hover{color:var(--ink)}
+  .sidebar .sb-toggle-label::after{content:"\25be";font-size:13px}
+  .sidebar .sb-body{max-height:0;overflow:hidden}
+  .sidebar .sb-toggle-input:checked ~ .sb-body{max-height:none;overflow:visible;
+    padding-top:14px}
+  .sidebar .sb-toggle-input:checked ~ .sb-toggle-label::after{content:"\25b4"}
+}
+
 .eyebrow{font-family:var(--sans);font-size:10px;font-weight:500;
   letter-spacing:.26em;text-transform:uppercase;color:var(--mid);line-height:1.5}
 .eyebrow.am{color:var(--amber)}
@@ -245,6 +311,42 @@ a{color:inherit}
 .compact .hero{gap:32px}
 .compact .context{gap:32px}
 .compact-hide{display:none}
+
+/* -- USER DENSITY TOGGLE -- independent of the item-count-driven `.compact`
+   above (that shrinks HERO/stat chrome for a SPARSE project, decided by the
+   render lane from the real item count). This one shrinks ROW padding/
+   line-height for a BUSY list, at the READER's own choice, persisted client-
+   side (see webtheme.py's `list_controls_js`) -- never the same class, never
+   the same trigger, so the two mechanisms can never fight over one rule.
+   Scoped to `body.density-compact` (not a `.wrap`/`.sec` scope) because the
+   class lives on `<body>` itself, which survives the auto-refresh body-swap
+   untouched (`document.body.innerHTML = ...` replaces CONTENTS, never the
+   element) -- see `list_controls_js`'s own docstring. */
+body.density-compact .tbl .c{min-height:34px;padding:5px 12px 5px 0;line-height:1.25}
+body.density-compact .tbl .c.gutter{padding:5px 5px 5px 0}
+body.density-compact .tbl .c.r{padding-right:0}
+body.density-compact .ti a{min-height:34px;padding:4px 0}
+body.density-compact .ti{font-size:13px}
+body.density-compact .tbl td.mb .sbar{height:6px}
+body.density-compact .holder,body.density-compact .iid{font-size:11px}
+body.density-compact td.link-cell > a{min-height:36px;padding:6px 16px 6px 0}
+
+.density-toggle{display:inline-flex;align-items:center;gap:6px;height:30px;
+  padding:0 12px;border-radius:4px;border:1px solid var(--rule-hi);
+  background:transparent;color:var(--mid);font-family:var(--sans);font-size:11px;
+  font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.density-toggle:hover{color:var(--ink)}
+/* pressed == compact -- amber here is the token's OWN sanctioned second job,
+   "the interactive accent that confirms" a selection (see the --amber token
+   comment above), not a new decorative use. */
+.density-toggle[aria-pressed="true"]{color:var(--ink);border-color:var(--amber);
+  background:rgba(217,162,83,.08)}
+
+/* -- KEYBOARD ROW SELECTION -- `j`/`k` highlight (see `list_controls_js`).
+   Neutral (--raise/--rule-hi), same as a mouse :hover, plus a hairline
+   inset border so keyboard focus is tellable from a mouse hover at a
+   glance without borrowing amber/crimson for a th ird, non-alarm meaning. */
+.tbl tbody tr.kbd-sel td{background:var(--raise);box-shadow:inset 0 0 0 1px var(--rule-hi)}
 
 /* -- HERO -- age is the biggest thing on the screen --------------------- */
 .hero{display:flex;align-items:flex-end;gap:54px;flex-wrap:wrap}
@@ -975,13 +1077,27 @@ def statusbar(left_html: str, right_html: str = "") -> str:
     return f'<footer class="statusbar">{left_html}<span class="sp"></span>{right_html}</footer>'
 
 
-def search_field(hint: str, field_id: str = "q") -> str:
+def search_field(hint: str, field_id: str = "q", *, shortcut: str = "/") -> str:
+    """The dashboard's client-filtered search field (see `search_js` below).
+
+    `shortcut`, when given (default `\"/\"`), is printed as a quiet trailing
+    hint INSIDE the `.hint` overlay -- \"Filter queues by name or state /\" --
+    so the keyboard shortcut that focuses this field (see `search_js`'s own
+    document-level `/` binding, and `list_controls_js`'s fallback for pages
+    that lack it) is discoverable without a separate legend. Kept OUT of
+    `aria-label` on purpose: a screen reader announcing \"...state slash\"
+    would be noise, not help -- the printed hint is a sighted-user affordance,
+    the field's actual accessible name stays just `hint`.
+    """
+    hint_html = _esc(hint)
+    if shortcut:
+        hint_html += f'<span class="hint-key"> {_esc(shortcut)}</span>'
     return (
         '<div class="field" id="field">'
         f'<span class="mag">{ICONS["mag"]}</span>'
         f'<input id="{field_id}" type="search" autocomplete="off" spellcheck="false" '
         f'aria-label="{_esc(hint)}">'
-        f'<span class="hint" id="hint">{_esc(hint)}</span></div>'
+        f'<span class="hint" id="hint">{hint_html}</span></div>'
     )
 
 
@@ -1143,6 +1259,173 @@ def auto_refresh_js(interval_ms: int) -> str:
   }}
   setInterval(tick, INTERVAL);
 }})();
+"""
+
+
+# ---------------------------------------------------------------------------
+# nav/density chrome -- the sidebar's narrow-width collapse (see the CSS
+# above) is pure HTML/CSS and needs no script. These two DO need one: a
+# density toggle button (comfortable/compact, persisted client-side) and
+# `j`/`k`/`Enter`/`Esc`/`g g`/`G` row navigation over whatever `.tbl` list
+# the current page has (the project item table, or the dashboard's queue
+# table -- both render rows as `tr[data-t]`, so one selector covers both,
+# no per-route customisation needed).
+# ---------------------------------------------------------------------------
+
+
+def density_toggle_html() -> str:
+    """A small comfortable/compact toggle button for a `.controls` row.
+
+    Server-rendered with a static, honest default (`aria-pressed="false"`,
+    label \"Compact\") -- the server has no way to know a visitor's stored
+    preference (no cookie is involved, only `localStorage`). `list_controls_js`
+    below corrects both the instant its inline script runs, which is before
+    the browser paints a plain synchronous end-of-body `<script>` with no
+    `defer`/`async` -- so there is no visible flash of the wrong density.
+    `type="button"` matters: this sits inside `project_view`'s `<form
+    class="controls">` (a GET search form) and must never submit it.
+    """
+    return (
+        '<button type="button" id="density-toggle" class="density-toggle" '
+        'aria-pressed="false" title="Toggle row density (comfortable/compact)">'
+        "Compact</button>"
+    )
+
+
+def list_controls_js() -> str:
+    """Two independent behaviours, concatenated into one script:
+
+    1. DENSITY -- reads `localStorage['wt-density']` and toggles
+       `body.density-compact` (see the CSS above) plus `#density-toggle`'s
+       `aria-pressed`, then binds that button's click handler. Needs NO
+       "attach once" guard: the class lives on `<body>` itself, which
+       `auto_refresh_js`'s `document.body.innerHTML = ...` swap NEVER
+       replaces (only body's CHILDREN are replaced) -- so the class simply
+       survives untouched across a refresh tick with no help from this
+       script at all. Re-running this IIFE on every swap (it is part of
+       the same re-created `<script>` tag every other page script is, see
+       `auto_refresh_js`'s own docstring) just re-applies the same class
+       (`classList.toggle` is idempotent) and rebinds the click handler to
+       the FRESH `#density-toggle` element the swap just created -- the old
+       element and its old listener were destroyed together, so this is a
+       fresh bind each time, never an accumulating one.
+
+    2. ROW NAVIGATION -- `/` focuses `#q` (a fallback for pages that lack
+       `search_js`'s own binding, e.g. `project_view`'s server-side search;
+       harmless if BOTH bind on a page that has both, since focusing an
+       already-focused element is a no-op); `j`/`k` move a `.kbd-sel`
+       highlight over `main table.tbl tbody tr[data-t]` rows (skipping any
+       `search_js`-hidden ones); `Enter` follows the highlighted row's
+       first link; `Esc` clears the search box's typed text when it has
+       focus, else clears the row highlight; `g g` / `G` jump to the
+       first/last row. This DOES need the standard `window`-level
+       "attach once" guard (`window.__wtKeyNavBound`) -- it is a
+       `document`-level listener, and `document` (unlike a swapped-out
+       button) is never replaced, so without the guard every refresh tick
+       would register one more competing listener forever, exactly the
+       failure mode `auto_refresh_js`'s own guard already prevents for
+       itself.
+
+    Every element lookup below (rows, the search field, the toggle
+    button) happens fresh at CALL time, inside the handler functions --
+    never captured once in a stale closure -- so `j`/`k`/`Enter` keep
+    working correctly against whatever DOM a body-swap most recently
+    produced, the same discipline `search_js` already documents for its
+    own row lookups.
+
+    Guarded throughout against firing while the visitor is typing: every
+    row-navigation key (not `/`, not the density click) bails out whenever
+    `document.activeElement` is an INPUT/TEXTAREA/SELECT, so a title full
+    of the letters \"j\"/\"k\"/\"g\" typed into the Add-item form never
+    hijacks a keystroke. Scroll/jump behaviour honours
+    `prefers-reduced-motion` by swapping `'smooth'` for `'auto'`.
+    """
+    return """
+(function(){
+  var KEY='wt-density';
+  function applyDensity(compact){
+    document.body.classList.toggle('density-compact', !!compact);
+    var btn=document.getElementById('density-toggle');
+    if(btn){ btn.setAttribute('aria-pressed', compact ? 'true' : 'false'); }
+  }
+  var stored=false;
+  try{ stored = localStorage.getItem(KEY) === 'compact'; }catch(e){ stored=false; }
+  applyDensity(stored);
+  var toggle=document.getElementById('density-toggle');
+  if(toggle){
+    toggle.addEventListener('click', function(){
+      var next = !document.body.classList.contains('density-compact');
+      applyDensity(next);
+      try{ localStorage.setItem(KEY, next ? 'compact' : 'comfortable'); }catch(e){}
+    });
+  }
+})();
+(function(){
+  if(window.__wtKeyNavBound) return;
+  window.__wtKeyNavBound = true;
+  var selIndex=-1, lastG=0;
+  function reduced(){
+    return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+  function rows(){
+    return [].slice.call(document.querySelectorAll('main table.tbl tbody tr[data-t]'))
+      .filter(function(r){ return !r.classList.contains('hidden'); });
+  }
+  function paint(rs){
+    rs.forEach(function(r,i){ r.classList.toggle('kbd-sel', i===selIndex); });
+  }
+  function moveSelection(delta){
+    var rs=rows();
+    if(!rs.length) return;
+    var base = selIndex<0 ? (delta>0 ? -1 : rs.length) : selIndex;
+    selIndex = Math.max(0, Math.min(rs.length-1, base+delta));
+    paint(rs);
+    rs[selIndex].scrollIntoView({block:'nearest', behavior: reduced()?'auto':'smooth'});
+  }
+  function jumpTo(where){
+    var rs=rows();
+    if(!rs.length) return;
+    selIndex = where==='first' ? 0 : rs.length-1;
+    paint(rs);
+    rs[selIndex].scrollIntoView({block:'center', behavior: reduced()?'auto':'smooth'});
+  }
+  function clearSelection(){
+    selIndex=-1;
+    paint(rows());
+  }
+  function openSelected(){
+    var rs=rows();
+    if(selIndex<0 || selIndex>=rs.length) return;
+    var a=rs[selIndex].querySelector('a');
+    if(a && a.getAttribute('href')){ window.location.href = a.getAttribute('href'); }
+  }
+  document.addEventListener('keydown', function(e){
+    var active=document.activeElement, tag=active && active.tagName;
+    var inField = tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT';
+
+    if(e.key==='Escape'){
+      if(inField && active.id==='q'){ active.value=''; }
+      else { clearSelection(); }
+      return;
+    }
+    if(e.key==='/' && !inField){
+      var q=document.getElementById('q');
+      if(q){ e.preventDefault(); q.focus(); }
+      return;
+    }
+    if(inField) return;
+
+    if(e.key==='j'){ e.preventDefault(); moveSelection(1); return; }
+    if(e.key==='k'){ e.preventDefault(); moveSelection(-1); return; }
+    if(e.key==='Enter'){ openSelected(); return; }
+    if(e.key==='G'){ jumpTo('last'); return; }
+    if(e.key==='g'){
+      var now=Date.now();
+      if(now - lastG < 500){ jumpTo('first'); lastG=0; } else { lastG=now; }
+      return;
+    }
+  });
+})();
 """
 
 
@@ -1318,7 +1601,9 @@ __all__ = [
     "auto_refresh_js",
     "axis_ruler_html",
     "bar_html",
+    "density_toggle_html",
     "duration_words",
+    "list_controls_js",
     "page",
     "search_field",
     "search_js",
