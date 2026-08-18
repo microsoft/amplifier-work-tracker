@@ -599,7 +599,7 @@ def test_dashboard_queue_table_numeric_columns_are_right_aligned(client, shared_
     assert '<th class="r">Total</th>' in r.text
     assert '<th class="r">Ready</th>' in r.text
     assert '<th class="r">Resolved</th>' in r.text
-    assert '<th class="r">Done</th>' in r.text
+    assert '<th class="r">Done&nbsp;%</th>' in r.text
 
 
 def test_dashboard_project_name_cell_is_a_stretched_link(client, shared_project_name):
@@ -1234,7 +1234,7 @@ def test_sidebar_shows_real_open_over_total_counts_for_a_real_project(
 
     r = client.get("/")
     assert r.status_code == 200
-    assert '<span class="sb-badge">2/2</span>' in r.text
+    assert '<span class="sb-badge" title="2 open of 2 items">2/2</span>' in r.text
 
 
 def test_sidebar_marks_a_held_project_with_the_amber_alarm_class(
