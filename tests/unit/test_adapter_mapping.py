@@ -118,6 +118,61 @@ def test_retryable_false_for_unrelated_errors():
     assert A._retryable("") is False
 
 
+def test_retryable_false_for_connection_errors():
+    """A dolt CONNECTION drop is NOT a serialization conflict -- the two
+    retry classes are deliberately distinct (see `Beads._run`), so
+    `_retryable` must not claim a connection error as its own."""
+    assert (
+        A._retryable(
+            "Dolt server unreachable at 127.0.0.1:1234: dial tcp: connect: connection refused"
+        )
+        is False
+    )
+
+
+# --------------------------------------------------- _connection_retryable
+
+
+def test_connection_retryable_detects_real_bd_unreachable_wording():
+    """The exact stderr bd 1.1.2 emits when the dolt server is unreachable --
+    captured directly against a stopped isolated server (see fix/flaky-tests).
+    This is the residual the connection-retry closes: a transient blip with
+    this wording used to fail a bd call hard, with no retry."""
+    blob = (
+        "Error: failed to open database: Dolt server unreachable at "
+        "127.0.0.1:54049: dial tcp 127.0.0.1:54049: connect: connection refused\n\n"
+        "The Dolt server may not be running. Try:\n  bd dolt start\n"
+    )
+    assert A._connection_retryable(blob) is True
+
+
+def test_connection_retryable_detects_transport_signatures():
+    for s in (
+        "read: connection reset by peer",
+        "write: broken pipe",
+        "driver: bad connection",
+        "invalid connection",
+        "dial tcp 127.0.0.1:3306: i/o timeout",
+        "Error 2006: MySQL server has gone away",
+    ):
+        assert A._connection_retryable(s) is True, s
+
+
+def test_connection_retryable_is_case_insensitive():
+    assert A._connection_retryable("DOLT SERVER UNREACHABLE") is True
+
+
+def test_connection_retryable_false_for_domain_and_serialization_errors():
+    """Must NOT fire for a genuine bd domain error (would mask a real
+    failure) or for a serialization conflict (that's `_retryable`'s job) --
+    the whole safety argument for a broad retry is that these strings can
+    never appear in a legitimate non-connection result."""
+    assert A._connection_retryable("issue not found: x-123") is False
+    assert A._connection_retryable("no ready work in lane") is False
+    assert A._connection_retryable("Error 1213: serialization failure") is False
+    assert A._connection_retryable("") is False
+
+
 # ------------------------------------------------------- directed claim
 
 

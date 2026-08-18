@@ -472,6 +472,30 @@ def test_reap_loop_records_start_before_its_first_sweep_completes(tmp_path):
     asyncio.run(run())
 
 
+async def _wait_until(predicate, *, timeout: float = 5.0, poll: float = 0.005) -> None:
+    """Poll ``predicate`` (a zero-arg callable) until it's truthy, or raise
+    after *timeout* seconds.
+
+    Replaces a fixed-duration ``asyncio.sleep(N)`` as the thing that decides
+    whether a test passes. A fixed sleep bets that N seconds is always
+    enough wall-clock time for a background loop to complete a sweep --
+    which is really a bet about how much CPU time the process gets in that
+    window, and loses it under a contended/throttled runner (reproduced on
+    unmodified main: ~1/30 runs failed under a cgroup-throttled CPU quota,
+    and consistently under single-core + CPU-hog contention -- see
+    fix/flaky-tests). Polling the real condition removes that bet: the test
+    now waits for exactly the thing it claims to prove, with a generous
+    ceiling (5s, ~500x the loops' own 0.01s interval) as the only failure
+    mode left -- a loop that is genuinely, unambiguously dead.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() >= deadline:
+            raise AssertionError(f"condition not met within {timeout}s")
+        await asyncio.sleep(poll)
+
+
 def test_reap_loop_records_completion_after_a_sweep(tmp_path):
     ws = _FakeWorkspace({})
     stop_event = asyncio.Event()
@@ -481,7 +505,12 @@ def test_reap_loop_records_completion_after_a_sweep(tmp_path):
         task = asyncio.create_task(
             SV.reap_loop(ws, interval=0.01, stop_event=stop_event, heartbeat_path=hb_path)  # type: ignore[arg-type]
         )
-        await asyncio.sleep(0.1)  # several intervals' worth
+
+        def completed() -> bool:
+            rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
+            return rec is not None and rec["last_completed"] is not None
+
+        await _wait_until(completed)
         stop_event.set()
         await task
 
@@ -500,7 +529,12 @@ def test_notify_loop_records_completion_after_a_sweep(tmp_path):
         task = asyncio.create_task(
             SV.notify_loop(ws, interval=0.01, stop_event=stop_event, heartbeat_path=hb_path)  # type: ignore[arg-type]
         )
-        await asyncio.sleep(0.1)
+
+        def completed() -> bool:
+            rec = HB.read_loop_heartbeat(hb_path, HB.NOTIFY)
+            return rec is not None and rec["last_completed"] is not None
+
+        await _wait_until(completed)
         stop_event.set()
         await task
 
@@ -524,7 +558,18 @@ def test_reap_and_notify_loops_use_independent_heartbeat_records(tmp_path):
         notify_task = asyncio.create_task(
             SV.notify_loop(ws, interval=0.01, stop_event=stop_event, heartbeat_path=hb_path)  # type: ignore[arg-type]
         )
-        await asyncio.sleep(0.1)
+
+        def both_completed() -> bool:
+            reap_rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
+            notify_rec = HB.read_loop_heartbeat(hb_path, HB.NOTIFY)
+            return (
+                reap_rec is not None
+                and reap_rec["last_completed"] is not None
+                and notify_rec is not None
+                and notify_rec["last_completed"] is not None
+            )
+
+        await _wait_until(both_completed)
         stop_event.set()
         await asyncio.gather(reap_task, notify_task)
 
