@@ -274,7 +274,20 @@ a{color:inherit}
    needs no coordination with the auto-refresh body-swap or the keyboard/
    density script below -- nothing here is JS-driven. */
 @media (max-width:860px){
-  .pagegrid{flex-direction:column;gap:0}
+  /* Header overlap fix: the top bar's content (brand + breadcrumb +
+     identity) no longer fits on one line below ~815px and wraps -- but
+     its FIXED 74px height clipped the box, so the wrapped identity line
+     painted DOWN over the sidebar's collapse disclosure right below the
+     sticky bar. Let the bar grow to contain whatever it wraps to, with a
+     little vertical breathing room; a single line still renders at 74px
+     (min-height), so 815-860px is visually unchanged. */
+  .top{height:auto;min-height:74px;padding-top:12px;padding-bottom:12px}
+  /* `align-items:stretch` (overriding the desktop `flex-start`) is what
+     makes the stacked content column fill the FULL width instead of being
+     sized to its widest child. Without it the item table's fixed columns
+     (~418px) sized the whole column, so `.tbl-scroll`'s overflow scroll
+     below could never engage and the page overflowed the viewport. */
+  .pagegrid{flex-direction:column;gap:0;align-items:stretch}
   .sidebar{position:static;width:100%;flex:1 1 auto;padding:6px 0 18px}
   .sidebar .sb-toggle-label{display:flex;align-items:center;justify-content:space-between;
     cursor:pointer;padding:12px 2px;font-family:var(--sans);font-size:11px;font-weight:600;
@@ -944,6 +957,41 @@ button.danger:hover,a.btn.danger:hover{background:#c44c40}
   padding:0 20px;font-family:var(--sans);font-size:11px;font-weight:700;
   letter-spacing:.14em;text-transform:uppercase;text-decoration:none}
 .skip:focus{left:var(--pad)}
+
+/* -- PHONE REFLOW (<=600px) ---------------------------------------------
+   Below ~480px the project page overflowed the viewport and its controls
+   collided. Fixed here, pure CSS, no JS. Placed at the END of the sheet
+   ON PURPOSE: several of the base component rules it overrides (`.tabs`,
+   `.grp`) are defined LATER in the source than the sidebar/header media
+   block above, so an equal-specificity override only wins from here. Every
+   rule is phone-only; nothing at >=601px (incl. desktop) is touched.
+
+   Three compounding causes:
+     1. The 52px page gutter is too wide for a phone, and a full-bleed rule
+        (`.bleed`, margin == -pad) then overhangs both edges -> shrink --pad.
+     2. The item table's fixed-px colgroup (sum ~418px) was wider than the
+        viewport and (with the stacked column now stretch-aligned, see the
+        <=860px block) `.tbl-scroll` gives it its OWN horizontal scroll so
+        it never widens the page or its full-bleed rules.
+     3. The status-tab row and the search/controls row could not fit on one
+        line: let the tabs wrap onto a clean second line (a real row-gap so
+        the two rows never touch), and let the search field take a full row
+        so the Search button + count + density toggle wrap cleanly beneath
+        it instead of being pushed off-screen. */
+@media (max-width:600px){
+  :root{--pad:16px}
+  /* status filter tabs -> clean multi-line wrap, never a pile-up */
+  .tabs{gap:9px 0}
+  .tabs .tab{margin-right:18px}
+  /* search/controls -> field owns its row; button + count + toggle wrap below */
+  .controls .field{flex:1 1 100%;min-width:0;max-width:none}
+  .controls .count{margin-left:0}
+  /* project-hero composition tallies + throughput -> tighter so nothing clips */
+  .tallies .tally{padding-right:20px;margin-right:20px}
+  .grp{padding-right:16px;margin-right:16px;min-width:120px}
+  /* item table -> scroll horizontally within the page, not a body-wide overflow */
+  .tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+}
 
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{

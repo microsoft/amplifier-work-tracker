@@ -3122,7 +3122,12 @@ def create_app(
             # identity. `.iid`'s own ellipsis+clip (webtheme.py) is what makes
             # "never collide, at any title length" true even past this width,
             # not the width itself -- this number only sets the common case.
-            table = f"""<table class="tbl">
+            # `.tbl-scroll` is an inert full-width block on desktop (no visual
+            # change), but at phone width its `overflow-x:auto` (see
+            # webtheme.py's <=600px block) gives the fixed-column item table
+            # its OWN horizontal scroll instead of forcing the whole page --
+            # and its full-bleed rules -- wider than the viewport.
+            table = f"""<div class="tbl-scroll"><table class="tbl">
               <colgroup><col style="width:20px"><col style="width:46px"><col style="width:108px">
                 <col style="width:82px"><col style="width:70px"><col style="width:92px">
                 <col></colgroup>
@@ -3131,7 +3136,7 @@ def create_app(
                 <th>Age</th><th>Holder</th><th>Title</th>
               </tr></thead>
               <tbody>{rows}</tbody>
-            </table>"""
+            </table></div>"""
         elif q:
             # A search that matched nothing -- name the search (and any active
             # status), and offer a real one-click way back to the full list.
