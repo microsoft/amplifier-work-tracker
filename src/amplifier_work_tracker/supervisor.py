@@ -730,7 +730,7 @@ async def web_server_loop(
         ws.root,
     )
 
-    app = webapp.create_app(ws, config.auth)
+    app = webapp.create_app(ws, config.auth, web_http_port=config.http_port)
     ssl_kwargs: dict = {}
     if config.tls_cert and config.tls_key:
         ssl_kwargs = {"ssl_certfile": config.tls_cert, "ssl_keyfile": config.tls_key}

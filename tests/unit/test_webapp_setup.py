@@ -355,3 +355,143 @@ def test_ca_crt_route_serves_a_valid_pem_when_ca_is_configured(client):
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/x-x509-ca-cert"
     assert resp.content.startswith(b"-----BEGIN CERTIFICATE-----")
+
+
+# ---------------------------------------------------------------------------
+# Recommendation selector -- pure function, no Request/FastAPI needed.
+# ---------------------------------------------------------------------------
+
+
+def test_recommended_method_is_tailscale_when_available():
+    assert webapp._setup_recommended_method(tailscale_available=True) == "tailscale"
+
+
+def test_recommended_method_is_local_ca_when_tailscale_unavailable():
+    assert webapp._setup_recommended_method(tailscale_available=False) == "ca"
+
+
+# ---------------------------------------------------------------------------
+# Friction-spectrum framing + "Recommended" badge -- rendered above the
+# method rows, badge floats to whichever method the live probe favors.
+# ---------------------------------------------------------------------------
+
+
+def test_setup_shows_friction_spectrum_framing(client):
+    _login(client)
+    resp = client.get("/setup")
+    assert "Which method fits how you reach this server?" in resp.text
+    # The hard-constraint framing -- asserted as two same-line substrings
+    # rather than one long string, since the HTML wraps across lines.
+    assert "never a bare LAN" in resp.text
+    assert "That is a hard constraint, not a preference" in resp.text
+    # All three methods get a one-line rationale in the spectrum itself.
+    assert "browser-trusted, zero install" in resp.text
+    assert "covers the LAN IP," in resp.text
+    assert "a browser warning every single visit" in resp.text
+
+
+def test_setup_recommends_tailscale_when_available(client, monkeypatch):
+    monkeypatch.setattr(
+        webapp.WT,
+        "detect_tailscale",
+        lambda: {"hostname": "probe-host.tail1234.ts.net", "ips": [], "cert_domains": ["x"]},
+    )
+    _login(client)
+    resp = client.get("/setup")
+    assert resp.status_code == 200
+    # Exactly one method is badged -- never both, never neither.
+    assert resp.text.count("recommended for personal use") == 1
+    assert resp.text.count("&bull; Recommended") == 1
+    # The badge sits on the Tailscale row (its title appears before the
+    # method-row badge in document order), not on Local CA's.
+    tailscale_title_idx = resp.text.index("Tailscale (Let&#x27;s Encrypt)")
+    ca_title_idx = resp.text.index('<span class="flegend">Local CA')
+    badge_idx = resp.text.index("&bull; Recommended")
+    assert tailscale_title_idx < badge_idx < ca_title_idx
+    # And the friction-spectrum's own inline mark names Tailscale, not CA.
+    spectrum_idx = resp.text.index("Which method fits how you reach this server?")
+    tailscale_mark_idx = resp.text.index("Tailscale name", spectrum_idx)
+    reco_mark_idx = resp.text.index("recommended for personal use", spectrum_idx)
+    local_ca_mark_idx = resp.text.index("Local CA</b>", spectrum_idx)
+    assert tailscale_mark_idx < reco_mark_idx < local_ca_mark_idx
+
+
+def test_setup_recommends_local_ca_when_tailscale_unavailable(client, monkeypatch):
+    monkeypatch.setattr(webapp.WT, "detect_tailscale", lambda: None)
+    _login(client)
+    resp = client.get("/setup")
+    assert resp.status_code == 200
+    assert resp.text.count("recommended for personal use") == 1
+    assert resp.text.count("&bull; Recommended") == 1
+    ca_title_idx = resp.text.index('<span class="flegend">Local CA')
+    selfsigned_title_idx = resp.text.index('<span class="flegend">Self-signed')
+    badge_idx = resp.text.index("&bull; Recommended")
+    assert ca_title_idx < badge_idx < selfsigned_title_idx
+
+
+# ---------------------------------------------------------------------------
+# /trust cross-link -- built from the request Host + the configured
+# web-http-port (real value when known via app.state, else the documented
+# https-port+1 pattern).
+# ---------------------------------------------------------------------------
+
+
+def test_trust_bootstrap_url_uses_configured_web_http_port_when_known(tmp_path, auth_config):
+    """`create_app(..., web_http_port=...)` threads the REAL companion port
+    onto `app.state`, and `_setup_ca_download_html` (via `_setup_body`)
+    cross-links that exact value -- not the https-port+1 pattern."""
+    ws = A.Workspace(tmp_path / "root")
+    app = webapp.create_app(ws, auth_config, web_http_port=9001)
+    WT.generate_local_ca(WT.default_ca_cert_path(), WT.default_ca_key_path())
+    with TestClient(app, base_url="https://testserver:8095", follow_redirects=False) as c:
+        _login(c)
+        resp = c.get("/setup")
+    assert resp.status_code == 200
+    assert "http://testserver:9001/trust" in resp.text
+    # Honest: no "confirm the exact port" caveat when the real value is known.
+    assert "confirm the exact port" not in resp.text
+
+
+def test_trust_bootstrap_url_falls_back_to_https_port_plus_one_pattern(client):
+    """No `web_http_port` threaded through (this fixture's `create_app`
+    call omits it, like most of this file's tests) -- falls back to the
+    documented default pattern, honestly caveated as such."""
+    WT.generate_local_ca(WT.default_ca_cert_path(), WT.default_ca_key_path())
+    _login(client)
+    resp = client.get("/setup")
+    assert resp.status_code == 200
+    # TestClient's plain-http default base_url is "http://testserver" with
+    # no explicit port -- scheme "http" falls back to port 80, so the
+    # pattern lands on 81.
+    assert "http://testserver:81/trust" in resp.text
+    assert "confirm the exact port" in resp.text
+
+
+def test_trust_bootstrap_url_pattern_uses_explicit_https_port(tmp_path, auth_config):
+    """The https-port+1 fallback reads the REQUEST's own explicit port
+    (8095 here), not a hardcoded default -- proven with an explicit
+    non-default port and no `web_http_port` threaded through."""
+    ws = A.Workspace(tmp_path / "root")
+    app = webapp.create_app(ws, auth_config)  # no web_http_port -- fallback path
+    WT.generate_local_ca(WT.default_ca_cert_path(), WT.default_ca_key_path())
+    with TestClient(app, base_url="https://testserver:8095", follow_redirects=False) as c:
+        _login(c)
+        resp = c.get("/setup")
+    assert resp.status_code == 200
+    assert "http://testserver:8096/trust" in resp.text
+    assert "confirm the exact port" in resp.text
+
+
+def test_setup_ca_section_omits_trust_cross_link_when_no_ca_configured(client):
+    """No CA on this host -- the whole "Install the local CA" section (and
+    therefore the concrete `/trust` cross-link inside it) is absent, never
+    a dead link. The friction spectrum above still mentions `/trust` by
+    NAME (a forward reference: "see below once one is configured") even
+    when no CA exists yet -- that is the one place `/trust` legitimately
+    appears without a CA configured, and it is prose, not a link."""
+    _login(client)
+    resp = client.get("/setup")
+    assert resp.status_code == 200
+    assert "Install the local CA" not in resp.text
+    assert "Adding a new device?" not in resp.text
+    assert 'href="/setup/ca.crt"' not in resp.text
