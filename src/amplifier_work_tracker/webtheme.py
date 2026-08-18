@@ -485,6 +485,29 @@ a.what:hover{color:var(--amber)}
 .count b{color:var(--mid);font-weight:600}
 .count.hit b{color:var(--amber)}
 
+/* -- STATUS TABS: per-project filter row with live counts ---------------
+   Server-linked (`?status=...`), so a click is a plain navigation the
+   existing route already handles -- no client-side filtering here. A
+   zero count stays visible, dimmed (`.tcount.z`), the same "lamp present,
+   switched off" convention `.comp .legend .n.z` already uses -- see
+   webapp.py's `_status_tabs_html`. Held/Blocked reuse --amber/--crimson
+   verbatim when non-zero (the SAME hues `.st-held`/`.st-blkd` use for
+   these two statuses elsewhere); every other tab stays neutral no
+   matter its count -- a healthy ready backlog is not an alarm. */
+.tabs{display:flex;flex-wrap:wrap;gap:2px;margin:0 0 14px;
+  border-bottom:1px solid var(--rule)}
+.tabs .tab{display:flex;align-items:baseline;gap:8px;padding:0 0 10px;
+  margin-right:24px;font-family:var(--sans);font-size:12.5px;font-weight:600;
+  letter-spacing:.03em;color:var(--mid);text-decoration:none;
+  border-bottom:2px solid transparent}
+.tabs .tab:hover{color:var(--ink)}
+.tabs .tab.active{color:var(--ink);border-bottom-color:var(--ink)}
+.tabs .tcount{font-family:var(--serif);font-size:14px;font-weight:500;
+  color:var(--mid);font-variant-numeric:tabular-nums}
+.tabs .tcount.z{color:var(--st-empty)}
+.tabs .tcount.am{color:var(--amber)}
+.tabs .tcount.cr{color:var(--crimson)}
+
 /* -- TABLE --------------------------------------------------------------- */
 table.tbl{width:100%;border-collapse:collapse;table-layout:fixed}
 .tbl th{
@@ -615,6 +638,21 @@ tr.hidden{display:none}
 .st-done{color:var(--dim);font-weight:500;font-size:10.5px;letter-spacing:.13em}
 .st-blkd{color:var(--crimson);font-weight:700}
 .st-deferred{color:var(--quiet)}
+
+/* -- row gutter: priority bar + status icon, ~20px, no wide new column --
+   Priority (bd's 0=critical..4=backlog) is encoded as BRIGHTNESS on the
+   app's existing neutral text ramp (--ink..--dim, plus --rule-hi for the
+   faintest/unknown case) rather than a new hue: --amber and --crimson are
+   each already reserved for exactly one job elsewhere in this app (age/
+   attention, and blocked/escalation -- see the SIGNAL COLOURS comment
+   above), and a static severity tag is neither. This keeps the bar subtle
+   by construction -- it can never out-shout the amber age accent or a
+   real crimson blocked/escalation marker, because it never uses either
+   hue. See webapp.py's `_priority_bar_html` for the exact ramp. */
+.tbl .c.gutter{padding:10px 5px 10px 0;gap:6px}
+.pribar{display:inline-block;width:3px;height:20px;border-radius:1px;flex:0 0 3px}
+.stico{display:inline-flex;width:13px;height:13px;flex:0 0 13px;align-items:center}
+.stico svg{width:100%;height:100%}
 
 /* -- link-cell (stretched-link): whole cell clickable, not just text ---- */
 td.link-cell{padding:0}
@@ -783,6 +821,18 @@ def _svg(paths: str) -> str:
 ICONS = {
     "mag": _svg('<circle cx="7.1" cy="7.1" r="4.6"/><path d="M10.6 10.6l3.1 3.1"/>'),
     "filter": _svg('<path d="M1.8 3h12.4L9.5 8.5v4.3l-3 1.4V8.5z"/>'),
+    # Per-status row glyphs (see webapp.py's `_status_icon_html`) -- each
+    # status is a distinct SHAPE, not just a colour, matching the same
+    # "never on hue alone" discipline `.state.warnv`/`.state.bad`'s own
+    # marker-shape difference already uses. Coloured via `currentColor`,
+    # set by the SAME `st-*` classes the row's text badge uses
+    # (`_item_state_html`), so an icon and its row's status text can
+    # never disagree in colour.
+    "ready": _svg('<circle cx="8" cy="8" r="5.4"/>'),
+    "held": _svg('<circle cx="8" cy="8" r="4" fill="currentColor" stroke="none"/>'),
+    "blocked": _svg('<path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/>'),
+    "deferred": _svg('<path d="M5.3 3.2v9.6M10.7 3.2v9.6"/>'),
+    "resolved": _svg('<path d="M3.4 8.6l3.2 3.2L12.6 4.6"/>'),
 }
 
 
