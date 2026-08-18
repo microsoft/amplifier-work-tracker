@@ -56,6 +56,7 @@ from typing import Any, Literal
 from . import adapter as A
 from . import custody as C
 from . import heartbeat as HB
+from . import webpush as WP
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,10 @@ def reap_project(
         if eligible:
             bd.release(item.id)
             reclaimed.append({"id": item.id, "was_holder": item.holder, "reason": reason})
+            # ALARM: custody-TTL breach is a real alarm condition. Sync, never raises
+            # (a push failure must never prevent/undo the reclaim above); any failure
+            # is LOUD-logged inside webpush, not swallowed.
+            WP.fire_reclaim_alarm(item.id, item.holder, reason)
         else:
             note = "quiet (awaiting_human)" if not C.should_notify(rec) else "ok"
             kept.append({"id": item.id, "holder": item.holder, "note": note})

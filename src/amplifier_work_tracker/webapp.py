@@ -3636,6 +3636,7 @@ def create_app(
         sb = T.statusbar(
             '<span class="s"><span class="dot on"></span>Sweep <b>healthy</b></span>'
             f'<span class="s">Held <b>{held_display}</b></span>',
+            f'<a href="/projects/{_esc(name)}/browse">Browse</a> '
             f'<a href="/projects/{_esc(name)}">Refresh</a>',
         )
         # No client-side search_js here: the search is now a server-side GET
@@ -3992,6 +3993,10 @@ def create_app(
             # docstring for why that's a deliberate, narrow choice).
             return _redirect(f"/projects/{name}/remove", error=str(e))
         return _redirect("/", msg=f"removed project '{name}'")
+
+    from amplifier_work_tracker import webbrowse
+
+    webbrowse.register(app, workspace)
 
     return app
 
