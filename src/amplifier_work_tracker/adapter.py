@@ -998,9 +998,9 @@ def _history_events(history: list) -> list[ActivityEvent]:
     \"the oldest\" (bd itself returns newest-first). The three event shapes
     this produces:
 
-      - The very first entry becomes a `\"created\"` event, timestamped and
-        attributed from the issue's own `created_at`/`created_by` (real
-        fields on every entry, not inferred).
+      - The very first entry becomes a `\"created\"` event, attributed from
+        the issue's own `created_by` (a real field on every entry, not
+        inferred).
       - A transition INTO our `\"held\"` status with a real assignee becomes
         a `\"status\"` event summarized `\"Claimed\"`, attributed to that
         assignee -- the best signal bd gives for \"who\"; not literally
@@ -1014,6 +1014,22 @@ def _history_events(history: list) -> list[ActivityEvent]:
         doesn't change status, a held item released back to open, etc.)
         becomes a generic `\"status\"` event naming the before/after states
         in OUR vocabulary.
+
+    Every event's `at` is `CommitDate` -- the commit's own timestamp,
+    guaranteed present here (see the skip below) and carrying millisecond
+    precision -- never `created_at`/`closed_at`. Those domain fields are
+    real but bd truncates them to whole SECONDS, while a fast lifecycle
+    (create, claim, comment, resolve) routinely completes within a single
+    wall-clock second. Two whole-second-truncated fields landing on the
+    same second are a genuine tie, and `Beads.activity`'s sort breaks ties
+    by `list.sort`'s stability -- i.e. by INSERTION order, not real time --
+    which let `created` (always inserted first) occasionally sort as newer
+    than `resolved` (inserted last), even though `resolved` always
+    corresponds to a strictly later dolt commit. `CommitDate` is monotonic
+    per commit and has no such precision gap, so using it removes the tie
+    at its root rather than papering over one occurrence of it (see
+    fix/flaky-tests for the reproduction: a build using created_at/closed_at
+    here failed this ordering on ~17/40 runs against a real server).
 
     A history entry with no `CommitDate` at all is skipped (nothing to sort
     or timestamp it by) rather than guessed at.
@@ -1042,7 +1058,7 @@ def _history_events(history: list) -> list[ActivityEvent]:
             events.append(
                 ActivityEvent(
                     kind="created",
-                    at=_parse_bd_timestamp(issue.get("created_at")) or at,
+                    at=at,
                     actor=issue.get("created_by"),
                     summary="Created",
                 )
@@ -1051,7 +1067,7 @@ def _history_events(history: list) -> list[ActivityEvent]:
             events.append(
                 ActivityEvent(
                     kind="resolved",
-                    at=_parse_bd_timestamp(issue.get("closed_at")) or at,
+                    at=at,
                     actor=assignee,
                     summary="Resolved",
                     detail=issue.get("close_reason"),
