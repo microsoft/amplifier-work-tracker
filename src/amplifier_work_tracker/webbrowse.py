@@ -125,23 +125,40 @@ _BROWSE_CSS = r"""
    `scrollbar-gutter:stable` reserves the thumb's width up front so its
    appearance never shifts the content underneath by a few pixels once a
    pane becomes scrollable. */
-.wtb-scroll{scrollbar-width:thin;scrollbar-color:var(--dim) transparent;
+/* C7 (craft punch list): `--dim` still read as barely-there against the
+   glass panel fill -- the SAME invisible-affordance defect this rule's own
+   comment above already fixed once, just not far enough. `--mid` (one
+   step up the same ink ramp, still <=4.5:1-verified in both schemes) is
+   the next real, legible stop -- hover moves to the strongest step
+   (`--ink`) so the thumb clearly brightens under the pointer. */
+.wtb-scroll{scrollbar-width:thin;scrollbar-color:var(--mid) transparent;
   scrollbar-gutter:stable}
 .wtb-scroll::-webkit-scrollbar{width:8px}
 .wtb-scroll::-webkit-scrollbar-track{background:transparent}
-.wtb-scroll::-webkit-scrollbar-thumb{background:var(--dim);
+.wtb-scroll::-webkit-scrollbar-thumb{background:var(--mid);
   border-radius:4px;border:2px solid transparent;background-clip:padding-box}
-.wtb-scroll::-webkit-scrollbar-thumb:hover{background:var(--mid)}
+.wtb-scroll::-webkit-scrollbar-thumb:hover{background:var(--ink)}
 
 /* -- column headers (goal wtv3/components, C2) -- the blend-3 mockup's
    left-pane column set: Priority . Status . Item ID . Task title .
    Relative age. Purely a label row over the SAME implicit grid `a.wtb-row`
    lays out (gutter . main . age) -- "Pri"/"St" label the gutter's two
    icons, "Item" the id+title stack, "Age" the trailing age. */
+/* C9 (craft punch list): this grid declares 3 tracks (gutter . main . age),
+   mirroring `a.wtb-row`'s own 3-column grid -- but the markup below used to
+   emit 4 flat sibling <span>s ("Pri","St","Item","Age"), so CSS grid
+   auto-placement wrapped the 4th ("Age") onto a new implicit row at column
+   1, instead of landing over the row's actual right-aligned Age column.
+   Nesting "Pri"+"St" inside ONE wrapping span (matching `:first-child`'s
+   existing `display:flex` rule below, which was written for exactly that
+   nesting) restores 3 real top-level items -- gutter/main/age -- so "Age"
+   lands in the grid's 3rd (auto-width, right-hand) track like the data
+   rows' own `.wtb-age`, and `text-align:right` on it now means something. */
 .wtb-col-headers{display:grid;grid-template-columns:auto minmax(0,1fr) auto;
   column-gap:11px;padding:0 12px 6px;font-family:var(--sans);font-size:9.5px;
   font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
 .wtb-col-headers span:first-child{display:flex;gap:14px}
+.wtb-col-headers span:last-child{text-align:right}
 
 /* -- list-pane header/footer EXTRA slots (goal wtv3/project-page) -- optional,
    only rendered when a caller passes them (`render_browse_body`'s

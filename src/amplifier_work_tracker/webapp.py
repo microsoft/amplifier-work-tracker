@@ -2066,8 +2066,19 @@ def _dashboard_row(s: A.ProjectSummary) -> str:
     mini_bar = _state_bar_html(counts)
     pct_done = f"{round(resolved / total * 100)}%" if total else "\u2014"
     resolved_shown = str(resolved) if resolved else "\u2014"
-    resolved_cls = "n hi" if resolved else "n z"
-    pct_cls = "r n hi" if resolved else "r n z"
+    # C8 (craft punch list): these used to read `"n hi"`/`"n z"` -- neither
+    # `.hi` nor a bare `.z` (scoped to `.n`) is a real rule anywhere in
+    # webtheme.py (only `.n.ink`/`.n.zero`, used by the READY column just
+    # above, and `.comp .legend .n.z`, a different component entirely).
+    # Every Resolved/Done% value silently fell through to the same flat
+    # `.n{color:var(--dim)}` regardless of count -- so a 0% row and a
+    # healthy 60% row were rendered in code paths that LOOKED
+    # value-dependent but were not, one dead class reference away from
+    # actually doing something. Fixed to what the punch list asks for
+    # directly: one real, value-independent numeric colour for this
+    # column, not a broken attempt at two.
+    resolved_cls = "n"
+    pct_cls = "r n"
 
     # Alarm escalation -- this project's own row must be tellable apart from
     # a calm, all-ready-or-resolved queue at a glance, not only via its own
@@ -4459,13 +4470,15 @@ def create_app(
             <p class="field-hint">Title, description, acceptance criteria and design notes are
               editable here and persist on Save. Status, holder and the timestamps above are
               lifecycle facts, not free-edit -- they change only through claim/resolve.</p>
-            <button type="submit">Save changes</button>
+            <button type="submit" style="margin-top:0.3rem">Save changes</button>
           </form>
 
+          <div style="margin-top:32px">
           {resolution_html}
           {links_html}
           {activity_html}
           {action_html}
+          </div>
         </div>
         </section>
         """

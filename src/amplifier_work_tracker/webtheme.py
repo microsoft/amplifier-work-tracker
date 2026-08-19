@@ -257,8 +257,17 @@ CSS = r"""
     --glass-fill-strong:rgba(11,18,32,.07);
     --glass-fill-row-hover:rgba(11,18,32,.06);
     --glass-fill-row-selected:rgba(8,145,178,.10);
-    --glass-hairline:rgba(11,18,32,.12);
-    --glass-hairline-soft:rgba(11,18,32,.08);
+    /* C8/C4/C17 (craft punch list): card/table/rim borders at .08-.12 alpha
+       over this LIGHT ground read as barely-there -- unlike dark mode,
+       where the same alpha sits against near-black and reads as a clear
+       rim, an alpha-over-white wash of this size is close to invisible
+       (measured against a real light render: the THROUGHPUT card's rim,
+       queue-table header rule, and every other hairline-bordered panel all
+       failed to register as a boundary). Bumped to the next visibly-real
+       step -- still a hairline, not a heavy stroke -- fixing every
+       hairline-bordered surface in one place rather than per-component. */
+    --glass-hairline:rgba(11,18,32,.22);
+    --glass-hairline-soft:rgba(11,18,32,.16);
     --glass-shadow:0 8px 32px rgba(15,23,42,.10),inset 0 1px 0 rgba(255,255,255,.6);
     --glass-shadow-float:0 24px 64px rgba(15,23,42,.16),inset 0 1px 0 rgba(255,255,255,.7);
     --ink-primary:#0b1220;
@@ -268,14 +277,37 @@ CSS = r"""
     --ink-on-ground-inverse:#f8fafc;
     /* reserved status hues re-tuned darker so text/icons still clear 4.5:1 on a light ground */
     --alarm:#92400e;
-    --alarm-surface:rgba(245,158,11,.16);
+    /* C2 (craft punch list): the dark-mode surface alpha (.14) was carried
+       over UNCHANGED (even bumped to .16) for light mode -- the opposite of
+       every other "wash" token here (--glass-fill-strong etc go LOWER in
+       light, .10->.07, because the identical alpha reads far more solid
+       over a light ground than over near-black). At .14-.16 an amber/
+       crimson wash over this light ground reads as a loud, saturated
+       peach/pink patch -- the "dark-mode fill carried straight over"
+       impression on the selected/alarm queue-table row, held/blocked tab
+       counts, and count-badges. Halved (.16->.08, .14->.07), following the
+       same ratio the glass tokens already use, so the SAME alarm/blocked
+       semantics (never touched) read as a calm tint here instead of a
+       solid block. */
+    --alarm-surface:rgba(245,158,11,.08);
     --alarm-ink-on-surface:#7c3009;
     --blocked:#991b1b;
-    --blocked-surface:rgba(239,68,68,.14);
+    --blocked-surface:rgba(239,68,68,.07);
     --blocked-ink-on-surface:#7f1d1d;
     --brand-cyan-ink:#0b6b80;
     --brand-purple-ink:#7e22ce;
   }
+  /* -- light-mode COMPONENT overrides (not pure token re-tuning) ---------
+     C8: the sidebar and the main content column share the exact same flat
+     page ground with nothing between them -- in dark mode the ambient
+     radial-glow `body::before` gives enough depth cues that the missing
+     seam goes unnoticed; in light mode (a much lower-contrast backdrop)
+     the two columns visually fuse into one. A light-only hairline
+     separator (using the SAME re-tuned `--rule-hi` token above) gives the
+     sidebar a real edge without adding anything to dark mode, which never
+     had this complaint. */
+  .sidebar{border-right:1px solid var(--rule-hi)}
+  @media (max-width:860px){.sidebar{border-right:0}}
 }
 
 /* -- AFFORDANCE GRAMMAR (one documented convention) ----------------------
@@ -423,7 +455,11 @@ a{color:inherit}
   bottom:6px;width:2px;border-radius:1px;background:var(--brand-gradient-rim)}
 .sidebar .sb-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap}
-.sidebar .sb-badge{flex:0 0 auto;font-variant-numeric:tabular-nums;color:var(--dim);
+/* C8 (craft punch list): `--dim` (ink-tertiary) on the count badge ("18/18")
+   read as low-contrast small print, especially in light mode -- bumped one
+   step to `--mid` (ink-secondary), the same stop the sidebar's own project
+   labels (`.sb-row`) already read at. */
+.sidebar .sb-badge{flex:0 0 auto;font-variant-numeric:tabular-nums;color:var(--mid);
   font-size:11px}
 .sidebar .sb-dot{width:5px;height:5px;border-radius:50%;flex:0 0 5px;background:transparent}
 /* alarm marker -- SAME reserved amber/crimson escalation hues everywhere else
@@ -477,6 +513,14 @@ a{color:inherit}
    right edge. Additive: desktop layout is untouched. */
 @media (max-width:600px){
   .verdict{gap:8px}
+  /* C11 (craft punch list): `.vdetail` ("58 waiting 7d+") stayed an
+     ordinary flex item -- it starts wherever the icon+keyword before it
+     happens to end, not at the row's own left edge -- while `.vasof`
+     ("as of ... UTC") already gets its own full-width row starting flush
+     left. The two caption lines read at different left offsets. Giving
+     `.vdetail` the SAME `flex-basis:100%` own-row treatment puts both on
+     one shared left alignment. */
+  .verdict .vdetail{flex-basis:100%}
   .verdict .vasof{margin-left:0;flex-basis:100%}
   .needs-row{gap:8px}
   .needs-row .nconds{gap:10px}
@@ -742,7 +786,11 @@ a.what:hover{color:var(--brand-cyan-ink)}
 .sbar .seam::after{content:"";position:absolute;inset:0;background:var(--st-empty)}
 
 /* "workspace by state" -- the full-width centrepiece. */
-.comp .chead{display:flex;align-items:baseline;gap:16px;margin-bottom:13px;
+/* C15 (craft punch list): 16px was an off-scale outlier next to every other
+   "head row" gap on this page at 24px (spacing runs 8/16/24/32 elsewhere) --
+   snapped to the same 24px so this eyebrow-to-total-count gap reads on the
+   same rhythm as its neighbours. */
+.comp .chead{display:flex;align-items:baseline;gap:24px;margin-bottom:13px;
   flex-wrap:wrap}
 .comp .chead .rt{margin-left:auto;font-family:var(--sans);font-size:11px;
   color:var(--quiet);letter-spacing:.02em}
@@ -760,14 +808,28 @@ a.what:hover{color:var(--brand-cyan-ink)}
    ready/total, its own state-mix mini bar, relative last-activity). The
    grid is `auto-fill` so it reflows from many columns (wide desktop) down
    to one (phone) with no breakpoint of its own needed. */
-.projoverview .chead{display:flex;align-items:baseline;gap:16px;margin-bottom:13px;
+/* C15 (craft punch list): same off-scale 16px head-row gap as `.comp
+   .chead` above, snapped to the same 24px rhythm. */
+.projoverview .chead{display:flex;align-items:baseline;gap:24px;margin-bottom:13px;
   flex-wrap:wrap}
 .projoverview .chead .rt{margin-left:auto;font-family:var(--sans);font-size:11px;
   color:var(--quiet);letter-spacing:.02em}
 .projgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));
   gap:14px}
+/* C17/C18 (craft punch list): the per-project mini-card is the ONE bordered
+   panel on this page with no shadow at all -- every major panel (hero,
+   comp, needs, thru, dispatch, projoverview's own container) pairs its
+   hairline border with `--glass-shadow`/`-float`; this card paired its
+   border with nothing, reading as a flatter, second boundary grammar mid-
+   page (worse in light mode, where the hairline alone is faint -- see the
+   light-mode hairline retune above). `--glass-shadow` (the lighter of the
+   two shadow tiers -- this is a small ROW-level card, not a major panel,
+   so it stays on `--radius-md`, the same explicit "small" partner to the
+   major panels' `--radius-lg` the token block already names) closes that
+   gap without escalating this card to major-panel depth. */
 .projcard{display:block;padding:14px 16px;border-radius:var(--radius-md);
   background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  box-shadow:var(--glass-shadow);
   text-decoration:none;color:inherit;min-width:0}
 .projcard:hover{background:var(--glass-fill-row-hover)}
 .projcard .pname{font-family:var(--sans);font-weight:700;font-size:13px;
@@ -839,6 +901,15 @@ a.what:hover{color:var(--brand-cyan-ink)}
   padding:0 14px 0 40px;color:var(--ink);border-radius:var(--radius-pill);
   font-family:var(--sans);font-size:13.5px;font-weight:400;letter-spacing:.01em;
   caret-color:var(--brand-cyan);
+  /* C3 (craft punch list): "Filter projects..."/"Filter queues..." kept a
+     dark charcoal fill in light mode. Root cause: `type="search"` gets its
+     OWN native platform chrome (WebKit/Blink's `searchfield` appearance)
+     that can paint over an authored `background:transparent` regardless of
+     `color-scheme`. `appearance:none` forces the browser to defer to this
+     rule's own transparent fill (-> `.field`'s glass fill shows through,
+     correctly re-tinted per light/dark tokens) instead of its own native
+     widget skin. */
+  -webkit-appearance:none;appearance:none;
 }
 .field .mag{position:absolute;left:14px;top:50%;transform:translateY(-50%);
   color:var(--dim);display:flex;pointer-events:none}
@@ -1128,8 +1199,22 @@ td.link-cell > a:hover::after{color:var(--brand-cyan-ink)}
 .prose{font-size:16.5px;line-height:1.66;color:var(--ink);font-weight:400;
   letter-spacing:.0015em;max-width:var(--measure,620px)}
 .prose p + p{margin-top:1.1em}
-.content-block{white-space:pre-wrap;word-break:break-word;background:var(--raise);
-  border:1px solid var(--rule);border-radius:var(--radius-md);padding:0.9rem 1rem;
+/* C5/C6 (craft punch list): a long Description/Acceptance body could read
+   as clipped -- the last line's own descenders (g/y/p/q) sitting flush
+   against the box's bottom edge with no breathing room below them, and no
+   declared `overflow` at all (an ancestor's own layout is what was silently
+   doing any clipping, never a deliberate, visible affordance on this box
+   itself). Bottom padding bumped to explicitly clear a descender at this
+   font-size/line-height, and `overflow-wrap:anywhere` covers the case
+   `word-break:break-word` alone still doesn't (a run with no soft break
+   opportunity at all -- a long id/URL/hash pasted into a body). This block
+   itself never needs to scroll (its ancestor -- `.wtb-scroll`/the page --
+   already owns that), so no `overflow:auto` is added here; the point is
+   that nothing above or below this rule was silently relying on an
+   ancestor's clip to hide an otherwise-overflowing last line. */
+.content-block{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;
+  background:var(--raise);
+  border:1px solid var(--rule);border-radius:var(--radius-md);padding:0.9rem 1rem 1.15rem;
   font-size:15px;line-height:1.6;color:var(--ink);margin:0.3rem 0 0}
 /* MONOSPACE face for content whose alignment is meaningful -- ASCII tables,
    code, fixed-width output. Proportional Archivo destroys column alignment, so
@@ -1138,6 +1223,22 @@ td.link-cell > a:hover::after{color:var(--brand-cyan-ink)}
    comfortable reading width for prose. */
 .mono{font-family:var(--mono);font-variant-ligatures:none;
   font-variant-numeric:tabular-nums}
+/* C16 (craft punch list): an embedded fenced ```code``` block or inline
+   `code` span inside a Description/Acceptance/Design body rendered as bare,
+   unstyled text -- indistinguishable from ordinary prose even though
+   `_render_item_markdown` already wraps it in real <pre>/<code>. A token-
+   driven inset (sunken ground + hairline + mono face) is the SAME "this is
+   literal/verbatim data" grammar `.content-block` itself already uses for
+   its own container -- just one tier further in, for a block already
+   inside one. Inline `<code>` gets the lighter chip treatment `.chip`/
+   `.priority-chip` use elsewhere: a small glass pill, not a full block. */
+.content-block pre{background:var(--color-ground-sunken);
+  border:1px solid var(--rule);border-radius:var(--radius-sm);
+  padding:0.7rem 0.85rem;margin:0.5em 0;overflow-x:auto}
+.content-block pre code{background:transparent;border:0;padding:0}
+.content-block code{font-family:var(--mono);font-size:0.92em;
+  background:var(--glass-fill-strong);border:1px solid var(--glass-hairline-soft);
+  border-radius:4px;padding:0.1em 0.4em}
 /* the single INLINE-link resting affordance: an underline in --link-underline,
    brand cyan only on hover -- interaction confirmation, per the v2 firewall
    (amber means attention/alarm only now, never a resting OR hover link colour). */
@@ -1153,10 +1254,29 @@ td.link-cell > a:hover::after{color:var(--brand-cyan-ink)}
 .foot + .foot{margin-top:14px}
 
 /* -- key/value blocks (item detail) -------------------------------------- */
-.kv{display:flex;flex-wrap:wrap;gap:0 0}
-.kv div{padding-right:32px;margin-right:32px;margin-bottom:14px;
-  border-right:1px solid var(--rule)}
-.kv div:last-child{border-right:0;margin-right:0;padding-right:0}
+/* C10 (craft punch list): item-detail (and the browse/project-split detail
+   pane) renders TWO independent `.kv` blocks back-to-back -- facts (Queue/
+   Kind/Priority/Reported-by) then timestamps (Created/Updated/[closed-at]).
+   NOTE: this comment deliberately avoids spelling out that third timestamp
+   label literally -- this stylesheet is embedded verbatim in every page's
+   <style> tag, and this repo's own integration tests assert that word is
+   ABSENT from a fresh/open item's page text (it should only ever appear
+   once an item has actually reached that state) -- see
+   test_item_detail_fresh_item_activity_feed_shows_only_created.
+   As a `display:flex` row, each block's column widths sized to ITS OWN
+   content, so "Priority" (facts row, 3rd item) and that third timestamp
+   (time row, 3rd item) landed at whatever x-offset their own, unrelated
+   text widths produced -- a ~40-60px drift between two rows a reader
+   expects to read as one shared grid. `display:grid` with a FIXED (not
+   `auto`/content-sized) track width means every `.kv` instance on the
+   page -- regardless of how many items it holds or how long their text
+   is -- lays its Nth
+   item down at the exact same offset (N-1)*168px, so the two stacked
+   blocks' labels finally line up column-to-column. */
+.kv{display:grid;grid-template-columns:repeat(auto-fill,168px);
+  column-gap:0;row-gap:14px}
+.kv div{padding-right:28px;border-right:1px solid var(--rule)}
+.kv div:last-child{border-right:0;padding-right:0}
 .kv .k{font-family:var(--sans);font-size:9.5px;font-weight:600;
   letter-spacing:.18em;text-transform:uppercase;color:var(--dim);display:block;
   margin-bottom:7px}
@@ -1227,7 +1347,14 @@ input[type=text],input[type=password],textarea,select{
 input[type=text]:focus,input[type=password]:focus,textarea:focus,select:focus{
   outline:2px solid var(--brand-cyan);outline-offset:1px;border-color:var(--rule-hi);
 }
-textarea{min-height:5.5rem}
+/* C1 (craft punch list): a bare <textarea> carried the native diagonal
+   resize handle -- the single cheapest "nobody finished this" tell on the
+   item-detail form (Description/Acceptance/Design all use this base rule
+   unstyled). `resize:none` kills it here; the Title field's own inline
+   style (`item_detail`'s `title_input_style`) deliberately overrides this
+   with `resize:vertical` -- a documented, intentional exception (lets a
+   reader manually reveal more of a long title) -- so it is unaffected. */
+textarea{min-height:5.5rem;resize:none}
 input::placeholder,textarea::placeholder{color:var(--dim);opacity:1}
 /* PRIMARY -- the design system's own solid brand gradient (darker stops than
    the rim/logo gradient so white text clears >=4.5:1 at every point -- see
@@ -1322,8 +1449,18 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
 .needs-row.sev-am{box-shadow:inset 4px 0 0 var(--alarm)}
 .needs-row.sev-cr{box-shadow:inset 4px 0 0 var(--blocked)}
 .needs-row .nlead{flex:0 0 auto;display:inline-flex}
+/* C12 (craft punch list): the one project-name span in this row list with
+   no truncation guard -- every sibling row-title span elsewhere on this
+   page (`.wtb-title`, `.projcard .pname`, `.sidebar .sb-name`) already
+   clips a too-long name with an ellipsis; this one had no `overflow`/
+   `text-overflow`/`white-space` at all, so a long project name could wrap
+   or run on unlike its siblings. `min-width:0` is required alongside them
+   here specifically because this span is a flex item in `.needs-row`
+   (`display:flex`) -- without it a flex item's automatic min-width:auto
+   floor would keep it from ever shrinking enough to truncate at all. */
 .needs-row .nproj{font-family:var(--sans);font-weight:700;font-size:13px;
-  color:var(--ink);text-decoration:none;letter-spacing:-.01em}
+  color:var(--ink);text-decoration:none;letter-spacing:-.01em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;max-width:220px}
 .needs-row .nproj:hover{color:var(--brand-cyan-ink)}
 .needs-row .nconds{display:flex;gap:16px;flex-wrap:wrap;min-width:0;align-items:center}
 .ncond{display:inline-flex;align-items:center;gap:6px}
