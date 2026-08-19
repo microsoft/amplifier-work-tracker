@@ -16,7 +16,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import socket
+import subprocess
 import sys
 import time
 from typing import NoReturn
@@ -938,6 +940,50 @@ def cmd_notify(a):
     print(json.dumps({"flipped": flipped, "count": len(flipped)}, indent=2))
 
 
+DIST_NAME = "amplifier-work-tracker"
+
+
+def cmd_update(a):
+    """Self-update this CLI to the latest version from its install source.
+
+    The tool is distributed as a uv tool installed from git, so the correct
+    update is `uv tool upgrade amplifier-work-tracker` -- which re-resolves the
+    recorded git ref (e.g. `main`) to its newest commit and rebuilds. This
+    subcommand runs exactly that so callers need not remember it. Note a plain
+    `uv tool install --force-reinstall amplifier-work-tracker` does NOT work: the
+    package is not published to any PyPI index, only installed from git.
+
+    Fails loud rather than pretending: if `uv` is not on PATH, or uv reports a
+    non-zero exit (e.g. the tool was installed some other way), it says so and
+    prints the command to run by hand -- it never exits 0 on a silent no-op.
+    """
+    uv = shutil.which("uv")
+    if uv is None:
+        die(
+            "cannot self-update: 'uv' is not on PATH. This CLI is distributed as a "
+            "uv tool; install uv (https://docs.astral.sh/uv/), then run:\n"
+            f"    uv tool upgrade {DIST_NAME}"
+        )
+    cmd = [uv, "tool", "upgrade"]
+    if getattr(a, "reinstall", False):
+        cmd.append("--reinstall")
+    cmd.append(DIST_NAME)
+    print(f"amplifier-work-tracker: {' '.join(cmd)}", file=sys.stderr)
+    try:
+        completed = subprocess.run(cmd, check=False)
+    except OSError as e:  # uv vanished between which() and run(), or exec failed
+        die(f"cannot self-update: failed to run uv: {e}")
+    if completed.returncode != 0:
+        die(
+            f"self-update failed: uv exited {completed.returncode} (see its output "
+            "above). If this CLI was not installed via `uv tool` (e.g. a pip or "
+            "editable dev checkout), update it there instead -- e.g. `git pull` in "
+            "your checkout.",
+            code=completed.returncode,
+        )
+    return 0
+
+
 def _root_parent_parser() -> argparse.ArgumentParser:
     """`--root` as a parent parser, composed into EVERY subcommand below via
     `parents=[...]`.
@@ -1463,6 +1509,17 @@ def main():
     )
     p.add_argument("--project", required=True)
     p.set_defaults(fn=cmd_notify)
+
+    p = sub.add_parser(
+        "update",
+        help="self-update this CLI to the latest version (uv tool upgrade)",
+    )
+    p.add_argument(
+        "--reinstall",
+        action="store_true",
+        help="force a rebuild even if the git ref resolves to the same commit",
+    )
+    p.set_defaults(fn=cmd_update)
 
     p = sub.add_parser(
         "serve",
