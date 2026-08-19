@@ -104,6 +104,16 @@ _BROWSE_CSS = r"""
 .wtb-list .wtb-scroll{padding:6px}
 .wtb-detail .wtb-scroll{padding:22px 26px 40px}
 
+/* -- column headers (goal wtv3/components, C2) -- the blend-3 mockup's
+   left-pane column set: Priority . Status . Item ID . Task title .
+   Relative age. Purely a label row over the SAME implicit grid `a.wtb-row`
+   lays out (gutter . main . age) -- "Pri"/"St" label the gutter's two
+   icons, "Item" the id+title stack, "Age" the trailing age. */
+.wtb-col-headers{display:grid;grid-template-columns:auto minmax(0,1fr) auto;
+  column-gap:11px;padding:0 12px 6px;font-family:var(--sans);font-size:9.5px;
+  font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.wtb-col-headers span:first-child{display:flex;gap:14px}
+
 /* -- list rows -- squircle glass cards (visual-fidelity pass, gap 4): each
    row is its own rounded glass-fill card with real spacing between rows,
    the same "row-list" language the needs-you queue and the design system
@@ -400,6 +410,14 @@ def render_browse_body(
         '<section class="wtb-pane wtb-list" aria-label="Work items">'
         '<div class="wtb-pane-head"><span class="eyebrow">Items</span>'
         f'<span class="wtb-count">{len(items)}</span></div>'
+        # C2 (goal wtv3/components): the blend-3 mockup's exact left-pane
+        # column set -- Priority . Status . Item ID . Task title . Relative
+        # age -- ported from the approved gallery's own `.col-headers`
+        # (design-system.html #list-detail). Purely a labelling row over
+        # the SAME grid `a.wtb-row` already lays out; no new data.
+        '<div class="wtb-col-headers" aria-hidden="true">'
+        "<span>Pri</span><span>St</span><span>Item</span><span>Age</span>"
+        "</div>"
         f'<div class="wtb-scroll" id="browse-list">{list_html}</div>'
         "</section>"
         '<section class="wtb-pane wtb-detail" aria-label="Item detail">'
@@ -470,4 +488,5 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
             crumb_html=crumb,
             js=browse_js(),
             auto_refresh_ms=_AUTO_REFRESH_MS,
+            nav_project=name,
         )

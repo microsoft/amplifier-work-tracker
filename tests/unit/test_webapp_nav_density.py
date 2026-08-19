@@ -205,8 +205,10 @@ def test_sidebar_html_includes_the_narrow_width_checkbox_toggle():
 
 
 def test_search_field_shows_a_slash_shortcut_hint_by_default():
+    """v3 fidelity pass (goal wtv3/components, B10): a real `<kbd>` element,
+    ported from the approved gallery's own `.search-input kbd`."""
     html = T.search_field("Filter queues by name or state")
-    assert '<span class="hint-key"> /</span>' in html
+    assert "<kbd>/</kbd>" in html
 
 
 def test_search_field_aria_label_never_carries_the_shortcut_hint():

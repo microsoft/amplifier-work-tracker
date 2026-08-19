@@ -1165,7 +1165,9 @@ def test_project_view_item_rows_include_priority_bar_and_status_icon(
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
     assert 'class="c gutter"' in r.text
-    assert "pribar" in r.text
+    # v3 fidelity pass (goal wtv3/components, B3/B4): a priority CHIP, not
+    # the prior coloured bar.
+    assert "priority-chip" in r.text
     assert "stico" in r.text
 
 
@@ -1282,10 +1284,12 @@ def test_project_view_search_placeholder_carries_the_slash_shortcut_hint(
 
 
 def test_dashboard_search_hint_carries_the_slash_shortcut(client, shared_project_name):
+    """v3 fidelity pass (goal wtv3/components, B10): a real `<kbd>` element,
+    ported from the approved gallery's own `.search-input kbd`."""
     _login(client)
     r = client.get("/")
     assert r.status_code == 200
-    assert '<span class="hint-key"> /</span>' in r.text
+    assert "<kbd>/</kbd>" in r.text
 
 
 # --------------------------------------------- nav/density: density + keynav js
