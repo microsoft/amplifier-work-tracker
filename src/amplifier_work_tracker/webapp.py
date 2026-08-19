@@ -78,6 +78,7 @@ from . import webauth as WA
 from . import webpwa as PWA
 from . import webtheme as T
 from . import webtls as WT
+from . import widgets as WD
 
 logger = logging.getLogger(__name__)
 
@@ -1651,6 +1652,141 @@ def _throughput_html(
     {resolved_7d} resolved in 7 days &middot; {older_than_7d} older than that</div>
   {f'<div class="tfoot">{coverage}</div>' if coverage else ""}
 </div>"""
+
+
+# ---------------------------------------------------------------------------
+# Dashboard widget registry (see widgets.py + docs/widget-contract.md)
+#
+# The four overview panels below register through the INTERNAL widget contract
+# instead of being hand-called in sequence inside `dashboard()`. Each adapter
+# reads only the reduced figures the route already computed once into a shared
+# `WD.DashboardContext`, and returns the SAME fragment its builder produced
+# inline before -- the registry routes rendering, it never restyles. This is
+# the proof the contract fits the real v2 panels (aggregate-shaped AND
+# summary-ranking-shaped), and the seam a second author or a hosted instance
+# extends by calling `DASHBOARD_WIDGETS.register(...)`.
+# ---------------------------------------------------------------------------
+DASHBOARD_WIDGETS = WD.WidgetRegistry()
+
+DASHBOARD_WIDGETS.register(
+    WD.Widget(
+        id="workspace-composition",
+        title="Workspace by state",
+        size=WD.WidgetSize.FULL,
+        needs=(
+            "ready_total",
+            "held_total",
+            "blocked_total",
+            "deferred_total",
+            "resolved_total",
+            "reconciled_items",
+        ),
+        description="The hard-drive-split composition bar: items by state, resolved share.",
+        render=lambda c: _workspace_composition_html(
+            {
+                "ready": c.ready_total,
+                "held": c.held_total,
+                "blocked": c.blocked_total,
+                "deferred": c.deferred_total,
+                "resolved": c.resolved_total,
+            },
+            c.reconciled_items,
+        ),
+    )
+)
+
+DASHBOARD_WIDGETS.register(
+    WD.Widget(
+        id="ready-queue-by-age",
+        title="Ready queue by age",
+        size=WD.WidgetSize.HALF,
+        needs=("buckets",),
+        description="Age histogram of unclaimed work across the workspace.",
+        render=lambda c: _heartbeat_html(dict(c.buckets)),
+    )
+)
+
+DASHBOARD_WIDGETS.register(
+    WD.Widget(
+        id="throughput",
+        title="Throughput",
+        size=WD.WidgetSize.HALF,
+        needs=(
+            "resolved_24h_total",
+            "prior6d_rate",
+            "delta_pct",
+            "resolved_7d_total",
+            "older_than_7d",
+            "n_measurable_with_resolutions",
+            "n_with_resolutions",
+        ),
+        description="Resolved today vs the prior-6-day rate, with coverage honesty.",
+        render=lambda c: _throughput_html(
+            c.resolved_24h_total,
+            c.prior6d_rate,
+            c.delta_pct,
+            c.resolved_7d_total,
+            c.older_than_7d,
+            c.n_measurable_with_resolutions,
+            c.n_with_resolutions,
+        ),
+    )
+)
+
+DASHBOARD_WIDGETS.register(
+    WD.Widget(
+        id="needs-you",
+        title="Needs you \u2014 ranked",
+        size=WD.WidgetSize.FULL,
+        needs=("ok", "rendered_at"),
+        description="The ranked cross-project attention queue (custody > blocked > aging).",
+        render=lambda c: _needs_you_html(_attention_entries(list(c.ok)), c.rendered_at),
+    )
+)
+
+
+def _dashboard_context(
+    *,
+    summaries: list[A.ProjectSummary],
+    ok: list[A.ProjectSummary],
+    rendered_at: datetime,
+    buckets: dict[str, int],
+    reconciled_items: int,
+    ready_total: int,
+    held_total: int,
+    blocked_total: int,
+    deferred_total: int,
+    resolved_total: int,
+    resolved_24h_total: int,
+    resolved_7d_total: int,
+    prior6d_rate: float,
+    delta_pct: int | None,
+    older_than_7d: int,
+    n_measurable_with_resolutions: int,
+    n_with_resolutions: int,
+) -> WD.DashboardContext:
+    """Freeze the route's already-computed figures into the one read-only bag
+    every registered widget renders from. A thin adapter -- it copies, it does
+    not recompute -- so the widgets see exactly the values the inline calls saw."""
+    return WD.DashboardContext(
+        summaries=tuple(summaries),
+        ok=tuple(ok),
+        rendered_at=rendered_at,
+        buckets=dict(buckets),
+        reconciled_items=reconciled_items,
+        ready_total=ready_total,
+        held_total=held_total,
+        blocked_total=blocked_total,
+        deferred_total=deferred_total,
+        resolved_total=resolved_total,
+        resolved_24h_total=resolved_24h_total,
+        resolved_7d_total=resolved_7d_total,
+        prior6d_rate=prior6d_rate,
+        delta_pct=delta_pct,
+        older_than_7d=older_than_7d,
+        n_measurable_with_resolutions=n_measurable_with_resolutions,
+        n_with_resolutions=n_with_resolutions,
+    )
 
 
 def _dashboard_row(s: A.ProjectSummary) -> str:
@@ -3248,6 +3384,27 @@ def create_app(
         # the throughput/activity figures above so a DEAD/IDLE fleet cannot
         # wear a serene "all clear."
         rendered_at = datetime.now(UTC)
+        # One read-only bag of the figures above, rendered from by every
+        # registered dashboard widget (see the registry block above / widgets.py).
+        ctx = _dashboard_context(
+            summaries=summaries,
+            ok=ok,
+            rendered_at=rendered_at,
+            buckets=buckets,
+            reconciled_items=reconciled_items,
+            ready_total=ready_total,
+            held_total=held_total,
+            blocked_total=blocked_total,
+            deferred_total=deferred_total,
+            resolved_total=resolved_total,
+            resolved_24h_total=resolved_24h_total,
+            resolved_7d_total=resolved_7d_total,
+            prior6d_rate=prior6d_rate,
+            delta_pct=delta_pct,
+            older_than_7d=older_than_7d,
+            n_measurable_with_resolutions=n_measurable_with_resolutions,
+            n_with_resolutions=n_with_resolutions,
+        )
         attention_entries = _attention_entries(ok)
         verdict_level, verdict_word, verdict_detail = _verdict(
             attention_entries,
@@ -3259,7 +3416,7 @@ def create_app(
             now=rendered_at,
         )
         verdict = _verdict_html(verdict_level, verdict_word, verdict_detail, rendered_at)
-        needs_you = _needs_you_html(attention_entries, rendered_at)
+        needs_you = DASHBOARD_WIDGETS.render("needs-you", ctx)
         dispatch = _dispatch_html(ok)
         needs_block = (
             f'<section class="sec tight nsec">{needs_you}{dispatch}</section>'
@@ -3271,26 +3428,9 @@ def create_app(
         secondary = _secondary_readings_html(
             concentration, n7d, pct7d, oldest_days, oldest_href, held_total, blocked_total
         )
-        composition = _workspace_composition_html(
-            {
-                "ready": ready_total,
-                "held": held_total,
-                "blocked": blocked_total,
-                "deferred": deferred_total,
-                "resolved": resolved_total,
-            },
-            reconciled_items,
-        )
-        heartbeat = _heartbeat_html(buckets)
-        throughput = _throughput_html(
-            resolved_24h_total,
-            prior6d_rate,
-            delta_pct,
-            resolved_7d_total,
-            older_than_7d,
-            n_measurable_with_resolutions,
-            n_with_resolutions,
-        )
+        composition = DASHBOARD_WIDGETS.render("workspace-composition", ctx)
+        heartbeat = DASHBOARD_WIDGETS.render("ready-queue-by-age", ctx)
+        throughput = DASHBOARD_WIDGETS.render("throughput", ctx)
 
         rows = "".join(_dashboard_row(s) for s in ordered)
         # `.tbl-scroll` is inert on desktop (a plain full-width block, no visual
