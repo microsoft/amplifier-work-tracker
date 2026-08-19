@@ -1830,7 +1830,12 @@ def _per_project_overview_html(summaries: list[A.ProjectSummary]) -> str:
         total = s.total or 0
         age = _relative_time(s.last_activity) if s.last_activity else "no activity recorded"
         cards.append(
-            f'<a class="projcard" href="/projects/{_esc(s.name)}">'
+            # `data-t` (goal wtv3/finish, task 2): the same client-filter
+            # vocabulary every other filterable list in this app uses
+            # (`search_js` toggles `.hidden` on anything matching this
+            # attribute) -- filterable by project name, this widget's own
+            # sole identifying text.
+            f'<a class="projcard" data-t="{_esc(s.name.lower())}" href="/projects/{_esc(s.name)}">'
             f'<div class="pname">{_esc(s.name)}</div>'
             '<div class="pfigs">'
             f'<span class="pn">{counts["ready"]}</span><span class="pl">ready</span>'
@@ -1840,10 +1845,27 @@ def _per_project_overview_html(summaries: list[A.ProjectSummary]) -> str:
             f'<div class="page">{_esc(age)}</div>'
             "</a>"
         )
+    # Filter bar (goal wtv3/finish, task 2): this grid had NO filter/search
+    # affordance at all -- the queue table further down the page has one
+    # (`T.search_field` + `T.search_js`), so a workspace with many projects
+    # had an inconsistent, glass-less gap here. Reuses the SAME `.controls`/
+    # `.field` glass chrome (never a new token or a bespoke look), with its
+    # own field id (`pq`) and counter id (`ppc`) so it filters independently
+    # of the queue table's own `#q`/`#qc` -- see `search_js`'s `count_id`
+    # param. No `/` kbd hint (`shortcut=None`): the document-level `/`
+    # shortcut binds to whichever search field's `search_js` call runs
+    # first (the queue table's), so printing that hint here would promise a
+    # shortcut this field doesn't answer to.
+    filter_bar = (
+        '<div class="controls">'
+        f"{T.search_field('Filter projects by name', 'pq', shortcut=None)}"
+        f'<span class="count" id="ppc">{_pluralize(len(ordered), "project")}</span>'
+        "</div>"
+    )
     return f"""
 <div class="projoverview">
-  <div class="chead"><span class="eyebrow">Per-project overview</span>
-    <span class="rt">{_pluralize(len(ordered), "project")}</span></div>
+  <div class="chead"><span class="eyebrow">Per-project overview</span></div>
+  {filter_bar}
   <div class="projgrid">{"".join(cards)}</div>
 </div>"""
 
@@ -2104,17 +2126,43 @@ def _units_legend_html() -> str:
 
 
 def _create_project_form() -> str:
+    """The workspace's project-creation flow (goal wtv3/finish, task 3).
+
+    Was previously an always-visible `.formsec` (a bare top-border strip --
+    no glass, no card -- the one genuinely unstyled widget on the
+    dashboard) rendered TWICE (once in the empty-workspace branch, once at
+    the foot of the main body). Now a single, collapsed glass DISCLOSURE:
+    calm by default (a small pill trigger, not a permanent form sitting
+    under a polished dashboard), expanding to a proper glass card that
+    matches the rest of the app's chrome (`.wtb-pane`/`.projcard`'s own
+    `--glass-fill`/`--glass-hairline-soft`/`--glass-shadow-float` tokens --
+    no new tokens defined here).
+
+    The nav's existing "+ New project" action (`_nav_actions_html`) already
+    links to `/#create-project` -- unchanged by this rewrite. `<details>`
+    is a real fragment-navigation TARGET in every evergreen browser (Chrome,
+    Firefox, Safari all auto-open a `<details>` that is the target of the
+    current URL fragment, a standard platform behavior, not a bespoke
+    hack) -- so putting `id="create-project"` on the `<details>` itself
+    keeps that affordance working with no JS of its own. The only OTHER
+    caller (`dashboard`'s empty-workspace branch) now renders this same
+    function instead of its own inline copy, so there is exactly one
+    render site, never two competing `id="create-project"` elements on the
+    same page.
+    """
     return """
-<div class="formsec">
-  <span class="flegend">Create a project</span>
-  <form method="post" action="/projects">
-    <label for="name">Project name</label>
-    <input type="text" id="name" name="name" pattern="[a-z][a-z0-9_]{1,30}" required
-           placeholder="my_project">
-    <p class="field-hint">Lowercase letters, digits, underscores; must start with a letter.</p>
-    <button type="submit">Create</button>
-  </form>
-</div>"""
+<details class="createproj" id="create-project">
+  <summary class="cp-trigger">+ Create a project</summary>
+  <div class="cp-card">
+    <form method="post" action="/projects">
+      <label for="name">Project name</label>
+      <input type="text" id="name" name="name" pattern="[a-z][a-z0-9_]{1,30}" required
+             placeholder="my_project">
+      <p class="field-hint">Lowercase letters, digits, underscores; must start with a letter.</p>
+      <button type="submit">Create</button>
+    </form>
+  </div>
+</details>"""
 
 
 # ---------------------------------------------------------------------------
@@ -3801,7 +3849,7 @@ def create_app(
           {broken_foot}
         </section>
         <div class="hr bleed"></div>
-        <section class="sec" id="create-project">{_create_project_form()}</section>
+        <section class="sec">{_create_project_form()}</section>
         """
         sb_left = ['<span class="s"><span class="dot on"></span>Sweep <b>healthy</b></span>']
         if oldest_days is not None:
@@ -3821,7 +3869,14 @@ def create_app(
             "Dashboard",
             body,
             statusbar_html=sb,
-            js=T.search_js(len(summaries), "QUEUES", "tbody tr[data-t]") + T.list_controls_js(),
+            js=(
+                T.search_js(len(summaries), "QUEUES", "tbody tr[data-t]")
+                # Per-project-overview's own independent filter (goal
+                # wtv3/finish, task 2) -- separate field/counter ids so it
+                # never clobbers the queue table's `#q`/`#qc` above.
+                + T.search_js(len(ok), "PROJECTS", ".projcard", "pq", "ppc")
+                + T.list_controls_js()
+            ),
             auto_refresh_ms=_AUTO_REFRESH_MS,
             sidebar_html=_sidebar_html(names, summaries, None),
         )
