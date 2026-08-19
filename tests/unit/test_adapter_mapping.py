@@ -842,3 +842,52 @@ def test_history_events_skips_entries_with_no_commit_date():
 
 def test_history_events_empty_input_returns_empty():
     assert A._history_events([]) == []
+
+
+# ---------------------------------------------------------- daily resolutions
+
+
+def _resolved(days_ago: float, now: object) -> A.Item:
+    from datetime import timedelta
+
+    return A.Item(
+        id=f"r{days_ago}",
+        status="resolved",
+        closed_at=now - timedelta(days=days_ago),  # type: ignore[operator]
+    )
+
+
+def test_daily_resolved_counts_buckets_by_day_oldest_to_newest():
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+    items = [_resolved(0.1, now), _resolved(0.1, now), _resolved(2.5, now)]
+    counts = A._daily_resolved_counts(items, days=5, now=now)
+    assert counts is not None
+    assert len(counts) == 5
+    assert counts[-1] == 2  # today (bucket 4 -- the last/newest slot)
+    assert counts[-3] == 1  # 2.5 days ago -> the third-from-newest slot
+    assert sum(counts) == 3
+
+
+def test_daily_resolved_counts_none_when_unmeasurable():
+    """Resolved items with no `closed_at` at all -- same honesty gap as
+    `resolved_24h`/`resolved_7d`: cannot be measured, so `None`, never a
+    fabricated all-zero list."""
+    items = [A.Item(id="x", status="resolved", closed_at=None)]
+    assert A._daily_resolved_counts(items) is None
+
+
+def test_daily_resolved_counts_real_zero_when_nothing_resolved():
+    items = [A.Item(id="x", status="open")]
+    counts = A._daily_resolved_counts(items, days=3)
+    assert counts == [0, 0, 0]
+
+
+def test_daily_resolved_counts_out_of_window_is_dropped_not_errored():
+    from datetime import UTC, datetime
+
+    now = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+    items = [_resolved(99, now)]
+    counts = A._daily_resolved_counts(items, days=5, now=now)
+    assert counts == [0, 0, 0, 0, 0]

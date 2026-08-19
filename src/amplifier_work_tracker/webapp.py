@@ -848,7 +848,8 @@ def _ledger_hero_html(ready_total: int | None, n_projects: int, burn_days: float
             if burn_days is not None
             else " &middot; no measured throughput today"
         )
-        under = f"across <b>{n_projects}</b> {_pluralize(n_projects, 'queue')}{rate_clause}"
+        queue_word = _pluralize(n_projects, "queue").split(" ", 1)[1]
+        under = f"across <b>{n_projects}</b> {queue_word}{rate_clause}"
     return f"""
 <div class="lead">
   <span class="eyebrow">Ready to claim</span>
@@ -866,14 +867,23 @@ def _secondary_readings_html(
     oldest_waiting_href: str | None,
     held_total: int,
     blocked_total: int,
+    *,
+    workspace_last_activity: str | None = None,
+    rendered_at: datetime | None = None,
 ) -> str:
-    """The hero's three quiet 27px readings (`.hstats`, pushed right via
+    """The hero's quiet 27px readings (`.hstats`, pushed right via
     `margin-left:auto`, own font scale -- never competing with the hero):
     CONCENTRATION (the single biggest ready queue, so a workspace-wide
     total never hides one queue quietly drowning), WAITING 7D+ (the one
     age reading that survives the hero's demotion, amber only here --
-    never on a good number), and CUSTODY (held/blocked, real for every
-    project, no instrumentation gap).
+    never on a good number), CUSTODY (held/blocked, real for every
+    project, no instrumentation gap), and -- when both `workspace_last_activity`
+    and `rendered_at` are supplied (A5; every pre-existing caller omits
+    them and keeps the original three-tile output byte-for-byte) -- LAST
+    ACTIVITY: a clear "Nh/Nm ago" reading that turns amber once it clears
+    the SAME `_STALL_HOURS` threshold the verdict's own absence-alarm
+    already uses, so this tile and the verdict line can never disagree
+    about what counts as stale.
 
     Every argument is a real, already-honestly-computed value from the
     route -- `None` where a reading genuinely cannot be formed (no ready
@@ -905,6 +915,29 @@ def _secondary_readings_html(
         custody_note = "in progress"
     custody_sub = f"held &middot; {blocked_total} blocked<br>{custody_note}"
 
+    # A5 -- Last activity: only rendered when the route supplies BOTH the
+    # timestamp and the render instant to measure it against (every other
+    # caller omits both and keeps the original three-tile output verbatim).
+    activity_tile = ""
+    if rendered_at is not None:
+        hours = _hours_since(workspace_last_activity, rendered_at)
+        if hours is None:
+            act_cls, act_n, act_sub = "n", "\u2014", "no recorded activity yet"
+        else:
+            stale = hours >= _STALL_HOURS
+            act_cls = "n am" if stale else "n"
+            act_n = _relative_time(workspace_last_activity)
+            act_sub = (
+                f"idle {int(hours)}h &middot; past the {int(_STALL_HOURS)}h stall floor"
+                if stale
+                else "within the normal working window"
+            )
+        activity_tile = (
+            '<div class="s"><span class="k">Last activity</span>'
+            f'<span class="{act_cls}">{act_n}</span>'
+            f'<span class="sub">{act_sub}</span></div>'
+        )
+
     return f"""
 <div class="hstats">
   <div class="s"><span class="k">Concentration</span>
@@ -916,6 +949,7 @@ def _secondary_readings_html(
   <div class="s"><span class="k">Custody</span>
     <span class="n">{held_total}</span>
     <span class="sub">{custody_sub}</span></div>
+  {activity_tile}
 </div>"""
 
 
@@ -1604,6 +1638,41 @@ def _heartbeat_html(buckets: dict[str, int]) -> str:
 </div>"""
 
 
+def _throughput_sparkline_html(daily_counts: list[int]) -> str:
+    """The trailing-N-day resolutions sparkline (A1) -- a chrome cyan trend
+    LINE, never the sole carrier of a reading (the flat today/prior-6d
+    figures below it already say the real numbers; this is the shape
+    supporting them, matching the approved mockup's top-right trend card).
+
+    `var(--brand-cyan)` here is CHROME/brand, not a status hue -- the
+    firewall reserves amber/crimson for alarm/blocked meaning only; a trend
+    line's colour carries no status of its own, same discipline as the
+    activity timeline's cyan \"agent\" dot (actor/decoration, not severity).
+    Returns \"\" for fewer than 2 points -- a single point has no trend to
+    draw, and an empty/`None` list means \"not enough history yet\", not a
+    fabricated flat line at zero."""
+    n = len(daily_counts)
+    if n < 2:
+        return ""
+    width, height = 220, 40
+    max_v = max(daily_counts) or 1
+    step = width / (n - 1)
+    pts = []
+    for i, c in enumerate(daily_counts):
+        x = round(i * step, 1)
+        y = round(height - 3 - (c / max_v) * (height - 6), 1)
+        pts.append(f"{x},{y}")
+    path = " ".join(pts)
+    total = sum(daily_counts)
+    aria = f"Resolutions per day over the last {n} days, totalling {total}."
+    return (
+        f'<div class="spark-wrap"><svg class="spark" viewBox="0 0 {width} {height}" '
+        f'preserveAspectRatio="none" role="img" aria-label="{_esc(aria)}">'
+        f'<polyline points="{path}" fill="none" stroke="var(--brand-cyan)" '
+        'stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg></div>'
+    )
+
+
 def _throughput_html(
     today: int,
     prior_rate: float | None,
@@ -1612,10 +1681,16 @@ def _throughput_html(
     older_than_7d: int,
     n_measurable: int,
     n_with_resolutions: int,
+    daily_counts: list[int] | None = None,
 ) -> str:
     """Resolved today vs the prior-6-day average, with a trend indicator --
-    sits in `.context .ledgercol` beside the (unchanged) ready-queue-by-age
-    heartbeat, reusing that flex split verbatim.
+    the OVERVIEW's top-row companion to the hero (`.herorow`), matching the
+    approved blend-2 mockup's hero-left / trend-right layout.
+
+    `daily_counts` (oldest -> newest, `adapter.DAILY_THROUGHPUT_WINDOW`
+    days) draws the sparkline (A1); `None`/`[]` (the default -- every
+    existing caller that predates the sparkline keeps working unchanged)
+    simply omits it, never a fabricated flat line.
 
     Honesty gap this renders rather than hides: `project_activity` reports
     `None` (not a fabricated 0) for a project that has resolved items but
@@ -1640,9 +1715,11 @@ def _throughput_html(
         if n_with_resolutions > n_measurable
         else ""
     )
+    sparkline = _throughput_sparkline_html(daily_counts) if daily_counts else ""
     return f"""
 <div class="thru">
   <div class="bh"><span class="eyebrow">Throughput</span></div>
+  {sparkline}
   <div class="trow"><span class="tn">{today}</span><span class="tl">today</span>
     <span class="tb" style="width:{today_w}px"></span></div>
   <div class="trow prev"><span class="tn">{round(prior_rate) if prior_rate else 0}</span>
@@ -1657,15 +1734,61 @@ def _throughput_html(
 # ---------------------------------------------------------------------------
 # Dashboard widget registry (see widgets.py + docs/widget-contract.md)
 #
-# The four overview panels below register through the INTERNAL widget contract
-# instead of being hand-called in sequence inside `dashboard()`. Each adapter
-# reads only the reduced figures the route already computed once into a shared
+# The panels below register through the INTERNAL widget contract instead of
+# being hand-called in sequence inside `dashboard()`. Each adapter reads only
+# the reduced figures the route already computed once into a shared
 # `WD.DashboardContext`, and returns the SAME fragment its builder produced
 # inline before -- the registry routes rendering, it never restyles. This is
 # the proof the contract fits the real v2 panels (aggregate-shaped AND
 # summary-ranking-shaped), and the seam a second author or a hosted instance
 # extends by calling `DASHBOARD_WIDGETS.register(...)`.
 # ---------------------------------------------------------------------------
+
+
+def _per_project_overview_html(summaries: list[A.ProjectSummary]) -> str:
+    """A6 -- \"it's not clear how to get an overview of each project\": one
+    compact glass card per READABLE project (name, ready/total, its own
+    state-mix mini bar, relative last-activity, click-through) -- distinct
+    from the ranked needs-you queue (which surfaces only projects that
+    currently need a human) and the detailed queue table further down (a
+    dense, every-column list built for scanning/filtering, not skimming).
+
+    Broken/creating projects are surfaced elsewhere (the sidebar, the queue
+    table's own unmissable alarm row) -- this widget reads `ok` summaries
+    only, the SAME convention `needs-you` already uses, so a caller never
+    has to guess which project-list flavour a given panel expects.
+
+    Sorted ready-descending, ties by name -- the same "what needs the most
+    claiming" ordering the queue table's own sort key uses, so a reader
+    never has to learn a second ranking for the same data. Returns ""
+    when there are no readable projects at all (nothing to overview)."""
+    if not summaries:
+        return ""
+    ordered = sorted(summaries, key=lambda s: (-(s.ready or 0), s.name))
+    cards = []
+    for s in ordered:
+        counts = _state_counts(s)
+        total = s.total or 0
+        age = _relative_time(s.last_activity) if s.last_activity else "no activity recorded"
+        cards.append(
+            f'<a class="projcard" href="/projects/{_esc(s.name)}">'
+            f'<div class="pname">{_esc(s.name)}</div>'
+            '<div class="pfigs">'
+            f'<span class="pn">{counts["ready"]}</span><span class="pl">ready</span>'
+            f'<span class="pn pn-dim">/ {total}</span><span class="pl">total</span>'
+            "</div>"
+            f"{_state_bar_html(counts)}"
+            f'<div class="page">{_esc(age)}</div>'
+            "</a>"
+        )
+    return f"""
+<div class="projoverview">
+  <div class="chead"><span class="eyebrow">Per-project overview</span>
+    <span class="rt">{_pluralize(len(ordered), "project")}</span></div>
+  <div class="projgrid">{"".join(cards)}</div>
+</div>"""
+
+
 DASHBOARD_WIDGETS = WD.WidgetRegistry()
 
 DASHBOARD_WIDGETS.register(
@@ -1710,7 +1833,7 @@ DASHBOARD_WIDGETS.register(
     WD.Widget(
         id="throughput",
         title="Throughput",
-        size=WD.WidgetSize.HALF,
+        size=WD.WidgetSize.FULL,
         needs=(
             "resolved_24h_total",
             "prior6d_rate",
@@ -1719,8 +1842,9 @@ DASHBOARD_WIDGETS.register(
             "older_than_7d",
             "n_measurable_with_resolutions",
             "n_with_resolutions",
+            "resolved_daily_totals",
         ),
-        description="Resolved today vs the prior-6-day rate, with coverage honesty.",
+        description="Resolved today vs the prior-6-day rate, with a trailing sparkline.",
         render=lambda c: _throughput_html(
             c.resolved_24h_total,
             c.prior6d_rate,
@@ -1729,7 +1853,19 @@ DASHBOARD_WIDGETS.register(
             c.older_than_7d,
             c.n_measurable_with_resolutions,
             c.n_with_resolutions,
+            list(c.resolved_daily_totals),
         ),
+    )
+)
+
+DASHBOARD_WIDGETS.register(
+    WD.Widget(
+        id="per-project-overview",
+        title="Per-project overview",
+        size=WD.WidgetSize.FULL,
+        needs=("ok",),
+        description="A6 -- one compact card per readable project (ready/total, state mix, age).",
+        render=lambda c: _per_project_overview_html(list(c.ok)),
     )
 )
 
@@ -1764,6 +1900,8 @@ def _dashboard_context(
     older_than_7d: int,
     n_measurable_with_resolutions: int,
     n_with_resolutions: int,
+    resolved_daily_totals: tuple[int, ...] = (),
+    workspace_last_activity: str | None = None,
 ) -> WD.DashboardContext:
     """Freeze the route's already-computed figures into the one read-only bag
     every registered widget renders from. A thin adapter -- it copies, it does
@@ -1786,6 +1924,8 @@ def _dashboard_context(
         older_than_7d=older_than_7d,
         n_measurable_with_resolutions=n_measurable_with_resolutions,
         n_with_resolutions=n_with_resolutions,
+        resolved_daily_totals=resolved_daily_totals,
+        workspace_last_activity=workspace_last_activity,
     )
 
 
@@ -3377,6 +3517,17 @@ def create_app(
         n_with_resolutions = sum(1 for s in ok if (s.resolved or 0) > 0)
         n_measurable_with_resolutions = sum(1 for s in measurable if (s.resolved or 0) > 0)
 
+        # A1 -- workspace-wide daily resolutions (oldest -> newest), summed
+        # ONLY across the SAME `measurable` set F4 already partitioned out --
+        # a project with resolved items but no `closed_at` contributes to
+        # neither the aggregate throughput figures nor this histogram, one
+        # partition, never two that could quietly disagree.
+        resolved_daily_totals = [0] * A.DAILY_THROUGHPUT_WINDOW
+        for s in measurable:
+            for i, n in enumerate(s.resolved_daily or ()):
+                if i < len(resolved_daily_totals):
+                    resolved_daily_totals[i] += n
+
         burn_days = round(ready_total / resolved_24h_total, 1) if resolved_24h_total > 0 else None
 
         # The needs-you overview -- one render instant (`rendered_at`) anchors
@@ -3404,6 +3555,8 @@ def create_app(
             older_than_7d=older_than_7d,
             n_measurable_with_resolutions=n_measurable_with_resolutions,
             n_with_resolutions=n_with_resolutions,
+            resolved_daily_totals=tuple(resolved_daily_totals),
+            workspace_last_activity=workspace_last_activity,
         )
         attention_entries = _attention_entries(ok)
         verdict_level, verdict_word, verdict_detail = _verdict(
@@ -3418,7 +3571,8 @@ def create_app(
         verdict = _verdict_html(verdict_level, verdict_word, verdict_detail, rendered_at)
         needs_you = DASHBOARD_WIDGETS.render("needs-you", ctx)
         dispatch = _dispatch_html(ok)
-        needs_block = (
+        needs_section = (
+            '<div class="hr bleed"></div>'
             f'<section class="sec tight nsec">{needs_you}{dispatch}</section>'
             if (needs_you or dispatch)
             else ""
@@ -3426,11 +3580,20 @@ def create_app(
 
         hero = _ledger_hero_html(ready_total if readable_count else None, len(names), burn_days)
         secondary = _secondary_readings_html(
-            concentration, n7d, pct7d, oldest_days, oldest_href, held_total, blocked_total
+            concentration,
+            n7d,
+            pct7d,
+            oldest_days,
+            oldest_href,
+            held_total,
+            blocked_total,
+            workspace_last_activity=workspace_last_activity,
+            rendered_at=rendered_at,
         )
         composition = DASHBOARD_WIDGETS.render("workspace-composition", ctx)
         heartbeat = DASHBOARD_WIDGETS.render("ready-queue-by-age", ctx)
         throughput = DASHBOARD_WIDGETS.render("throughput", ctx)
+        per_project = DASHBOARD_WIDGETS.render("per-project-overview", ctx)
 
         rows = "".join(_dashboard_row(s) for s in ordered)
         # `.tbl-scroll` is inert on desktop (a plain full-width block, no visual
@@ -3464,19 +3627,31 @@ def create_app(
                 "could not be read and are excluded from those totals.</span></div>"
             )
 
+        # Layout (A7/C1): nav -> verdict -> HERO ROW (hero+secondary on the
+        # left, throughput's sparkline on the right, matching the approved
+        # blend-2 mockup's top row) -> WIDGET BAND (workspace-by-state,
+        # ready-queue-by-age, per-project overview) -> the ranked needs-you
+        # queue -> the detailed queue table. Verdict/absence-alarm/dispatch
+        # are unchanged content, only repositioned lower (`needs_section`
+        # now follows the widget band instead of leading it).
         body = f"""
         {_flash(request)}
         {impaired_banner}
         {verdict}
-        {needs_block}
         <div class="hr bleed"></div>
-        <section class="sec heroic"><div class="hero">{hero}{secondary}</div></section>
+        <section class="sec heroic">
+          <div class="herorow">
+            <div class="hero">{hero}{secondary}</div>
+            <div class="hero-side">{throughput}</div>
+          </div>
+        </section>
         <div class="hr bleed"></div>
         <section class="sec tight">{composition}</section>
         <div class="hr bleed"></div>
-        <section class="sec tight">
-          <div class="context">{heartbeat}<div class="ledgercol">{throughput}</div></div>
-        </section>
+        <section class="sec tight"><div class="context">{heartbeat}</div></section>
+        <div class="hr bleed"></div>
+        <section class="sec tight">{per_project}</section>
+        {needs_section}
         <div class="hr bleed"></div>
         <section class="sec tight">
           <div class="controls">

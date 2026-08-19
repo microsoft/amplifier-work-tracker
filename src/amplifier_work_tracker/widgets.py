@@ -106,6 +106,20 @@ class DashboardContext:
     n_measurable_with_resolutions: int
     n_with_resolutions: int
 
+    # -- workspace-wide daily resolution counts, oldest -> newest, summed
+    # across every measurable project (see adapter.DAILY_THROUGHPUT_WINDOW) --
+    # the throughput sparkline's real data source. Defaulted to `()` (not a
+    # required field) so existing widget-contract tests that construct a
+    # `DashboardContext` without this field keep working unmodified; the real
+    # route always supplies a populated tuple.
+    resolved_daily_totals: tuple[int, ...] = ()
+
+    # -- the workspace's most recent activity of ANY kind, as an ISO string
+    # (the same value the verdict's own stall check reads) -- lets a widget
+    # surface "last activity Nh ago" without re-deriving it a second way.
+    # Defaulted to `None` for the same backward-compatibility reason as above.
+    workspace_last_activity: str | None = None
+
 
 # Callable that turns the shared context into one panel's HTML fragment.
 WidgetRender = Callable[[DashboardContext], str]
