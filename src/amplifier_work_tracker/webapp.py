@@ -3903,6 +3903,10 @@ def create_app(
             page = max(1, int(request.query_params.get("page", "1")))
         except ValueError:
             page = 1
+        # goal wtv3/project-page: which item the split-pane's right side
+        # shows, exactly like webbrowse.py's own `?item=` (see that module's
+        # docstring for the fresh-read-every-request contract this mirrors).
+        selected_id = request.query_params.get("item") or None
         crumb = _crumb(("/", "All projects"), ("", name))
         try:
             bd = workspace.project(name)
@@ -4002,55 +4006,71 @@ def create_app(
         tab_counts = _status_tab_counts(summary)
         tabs_html = _status_tabs_html(name, status, q, tab_counts)
 
-        rows = "".join(
-            _item_row(name, i, result.offset + n + 1) for n, i in enumerate(result.items)
-        )
         pagination_html = (
             _filtered_pagination(name, status, q, page, total_pages, result)
             if q
             else _pagination_html(name, status, page, total_pages, result)
         )
-        if result.items:
-            # Id widened (64px -> 108px) so a real `<project>-<suffix>` id fits
-            # without truncating in the common case; Holder narrowed (130px ->
-            # 92px) to make room -- it is now a dash for every non-held row
-            # (see `_item_row`), so it never needs to fit more than one short
-            # identity. `.iid`'s own ellipsis+clip (webtheme.py) is what makes
-            # "never collide, at any title length" true even past this width,
-            # not the width itself -- this number only sets the common case.
-            # `.tbl-scroll` is an inert full-width block on desktop (no visual
-            # change), but at phone width its `overflow-x:auto` (see
-            # webtheme.py's <=600px block) gives the fixed-column item table
-            # its OWN horizontal scroll instead of forcing the whole page --
-            # and its full-bleed rules -- wider than the viewport.
-            table = f"""<div class="tbl-scroll"><table class="tbl">
-              <colgroup><col style="width:20px"><col style="width:46px"><col style="width:108px">
-                <col style="width:82px"><col style="width:70px"><col style="width:92px">
-                <col></colgroup>
-              <thead><tr>
-                <th aria-label="Priority and status"></th><th>#</th><th>Id</th><th>State</th>
-                <th>Age</th><th>Holder</th><th>Title</th>
-              </tr></thead>
-              <tbody>{rows}</tbody>
-            </table></div>"""
-        elif q:
-            # A search that matched nothing -- name the search (and any active
-            # status), and offer a real one-click way back to the full list.
-            clear_href = f"/projects/{_esc(name)}" + (f"?status={quote(status)}" if status else "")
-            with_status = f" with status <code>{_esc(status)}</code>" if status else ""
-            table = (
-                '<div class="empty-state"><p>No items match '
-                f"<code>{_esc(q)}</code>{with_status}.</p>"
-                f'<p><a href="{clear_href}">clear search</a></p></div>'
-            )
-        elif status:
-            table = (
-                '<div class="empty-state"><p>No items match status '
-                f"<code>{_esc(status)}</code>.</p>"
-                f'<p><a href="/projects/{_esc(name)}">clear filter</a></p></div>'
-            )
-        else:
-            table = '<div class="empty-state"><p>No items yet. Add the first one below.</p></div>'
+
+        # ------------------------------------------------------ split pane
+        # goal wtv3/project-page: the item list + a read-only detail pane,
+        # reusing webbrowse.py's shared split-pane machinery VERBATIM (the
+        # same squircle row cards, gutter, rim-glow panes, and detail-pane
+        # renderer the already-shipped `/browse` view uses) rather than a
+        # second, drift-prone copy -- see `webbrowse.render_browse_body`'s
+        # own docstring, which documents exactly these generalization hooks.
+        # This route supplies what `/browse` deliberately has none of: the
+        # status-tab `?status=` filter, the free-text `?q=` search, and
+        # pagination (this project's own scale concern; `/browse` shows the
+        # whole project unpaginated, a fine trade for a project small enough
+        # that "everything, unpaginated" is itself the point).
+        def _item_href(item: A.Item) -> str:
+            """Preserve the active status/q/page filter across a row
+            selection -- the SAME `?status=`/`?q=` carry-through
+            `_tab_href`/pagination hrefs already do for their own links."""
+            parts = []
+            if page > 1:
+                parts.append(f"page={page}")
+            if status:
+                parts.append(f"status={quote(status)}")
+            if q:
+                parts.append(f"q={quote(q)}")
+            parts.append(f"item={quote(item.id)}")
+            return f"/projects/{_esc(name)}?{'&'.join(parts)}"
+
+        def _item_held_html(item: A.Item) -> str:
+            """The row's own held/custody reading (goal wtv3/project-page,
+            task 2) -- the SAME "genuinely held right now" gate and
+            `_custody_html`/`_custody_reading` reading the retired table
+            row (`_item_row`) used, so a held item's staleness is visible
+            in the list without selecting it (see
+            `test_full_write_flow_create_add_resolve_remove`'s "holder
+            column shows the real, current holder" contract)."""
+            custody_html = _custody_html(_custody_reading(item))
+            if custody_html:
+                return custody_html
+            if item.holder and item.status == "held":
+                return f"held by {_identity_html(item.holder)}"
+            return ""
+
+        selected_item: A.Item | None = None
+        activity: list[A.ActivityEvent] = []
+        detail_error: str | None = None
+        if selected_id:
+            # Fresh read every request -- same contract webbrowse.py's own
+            # `browse()` route documents: an auto-refresh tick (this page
+            # carries `auto_refresh_ms` below) or a redirect landing here
+            # must never render a stale model.
+            try:
+                selected_item = bd.get(selected_id, with_links=True)
+            except A.BeadsError:
+                selected_item = None
+                detail_error = selected_id
+            if selected_item is not None:
+                try:
+                    activity = bd.activity(selected_item.id)
+                except A.BeadsError:
+                    activity = []
 
         # D2 -- a real server-side search control. It is a GET form so the URL
         # carries the query, a hidden `status` input submits WITH it
@@ -4089,6 +4109,44 @@ def create_app(
             <span class="count" id="qc">{qc_text}</span>
             {T.density_toggle_html()}
           </form>"""
+
+        if result.items:
+            empty_html = None
+        elif q:
+            # A search that matched nothing -- name the search (and any active
+            # status), and offer a real one-click way back to the full list.
+            clear_href = f"/projects/{_esc(name)}" + (f"?status={quote(status)}" if status else "")
+            with_status = f" with status <code>{_esc(status)}</code>" if status else ""
+            empty_html = (
+                '<div class="empty-state"><p>No items match '
+                f"<code>{_esc(q)}</code>{with_status}.</p>"
+                f'<p><a href="{clear_href}">clear search</a></p></div>'
+            )
+        elif status:
+            empty_html = (
+                '<div class="empty-state"><p>No items match status '
+                f"<code>{_esc(status)}</code>.</p>"
+                f'<p><a href="/projects/{_esc(name)}">clear filter</a></p></div>'
+            )
+        else:
+            empty_html = (
+                '<div class="empty-state"><p>No items yet. Add the first one below.</p></div>'
+            )
+
+        split_html = webbrowse.render_browse_body(
+            name,
+            result.items,
+            selected_item,
+            activity,
+            selected_id=selected_id,
+            detail_error=detail_error,
+            list_header_extra=f"{tabs_html}{controls}",
+            list_footer_html=pagination_html,
+            href_builder=_item_href,
+            row_extra_builder=_item_held_html,
+            empty_html=empty_html,
+        )
+
         body = f"""
         {_flash(request)}
         {impaired_banner}
@@ -4096,10 +4154,7 @@ def create_app(
         <section class="sec">{_project_hero_html(name, summary, oldest_item)}</section>
         <div class="hr bleed"></div>
         <section class="sec tight">
-          {tabs_html}
-          {controls}
-          {table}
-          {pagination_html}
+          {split_html}
         </section>
         <div class="hr bleed"></div>
         <section class="sec" id="add-item">
@@ -4146,20 +4201,21 @@ def create_app(
             f'<a href="/projects/{_esc(name)}/browse">Browse</a> '
             f'<a href="/projects/{_esc(name)}">Refresh</a>',
         )
-        # No client-side search_js here: the search is now a server-side GET
-        # (see the `q` handling above), so the count and pagination are the
-        # honest server figures rather than a recount over the current page's
-        # rows. A client-side re-filter would reintroduce exactly the
-        # under-reporting this deliverable removes. `list_controls_js` is
-        # unrelated to that concern -- density + `j`/`k`/`Enter`/`Esc` row
-        # navigation over the ITEM table, never a re-filter.
+        # `browse_js()` -- the SAME progressive-enhancement row-selection +
+        # scroll-preservation script `/browse` itself ships (see its own
+        # docstring): this page reuses the identical `#browse-list`/
+        # `#browse-detail` ids `render_browse_body` renders, so a plain
+        # click still works with JS off, and JS-on selection swaps ONLY
+        # the detail pane. `list_controls_js` -- density + `j`/`k`/`Enter`/
+        # `Esc` row navigation, now generalized (see its own docstring) to
+        # also cover `a.wtb-row[data-t]`, not just the item table.
         return _page(
             request,
             name,
             body,
             crumb_html=crumb,
             statusbar_html=sb,
-            js=T.list_controls_js(),
+            js=webbrowse.browse_js() + T.list_controls_js(),
             sidebar_html=_sidebar_html(sidebar_names, sidebar_summaries, name),
             auto_refresh_ms=_AUTO_REFRESH_MS,
             nav_project=name,
@@ -4336,6 +4392,7 @@ def create_app(
         body = f"""
         {_flash(request)}
         <section class="sec">
+        <div class="itemcard">
           <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
             <span class="muted">{_esc(item.id)}</span>
             {_item_state_html(item.status)}
@@ -4378,6 +4435,7 @@ def create_app(
           {links_html}
           {activity_html}
           {action_html}
+        </div>
         </section>
         """
         return _page(
