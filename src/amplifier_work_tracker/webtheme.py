@@ -307,6 +307,27 @@ body{
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
   padding-bottom:46px;
 }
+/* -- ambient brand glow behind the whole page -- decorative, sits BELOW
+   every real content layer (z-index:0 vs the z-index:1 given to `.wrap`/
+   `.pagegrid` below). This is what makes `backdrop-filter:blur(...)` on
+   the glass panels further down actually read as glass instead of "flat,
+   slightly lighter" -- a blur needs colour/gradient behind it to reveal.
+   Shape/placement start from the approved gallery's own `body::before`
+   (design-system.html); OPACITY is bumped and a third, lower stop is
+   added here because this app's overview is a tall, mostly-monotone
+   stack of dark glass panels (unlike the gallery's own short, colourful
+   swatch-heavy page) -- the gallery's literal values read as glass there
+   but under-deliver on a page this long, verified by rendering both and
+   comparing (see PR description). `position:fixed` means every glow stop
+   is anchored to the VIEWPORT, so scrolling doesn't lose the effect on
+   panels further down the page. */
+body::before{
+  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(circle at 15% -10%,rgba(34,211,238,.20),transparent 45%),
+    radial-gradient(circle at 110% 10%,rgba(168,85,247,.20),transparent 50%),
+    radial-gradient(circle at 30% 85%,rgba(99,102,241,.14),transparent 55%);
+}
 ::selection{background:var(--glass-fill-row-selected);color:var(--ink)}
 a{color:inherit}
 :focus-visible{outline:2px solid var(--brand-cyan);outline-offset:3px}
@@ -362,7 +383,7 @@ a{color:inherit}
 @keyframes dotpulse{0%{transform:scale(1)}40%{transform:scale(1.7)}100%{transform:scale(1)}}
 
 /* -- content ------------------------------------------------------------ */
-.wrap{padding:0 var(--pad);max-width:1440px;margin:0 auto}
+.wrap{padding:0 var(--pad);max-width:1440px;margin:0 auto;position:relative;z-index:1}
 .sec{padding:40px 0}
 .sec.tight{padding:18px 0}
 .hr{border-top:1px solid var(--rule)}
@@ -378,7 +399,7 @@ a{color:inherit}
    content column flex to fill whatever space the sidebar doesn't use.
    Pages with no sidebar keep the plain `<main class="wrap">` untouched. */
 .pagegrid{max-width:1440px;margin:0 auto;padding:0 var(--pad);
-  display:flex;gap:40px;align-items:flex-start}
+  display:flex;gap:40px;align-items:flex-start;position:relative;z-index:1}
 .pagegrid > .wrap{padding:0;max-width:none;margin:0;flex:1 1 auto;min-width:0}
 .sidebar{flex:0 0 200px;width:200px;padding:28px 0 40px}
 .sidebar .sb-toggle-input{position:absolute;left:-9999px}
@@ -1281,6 +1302,151 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
   .tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 }
 
+/* =========================================================================
+   VISUAL FIDELITY PASS -- port the approved gallery's glass MATERIALS,
+   lighting and shapes (design-system.html) onto the already-adopted token
+   palette. Nothing below introduces a new hue or a new status meaning --
+   every rule is chrome (glass fill/blur/rim-glow) or type hierarchy, and
+   layers on top of the component rules above purely by CASCADE ORDER
+   (this block sits later in the same stylesheet), so no existing markup,
+   class name, or test needs to change.
+   ========================================================================= */
+
+/* -- gradient rim-glow: the luminous edge every major glass panel in the
+   gallery has, via mask-composite so it never touches the flat data-ink
+   layer sitting on top (a border-image would paint square corners; this
+   respects `border-radius:inherit`). Chrome only -- no status meaning
+   ever travels on this gradient. */
+.hero,.verdict,.comp,.needs,.dispatch,.context>.beat,.thru{position:relative}
+.hero::before,.verdict::before,.comp::before,.needs::before,.dispatch::before,
+.context>.beat::before,.thru::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:var(--brand-gradient-rim);
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  opacity:.5;pointer-events:none;
+}
+
+/* -- promote the flat "workspace by state" / "needs you" / "throughput" /
+   "ready queue by age" sections to real glass panels -- gap 1 (glass
+   material) closed for every panel the fidelity diagnosis named.
+   `.dispatch` already had a base glass-fill; this only adds the depth
+   (blur/shadow) it was missing and bumps its radius to the same
+   --radius-lg every other major panel uses. `.context>.beat` (a
+   direct-child combinator) scopes this to the OVERVIEW's standalone
+   ready-queue-by-age panel only -- the unrelated `.beat` nested inside a
+   project page's own `.hero` (a different composition, see
+   `_ledger_hero_html`) is untouched, so it never doubles glass-on-glass
+   inside an already-glass hero. */
+/* Fill/blur bumped to the STRONG tier (not the base --glass-fill DESIGN-
+   SYSTEM.md's token map assigns a plain data ROW) after rendering both and
+   comparing: at 6% fill these container panels sat too close to the near-
+   black ground to read as unmistakably glass even with the ambient glow
+   behind them, while the individual rows/cards nested inside (still on
+   plain --glass-fill, e.g. `.needs-row`) provide the lighter inner layer
+   that keeps the "glass on glass" depth cue instead of a flat wash. */
+.comp,.needs,.context>.beat,.thru,.dispatch{
+  background:var(--glass-fill-strong);
+  backdrop-filter:blur(var(--glass-blur-strong));-webkit-backdrop-filter:blur(var(--glass-blur-strong));
+  border:1px solid var(--glass-hairline);
+  border-radius:var(--radius-lg);
+  box-shadow:var(--glass-shadow-float);
+  padding:24px 26px;
+}
+
+/* -- hero (age / ready-count widgets): was already glass-fill; promote to
+   the STRONGER hero-tier fill + float shadow, matching the design
+   system's own token map ("Hero verdict panel: --glass-fill-strong"). */
+.hero{background:var(--glass-fill-strong);box-shadow:var(--glass-shadow-float)}
+
+/* -- the "N NEED YOU / ALL CLEAR" verdict panel: promoted from a flat,
+   glass-less banner (the prior port's deliberate choice) to the DOMINANT
+   glass hero the approved gallery's own hero section shows -- strongest
+   fill, blur, float shadow, rim-glow, bigger verdict text. The reserved
+   hues still carry ALL status meaning (icon + keyword + a left accent
+   bar); only the CONTAINER becomes chrome -- the firewall's "flat
+   data-ink" rule for the text itself is untouched, only where that ink
+   now sits changed. */
+.verdict{
+  padding:28px 32px;border-radius:var(--radius-lg);
+  background:var(--glass-fill-strong);border-color:var(--glass-hairline);
+  backdrop-filter:blur(var(--glass-blur-strong));-webkit-backdrop-filter:blur(var(--glass-blur-strong));
+  box-shadow:var(--glass-shadow-float);
+}
+.verdict .vword{font-size:1.75rem;letter-spacing:.015em}
+.verdict .vicon .stico{width:22px;height:22px}
+/* the reserved hue still marks the accent bar + border -- but per the
+   approved gallery's own hero-is-alarm variant (design-system.html), the
+   PANEL stays the same neutral strong-glass chrome in every state; only
+   the icon + keyword + this accent carry status meaning. Re-asserted here
+   (not just relying on the base `.verdict` rule above) because these two
+   selectors have equal specificity to -- and come later in the cascade
+   than -- the prior port's own `background:var(--alarm-surface)` rule a
+   few lines up, which would otherwise still win for the `background`
+   property alone. */
+.verdict.v-idle,.verdict.v-alarm{
+  background:var(--glass-fill-strong);
+  border-color:var(--alarm);box-shadow:var(--glass-shadow-float),inset 4px 0 0 var(--alarm);
+}
+.verdict.v-blocked{
+  background:var(--glass-fill-strong);
+  border-color:var(--blocked);box-shadow:var(--glass-shadow-float),inset 4px 0 0 var(--blocked);
+}
+
+/* -- squircle glass cards (gap 4): table data rows get the SAME per-row
+   glass-fill + rounded-corner treatment the needs-you rows already had.
+   Scoped to `tr:not(.grp)` so a group-header row (`.tbl tbody tr.grp`, a
+   sub-heading, not a data row) keeps its plain divider look, never a
+   floating card of its own. `border-collapse:separate` + a real
+   `border-spacing` is what makes a gap BETWEEN rows possible at all --
+   `border-collapse:collapse` (the prior rule) cannot have inter-row gaps.
+   `margin-top` cancels the first row's leading half-gap so the table's
+   top edge still aligns with the header rule above it. */
+table.tbl{border-collapse:separate;border-spacing:0 6px;margin-top:-6px}
+.tbl tbody tr:not(.grp){background:var(--glass-fill)}
+.tbl tbody tr:not(.grp):hover{background:var(--glass-fill-row-hover)}
+.tbl tbody tr:not(.grp) td{border-bottom:0}
+.tbl tbody tr:not(.grp) td:first-child{
+  border-top-left-radius:var(--radius-md);border-bottom-left-radius:var(--radius-md);
+}
+.tbl tbody tr:not(.grp) td:first-child .c{padding-left:12px}
+.tbl tbody tr:not(.grp) td:last-child{
+  border-top-right-radius:var(--radius-md);border-bottom-right-radius:var(--radius-md);
+}
+.tbl tbody tr:not(.grp) td:last-child .c{padding-right:12px}
+/* the old per-td hover fill is superseded by the per-row fill above --
+   neutralized (not deleted) so a future row this selector doesn't reach
+   can't silently lose hover feedback. */
+.tbl tbody tr:hover td{background:transparent}
+
+.needs-row{padding:14px 16px}
+
+/* -- item-detail lists (blocker chain, activity feed): the same squircle-
+   card treatment; a plain `<li>` list, so no table constraints apply. */
+.blocker-list,.activity-list{display:flex;flex-direction:column;gap:8px}
+.blocker-list li,.activity-list li{
+  border-bottom:0;background:var(--glass-fill);border-radius:var(--radius-md);
+  padding:10px 14px;
+}
+
+/* -- chrome text accents (gap 5): section labels/eyebrows read as the
+   brand-cyan-ink token (never the raw --brand-cyan/gradient -- that
+   failed contrast and is exactly what the design-council caught in the
+   design-system round). `.eyebrow.am`'s existing higher-specificity
+   override (reserved amber, e.g. "Blocked by") wins over this unchanged. */
+.eyebrow{color:var(--brand-cyan-ink);font-weight:700}
+
+/* -- type hierarchy (gap 6): the wordmark anchors the page, ahead of
+   every other chrome label; the gradient logotype (see `top_bar`'s
+   markup) carries the WCAG SC 1.4.3 logotype exemption -- brand text
+   recognized by shape, not read letter-by-letter -- the one place a raw
+   brand gradient is allowed on reading copy. */
+.top .brand{font-size:21px;font-weight:800}
+.top .brand .accent{
+  background:var(--brand-gradient-rim);-webkit-background-clip:text;
+  background-clip:text;color:transparent;
+}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{
     animation-duration:.001ms !important;animation-iteration-count:1 !important;
@@ -1404,7 +1570,13 @@ def top_bar(*, crumb_html: str = "", right_html: str = "") -> str:
     right = f'<span class="identity">{right_html}</span>' if right_html else ""
     return (
         '<header class="top">'
-        '<a class="brand" href="/"><span class="bm"></span>amplifier-work-tracker</a>'
+        # "amplifier-" stays flat ink; "work-tracker" is the gradient LOGOTYPE
+        # (background-clip:text) -- WCAG SC 1.4.3 exempts logotypes/brand
+        # names from the text-contrast requirement (recognized by shape, not
+        # read letter-by-letter), the one place a raw brand gradient is
+        # allowed on reading copy. See webtheme.py's CSS `.top .brand .accent`.
+        '<a class="brand" href="/"><span class="bm"></span>'
+        'amplifier-<span class="accent">work-tracker</span></a>'
         f'{crumb}<span class="sp"></span>{right}'
         "</header>"
     )

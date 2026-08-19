@@ -75,10 +75,25 @@ from amplifier_work_tracker.webapp import (
 _BROWSE_CSS = r"""
 .wtb-grid{display:flex;gap:26px;align-items:stretch;margin-top:8px;
   height:calc(100vh - 176px);min-height:440px}
-/* Glass lives on the pane CHROME only -- the data inside each pane stays flat. */
+/* Glass lives on the pane CHROME only -- the data inside each pane stays flat.
+   `backdrop-filter` + the rim-glow pseudo (below) port the same gallery
+   materials/lighting the overview panels use (visual-fidelity pass); the
+   pane's OWN background/border/radius/shadow are unchanged. */
 .wtb-pane{background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
-  border-radius:var(--radius-lg);box-shadow:var(--glass-shadow);
-  display:flex;flex-direction:column;min-height:0}
+  border-radius:var(--radius-lg);box-shadow:var(--glass-shadow-float);
+  backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));
+  display:flex;flex-direction:column;min-height:0;position:relative}
+/* gradient rim-glow -- chrome only, carries no status meaning; see
+   webtheme.py's own `.hero::before` etc for the identical mask-composite
+   technique (kept local here per this module's own no-shared-token-file
+   convention rather than importing a mixin). */
+.wtb-pane::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:var(--brand-gradient-rim);
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  opacity:.5;pointer-events:none;
+}
 .wtb-list{flex:0 0 clamp(300px,32%,440px)}
 .wtb-detail{flex:1 1 auto;min-width:0}
 .wtb-pane-head{flex:0 0 auto;display:flex;align-items:baseline;justify-content:space-between;
@@ -89,10 +104,14 @@ _BROWSE_CSS = r"""
 .wtb-list .wtb-scroll{padding:6px}
 .wtb-detail .wtb-scroll{padding:22px 26px 40px}
 
-/* -- list rows -- */
-.wtb-rows{display:flex;flex-direction:column;gap:1px}
+/* -- list rows -- squircle glass cards (visual-fidelity pass, gap 4): each
+   row is its own rounded glass-fill card with real spacing between rows,
+   the same "row-list" language the needs-you queue and the design system
+   gallery both use, rather than a flush 1px-gap flat list. */
+.wtb-rows{display:flex;flex-direction:column;gap:6px}
 a.wtb-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;column-gap:11px;
-  align-items:center;padding:9px 12px;border-radius:var(--radius-sm);position:relative;
+  align-items:center;padding:9px 12px;border-radius:var(--radius-md);position:relative;
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
   text-decoration:none;color:var(--mid);min-height:var(--u)}
 a.wtb-row:hover{background:var(--glass-fill-row-hover);color:var(--ink)}
 /* cyan wash = SELECTION (interaction), never a status color -- the same token
