@@ -303,7 +303,7 @@ def _abs_and_rel(ts: str | None) -> str:
     return f'<span title="{_esc(ts)}">{_esc(_relative_time(ts))}</span>'
 
 
-def _item_age_html(dt: datetime | None) -> str:
+def _item_age_html(dt: datetime | None, *, alarm_eligible: bool = False) -> str:
     """Render `dt` (an already-parsed `Item` timestamp) with the SAME
     compact age vocabulary the item table's own Age column uses
     (`T.age_short`/`T.age_band_class`) -- one age format across the whole
@@ -317,11 +317,28 @@ def _item_age_html(dt: datetime | None) -> str:
     dashboard convention of a fresh item reading as immediate, not "0m")
     -- the one case `age_short` itself renders as `(\"0\", \"m\")`, reinterpreted
     here rather than changed in the shared helper, which every row in the
-    item table also calls and must keep reading "0m" nowhere else."""
+    item table also calls and must keep reading "0m" nowhere else.
+
+    `age_band_class`'s top "a3" tier is the amber "this has been
+    neglected" alarm -- legitimate ONLY for a genuinely ready/unclaimed
+    item's own age (the browse row's Age column, gated by the caller;
+    see webbrowse.py's `_row_html`, and the ready-queue-by-age widget),
+    never for HISTORY (item-detail's Created/Updated/Resolved, the
+    browse detail pane's own copy of the same, the activity timeline's
+    per-event age). `alarm_eligible` defaults to False -- every history
+    call site simply omits it -- and caps the band at "a2" (`--ink`, the
+    same neutral tier a merely-old-but-not-yet-alarming reading already
+    uses): a 9-day-old "Created" stamp on a calm, long-finished item is
+    a fact, not an alarm, and must never render amber, per the
+    firewall's "amber = alarm only" rule. Pass `alarm_eligible=True` only
+    from a call site rendering a genuinely ready/unclaimed item's OWN
+    age, where escalating to amber is the intended neglect signal."""
     if dt is None:
         return f'<span class="muted">{_EMPTY_GLYPH}</span>'
     seconds = max(0.0, (datetime.now(UTC) - dt).total_seconds())
     band = T.age_band_class(seconds)
+    if band == "a3" and not alarm_eligible:
+        band = "a2"  # history never escalates to the amber alarm tier
     value, unit = T.age_short(seconds)
     label = "now" if (value, unit) == ("0", "m") else f"{value}{unit}"
     return f'<span class="age {band}" title="{_esc(dt.isoformat())}">{_esc(label)}</span>'
@@ -4384,9 +4401,23 @@ def create_app(
         # here, deliberately distinct from the plain, borderless
         # `_fact_value_html`/`.kv` text beside it (Kind, Priority, Status,
         # Holder, timestamps -- all lifecycle/read-only, never in this form).
+        #
+        # v3 firewall polish (task 3): a single-line `<input>` clips a long
+        # title on the right with no way to see the rest -- an `<input>`
+        # never wraps, it only scrolls its own box sideways. A `<textarea>`
+        # posts under the SAME `name="title"` field the `/update` route
+        # already reads (Form(...) does not care whether the tag was
+        # `<input>` or `<textarea>`), so the Save form's contract is
+        # unchanged; only the tag -- and therefore the wrapping behaviour --
+        # changes. `resize:vertical` lets a reader manually reveal more of
+        # a title long enough to still clip at 2 rows, without breaking the
+        # form; `white-space:pre-wrap`+`overflow-wrap:anywhere` guarantee
+        # the full value is always reachable (wrap first, break mid-word
+        # only if a single unbroken run is itself wider than the field).
         title_input_style = (
             "font-family:var(--sans);font-size:20px;font-weight:500;"
-            "letter-spacing:-.008em;color:var(--ink);max-width:900px;min-height:52px"
+            "letter-spacing:-.008em;color:var(--ink);max-width:900px;min-height:52px;"
+            "resize:vertical;white-space:pre-wrap;overflow-wrap:anywhere"
         )
         textarea_style = "max-width:80ch;min-height:7rem"
         body = f"""
@@ -4401,8 +4432,8 @@ def create_app(
           <form method="post" action="/projects/{_esc(name)}/items/{_esc(item.id)}/update"
                 style="margin-top:18px">
             <label for="title">Title</label>
-            <input type="text" id="title" name="title" required
-                   value="{_esc(item.title)}" style="{title_input_style}">
+            <textarea id="title" name="title" required rows="3"
+                      style="{title_input_style}">{_esc(item.title)}</textarea>
 
             <div class="kv" style="margin-top:18px">{facts_kv}</div>
             <div class="kv" style="margin-top:10px">{time_kv}</div>

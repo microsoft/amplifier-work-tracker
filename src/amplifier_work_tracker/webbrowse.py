@@ -352,7 +352,13 @@ def _row_html(
     key = f"{item.id} {item.title} {item.status} {item.holder or ''}".lower()
     gutter = _priority_bar_html(item.priority) + _status_icon_html(item.status)
     title = _esc(item.title) or "&mdash;"
-    age = _item_age_html(item.created_at)
+    # v3 firewall polish: this IS the item-table Age column (the old,
+    # now-dead `_item_row`/.tbl component's replacement) -- amber-as-
+    # neglect is legitimate here ONLY for a genuinely ready/unclaimed
+    # item (matches `_item_row`'s own historical `if i.status == "open"
+    # else "a0"` gate); a held/blocked/deferred/resolved row's age is a
+    # calm fact, never an alarm.
+    age = _item_age_html(item.created_at, alarm_eligible=(item.status == "open"))
     row_href = href if href is not None else f"/projects/{_esc(name)}/browse?item={quote(item.id)}"
     sel_cls = " selected" if selected else ""
     aria = ' aria-current="true"' if selected else ""

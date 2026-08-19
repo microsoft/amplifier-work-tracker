@@ -1457,6 +1457,19 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
   /* project-hero composition tallies + throughput -> tighter so nothing clips */
   .tallies .tally{padding-right:20px;margin-right:20px}
   .grp{padding-right:16px;margin-right:16px;min-width:120px}
+  /* project hero (v3 firewall polish): `.lead`'s desktop `flex:0 0 auto`
+     sizes it to its content's un-shrunk width -- fine when `.beat` (the
+     composition/throughput column) has room to grow on the right, but at
+     this width it pushed the page ~12px past the viewport whenever the
+     oldest-item title (`a.what`, already `overflow-wrap:anywhere`) was
+     long: that rule only ever wraps text once its box has a REAL width to
+     wrap against, and flex-shrink:0 never gave it one. Forcing `.lead`
+     onto its own full-width row -- the same flex-basis:100% one-column-
+     per-row convention `.controls .field` already uses just above -- gives
+     the title link a concrete width, so it wraps instead of overflowing.
+     Desktop (>600px) is untouched: `.lead` still sizes to its content
+     there, and all the extra row width still goes to `.beat` alone. */
+  .hero .lead{flex:1 1 100%;max-width:100%}
   /* item table -> scroll horizontally within the page, not a body-wide overflow */
   .tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 }
