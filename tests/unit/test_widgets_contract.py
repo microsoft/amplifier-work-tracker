@@ -218,11 +218,12 @@ def test_render_enforce_raises_on_violation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_dashboard_registry_has_the_four_v2_panels() -> None:
+def test_dashboard_registry_has_the_five_v2_panels() -> None:
     assert set(W.DASHBOARD_WIDGETS.ids()) == {
         "workspace-composition",
         "ready-queue-by-age",
         "throughput",
+        "per-project-overview",
         "needs-you",
     }
 

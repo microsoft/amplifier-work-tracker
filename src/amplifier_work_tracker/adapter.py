@@ -1218,6 +1218,7 @@ def project_activity(items: list[Item]) -> dict:
           - `resolved_24h` / `resolved_7d` (int): count of items whose
             `status == "resolved"` and `closed_at` falls within the last
             24 hours / 7 days of now.
+          - `resolved_daily` (list[int] | None): see `_daily_resolved_counts`.
           - `last_activity` (str | None): the most recent `updated_at`
             across every item, as an ISO 8601 string, or `None` if no
             item has a readable `updated_at`.
@@ -1262,8 +1263,53 @@ def project_activity(items: list[Item]) -> dict:
         "oldest_unclaimed_age_seconds": max(ready_ages) if ready_ages else None,
         "resolved_24h": resolved_24h,
         "resolved_7d": resolved_7d,
+        "resolved_daily": _daily_resolved_counts(items, now=now),
         "last_activity": max(activity_times).isoformat() if activity_times else None,
     }
+
+
+#: How many trailing days the throughput sparkline (`_daily_resolved_counts`)
+#: covers -- long enough to show a real trend line, short enough that a
+#: quiet project's sparkline is still mostly-empty rather than a wall of zeros.
+DAILY_THROUGHPUT_WINDOW = 14
+
+
+def _daily_resolved_counts(
+    items: list[Item], *, days: int = DAILY_THROUGHPUT_WINDOW, now: datetime | None = None
+) -> list[int] | None:
+    """Resolutions per calendar day for the trailing `days` days, oldest to
+    newest -- the per-day breakdown `resolved_24h`/`resolved_7d` (aggregate
+    windows only) cannot supply, and the throughput sparkline's real data
+    source. Never a fabricated shape: this is a real histogram of the SAME
+    `closed_at` timestamps `resolved_24h`/`resolved_7d` already read, just
+    bucketed by day instead of summed into one window.
+
+    Same honesty gap as `resolved_24h`/`resolved_7d`: a project that has
+    resolved items but records NO `closed_at` on any of them cannot be
+    measured at all, so this returns `None` (never a fabricated all-zero
+    list) in that case -- a caller summing this across projects must
+    exclude such a project the same way it already excludes it from
+    `resolved_24h`/`resolved_7d`. A project with no resolutions in the
+    window, or none at all, is a real all-zero list (a genuine reading,
+    not a gap).
+    """
+    now = now or datetime.now(UTC)
+    resolved_closed_ats = [
+        i.closed_at for i in items if i.status == "resolved" and i.closed_at is not None
+    ]
+    any_resolved = any(i.status == "resolved" for i in items)
+    if any_resolved and not resolved_closed_ats:
+        return None
+    counts = [0] * days
+    for t in resolved_closed_ats:
+        age_days = (now - t).total_seconds() / 86400.0
+        # bucket 0 == oldest day in the window, bucket `days-1` == today;
+        # a negative age (small clock skew) still lands in "today", never
+        # dropped, matching `_ready_age_bucket_label`'s own skew guard.
+        idx = days - 1 if age_days < 0 else days - 1 - int(age_days)
+        if 0 <= idx < days:
+            counts[idx] += 1
+    return counts
 
 
 class Beads:
@@ -2650,6 +2696,7 @@ class ProjectSummary:
     ready_age_buckets: dict[str, int] | None = None
     blocked_stale: int | None = None
     held_stale_oldest_age_seconds: float | None = None
+    resolved_daily: list[int] | None = None
 
 
 def _ready_age_bucket_label(days: float) -> str:
@@ -2819,6 +2866,7 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
         oldest_unclaimed_age_seconds=activity["oldest_unclaimed_age_seconds"],
         resolved_24h=activity["resolved_24h"],
         resolved_7d=activity["resolved_7d"],
+        resolved_daily=activity["resolved_daily"],
         ready_age_buckets=_ready_age_buckets(items),
         blocked_stale=_blocked_stale_count(blocked_items),
         held_stale_oldest_age_seconds=_held_stale_oldest_age_seconds(held_items),

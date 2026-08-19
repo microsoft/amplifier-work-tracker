@@ -572,6 +572,17 @@ body.density-compact td.link-cell > a{min-height:36px;padding:6px 16px 6px 0}
 .hero.solo{display:block}
 .sec.heroic{padding:36px 0 40px}
 .hero.solo .figrow{margin:20px 0 0}
+
+/* -- A7/C1 hero row: hero (ready count + secondary readings) on the left,
+   throughput's trend on the right -- the approved blend-2 mockup's top-row
+   composition. `.hero` keeps its own flex:2 share of the row; `.hero-side`
+   is the narrower trend companion. Both wrap to a single column below
+   860px (same breakpoint the sidebar already reflows at), so a phone
+   viewport never has to scroll sideways to read either panel. */
+.herorow{display:flex;align-items:stretch;gap:28px;flex-wrap:wrap}
+.herorow .hero{flex:2 1 480px;margin:0}
+.herorow .hero-side{flex:1 1 260px;display:flex;min-width:0}
+.herorow .hero-side .thru{flex:1 1 auto}
 .attrib{display:inline-flex;align-items:center;flex-wrap:wrap;gap:0 10px;
   min-height:var(--u);margin-top:14px;text-decoration:none;
   font-family:var(--sans);font-size:12px;font-weight:600;letter-spacing:.1em;
@@ -745,12 +756,51 @@ a.what:hover{color:var(--brand-cyan-ink)}
 .comp .legend .n{font-family:var(--serif);font-size:17px;font-weight:500;
   color:var(--ink)}
 .comp .legend .n.z{color:var(--dim)}
+/* A6 -- per-project overview: one compact card per readable project (name,
+   ready/total, its own state-mix mini bar, relative last-activity). The
+   grid is `auto-fill` so it reflows from many columns (wide desktop) down
+   to one (phone) with no breakpoint of its own needed. */
+.projoverview .chead{display:flex;align-items:baseline;gap:16px;margin-bottom:13px;
+  flex-wrap:wrap}
+.projoverview .chead .rt{margin-left:auto;font-family:var(--sans);font-size:11px;
+  color:var(--quiet);letter-spacing:.02em}
+.projgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));
+  gap:14px}
+.projcard{display:block;padding:14px 16px;border-radius:var(--radius-md);
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  text-decoration:none;color:inherit;min-width:0}
+.projcard:hover{background:var(--glass-fill-row-hover)}
+.projcard .pname{font-family:var(--sans);font-weight:700;font-size:13px;
+  color:var(--ink);letter-spacing:-.01em;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.projcard .pfigs{display:flex;align-items:baseline;gap:6px;margin:8px 0}
+.projcard .pfigs .pn{font-family:var(--serif);font-size:17px;font-weight:500;
+  color:var(--ink)}
+.projcard .pfigs .pn.pn-dim{font-size:13px;color:var(--dim)}
+.projcard .pfigs .pl{font-family:var(--sans);font-size:9.5px;font-weight:500;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--mid);margin-right:6px}
+.projcard .sbar{height:6px;margin-top:2px}
+.projcard .page{font-family:var(--sans);font-size:10.5px;color:var(--quiet);
+  margin-top:9px}
+
 .comp .legend .l{font-family:var(--sans);font-size:10px;font-weight:500;
   letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
 
-/* throughput -- sits in `.context .ledgercol` beside the (unchanged)
-   ready-queue-by-age heartbeat, reusing that flex split verbatim. */
+/* throughput -- the overview's hero-row companion (`.herorow .hero-side`,
+   see below): hero (ready count) on the left, throughput's trend on the
+   right, matching the approved blend-2 mockup's top-row composition.
+   Height comes from `.herorow`'s `align-items:stretch` + `.hero-side`'s
+   own `display:flex` (the default stretched cross-axis, no explicit
+   `height:100%` needed) -- an explicit height here clipped the panel's
+   own content at 430px, where `.herorow` wraps to a single column and
+   `.hero-side` no longer shares a row with `.hero` to stretch against. */
 .thru .bh{display:flex;align-items:baseline;gap:12px;margin-bottom:14px}
+/* A1 sparkline -- a chrome cyan trend LINE, never the sole carrier of a
+   reading (the flat today/prior-6d rows below it already state the real
+   numbers). `overflow:visible` keeps the 2px stroke from clipping at the
+   viewBox edge on a thin line. */
+.spark-wrap{margin-bottom:14px}
+.spark{width:100%;height:40px;display:block;overflow:visible}
 .trow{display:flex;align-items:center;gap:12px;margin-bottom:9px}
 .trow .tn{font-family:var(--serif);font-size:22px;font-weight:500;
   color:var(--ink);width:38px;flex:0 0 38px;text-align:right;line-height:1}
@@ -1317,9 +1367,9 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
    layer sitting on top (a border-image would paint square corners; this
    respects `border-radius:inherit`). Chrome only -- no status meaning
    ever travels on this gradient. */
-.hero,.verdict,.comp,.needs,.dispatch,.context>.beat,.thru{position:relative}
+.hero,.verdict,.comp,.needs,.dispatch,.context>.beat,.thru,.projoverview{position:relative}
 .hero::before,.verdict::before,.comp::before,.needs::before,.dispatch::before,
-.context>.beat::before,.thru::before{
+.context>.beat::before,.thru::before,.projoverview::before{
   content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
   background:var(--brand-gradient-rim);
   -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
@@ -1345,7 +1395,7 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
    behind them, while the individual rows/cards nested inside (still on
    plain --glass-fill, e.g. `.needs-row`) provide the lighter inner layer
    that keeps the "glass on glass" depth cue instead of a flat wash. */
-.comp,.needs,.context>.beat,.thru,.dispatch{
+.comp,.needs,.context>.beat,.thru,.dispatch,.projoverview{
   background:var(--glass-fill-strong);
   backdrop-filter:blur(var(--glass-blur-strong));-webkit-backdrop-filter:blur(var(--glass-blur-strong));
   border:1px solid var(--glass-hairline);
