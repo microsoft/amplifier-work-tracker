@@ -846,34 +846,103 @@ a.what:hover{color:var(--brand-cyan-ink)}
   font-family:var(--sans);font-size:13.5px;color:var(--dim);
   pointer-events:none;white-space:nowrap;letter-spacing:.01em}
 .field.typed .hint{display:none}
+/* the `/` shortcut hint (goal wtv3/components, B10): a real `<kbd>` element
+   -- ported from the approved gallery's own `.search-input kbd` (design-
+   system.html #nav) -- not a bare span, so the affordance reads as an
+   actual keyboard key. */
+.field .hint kbd{font-family:var(--mono);font-size:11px;padding:1px 6px;
+  border-radius:5px;background:var(--glass-fill-strong);border:1px solid var(--glass-hairline);
+  color:var(--ink-tertiary);margin-left:6px}
+
+/* -- NAV ICON-BUTTONS + "+ New" pill (goal wtv3/components, B1) -- ported
+   from the approved gallery's own `.icon-btn`/`.btn-primary` (design-
+   system.html #nav): a compact square glass button for search/notifications,
+   and the primary gradient pill for the create-new action, sitting in the
+   top bar's right-hand chrome alongside identity/live. */
+.nav-actions{display:flex;align-items:center;gap:8px;margin-left:8px}
+/* `.icon-btn` is applied to a real `<button>` (search) AND an `<a>` (bell) --
+   the bare `button{...}` rule further down this file (min-height:var(--u)
+   ~44px, padding:0 20px, margin-top:.7rem, border-radius:pill,
+   background:var(--brand-gradient-solid), uppercase) targets EVERY
+   `<button>` on the page and, for any property `.icon-btn` does not
+   itself redeclare, wins by default (no competing rule sets it) even
+   though `.nav-actions .icon-btn` is the more specific selector overall --
+   CSS specificity is resolved per PROPERTY, not per rule. Every one of
+   those properties is neutralized explicitly below so a plain `<button
+   class="icon-btn">` renders as the SAME compact 32x32 glass square as
+   the `<a class="icon-btn">` bell, not a squashed/oversized pill. */
+.nav-actions .icon-btn{width:32px;height:32px;min-height:0;padding:0;margin-top:0;
+  border-radius:var(--radius-sm);display:inline-flex;align-items:center;
+  justify-content:center;background:var(--glass-fill);
+  border:1px solid var(--glass-hairline-soft);color:var(--ink-tertiary);
+  font-weight:400;text-transform:none;letter-spacing:normal;
+  cursor:pointer;text-decoration:none;flex:0 0 auto}
+.nav-actions .icon-btn svg{width:16px;height:16px}
+.nav-actions .icon-btn:hover{color:var(--ink);background:var(--glass-fill-row-hover)}
+.nav-actions a.btn-new{margin-top:0;padding:0 16px;height:32px;font-size:11.5px}
+@media (max-width:720px){.nav-actions .icon-btn{display:none}}
 .count{font-family:var(--sans);font-size:11px;font-weight:600;
   letter-spacing:.14em;text-transform:uppercase;color:var(--dim);
   white-space:nowrap;margin-left:auto}
 .count b{color:var(--mid);font-weight:600}
 .count.hit b{color:var(--brand-cyan-ink)}
 
-/* -- STATUS TABS: per-project filter row with live counts ---------------
-   Server-linked (`?status=...`), so a click is a plain navigation the
-   existing route already handles -- no client-side filtering here. A
-   zero count stays visible, dimmed (`.tcount.z`), the same "lamp present,
-   switched off" convention `.comp .legend .n.z` already uses -- see
-   webapp.py's `_status_tabs_html`. Held/Blocked reuse --amber/--crimson
-   verbatim when non-zero (the SAME hues `.st-held`/`.st-blkd` use for
-   these two statuses elsewhere); every other tab stays neutral no
-   matter its count -- a healthy ready backlog is not an alarm. */
-.tabs{display:flex;flex-wrap:wrap;gap:2px;margin:0 0 14px;
-  border-bottom:1px solid var(--rule)}
-.tabs .tab{display:flex;align-items:baseline;gap:8px;padding:0 0 10px;
-  margin-right:24px;font-family:var(--sans);font-size:12.5px;font-weight:600;
-  letter-spacing:.03em;color:var(--mid);text-decoration:none;
-  border-bottom:2px solid transparent}
+/* -- STATUS TABS: per-project filter row with live counts (goal wtv3/
+   components, B5/B6) -- restyled as the approved gallery's own glass PILL
+   TRACK (design-system.html #badges-tabs: `.status-tabs`/`.status-tab`),
+   replacing the prior underline-tab look; markup/hrefs are UNCHANGED
+   (still server-linked `?status=...`, a click is a plain navigation the
+   existing route already handles -- no client-side filtering here).
+   Each count is now a real COUNT BADGE (`.tcount` -> pill, mono, tabular
+   -- the gallery's `.count-badge`), not bare text: `.z` (zero) dims to
+   `--ink-tertiary` (gallery's ".is-zero"); `.am`/`.cr` (non-zero
+   Held/Blocked) use the gallery's `.is-alarm`/`.is-blocked` surface+
+   border+ink trio, not just a coloured number -- see webapp.py's
+   `_status_tabs_html`. The "Blocked" tab additionally pairs a crimson
+   DOT with its word (gallery's `.tab-blocked .dot`) so blocked is never
+   identified by the badge's colour alone. Every other tab stays neutral
+   no matter its count -- a healthy ready backlog is not an alarm. */
+.tabs{display:flex;flex-wrap:wrap;gap:var(--space-1,.25rem);margin:0 0 14px;
+  padding:4px;border-radius:var(--radius-pill);width:fit-content;
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft)}
+.tabs .tab{display:flex;align-items:center;gap:8px;padding:8px 16px;
+  border-radius:var(--radius-pill);font-family:var(--sans);font-size:12.5px;
+  font-weight:600;letter-spacing:.03em;color:var(--ink-tertiary);
+  text-decoration:none;border-bottom:0}
 .tabs .tab:hover{color:var(--brand-cyan-ink)}
-.tabs .tab.active{color:var(--ink);border-bottom-color:var(--ink)}
-.tabs .tcount{font-family:var(--serif);font-size:14px;font-weight:500;
-  color:var(--mid);font-variant-numeric:tabular-nums}
-.tabs .tcount.z{color:var(--st-empty)}
-.tabs .tcount.am{color:var(--amber)}
-.tabs .tcount.cr{color:var(--crimson)}
+.tabs .tab.active{background:var(--glass-fill-strong);color:var(--ink);
+  box-shadow:inset 0 0 0 1px var(--glass-hairline)}
+.tabs .tab .tab-dot{width:6px;height:6px;border-radius:999px;background:var(--crimson);
+  flex:0 0 6px}
+.tabs .tcount{display:inline-flex;align-items:center;justify-content:center;
+  min-width:22px;height:18px;padding:0 7px;border-radius:var(--radius-pill);
+  font-family:var(--mono);font-size:11px;font-weight:600;
+  background:var(--glass-fill-strong);color:var(--ink-primary);
+  border:1px solid var(--glass-hairline);font-variant-numeric:tabular-nums}
+.tabs .tcount.z{color:var(--ink-tertiary);background:var(--glass-fill);
+  border-color:var(--glass-hairline-soft)}
+.tabs .tcount.am{color:var(--alarm-ink-on-surface);background:var(--alarm-surface);
+  border-color:var(--alarm)}
+.tabs .tcount.cr{color:var(--blocked-ink-on-surface);background:var(--blocked-surface);
+  border-color:var(--blocked)}
+
+/* -- COUNT BADGE (goal wtv3/components, B5) -- the gallery's `.count-badge`
+   as a standalone, reusable class (design-system.html #badges-tabs): mono
+   tabular figure in a glass pill, `.is-zero` dims, `.is-alarm`/`.is-blocked`
+   reuse the SAME reserved-hue surface/border/ink trio the tab counts and
+   the blocker banner (below) use -- one visual vocabulary for "a count in
+   a pill", never a bespoke one per component. */
+.count-badge{display:inline-flex;align-items:center;justify-content:center;
+  min-width:26px;height:22px;padding:0 8px;border-radius:var(--radius-pill);
+  font-family:var(--mono);font-size:12px;font-weight:600;
+  background:var(--glass-fill-strong);color:var(--ink-primary);
+  border:1px solid var(--glass-hairline);font-variant-numeric:tabular-nums}
+.count-badge.is-zero{color:var(--ink-tertiary);background:var(--glass-fill);
+  border-color:var(--glass-hairline-soft)}
+.count-badge.is-alarm{color:var(--alarm-ink-on-surface);background:var(--alarm-surface);
+  border-color:var(--alarm)}
+.count-badge.is-blocked{color:var(--blocked-ink-on-surface);background:var(--blocked-surface);
+  border-color:var(--blocked)}
 
 /* -- TABLE --------------------------------------------------------------- */
 table.tbl{width:100%;border-collapse:collapse;table-layout:fixed}
@@ -1021,19 +1090,29 @@ tr.hidden{display:none}
 .st-blkd{color:var(--crimson);font-weight:700}
 .st-deferred{color:var(--quiet)}
 
-/* -- row gutter: priority bar + status icon, ~20px, no wide new column --
-   Priority (bd's 0=critical..4=backlog) is encoded as BRIGHTNESS on the
-   app's existing neutral text ramp (--ink..--dim, plus --rule-hi for the
-   faintest/unknown case) rather than a new hue: --amber and --crimson are
-   each already reserved for exactly one job elsewhere in this app (age/
-   attention, and blocked/escalation -- see the SIGNAL COLOURS comment
-   above), and a static severity tag is neither. This keeps the bar subtle
-   by construction -- it can never out-shout the amber age accent or a
-   real crimson blocked/escalation marker, because it never uses either
-   hue. See webapp.py's `_priority_bar_html` for the exact ramp. */
+/* -- row gutter: priority CHIP + status icon (goal wtv3/components, B3/B4) --
+   Priority (bd's 0=critical..4=backlog) renders as a `P{n}` glass mono
+   CHIP -- ported from the approved gallery's own `.priority-chip` (design-
+   system.html #rows) -- not a coloured bar: priority is encoded as
+   BRIGHTNESS/weight on the app's existing neutral text ramp (--ink..--dim)
+   rather than a new hue, exactly as the gallery's own comment states
+   ("severity is ramped with weight/opacity (chrome), never a reserved
+   hue -- amber stays alarm-only"). See webapp.py's `_priority_bar_html`
+   for the exact P0..P4 ramp -- this app's real bd range (0-4) is one wider
+   than the gallery's own P0-P2 demo, so P3/P4 extend the SAME ramp rather
+   than inventing a fourth visual language. */
 .tbl .c.gutter{padding:10px 5px 10px 0;gap:6px}
-.pribar{display:inline-block;width:3px;height:20px;border-radius:1px;flex:0 0 3px}
-.stico{display:inline-flex;width:13px;height:13px;flex:0 0 13px;align-items:center}
+.priority-chip{display:inline-flex;align-items:center;justify-content:center;
+  width:24px;height:18px;border-radius:6px;font-family:var(--mono);font-size:9px;
+  font-weight:700;letter-spacing:.02em;background:var(--glass-fill);
+  color:var(--ink-quiet);border:1px solid var(--glass-hairline-soft);flex:0 0 auto}
+.priority-chip.p0{color:var(--ink-primary);background:var(--glass-fill-strong);
+  border-color:var(--glass-hairline);font-weight:800}
+.priority-chip.p1{color:var(--ink-secondary)}
+.priority-chip.p2{color:var(--ink-tertiary)}
+.priority-chip.p3,.priority-chip.p4{color:var(--ink-quiet);opacity:.85}
+[data-density="compact"] .priority-chip,body.density-compact .priority-chip{width:20px;height:16px}
+.stico{display:inline-flex;width:15px;height:15px;flex:0 0 15px;align-items:center}
 .stico svg{width:100%;height:100%}
 
 /* -- link-cell (stretched-link): whole cell clickable, not just text ---- */
@@ -1471,13 +1550,60 @@ table.tbl{border-collapse:separate;border-spacing:0 6px;margin-top:-6px}
 
 .needs-row{padding:14px 16px}
 
-/* -- item-detail lists (blocker chain, activity feed): the same squircle-
-   card treatment; a plain `<li>` list, so no table constraints apply. */
-.blocker-list,.activity-list{display:flex;flex-direction:column;gap:8px}
-.blocker-list li,.activity-list li{
-  border-bottom:0;background:var(--glass-fill);border-radius:var(--radius-md);
-  padding:10px 14px;
-}
+/* -- BLOCKER BANNER (goal wtv3/components, B7) -- ported from the approved
+   gallery's own `.blocker-banner` (design-system.html #list-detail):
+   crimson surface+border+ink while the dependency is a still-open `blocks`
+   link (`.unresolved`), a NEUTRAL glass card with a check-circle icon once
+   it resolves (`.resolved` -- "no colour on the resolved state", the exact
+   stakeholder call DESIGN-SYSTEM.md sec 2a records: "crimson unresolved ->
+   neutral resolved check"). `.blocker-item.unsatisfied`/`.satisfied` are
+   carried on the SAME element (see webapp.py's `_blocked_by_list_html`) --
+   pre-existing selectors this repo's own tests assert on directly; kept
+   so the visual upgrade never disturbs that contract. */
+.blocker-banner{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;
+  border-radius:var(--radius-md);margin-bottom:8px}
+.blocker-banner.unresolved{background:var(--blocked-surface);border:1px solid var(--blocked);
+  color:var(--blocked-ink-on-surface)}
+.blocker-banner.resolved{background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  color:var(--ink-secondary)}
+.blocker-banner .icon{margin-top:2px;flex:0 0 auto;width:18px;height:18px}
+.blocker-banner .icon svg{width:100%;height:100%}
+.blocker-banner .btitle{font-weight:600;font-size:13.5px;color:inherit}
+.blocker-banner .blink{font-family:var(--sans);font-size:12.5px;margin-top:2px;opacity:.92}
+.blocker-banner .blink .check{color:var(--dim);font-weight:700;margin-right:2px}
+
+/* -- ACTIVITY TIMELINE (goal wtv3/components, B8) -- ported from the
+   approved gallery's own `.timeline`/`.tl-item`/`.tl-dot` (design-
+   system.html #list-detail). A vertical connecting line joins each dot;
+   dot RING colour marks the event's classification (see webapp.py's
+   `_activity_actor_class`): "blocked" = the reserved `--blocked` crimson
+   (same hue everywhere blocked appears); "resolved" = the calm/neutral
+   `--calm-ink` (never a hue, per DESIGN-SYSTEM.md sec 2a); "neutral" =
+   `--ink-secondary` (created/claimed/other status changes/comments --
+   see that function's own docstring for why the gallery's cyan="agent"/
+   purple="AI insight" actor split is deliberately DEFERRED here, not
+   faked). */
+.timeline{display:flex;flex-direction:column}
+.tl-item{display:grid;grid-template-columns:22px 1fr;gap:12px;padding-bottom:18px;
+  position:relative}
+.tl-item:last-child{padding-bottom:0}
+.tl-item::before{content:"";position:absolute;left:10px;top:22px;bottom:0;width:1px;
+  background:var(--glass-hairline)}
+.tl-item:last-child::before{display:none}
+.tl-dot{width:22px;height:22px;border-radius:999px;display:flex;align-items:center;
+  justify-content:center;background:var(--glass-fill-strong);border:1px solid var(--glass-hairline);
+  z-index:1;flex:0 0 22px}
+.tl-dot .icon{width:0.75em;height:0.75em}
+.tl-item.actor-neutral .tl-dot{color:var(--ink-secondary)}
+.tl-item.actor-resolved .tl-dot{color:var(--calm-ink)}
+.tl-item.actor-blocked .tl-dot{color:var(--blocked);border-color:var(--blocked)}
+.tl-body{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;min-width:0}
+.tl-body .tl-title{font-family:var(--sans);font-size:13.5px;font-weight:600;color:var(--ink);
+  flex-basis:100%}
+.tl-body .tl-time{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--dim)}
+.tl-body .muted{font-size:12px}
+.tl-body .adetail{flex-basis:100%;color:var(--mid);font-size:13px;white-space:pre-wrap;
+  word-break:break-word;margin-top:2px}
 
 /* -- chrome text accents (gap 5): section labels/eyebrows read as the
    brand-cyan-ink token (never the raw --brand-cyan/gradient -- that
@@ -1507,6 +1633,18 @@ table.tbl{border-collapse:separate;border-spacing:0 6px;margin-top:-6px}
 
 # ---------------------------------------------------------------------------
 # icons -- inline SVG, no external refs (hygiene: fonts inline, no network)
+#
+# The B12 set (goal wtv3/components): the exact shape-vocabulary ported
+# VERBATIM (same `<path>`/`<circle>` data, same 24x24 viewBox) from the
+# approved gallery's icon sprite
+# (.amplifier/design-gauntlet/wt-v3/design-system/design-system.html,
+# `#i-*` symbols) so a status/actor glyph in this app is pixel-identical in
+# SHAPE to its gallery counterpart -- only `currentColor` (driven by this
+# app's own `st-*`/`actor-*` classes) differs. `_svg24` is a second
+# constructor (distinct viewBox/stroke-width from the original `_svg`,
+# which several older 16x16 glyphs below still use) rather than a parameter
+# added to `_svg` itself, so neither the old nor the new glyphs need their
+# own call sites touched to keep rendering at their original size.
 # ---------------------------------------------------------------------------
 
 
@@ -1517,21 +1655,86 @@ def _svg(paths: str) -> str:
     )
 
 
+def _svg24(paths: str, *, filled: bool = False) -> str:
+    """The gallery's own icon-sprite geometry: `viewBox=\"0 0 24 24\"`,
+    round joins/caps, stroke-width 1.8 -- see design-system.html's inline
+    `<style>` (`.icon svg{...stroke-width:1.8;stroke-linecap:round;
+    stroke-linejoin:round}`). `filled=True` matches that same stylesheet's
+    `.icon.filled svg{fill:currentColor;stroke:none}` variant, used for the
+    sprite's own solid dot glyphs (`more`)."""
+    if filled:
+        return (
+            '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" '
+            'aria-hidden="true">' + paths + "</svg>"
+        )
+    return (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + "</svg>"
+    )
+
+
 ICONS = {
     "mag": _svg('<circle cx="7.1" cy="7.1" r="4.6"/><path d="M10.6 10.6l3.1 3.1"/>'),
     "filter": _svg('<path d="M1.8 3h12.4L9.5 8.5v4.3l-3 1.4V8.5z"/>'),
+    # ---- B12 icon set -- ported verbatim (same path data + viewBox) from
+    # the approved gallery's `#i-*` sprite symbols. ----
+    "check-circle": _svg24('<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5 5-5.5"/>'),
+    "alert-triangle": _svg24(
+        '<path d="M12 3.5 21 19H3z"/><path d="M12 9.5v4.5"/>'
+        '<circle cx="12" cy="16.7" r="0.6" fill="currentColor" stroke="none"/>'
+    ),
+    "octagon-x": _svg24(
+        '<path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M9.5 9.5l5 5M14.5 9.5l-5 5"/>'
+    ),
+    "clock": _svg24('<circle cx="12" cy="12" r="9"/><path d="M12 7v5.5l4 2"/>'),
+    "search": _svg24('<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>'),
+    "link": _svg24(
+        '<path d="M9 15l6-6"/><path d="M14 5l1.5-1.5a3.5 3.5 0 0 1 5 5L19 10"/>'
+        '<path d="M10 19l-1.5 1.5a3.5 3.5 0 0 1-5-5L5 14"/>'
+    ),
+    "more": _svg24(
+        '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/>'
+        '<circle cx="19" cy="12" r="1.4"/>',
+        filled=True,
+    ),
+    "plus-file": _svg24('<path d="M7 3h7l4 4v14H7z"/><path d="M12 10v6M9 13h6"/>'),
+    "bot": _svg24(
+        '<rect x="5" y="8" width="14" height="10" rx="3"/><path d="M12 4v4"/>'
+        '<circle cx="9" cy="13" r="1" fill="currentColor" stroke="none"/>'
+        '<circle cx="15" cy="13" r="1" fill="currentColor" stroke="none"/>'
+    ),
+    "chat": _svg24('<path d="M4 6h16v10H9l-4 4V6z"/>'),
+    "slash": _svg24('<path d="M16 4L8 20"/>'),
+    "flag": _svg24('<path d="M5 21V4h13l-3 4 3 4H5"/>'),
+    "density": _svg24('<path d="M4 6h16M4 12h16M4 18h16"/>'),
+    "chevron": _svg24('<path d="M9 5l7 7-7 7"/>'),
+    # Not in the gallery's own `#i-*` sprite (design-system.html has no
+    # bell symbol) -- the nav's "bell icon-btn" (goal wtv3/components, B1)
+    # is a genuinely new glyph, drawn in the SAME 24x24 round-stroke
+    # vocabulary as the rest of this set so it never looks like a
+    # mismatched import.
+    "bell": _svg24(
+        '<path d="M6 8a6 6 0 0 1 12 0c0 5 2 6 2 7H4c0-1 2-2 2-7"/><path d="M10 19a2 2 0 0 0 4 0"/>'
+    ),
     # Per-status row glyphs (see webapp.py's `_status_icon_html`) -- each
-    # status is a distinct SHAPE, not just a colour, matching the same
-    # "never on hue alone" discipline `.state.warnv`/`.state.bad`'s own
-    # marker-shape difference already uses. Coloured via `currentColor`,
-    # set by the SAME `st-*` classes the row's text badge uses
-    # (`_item_state_html`), so an icon and its row's status text can
-    # never disagree in colour.
-    "ready": _svg('<circle cx="8" cy="8" r="5.4"/>'),
-    "held": _svg('<circle cx="8" cy="8" r="4" fill="currentColor" stroke="none"/>'),
-    "blocked": _svg('<path d="M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/>'),
-    "deferred": _svg('<path d="M5.3 3.2v9.6M10.7 3.2v9.6"/>'),
-    "resolved": _svg('<path d="M3.4 8.6l3.2 3.2L12.6 4.6"/>'),
+    # status is a distinct SHAPE (the B12 shapes above), not just a colour,
+    # matching the same "never on hue alone" discipline `.state.warnv`/
+    # `.state.bad`'s own marker-shape difference already uses. Coloured via
+    # `currentColor`, set by the SAME `st-*` classes the row's text badge
+    # uses (`_item_state_html`), so an icon and its row's status text can
+    # never disagree in colour. `_STATUS_ICON_KEY` (webapp.py) maps each
+    # real bd status onto one of these 5 keys.
+    "ready": _svg24(  # -> check-circle
+        '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5 5-5.5"/>'
+    ),
+    "held": _svg24('<circle cx="12" cy="12" r="9"/><path d="M12 7v5.5l4 2"/>'),  # -> clock
+    "blocked": _svg24(
+        '<path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/><path d="M9.5 9.5l5 5M14.5 9.5l-5 5"/>'
+    ),  # -> octagon-x
+    "deferred": _svg24('<path d="M16 4L8 20"/>'),  # -> slash
+    "resolved": _svg24(  # -> check-circle (same shape as ready; distinguished
+        '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.5 2.5 5-5.5"/>'
+    ),  # by the row's own dim `.st-done` weight/colour, never a second colour
 }
 
 
@@ -1609,14 +1812,23 @@ _PWA_HEAD_HTML = (
 )
 
 
-def top_bar(*, crumb_html: str = "", right_html: str = "") -> str:
+def top_bar(*, crumb_html: str = "", right_html: str = "", actions_html: str = "") -> str:
     """The persistent top bar: brand (home link) + breadcrumb trail + a
-    right-aligned slot for live/identity/logout chrome. No `<h1>` here --
-    unlike the reference's fixed 5-section app, this app's real page
-    titles are already the first heading each route's own body renders
-    (`Dashboard` / a project name / an item id), so repeating it in the
-    chrome would be redundant, not load-bearing."""
+    right-aligned slot for live/identity/logout chrome, plus (goal wtv3/
+    components, B1) an optional `actions_html` slot -- the gallery's own
+    search/bell icon-buttons + "+ New" gradient pill (design-system.html
+    #nav) -- rendered in `.nav-actions` immediately before that identity
+    chrome. Built by webapp.py (this module owns HOW things look, not
+    WHAT routes/hrefs exist -- see this file's own module docstring), so
+    `actions_html` defaults to "" and every caller that has nothing
+    page-specific to offer there (login, setup, ...) renders the bar
+    exactly as before. No `<h1>` here -- unlike the reference's fixed
+    5-section app, this app's real page titles are already the first
+    heading each route's own body renders (`Dashboard` / a project name /
+    an item id), so repeating it in the chrome would be redundant, not
+    load-bearing."""
     crumb = f'<span class="crumb">{crumb_html}</span>' if crumb_html else ""
+    actions = f'<span class="nav-actions">{actions_html}</span>' if actions_html else ""
     right = f'<span class="identity">{right_html}</span>' if right_html else ""
     return (
         '<header class="top">'
@@ -1627,7 +1839,7 @@ def top_bar(*, crumb_html: str = "", right_html: str = "") -> str:
         # allowed on reading copy. See webtheme.py's CSS `.top .brand .accent`.
         '<a class="brand" href="/"><span class="bm"></span>'
         'amplifier-<span class="accent">work-tracker</span></a>'
-        f'{crumb}<span class="sp"></span>{right}'
+        f'{crumb}<span class="sp"></span>{actions}{right}'
         "</header>"
     )
 
@@ -1650,7 +1862,11 @@ def search_field(hint: str, field_id: str = "q", *, shortcut: str = "/") -> str:
     """
     hint_html = _esc(hint)
     if shortcut:
-        hint_html += f'<span class="hint-key"> {_esc(shortcut)}</span>'
+        # v3 fidelity pass (goal wtv3/components, B10): a real `<kbd>`
+        # element -- ported from the approved gallery's own
+        # `.search-input kbd` (design-system.html #nav) -- not a bare span,
+        # so the shortcut affordance reads as an actual keyboard key.
+        hint_html += f" <kbd>{_esc(shortcut)}</kbd>"
     return (
         '<div class="field" id="field">'
         f'<span class="mag">{ICONS["mag"]}</span>'

@@ -217,31 +217,37 @@ def test_item_age_html_applies_the_same_staleness_band_as_the_row_column():
 
 
 @pytest.mark.parametrize(
-    "priority,color",
+    "priority,chip_class",
     [
-        (0, "var(--ink)"),
-        (1, "var(--mid)"),
-        (2, "var(--quiet)"),
-        (3, "var(--dim)"),
-        (4, "var(--rule-hi)"),
+        (0, "p0"),
+        (1, "p1"),
+        (2, "p2"),
+        (3, "p3"),
+        (4, "p4"),
     ],
 )
-def test_priority_bar_html_maps_each_bd_priority_to_its_ramp_step(priority, color):
+def test_priority_bar_html_maps_each_bd_priority_to_its_ramp_step(priority, chip_class):
+    """v3 fidelity pass (goal wtv3/components, B3/B4): a `P{n}` glass mono
+    CHIP -- ported from the approved gallery's own `.priority-chip` -- not
+    a coloured bar. Severity still rides the neutral text ramp (each
+    `.priority-chip.p{n}` class, defined in webtheme.py's CSS, dims by
+    weight/opacity, never a reserved status hue)."""
     html = W._priority_bar_html(priority)  # noqa: SLF001
-    assert f"background:{color}" in html
+    assert f'class="priority-chip {chip_class}"' in html
+    assert f">P{priority}<" in html
 
 
 def test_priority_bar_html_none_degrades_honestly_to_the_faint_neutral():
-    """No real priority to show -- render the same faint neutral as P4,
-    never a guessed rank, and say so via the title."""
+    """No real priority to show -- render the honest `P?` chip, never a
+    guessed rank, and say so via the title."""
     html = W._priority_bar_html(None)  # noqa: SLF001
-    assert "background:var(--rule-hi)" in html
+    assert 'class="priority-chip punk"' in html
     assert 'title="priority unknown"' in html
 
 
 def test_priority_bar_html_out_of_range_value_also_degrades_honestly():
     html = W._priority_bar_html(99)  # noqa: SLF001
-    assert "background:var(--rule-hi)" in html
+    assert 'class="priority-chip punk"' in html
     assert 'title="priority unknown"' in html
 
 
@@ -283,14 +289,17 @@ def test_item_row_includes_a_priority_bar_and_status_icon_gutter_cell():
     item = _item("proj-abcd", priority=0, status="held")
     row = W._item_row("proj", item, 1)  # noqa: SLF001
     assert 'class="c gutter"' in row
-    assert "pribar" in row
-    assert "background:var(--ink)" in row  # P0
+    # v3 fidelity pass (goal wtv3/components, B3/B4): a `P{n}` glass mono
+    # CHIP, ported from the approved gallery's `.priority-chip` -- not a
+    # coloured bar. Severity still rides the neutral text ramp, never a
+    # reserved status hue (`p0` is the boldest/brightest chip variant).
+    assert 'class="priority-chip p0"' in row
     assert "st-held" in row
 
 
 def test_item_row_gutter_degrades_honestly_when_priority_is_missing():
     item = _item("proj-abcd", priority=None, status="open")
     row = W._item_row("proj", item, 1)  # noqa: SLF001
-    assert "background:var(--rule-hi)" in row
+    assert 'class="priority-chip punk"' in row
     assert 'title="priority unknown"' in row
     assert "st-open" in row

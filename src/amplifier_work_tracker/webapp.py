@@ -549,6 +549,48 @@ def _crumb(*parts: tuple[str, str]) -> str:
     return " / ".join(out)
 
 
+def _nav_actions_html(project: str | None) -> str:
+    """The nav's right-hand action cluster (goal wtv3/components, B1): a
+    search icon-button, a notifications ("bell") icon-button, and a
+    "+ New" gradient-pill primary action -- see `T.top_bar`'s own
+    `actions_html` slot and webtheme.py's `.nav-actions`/`.icon-btn` CSS.
+
+    Search: a real, functional affordance, not decoration -- it focuses
+    the on-page `#q` field (the SAME element `search_js`/`list_controls_js`
+    already bind the `/` keyboard shortcut to on pages that have one; a
+    harmless no-op via `?.focus()` on a page that doesn't).
+
+    Bell: links to `/setup`, this app's one real notifications-adjacent
+    settings surface (TLS/trust bootstrap plus, per PR #36, the ntfy
+    alarm-push channel) -- never a fabricated notification centre this
+    app doesn't have.
+
+    "+ New": context-aware, never a button pointed at a form that isn't
+    on the page it's rendered on. `project` given -> "+ New item",
+    scrolling/linking to THAT project's own `#add-item` anchor
+    (`project_view`'s real `POST /projects/{name}/items` form). `project
+    is None` (the dashboard, or any project-less page) -> "+ New
+    project", linking to the dashboard's own `#create-project` anchor.
+    """
+    search_btn = (
+        '<button type="button" class="icon-btn" title="Search (press /)" '
+        'aria-label="Search" onclick="var q=document.getElementById(\'q\');'
+        'if(q){q.focus();}">' + T.ICONS["search"] + "</button>"
+    )
+    bell_btn = (
+        '<a class="icon-btn" href="/setup" title="Notifications setup" '
+        'aria-label="Notifications setup">' + T.ICONS["bell"] + "</a>"
+    )
+    if project:
+        new_href = f"/projects/{quote(project)}#add-item"
+        new_label = "New item"
+    else:
+        new_href = "/#create-project"
+        new_label = "New project"
+    new_btn = f'<a class="btn btn-new" href="{new_href}">+ {new_label}</a>'
+    return search_btn + bell_btn + new_btn
+
+
 def _page(
     request: Request,
     title: str,
@@ -559,6 +601,7 @@ def _page(
     js: str = "",
     auto_refresh_ms: int | None = None,
     sidebar_html: str = "",
+    nav_project: str | None = None,
 ) -> HTMLResponse:
     """The one page shell every route renders through.
 
@@ -584,8 +627,18 @@ def _page(
     it always had -- omitting the parameter (its default, `""`) is itself
     the "no sidebar" case, the same convention `auto_refresh_ms` already
     uses above.
+
+    `nav_project`, when given, is the current project's name -- used to
+    build the nav's "+ New item" action (see `_nav_actions_html`) pointing
+    at THAT project's own add-item form. Omitted (its default, `None`) on
+    project-less pages (the dashboard, login, setup, ...), where the nav
+    instead offers "+ New project" against the dashboard's own create form.
     """
-    top = T.top_bar(crumb_html=crumb_html, right_html=_identity_right(request))
+    top = T.top_bar(
+        crumb_html=crumb_html,
+        right_html=_identity_right(request),
+        actions_html=_nav_actions_html(nav_project),
+    )
     main = f'<main class="wrap" id="main">{body}</main>'
     if sidebar_html:
         main = f'<div class="pagegrid">{sidebar_html}{main}</div>'
@@ -1537,8 +1590,14 @@ def _status_tabs_html(name: str, status: str | None, q: str, counts: dict[str, i
         cls = "tcount" if n else "tcount z"
         if n and key in _TAB_ALARM_CLASS:
             cls += f" {_TAB_ALARM_CLASS[key]}"
+        # B6 (goal wtv3/components): the "Blocked" tab pairs a crimson DOT
+        # with the word -- ported from the approved gallery's own
+        # `.tab-blocked .dot` (design-system.html #badges-tabs) -- so
+        # blocked is never identified by the count badge's colour alone.
+        dot = '<span class="tab-dot" aria-hidden="true"></span>' if key == "blocked" else ""
         tabs.append(
-            f'<a class="tab{active}" href="{href}">{_esc(label)}<span class="{cls}">{n}</span></a>'
+            f'<a class="tab{active}" href="{href}">{dot}{_esc(label)}'
+            f'<span class="{cls}">{n}</span></a>'
         )
     return f'<nav class="tabs" aria-label="Filter items by status">{"".join(tabs)}</nav>'
 
@@ -2172,20 +2231,18 @@ def _item_lifecycle_seconds(i: A.Item) -> float | None:
 
 
 # bd's priority scale (`bd priority --help`): 0=Critical .. 4=Backlog,
-# default 2=Medium. Encoded here as BRIGHTNESS on this app's existing
-# neutral text ramp rather than a new hue -- --amber and --crimson are
-# each already reserved for exactly one job elsewhere (age/attention,
-# and blocked/escalation; see webtheme.py's SIGNAL COLOURS comment), and
-# a static severity tag is neither of those. This keeps the bar subtle by
-# construction: it can never compete with the amber age accent or a real
-# crimson blocked marker, because it never borrows either hue.
-_PRIORITY_BAR_COLOR = {
-    0: "var(--ink)",
-    1: "var(--mid)",
-    2: "var(--quiet)",
-    3: "var(--dim)",
-    4: "var(--rule-hi)",
-}
+# default 2=Medium. Rendered as a `P{n}` glass mono CHIP (goal wtv3/
+# components, B3/B4) -- ported from the approved gallery's own
+# `.priority-chip` (design-system.html #rows) -- not a coloured bar:
+# severity is encoded as BRIGHTNESS/weight on this app's existing neutral
+# text ramp (`_PRIORITY_CHIP_CLASS`) rather than a new hue -- --amber and
+# --crimson are each already reserved for exactly one job elsewhere
+# (age/attention, and blocked/escalation; see webtheme.py's SIGNAL
+# COLOURS comment), and a static severity tag is neither of those. This
+# app's real bd range (0-4) is one wider than the gallery's own P0-P2
+# demo; P3/P4 extend the SAME dimming ramp (see webtheme.py's
+# `.priority-chip.p3,.p4`) rather than inventing a fourth visual language.
+_PRIORITY_CHIP_CLASS = {0: "p0", 1: "p1", 2: "p2", 3: "p3", 4: "p4"}
 _PRIORITY_LABEL = {
     0: "P0 \u2013 critical",
     1: "P1 \u2013 high",
@@ -2196,17 +2253,23 @@ _PRIORITY_LABEL = {
 
 
 def _priority_bar_html(priority: int | None) -> str:
-    """The row's left-edge priority bar. An unrecognized/missing priority
-    (`None`, or any value outside bd's documented 0-4 range) degrades
-    HONESTLY to the same faint `--rule-hi` neutral already used for P4,
-    titled \"priority unknown\" -- never a guessed rank."""
-    if priority is not None and priority in _PRIORITY_BAR_COLOR:
-        color = _PRIORITY_BAR_COLOR[priority]
+    """The row's leading priority chip (`P{n}`, e.g. `P0`). An
+    unrecognized/missing priority (`None`, or any value outside bd's
+    documented 0-4 range) degrades HONESTLY to a bare `P?`, titled
+    \"priority unknown\" -- never a guessed rank. Name kept from the prior
+    (bar-shaped) implementation -- every existing call site (this
+    module's `_item_row`, webbrowse.py's `_row_html`) still calls
+    `_priority_bar_html`; only the markup it returns changed, to the
+    approved gallery's chip."""
+    if priority is not None and priority in _PRIORITY_CHIP_CLASS:
+        cls = _PRIORITY_CHIP_CLASS[priority]
+        label = f"P{priority}"
         title = _PRIORITY_LABEL[priority]
     else:
-        color = "var(--rule-hi)"
+        cls = "punk"
+        label = "P?"
         title = "priority unknown"
-    return f'<span class="pribar" style="background:{color}" title="{_esc(title)}"></span>'
+    return f'<span class="priority-chip {cls}" title="{_esc(title)}">{_esc(label)}</span>'
 
 
 # Which `ICONS` glyph each status renders in the row gutter -- see
@@ -2437,12 +2500,22 @@ def _blocker_owner_html(link: dict) -> str:
 
 
 def _blocked_by_list_html(name: str, links: list[dict]) -> str:
-    """The `Blocked by` list: crimson + unstruck for a still-open `blocks`
-    dependency (`link[\"blocking\"]` -- the SAME check `claim_item` uses to
-    refuse a claim, so this can never show a chain as clear when a claim
-    would actually still be refused), a quiet check mark once the upstream
-    item resolves -- \"the chain clearing\", per this feature's own spec."""
-    rows = ""
+    """The `Blocked by` chain: one BANNER per still-live dependency (goal
+    wtv3/components, B7) -- ported from the approved gallery's own
+    `.blocker-banner` (design-system.html #list-detail): a crimson
+    surface+border+ink card, octagon-x icon, while the `blocks` dependency
+    is still open (`link[\"blocking\"]` -- the SAME check `claim_item` uses
+    to refuse a claim, so this can never show a chain as clear when a
+    claim would actually still be refused); a NEUTRAL glass card with a
+    check-circle icon once the upstream item resolves -- \"crimson
+    unresolved -> neutral resolved check\", the exact stakeholder call
+    DESIGN-SYSTEM.md sec 2a records, never a second colour on the cleared
+    state. Each banner ALSO carries the pre-existing `blocker-item
+    unsatisfied`/`satisfied` classes verbatim (this repo's own tests --
+    `tests/unit/test_webapp_item_render.py`, `tests/integration/
+    test_web.py` -- assert on those substrings directly) so the visual
+    upgrade never disturbs that contract."""
+    banners = ""
     for ln in links:
         ref = _link_ref_html(name, ln)
         if not ref:
@@ -2451,21 +2524,28 @@ def _blocked_by_list_html(name: str, links: list[dict]) -> str:
         owner = _blocker_owner_html(ln)
         owner_part = f' <span class="muted">{owner}</span>' if owner else ""
         if ln.get("blocking"):
-            rows += (
-                f'<li class="blocker-item unsatisfied">{ref} '
-                f'<span class="st st-blkd">{_esc(status)}</span>{owner_part}</li>'
+            banners += (
+                '<div class="blocker-item unsatisfied blocker-banner unresolved">'
+                f'<span class="icon">{T.ICONS["octagon-x"]}</span>'
+                '<div><div class="btitle">Blocked by unresolved dependency</div>'
+                f'<div class="blink">{ref} '
+                f'<span class="st st-blkd">{_esc(status)}</span>{owner_part}</div></div>'
+                "</div>"
             )
         else:
-            rows += (
-                f'<li class="blocker-item satisfied">'
-                f'<span class="check" aria-hidden="true">&#10003;</span> {ref} '
-                f'<span class="muted">({_esc(status)})</span></li>'
+            banners += (
+                '<div class="blocker-item satisfied blocker-banner resolved">'
+                f'<span class="icon">{T.ICONS["check-circle"]}</span>'
+                '<div><div class="btitle">Blocker resolved</div>'
+                '<div class="blink"><span class="check" aria-hidden="true">&#10003;</span> '
+                f'{ref} <span class="muted">({_esc(status)})</span></div></div>'
+                "</div>"
             )
-    if not rows:
+    if not banners:
         return ""
     return (
         '<h2 class="eyebrow am" style="display:block;margin-top:30px">Blocked by</h2>'
-        f'<ul class="blocker-list">{rows}</ul>'
+        f'<div class="blocker-chain">{banners}</div>'
     )
 
 
@@ -2546,27 +2626,84 @@ def _dependency_sections_html(name: str, links: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _activity_actor_class(ev: A.ActivityEvent) -> str:
+    """Classify one activity event into the TIMELINE's dot-ring colour
+    (goal wtv3/components, B8) -- ported from the approved gallery's own
+    `.tl-item.actor-*` (design-system.html #list-detail; DESIGN-SYSTEM.md
+    sec 2a). Implements only what `ActivityEvent` can actually
+    substantiate:
+
+      - \"blocked\"  -- a real transition into bd's own blocked status (the
+        summary text `adapter._history_events` itself generates for it,
+        e.g. \"Status: blocked\" / \"Status changed: X \\u2192 blocked\") --
+        the reserved crimson, the SAME hue everywhere blocked appears,
+        never a third meaning.
+      - \"resolved\" -- `ev.kind == \"resolved\"`: per DESIGN-SYSTEM.md sec
+        2a, \"calm / resolved ... is NEUTRAL ... not cyan, not green, not
+        any hue\" -- rendered with the calm check-circle glyph, no colour.
+      - \"neutral\"  -- everything else (created, claimed, a non-blocked
+        status change, a comment).
+
+    DEFERRED, on purpose, with this reason: the gallery's own cyan=
+    \"agent action\" / purple=\"AI insight\" actor split.  `ActivityEvent`
+    carries only an `actor` IDENTITY STRING (whoever bd recorded as
+    assignee/created_by/comment author) -- no field anywhere in this data
+    model marks an actor as \"an AI agent\" versus \"a human\" (see
+    .amplifier/wt-v3-discrepancies.md's own note: \"there is NO agent
+    entity -- custody is a PID-bound token\"). Guessing agent-vs-human
+    from an identity string's spelling would be exactly the kind of
+    fabricated signal this codebase's own doctrine forbids elsewhere (see
+    `_blocker_owner_html`'s \"honest, not fabricated\" discipline). When a
+    real, substantiated signal exists (e.g. a future
+    `ActivityEvent.actor_kind` populated from bd), the cyan/purple split
+    can be added here without touching any call site."""
+    if ev.kind == "resolved":
+        return "resolved"
+    if ev.kind == "status" and "blocked" in ev.summary.lower():
+        return "blocked"
+    return "neutral"
+
+
+# Which B12 glyph each timeline dot shows -- shape-redundant with its own
+# ring colour, never colour alone (same discipline `_STATUS_ICON_KEY` uses).
+_TIMELINE_ICON_KEY = {
+    "neutral": "plus-file",
+    "resolved": "check-circle",
+    "blocked": "octagon-x",
+}
+
+
 def _activity_event_html(ev: A.ActivityEvent) -> str:
+    actor_cls = _activity_actor_class(ev)
+    icon = T.ICONS[_TIMELINE_ICON_KEY[actor_cls]]
     age_html = _item_age_html(ev.at)
     actor_html = f' <span class="muted">{_identity_html(ev.actor)}</span>' if ev.actor else ""
     detail_html = f'<div class="adetail">{_esc(ev.detail)}</div>' if ev.detail else ""
     return (
-        f'<li>{age_html} <span class="ak">{_esc(ev.summary)}</span>{actor_html}{detail_html}</li>'
+        f'<div class="tl-item actor-{actor_cls}">'
+        f'<span class="tl-dot"><span class="icon">{icon}</span></span>'
+        '<div class="tl-body">'
+        f'<span class="tl-title">{_esc(ev.summary)}</span>'
+        f'<span class="tl-time">{age_html}</span>'
+        f"{actor_html}{detail_html}"
+        "</div></div>"
     )
 
 
 def _activity_feed_html(events: list) -> str:
-    """The full `Activity` section: a compact, reverse-chronological list
-    of everything bd itself can substantiate about this item. `events` is
-    already reverse-chronological (`Beads.activity` sorts it) -- this
-    function only renders, never reorders. Returns \"\" for an empty list
-    (a brand-new item with no history yet is not an error)."""
+    """The full `Activity` section: a reverse-chronological TIMELINE (goal
+    wtv3/components, B8) of everything bd itself can substantiate about
+    this item -- ported from the approved gallery's own `.timeline`
+    (design-system.html #list-detail). `events` is already reverse-
+    chronological (`Beads.activity` sorts it) -- this function only
+    renders, never reorders. Returns \"\" for an empty list (a brand-new
+    item with no history yet is not an error)."""
     if not events:
         return ""
     rows = "".join(_activity_event_html(ev) for ev in events)
     return (
         '<h2 class="eyebrow" style="display:block;margin-top:30px">Activity</h2>'
-        f'<ul class="activity-list">{rows}</ul>'
+        f'<div class="timeline">{rows}</div>'
     )
 
 
@@ -3664,7 +3801,7 @@ def create_app(
           {broken_foot}
         </section>
         <div class="hr bleed"></div>
-        <section class="sec">{_create_project_form()}</section>
+        <section class="sec" id="create-project">{_create_project_form()}</section>
         """
         sb_left = ['<span class="s"><span class="dot on"></span>Sweep <b>healthy</b></span>']
         if oldest_days is not None:
@@ -3910,7 +4047,7 @@ def create_app(
           {pagination_html}
         </section>
         <div class="hr bleed"></div>
-        <section class="sec">
+        <section class="sec" id="add-item">
           <div class="formsec">
             <span class="flegend">Add item</span>
             <form method="post" action="/projects/{_esc(name)}/items">
@@ -3970,6 +4107,7 @@ def create_app(
             js=T.list_controls_js(),
             sidebar_html=_sidebar_html(sidebar_names, sidebar_summaries, name),
             auto_refresh_ms=_AUTO_REFRESH_MS,
+            nav_project=name,
         )
 
     @app.post("/projects/{name}/items")
@@ -4192,6 +4330,7 @@ def create_app(
             f"{item.id} - {item.title}",
             body,
             crumb_html=_crumb(("/", "All projects"), (f"/projects/{name}", name), ("", item.id)),
+            nav_project=name,
         )
 
     @app.post("/projects/{name}/items/{item_id}/update")
