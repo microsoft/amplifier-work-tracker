@@ -7,7 +7,7 @@ render helpers -- no adapter/bd calls, no fixtures, no ``integration`` marker.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -66,6 +66,28 @@ def test_row_status_glyph_is_shape_not_color_only():
     blocked_row = B._row_html("proj", _item("proj-b", status="blocked"), selected=False)
     assert "stico" in open_row and "stico" in blocked_row
     assert open_row != blocked_row
+
+
+def test_row_age_escalates_to_amber_only_for_a_genuinely_ready_stale_item():
+    """v3 firewall polish: this row's own Age column is the item-table
+    Age column's live replacement (`_item_row`/.tbl is dead code) --
+    amber-as-neglect must render for a genuinely ready/unclaimed item
+    whose age crosses the alarm threshold, exactly like the old gated
+    `_item_row` did."""
+    old = datetime.now(UTC) - timedelta(days=10)
+    row = B._row_html("proj", _item("proj-a", status="open", created_at=old), selected=False)
+    assert 'class="age a3"' in row
+
+
+@pytest.mark.parametrize("status", ["held", "blocked", "deferred", "resolved"])
+def test_row_age_never_escalates_to_amber_for_a_non_ready_status(status):
+    """A held/blocked/deferred/resolved item's row age is a calm fact,
+    never an alarm -- even when it is just as old as a neglected ready
+    item would be."""
+    old = datetime.now(UTC) - timedelta(days=10)
+    row = B._row_html("proj", _item("proj-a", status=status, created_at=old), selected=False)
+    assert 'class="age a2"' in row
+    assert "a3" not in row
 
 
 def test_list_renders_one_row_per_item():

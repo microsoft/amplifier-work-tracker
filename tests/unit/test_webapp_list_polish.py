@@ -204,13 +204,27 @@ def test_item_age_html_carries_the_real_iso_timestamp_as_a_title():
     assert f'title="{dt.isoformat()}"' in html
 
 
-def test_item_age_html_applies_the_same_staleness_band_as_the_row_column():
-    """`age_band_class` (a0..a3) reused verbatim -- an item detail's
-    Created/Updated reading escalates to the same amber 'a3' band a
-    stale row does."""
+def test_item_age_html_never_escalates_to_the_amber_alarm_tier():
+    """v3 firewall polish: `_item_age_html` renders HISTORY (Created/
+    Updated/Resolved, activity-timeline event ages) -- amber-as-neglect
+    is reserved for a genuinely ready/unclaimed item's own Age column
+    (`_item_row`, status-gated) and the ready-queue-by-age widget, never
+    for a calm fact about the past. A history reading this old would
+    have escalated to `age_band_class`'s amber 'a3' tier verbatim before
+    this fix; it must now cap at the neutral '--ink' 'a2' tier instead."""
     old = datetime.now(UTC) - timedelta(days=10)
     html = W._item_age_html(old)  # noqa: SLF001
-    assert 'class="age a3"' in html
+    assert 'class="age a2"' in html
+    assert "a3" not in html
+
+
+def test_item_age_html_moderately_old_still_reads_a2():
+    """An age that would only reach the 'a2' tier anyway (4-6 days) is
+    unaffected by the cap -- confirms the cap is a ceiling, not a
+    blanket downgrade of the whole band scale."""
+    moderately_old = datetime.now(UTC) - timedelta(days=5)
+    html = W._item_age_html(moderately_old)  # noqa: SLF001
+    assert 'class="age a2"' in html
 
 
 # ------------------------------------------------------- _priority_bar_html
