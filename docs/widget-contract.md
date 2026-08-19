@@ -68,11 +68,14 @@ An ordered, in-process registry:
 
 ```python
 reg = WidgetRegistry()
-reg.register(widget)          # explicit; duplicate id raises ValueError
-reg.get("throughput")         # unknown id raises KeyError naming the known ids
-reg.render("throughput", ctx) # fast path: the fragment, untouched
+reg.register(widget)  # explicit; duplicate id raises ValueError
+reg.get("throughput")  # unknown id raises KeyError naming the known ids
+reg.render("throughput", ctx)  # fast path: the fragment, untouched
 reg.render("throughput", ctx, enforce=True)  # + firewall, raises on breach
-reg.ids(); reg.widgets(); len(reg); "throughput" in reg
+reg.ids()
+reg.widgets()
+len(reg)
+"throughput" in reg
 ```
 
 ### The design-system firewall
@@ -139,6 +142,7 @@ def _blocked_panel_html(blocked: int) -> str:
         '<span class="eyebrow">Blocked</span></div>'
         f'<div style="font-size:44px;color:{tone}">{blocked}</div></div>'
     )
+
 
 DASHBOARD_WIDGETS.register(
     Widget(
