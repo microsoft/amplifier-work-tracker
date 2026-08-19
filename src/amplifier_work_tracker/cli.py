@@ -874,6 +874,45 @@ def cmd_resolve(a):
     print(json.dumps({"resolved": item.id, "resolution": item.resolution}, indent=2))
 
 
+def cmd_unclaim(a):
+    """Voluntarily release a HELD item back to the ready queue WITHOUT
+    setting a resolution -- the inverse of `claim`, and deliberately distinct
+    from `resolve` (which CLOSES the item with a reason). Use it when you have
+    claimed work you will not finish, so another agent can pick it up.
+
+    Errors clearly and mutates nothing if the item does not exist, or is not
+    currently held (there is nothing to release). The status is checked FIRST,
+    before any write, so this can never silently no-op an already-open item or
+    be mistaken for `resolve`. Readback confirms the release actually landed --
+    exit 0 is not proof, same discipline as `resolve` (see `adapter.Beads`).
+
+    `--actor` is accepted for symmetry with `resolve`; releasing is not fenced
+    on it (a held item's own holder is who unclaims it, and `reap` releases
+    without a fence too -- see `cmd_reap`).
+    """
+    _guard()
+    bd = _ws(a).project(a.project)
+    try:
+        item = bd.get(a.id)
+    except A.BeadsError as e:
+        die(str(e))
+    if item.status != "held":
+        die(
+            f"cannot unclaim {a.id}: it is {item.status!r}, not held -- there is nothing to release"
+        )
+    try:
+        bd.release(a.id)
+    except A.BeadsError as e:
+        die(str(e))
+    back = bd.get(a.id)
+    if back.status == "held":
+        die(
+            f"release of {a.id} reported success but readback still shows it held "
+            f"by {back.holder!r} -- refusing to report success"
+        )
+    print(json.dumps({"unclaimed": a.id, "status": back.status, "holder": back.holder}, indent=2))
+
+
 def cmd_notify(a):
     """Propagate resolved work back to the reports that prompted it.
 
@@ -1408,6 +1447,16 @@ def main():
     p.add_argument("--reason", required=True)
     p.add_argument("--actor", default="agent")
     p.set_defaults(fn=cmd_resolve)
+
+    p = sub.add_parser(
+        "unclaim",
+        help="release a held item back to the ready queue WITHOUT resolving it",
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("--id", required=True)
+    p.add_argument("--actor", default="agent")
+    p.set_defaults(fn=cmd_unclaim)
 
     p = sub.add_parser(
         "notify", help="propagate resolved work back to reporters", parents=[root_parent]
