@@ -16,7 +16,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import socket
+import subprocess
 import sys
 import time
 from typing import NoReturn
@@ -874,6 +876,45 @@ def cmd_resolve(a):
     print(json.dumps({"resolved": item.id, "resolution": item.resolution}, indent=2))
 
 
+def cmd_unclaim(a):
+    """Voluntarily release a HELD item back to the ready queue WITHOUT
+    setting a resolution -- the inverse of `claim`, and deliberately distinct
+    from `resolve` (which CLOSES the item with a reason). Use it when you have
+    claimed work you will not finish, so another agent can pick it up.
+
+    Errors clearly and mutates nothing if the item does not exist, or is not
+    currently held (there is nothing to release). The status is checked FIRST,
+    before any write, so this can never silently no-op an already-open item or
+    be mistaken for `resolve`. Readback confirms the release actually landed --
+    exit 0 is not proof, same discipline as `resolve` (see `adapter.Beads`).
+
+    `--actor` is accepted for symmetry with `resolve`; releasing is not fenced
+    on it (a held item's own holder is who unclaims it, and `reap` releases
+    without a fence too -- see `cmd_reap`).
+    """
+    _guard()
+    bd = _ws(a).project(a.project)
+    try:
+        item = bd.get(a.id)
+    except A.BeadsError as e:
+        die(str(e))
+    if item.status != "held":
+        die(
+            f"cannot unclaim {a.id}: it is {item.status!r}, not held -- there is nothing to release"
+        )
+    try:
+        bd.release(a.id)
+    except A.BeadsError as e:
+        die(str(e))
+    back = bd.get(a.id)
+    if back.status == "held":
+        die(
+            f"release of {a.id} reported success but readback still shows it held "
+            f"by {back.holder!r} -- refusing to report success"
+        )
+    print(json.dumps({"unclaimed": a.id, "status": back.status, "holder": back.holder}, indent=2))
+
+
 def cmd_notify(a):
     """Propagate resolved work back to the reports that prompted it.
 
@@ -897,6 +938,50 @@ def cmd_notify(a):
             bd.resolve(src.id, f"Resolved by {item.id}: {reason}", actor="notifier")
             flipped.append({"report": src.id, "by": item.id})
     print(json.dumps({"flipped": flipped, "count": len(flipped)}, indent=2))
+
+
+DIST_NAME = "amplifier-work-tracker"
+
+
+def cmd_update(a):
+    """Self-update this CLI to the latest version from its install source.
+
+    The tool is distributed as a uv tool installed from git, so the correct
+    update is `uv tool upgrade amplifier-work-tracker` -- which re-resolves the
+    recorded git ref (e.g. `main`) to its newest commit and rebuilds. This
+    subcommand runs exactly that so callers need not remember it. Note a plain
+    `uv tool install --force-reinstall amplifier-work-tracker` does NOT work: the
+    package is not published to any PyPI index, only installed from git.
+
+    Fails loud rather than pretending: if `uv` is not on PATH, or uv reports a
+    non-zero exit (e.g. the tool was installed some other way), it says so and
+    prints the command to run by hand -- it never exits 0 on a silent no-op.
+    """
+    uv = shutil.which("uv")
+    if uv is None:
+        die(
+            "cannot self-update: 'uv' is not on PATH. This CLI is distributed as a "
+            "uv tool; install uv (https://docs.astral.sh/uv/), then run:\n"
+            f"    uv tool upgrade {DIST_NAME}"
+        )
+    cmd = [uv, "tool", "upgrade"]
+    if getattr(a, "reinstall", False):
+        cmd.append("--reinstall")
+    cmd.append(DIST_NAME)
+    print(f"amplifier-work-tracker: {' '.join(cmd)}", file=sys.stderr)
+    try:
+        completed = subprocess.run(cmd, check=False)
+    except OSError as e:  # uv vanished between which() and run(), or exec failed
+        die(f"cannot self-update: failed to run uv: {e}")
+    if completed.returncode != 0:
+        die(
+            f"self-update failed: uv exited {completed.returncode} (see its output "
+            "above). If this CLI was not installed via `uv tool` (e.g. a pip or "
+            "editable dev checkout), update it there instead -- e.g. `git pull` in "
+            "your checkout.",
+            code=completed.returncode,
+        )
+    return 0
 
 
 def _root_parent_parser() -> argparse.ArgumentParser:
@@ -1410,10 +1495,31 @@ def main():
     p.set_defaults(fn=cmd_resolve)
 
     p = sub.add_parser(
+        "unclaim",
+        help="release a held item back to the ready queue WITHOUT resolving it",
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("--id", required=True)
+    p.add_argument("--actor", default="agent")
+    p.set_defaults(fn=cmd_unclaim)
+
+    p = sub.add_parser(
         "notify", help="propagate resolved work back to reporters", parents=[root_parent]
     )
     p.add_argument("--project", required=True)
     p.set_defaults(fn=cmd_notify)
+
+    p = sub.add_parser(
+        "update",
+        help="self-update this CLI to the latest version (uv tool upgrade)",
+    )
+    p.add_argument(
+        "--reinstall",
+        action="store_true",
+        help="force a rebuild even if the git ref resolves to the same commit",
+    )
+    p.set_defaults(fn=cmd_update)
 
     p = sub.add_parser(
         "serve",

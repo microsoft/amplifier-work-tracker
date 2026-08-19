@@ -891,3 +891,128 @@ def test_daily_resolved_counts_out_of_window_is_dropped_not_errored():
     items = [_resolved(99, now)]
     counts = A._daily_resolved_counts(items, days=5, now=now)
     assert counts == [0, 0, 0, 0, 0]
+
+
+# ---------------------------------------------- bootstrap metadata parsing
+
+
+def test_parse_bootstrap_metadata_block_style_lists():
+    desc = (
+        "Do the thing.\n\n"
+        "```yaml\n"
+        "repos:\n"
+        "  - org/frontend\n"
+        "  - org/backend\n"
+        "context:\n"
+        "  - docs/spec.md\n"
+        "  - AGENTS.md\n"
+        "```\n\n"
+        "Then verify.\n"
+    )
+    out = A.parse_bootstrap_metadata(desc)
+    assert out == {
+        "repos": ["org/frontend", "org/backend"],
+        "context": ["docs/spec.md", "AGENTS.md"],
+    }
+
+
+def test_parse_bootstrap_metadata_inline_flow_style():
+    desc = "```yaml\nrepos: [org/a, org/b]\ncontext: [x/y.md]\n```"
+    out = A.parse_bootstrap_metadata(desc)
+    assert out == {"repos": ["org/a", "org/b"], "context": ["x/y.md"]}
+
+
+def test_parse_bootstrap_metadata_strips_matching_quotes():
+    desc = "```yaml\nrepos:\n  - \"org/a\"\n  - 'org/b'\ncontext: []\n```"
+    out = A.parse_bootstrap_metadata(desc)
+    assert out == {"repos": ["org/a", "org/b"], "context": []}
+
+
+def test_parse_bootstrap_metadata_only_one_key_present():
+    desc = "```yaml\nrepos:\n  - org/only\n```"
+    out = A.parse_bootstrap_metadata(desc)
+    assert out == {"repos": ["org/only"], "context": []}
+
+
+def test_parse_bootstrap_metadata_yml_tag_and_crlf():
+    desc = "```yml\r\nrepos:\r\n  - org/a\r\ncontext:\r\n  - c/d.md\r\n```"
+    out = A.parse_bootstrap_metadata(desc)
+    assert out == {"repos": ["org/a"], "context": ["c/d.md"]}
+
+
+def test_parse_bootstrap_metadata_no_block_is_empty_not_error():
+    assert A.parse_bootstrap_metadata("just a plain description, no fence") == {
+        "repos": [],
+        "context": [],
+    }
+
+
+def test_parse_bootstrap_metadata_none_and_empty_are_empty():
+    assert A.parse_bootstrap_metadata(None) == {"repos": [], "context": []}
+    assert A.parse_bootstrap_metadata("") == {"repos": [], "context": []}
+
+
+def test_parse_bootstrap_metadata_ignores_a_nested_list_item_named_like_a_key():
+    """A `- context` list item under `repos:` must not be mistaken for the
+    top-level `context:` key -- only an unindented key anchors a list."""
+    desc = "```yaml\nrepos:\n  - context\n  - org/b\n```"
+    out = A.parse_bootstrap_metadata(desc)
+    assert out == {"repos": ["context", "org/b"], "context": []}
+
+
+def test_parse_bootstrap_metadata_only_first_yaml_block_consulted():
+    desc = "```yaml\nrepos:\n  - first/one\n```\n```yaml\nrepos:\n  - second/two\n```"
+    out = A.parse_bootstrap_metadata(desc)
+    assert out == {"repos": ["first/one"], "context": []}
+
+
+# -------------------------------- Item.repos/context: from_beads + summary
+
+
+def test_from_beads_populates_repos_and_context_from_description():
+    d = {
+        "id": "proj-a1b2",
+        "description": "Kickoff.\n```yaml\nrepos:\n  - org/x\ncontext:\n  - c.md\n```",
+    }
+    item = A.Item.from_beads(d)
+    assert item.repos == ["org/x"]
+    assert item.context == ["c.md"]
+
+
+def test_from_beads_no_yaml_block_yields_empty_lists_backward_compatible():
+    """The load-bearing backward-compat case: an item whose description has
+    no fenced yaml block (or no description at all) gets empty lists and is
+    otherwise unchanged."""
+    with_desc = A.Item.from_beads({"id": "p-1", "description": "plain, no fence"})
+    assert with_desc.repos == []
+    assert with_desc.context == []
+
+    no_desc = A.Item.from_beads({"id": "p-2", "status": "open"})
+    assert no_desc.repos == []
+    assert no_desc.context == []
+
+
+def test_summary_full_includes_repos_and_context():
+    item = A.Item.from_beads(
+        {"id": "p-1", "description": "```yaml\nrepos:\n  - org/x\ncontext:\n  - c.md\n```"}
+    )
+    full = item.summary(full=True)
+    assert full["repos"] == ["org/x"]
+    assert full["context"] == ["c.md"]
+
+
+def test_summary_lean_omits_repos_and_context():
+    """The default (lean) list row must NOT carry repos/context -- not even
+    as empty lists -- matching how acceptance/description/design stay out of
+    the lean shape."""
+    item = A.Item.from_beads({"id": "p-1", "description": "```yaml\nrepos:\n  - org/x\n```"})
+    lean = item.summary()
+    assert "repos" not in lean
+    assert "context" not in lean
+
+
+def test_summary_full_repos_context_empty_for_plain_item():
+    item = A.Item.from_beads({"id": "p-1", "description": "no fence here"})
+    full = item.summary(full=True)
+    assert full["repos"] == []
+    assert full["context"] == []

@@ -582,6 +582,64 @@ def check_resolve_fenced(p: Probe) -> Result:
     )
 
 
+def check_release_reopens_unresolved(p: Probe) -> Result:
+    """`release()` must hand a HELD item back to the ready queue WITHOUT a
+    resolution -- the behaviour the CLI `unclaim` verb depends on, and the
+    single property that keeps it distinct from `resolve`/`close`.
+
+    Two things are asserted together, because either one silently defeats
+    `unclaim` on its own:
+      1. after release the item is back to a claimable state (not 'held',
+         not 'resolved') carrying NO resolution -- if release started
+         attaching a resolution, `unclaim` would become a disguised close;
+      2. a DIFFERENT actor can then claim it -- proving it genuinely
+         returned to the ready queue, not merely had a status field flipped.
+    """
+    assert p.bd
+    lane = "lane:release"
+    p.bd.create("release probe", tags=[lane], priority=1)
+    item = p.bd.claim_next(lane=lane, actor="holder_a")
+    if item is None:
+        return Result("release.reopens_unresolved", False, "could not claim the probe item")
+    if item.status != "held":
+        return Result(
+            "release.reopens_unresolved",
+            False,
+            f"claim did not yield a held item (status {item.status!r})",
+        )
+
+    p.bd.release(item.id)
+
+    back = p.bd.get(item.id)
+    if back.status in ("held", "resolved"):
+        return Result(
+            "release.reopens_unresolved",
+            False,
+            f"release left the item {back.status!r}, not returned to the ready queue",
+        )
+    if back.resolution:
+        return Result(
+            "release.reopens_unresolved",
+            False,
+            f"release attached a resolution ({back.resolution!r}) -- it must reopen "
+            f"WITHOUT one; that is what makes unclaim different from resolve",
+        )
+
+    taken = p.bd.claim_next(lane=lane, actor="holder_b")
+    if taken is None or taken.id != item.id:
+        return Result(
+            "release.reopens_unresolved",
+            False,
+            "a different actor could not re-claim the released item -- it did not "
+            "genuinely return to the ready queue",
+        )
+    return Result(
+        "release.reopens_unresolved",
+        True,
+        "release reopens a held item with no resolution, and it is re-claimable",
+    )
+
+
 def check_custody_fresh_survives(p: Probe) -> Result:
     """A custody signal renewed recently must NOT be reclaimed, no matter how
     long the TOTAL hold has been -- simulated by forging started_at 20 hours
@@ -913,6 +971,7 @@ def check_creation_state_reporting(p: Probe) -> Result:
 CHECKS = [
     ("capabilities", check_capabilities),
     ("resolve.fenced", check_resolve_fenced),
+    ("release.reopens_unresolved", check_release_reopens_unresolved),
     ("claim.subcommand", check_claim_subcommand),
     ("claim.atomic", check_claim_atomic),
     ("claim.directed_atomic", check_claim_directed_atomic),
