@@ -106,6 +106,50 @@ async def test_status_still_reports_every_healthy_project_alongside_a_broken_one
 
 
 @pytest.mark.asyncio
+async def test_status_row_carries_the_full_per_status_breakdown(tmp_path, monkeypatch):
+    """i7f-status: each project row is now the full `project_summary`
+    breakdown -- per-status counts (ready/held/intake/blocked/deferred/
+    resolved) plus aging/throughput -- not just the old total/ready/held.
+    Skipped when `bd` is absent (the module-level pytestmark)."""
+    root = tmp_path / "root"
+    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(root))
+
+    from amplifier_work_tracker import adapter as A
+
+    name = _unique("breakdownproj")
+    ws = A.Workspace(root)
+    ws.create(name)
+    try:
+        session = WorkTrackerSession({"actor": _unique("actor")})
+        add = WorkTrackerSession({"actor": _unique("adder")})
+        await add.add(name, "ready one")
+        held_added = await add.add(name, "held one")
+        held_id = held_added.output["added"]  # type: ignore[index]
+        claimer = WorkTrackerSession({"actor": _unique("claimer")})
+        assert (await claimer.claim(name, item_id=held_id)).success is True
+
+        result = await session.status()
+        assert result.success is True
+        output: dict[str, Any] = result.output  # type: ignore[assignment]
+        row = next(p for p in output["projects"] if p["project"] == name)
+
+        assert row["status"] == A.STATUS_OK
+        assert row["total"] == 2
+        assert row["ready"] == 1
+        assert row["held"] == 1
+        # The full breakdown fields that the hand-rolled ready/held counts
+        # never carried.
+        for key in ("intake", "blocked", "resolved", "deferred", "held_stale", "held_by"):
+            assert key in row
+        assert row["held_by"] == [claimer._actor]  # noqa: SLF001
+
+        await claimer.resolve(held_id, "test cleanup")
+    finally:
+        A.drop_database(name)
+        shutil.rmtree(ws.path(name), ignore_errors=True)
+
+
+@pytest.mark.asyncio
 async def test_claim_on_an_empty_queue_still_reports_success_with_claimed_null(
     tmp_path, monkeypatch
 ):

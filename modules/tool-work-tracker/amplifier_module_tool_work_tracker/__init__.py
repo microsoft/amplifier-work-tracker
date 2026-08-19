@@ -1,8 +1,9 @@
 """Amplifier tool module for amplifier-work-tracker.
 
-Exposes `work_claim`, `work_declare`, `work_resolve`, `work_status`,
-`work_file`, `work_add`, and `work_list` as agent-callable tools, backed
-directly by `amplifier_work_tracker.adapter` / `amplifier_work_tracker.custody`.
+Exposes `work_claim`, `work_declare`, `work_resolve`, `work_release`,
+`work_status`, `work_stats`, `work_file`, `work_add`, and `work_list` as
+agent-callable tools, backed directly by `amplifier_work_tracker.adapter` /
+`amplifier_work_tracker.custody`.
 This module contains no Beads knowledge of its own and shells out to nothing --
 all domain logic lives in the `amplifier_work_tracker` package it imports.
 
@@ -70,7 +71,7 @@ from __future__ import annotations
 import os
 import socket
 import threading
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +84,35 @@ from ._guard import guarded
 from .service_tools import WorkTrackerInstallTool, WorkTrackerStatusTool
 
 _MIN_RENEW_INTERVAL_SECONDS = 5
+
+
+def _summary_errored(summary: A.ProjectSummary) -> bool:
+    """A project's summary represents a genuine READ failure -- an
+    unreadable database whose status is a truncated `"ERROR: ..."` string
+    (see `adapter.project_summary`). `STATUS_OK`, and the honest
+    mid-creation / left-broken states (`STATUS_CREATING`/`STATUS_BROKEN`),
+    are NOT read failures: they are the operation succeeding and reporting a
+    known non-`ok` condition, exactly as an empty project is a success.
+    Only a real error flips the outer envelope to `success=False`, matching
+    the pre-`project_summary` behaviour where a caught `A.BeadsError` was
+    the only thing that did.
+    """
+    return summary.status.startswith("ERROR")
+
+
+def _project_summary_row(summary: A.ProjectSummary) -> dict[str, Any]:
+    """One project's full `ProjectSummary` as a JSON-ready row -- every
+    status field (open/ready/held/intake/blocked/deferred/resolved) plus the
+    aging/throughput figures, keyed under `project` (not `name`) to match the
+    long-standing `work_status` payload shape. This is the SAME computation
+    the CLI's `instances`/`status` commands and the web dashboard render, so
+    the tool surface can never silently disagree with them.
+    """
+    row: dict[str, Any] = {"project": summary.name}
+    for key, value in asdict(summary).items():
+        if key != "name":
+            row[key] = value
+    return row
 
 
 def _resolve_actor(config: dict[str, Any] | None) -> str:
@@ -261,6 +291,13 @@ class WorkTrackerSession:
                     "acceptance": item.acceptance,
                     "description": item.description,
                     "design": item.design,
+                    # Workspace-bootstrap metadata parsed from the item's
+                    # description (see adapter.parse_bootstrap_metadata) --
+                    # structured lists of the repos to check out and the
+                    # context files this lane needs. Empty lists for an item
+                    # that carries no fenced ```yaml block.
+                    "repos": item.repos,
+                    "context": item.context,
                     "custody": "established -- renewing automatically in the background",
                 },
             )
@@ -330,42 +367,37 @@ class WorkTrackerSession:
             )
 
     async def status(self) -> ToolResult:
-        """Read-only project roll-up. `success` is honest about whether
-        EVERY project's status was actually retrieved: a project a real
-        `A.BeadsError` occurred for still gets an entry (its error text,
-        same as before -- one broken project must never hide the healthy
-        ones), but that error must not be invisible to the outer envelope
-        too. Before this fix, a real, caught error here was buried as a
-        string inside one project's entry while the overall ToolResult
-        still reported `success=True` -- machine-invisible to any caller
-        that only checks the envelope. An empty project (zero items) is
-        NOT an error and never affects this -- that is 'the operation
-        succeeded and the answer is empty', the case this must not
-        conflate with a genuine failure.
+        """Read-only project roll-up -- every known project with its FULL
+        status breakdown (open/ready/held/intake/blocked/deferred/resolved,
+        plus aging/throughput and custody-staleness signals), computed by
+        `adapter.project_summary` -- the SAME function the CLI's `instances`
+        command and the web dashboard use, so this tool can never silently
+        disagree with them about what "ready"/"held" mean. It no longer
+        hand-rolls its own `ready`/`held` counts.
+
+        `success` is honest about whether EVERY project's status was
+        actually retrieved: a project a real read error occurred for still
+        gets an entry (its truncated `"ERROR: ..."` text, same as before --
+        one broken project must never hide the healthy ones), but that
+        error must not be invisible to the outer envelope too. Before this
+        was fixed, a real, caught error here was buried as a string inside
+        one project's entry while the overall ToolResult still reported
+        `success=True` -- machine-invisible to any caller that only checks
+        the envelope. An empty project (zero items) is NOT an error and
+        never affects this -- that is 'the operation succeeded and the
+        answer is empty', the case this must not conflate with a genuine
+        failure. `project_summary` never raises: an unreadable database
+        comes back as a summary whose `status` starts with `"ERROR"` (see
+        `_summary_errored`), and the mid-creation / left-broken states are
+        reported honestly without being treated as read failures.
         """
         projects: list[dict[str, Any]] = []
         any_project_errored = False
         for name in self._ws.names():
-            try:
-                items = self._ws.project(name).list(include_resolved=True)
-                row = {
-                    "project": name,
-                    "total": len(items),
-                    "ready": sum(1 for i in items if i.status == "open" and A.LANE_WORK in i.tags),
-                    "held": sum(1 for i in items if i.status == "held"),
-                }
-                # Aging/throughput -- cheap, computed once across the whole
-                # project rather than shipping per-item timestamps in a
-                # list (see `A.project_activity`'s docstring for why).
-                row.update(A.project_activity(items))
-                projects.append(row)
-            except A.BeadsError as e:
-                # A.truncate_status caps this without severing the actionable
-                # hint mid-word -- a bare `[:120]` slice used to leave e.g.
-                # "...or 'bd in" instead of "...or 'bd init' to create a
-                # new database". See adapter.truncate_status's docstring.
+            summary = A.project_summary(self._ws, name)
+            if _summary_errored(summary):
                 any_project_errored = True
-                projects.append({"project": name, "status": A.truncate_status(f"ERROR: {e}")})
+            projects.append(_project_summary_row(summary))
         with self._lock:
             held = self._held
             holding = (
@@ -380,6 +412,64 @@ class WorkTrackerSession:
         return ToolResult(
             success=not any_project_errored, output={"projects": projects, "holding": holding}
         )
+
+    async def stats(self, project: str) -> ToolResult:
+        """The full `project_summary` breakdown for ONE named project in a
+        single call -- the same per-status counts and aging/throughput/
+        custody-staleness figures `status()` reports for every project,
+        scoped to just this one. Read-only; never claims, mutates, or
+        touches custody.
+
+        `success` follows the same honesty rule as `status()`: `False` only
+        when this project's database genuinely could not be read (its
+        summary `status` starts with `"ERROR"` -- see `_summary_errored`),
+        never for an empty, mid-creation, or left-broken project, which are
+        all reported as honest non-failure states. `project_summary` never
+        raises, so this method needs no try/except of its own.
+        """
+        summary = A.project_summary(self._ws, project)
+        return ToolResult(
+            success=not _summary_errored(summary), output=_project_summary_row(summary)
+        )
+
+    async def unclaim(self, item_id: str) -> ToolResult:
+        """Voluntarily hand a HELD item back to the queue -- the inverse of
+        `claim`, and a sibling of `resolve` that sets NO resolution. Returns
+        the item to open/ready and STOPS this session's custody-renewal
+        thread, so the item is immediately claimable by anyone (including
+        this session again) with no reclaim-timeout wait.
+
+        Refuses -- clear error, mutates nothing -- if this session is not
+        currently holding exactly `item_id`, the same fence `resolve` uses:
+        a session must never release work it does not own. On a real bd
+        failure the hold is left intact (custody keeps renewing), mirroring
+        `resolve`'s non-fenced-error path; only a confirmed release stops
+        custody and clears local state.
+        """
+        with self._lock:
+            held = self._held
+            if held is None or held.item_id != item_id:
+                return ToolResult(
+                    success=False,
+                    output=(
+                        f"not currently holding {item_id!r} in this session -- "
+                        f"refusing to release an item this session did not claim"
+                    ),
+                )
+            try:
+                bd = self._project(held.project)
+                bd.release(item_id)
+            except A.BeadsError as e:
+                return ToolResult(success=False, output=str(e))
+            held.stop.set()
+            self._held = None
+            return ToolResult(
+                success=True,
+                output={
+                    "released": item_id,
+                    "custody": "stopped -- item returned to the queue, no resolution set",
+                },
+            )
 
     async def list_items(
         self,
@@ -638,6 +728,43 @@ class WorkResolveTool:
         return await self._session.resolve(input["id"], input["reason"])
 
 
+class WorkReleaseTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_release"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Voluntarily hand the item this session currently holds back to the "
+            "queue -- the inverse of work_claim, WITHOUT setting a resolution "
+            "(use work_resolve when the work is actually done). Returns the item "
+            "to open/ready and stops this session's custody renewal, so it is "
+            "immediately claimable again with no reclaim-timeout wait. Use it "
+            "when you claimed something you should not work after all, or need to "
+            "put it back for another agent. Refuses (mutating nothing) if this "
+            "session does not hold the named item -- a session can never release "
+            "work it does not own."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Item id this session holds."},
+            },
+            "required": ["id"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.unclaim(input["id"])
+
+
 class WorkStatusTool:
     def __init__(self, session: WorkTrackerSession):
         self._session = session
@@ -649,10 +776,14 @@ class WorkStatusTool:
     @property
     def description(self) -> str:
         return (
-            "Read-only: every known project with its total/ready/held item "
-            "counts, plus what this session currently holds (if anything), "
-            "including whether its custody was lost since claiming. Takes no "
-            "arguments."
+            "Read-only: every known project with its FULL status breakdown -- "
+            "total plus per-status counts (ready/held/intake/blocked/deferred/"
+            "resolved), aging/throughput (oldest-unclaimed age, resolved in the "
+            "last 24h/7d), and custody-staleness signals (held_stale, who holds "
+            "what) -- the same figures the CLI and web dashboard show. Also "
+            "reports what this session currently holds (if anything), including "
+            "whether its custody was lost since claiming. Takes no arguments. "
+            "For the same breakdown scoped to ONE named project, use work_stats."
         )
 
     @property
@@ -662,6 +793,44 @@ class WorkStatusTool:
     @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         return await self._session.status()
+
+
+class WorkStatsTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_stats"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Read-only: the FULL status breakdown for ONE named project in a "
+            "single call -- total plus per-status counts (ready/held/intake/"
+            "blocked/deferred/resolved), aging (oldest-unclaimed age), "
+            "throughput (resolved in the last 24h/7d), and custody-staleness "
+            "signals (held_stale, held_by). The same figures work_status "
+            "reports for every project, scoped to just this one. Never claims, "
+            "mutates, or touches custody."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Named project to report the full breakdown for.",
+                },
+            },
+            "required": ["project"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.stats(input["project"])
 
 
 class WorkFileTool:
@@ -831,7 +1000,7 @@ class WorkListTool:
 
 
 async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Mount all seven work_* tools, sharing one WorkTrackerSession.
+    """Mount all nine work_* tools, sharing one WorkTrackerSession.
 
     IRON LAW: every tool below is registered via `coordinator.mount()`.
     Skipping any of them (or returning without mounting) fails
@@ -842,7 +1011,9 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
         WorkClaimTool(session),
         WorkDeclareTool(session),
         WorkResolveTool(session),
+        WorkReleaseTool(session),
         WorkStatusTool(session),
+        WorkStatsTool(session),
         WorkFileTool(session),
         WorkAddTool(session),
         WorkListTool(session),

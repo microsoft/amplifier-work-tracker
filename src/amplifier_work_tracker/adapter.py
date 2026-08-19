@@ -761,6 +761,112 @@ def _uuid7_timestamp(v: object) -> datetime | None:
         return None
 
 
+# --------------------------------------------------------------------------
+# Workspace-bootstrap metadata. An item's markdown description may carry a
+# fenced ```yaml block naming the repos to check out and the context files a
+# lane needs before it can start work. We parse that out at the seam, so
+# every read surface (`work_claim`, `work_list --id`) sees the same
+# structured `repos`/`context` lists instead of each re-scraping the prose.
+# --------------------------------------------------------------------------
+
+# One fenced ```yaml block, first match wins. Tolerant of `yml`, of trailing
+# spaces after the language tag, and of CRLF line endings; case-insensitive
+# on the language tag only.
+_BOOTSTRAP_FENCE_RE = re.compile(
+    r"```[ \t]*ya?ml[ \t]*\r?\n(.*?)```",
+    re.DOTALL | re.IGNORECASE,
+)
+
+_BOOTSTRAP_KEYS = ("repos", "context")
+
+
+def _clean_scalar(s: str) -> str:
+    """Trim one list-item/inline scalar down to its value: surrounding
+    whitespace gone, and one layer of matching single/double quotes removed
+    if present. Deliberately minimal -- this is a fixed, shallow shape (a
+    flat list of repo slugs / context paths), never arbitrary YAML."""
+    s = s.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
+        s = s[1:-1]
+    return s.strip()
+
+
+def _parse_inline_list(rest: str) -> list[str]:
+    """A value that sits on the same line as its key: either flow style
+    (`[a, b, c]`) or a single bare scalar (`just-one`). An empty `[]` yields
+    an empty list."""
+    rest = rest.strip()
+    if rest.startswith("[") and rest.endswith("]"):
+        inner = rest[1:-1]
+        return [_clean_scalar(p) for p in inner.split(",") if p.strip()]
+    cleaned = _clean_scalar(rest)
+    return [cleaned] if cleaned else []
+
+
+def _parse_yaml_list_key(body: str, key: str) -> list[str]:
+    """Pull one top-level list-valued key out of a small YAML block, with a
+    stdlib-only parser (no PyYAML dependency for a shape this fixed).
+
+    Handles the two spellings a human actually writes:
+      - block style -- `key:` on its own line, then `- item` lines beneath it;
+      - inline flow style -- `key: [a, b]` (or a lone `key: value` scalar).
+
+    Only an UNINDENTED occurrence of the key counts, so a `- context` list
+    item or a deeper nested key is never mistaken for the anchor. The block
+    list ends at the first non-blank line that is not a `- ` item (e.g. the
+    next top-level key). Absent key -> empty list, never an error.
+    """
+    lines = body.splitlines()
+    n = len(lines)
+    i = 0
+    while i < n:
+        line = lines[i]
+        i += 1
+        # Top-level key only: no leading indentation.
+        if line[:1] in (" ", "\t"):
+            continue
+        stripped = line.strip()
+        if not stripped.startswith(f"{key}:"):
+            continue
+        rest = stripped[len(key) + 1 :].strip()
+        if rest:
+            return _parse_inline_list(rest)
+        items: list[str] = []
+        while i < n:
+            follow = lines[i]
+            fstripped = follow.strip()
+            if fstripped == "":
+                i += 1
+                continue
+            if fstripped.startswith("- ") or fstripped == "-":
+                items.append(_clean_scalar(fstripped[1:]))
+                i += 1
+                continue
+            break
+        return items
+    return []
+
+
+def parse_bootstrap_metadata(description: str | None) -> dict:
+    """Extract workspace-bootstrap metadata from an item's markdown
+    description: the `repos:` and `context:` lists inside a fenced ```yaml
+    block.
+
+    Always returns both keys, always as lists -- `{"repos": [...],
+    "context": [...]}`. An item with NO such block (the overwhelming common
+    case) yields two empty lists and never raises: full backward
+    compatibility with every pre-existing item. Only the FIRST fenced yaml
+    block is consulted.
+    """
+    if not description:
+        return {"repos": [], "context": []}
+    m = _BOOTSTRAP_FENCE_RE.search(description)
+    if not m:
+        return {"repos": [], "context": []}
+    body = m.group(1)
+    return {key: _parse_yaml_list_key(body, key) for key in _BOOTSTRAP_KEYS}
+
+
 @dataclass
 class Item:
     """One unit of work or one user report, in OUR vocabulary."""
@@ -774,6 +880,8 @@ class Item:
     acceptance: str | None = None
     description: str | None = None
     design: str | None = None
+    repos: list[str] = field(default_factory=list)
+    context: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     meta: dict = field(default_factory=dict)
     priority: int | None = None
@@ -805,6 +913,13 @@ class Item:
         out["updated_at"] = _parse_bd_timestamp(d.get("updated_at"))
         out["closed_at"] = _parse_bd_timestamp(d.get("closed_at"))
         out["created_by"] = d.get("created_by") or None
+        # Workspace-bootstrap metadata, parsed once here at the seam from the
+        # item's own description -- an item with no fenced ```yaml block gets
+        # two empty lists and behaves exactly as before (see
+        # `parse_bootstrap_metadata`).
+        bootstrap = parse_bootstrap_metadata(out.get("description"))
+        out["repos"] = bootstrap["repos"]
+        out["context"] = bootstrap["context"]
         return cls(**{k: v for k, v in out.items() if k in cls.__dataclass_fields__}, raw=d)
 
     def summary(self, *, full: bool = False) -> dict:
@@ -842,6 +957,11 @@ class Item:
             row["acceptance"] = self.acceptance
             row["description"] = self.description
             row["design"] = self.design
+            # Workspace-bootstrap metadata parsed from the description (see
+            # `parse_bootstrap_metadata`) -- always present as lists on a full
+            # read, empty for an item that carries no fenced ```yaml block.
+            row["repos"] = self.repos
+            row["context"] = self.context
             row["created_at"] = self.created_at.isoformat() if self.created_at else None
             row["updated_at"] = self.updated_at.isoformat() if self.updated_at else None
             row["closed_at"] = self.closed_at.isoformat() if self.closed_at else None
