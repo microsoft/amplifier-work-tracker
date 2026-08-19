@@ -41,6 +41,7 @@ position:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from urllib.parse import quote
 
 from fastapi import FastAPI, Request
@@ -141,6 +142,50 @@ _BROWSE_CSS = r"""
   column-gap:11px;padding:0 12px 6px;font-family:var(--sans);font-size:9.5px;
   font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
 .wtb-col-headers span:first-child{display:flex;gap:14px}
+
+/* -- list-pane header/footer EXTRA slots (goal wtv3/project-page) -- optional,
+   only rendered when a caller passes them (`render_browse_body`'s
+   `list_header_extra`/`list_footer_html`), so this route's own `/browse`
+   output is byte-identical when it doesn't. `.wtb-list-extra` sits between
+   the "Items N" head and the column headers -- `project_view` renders its
+   status tabs + search field there, reusing those UNCHANGED shared classes
+   (`.tabs`/`.controls`/`.field`), never a second copy. `.wtb-pane-foot` sits
+   BELOW the scrollable list (outside `.wtb-scroll`), so a control placed
+   there (e.g. `project_view`'s existing pagination) never scrolls out of
+   view with the rows above it. */
+.wtb-list-extra{padding:0 20px 14px}
+.wtb-list-extra .tabs{margin-bottom:0}
+.wtb-pane-foot{flex:0 0 auto;padding:10px 20px;border-top:1px solid var(--rule)}
+.wtb-pane-foot .pagination{margin:0}
+
+/* -- optional third row-line: a held/custody reading (goal wtv3/project-page,
+   task 2 -- "held custody / staleness readings...brought to standard"). Reuses
+   the SAME `.held-custody`/`.stale`/`.fresh` tokens the item-detail pane and
+   the (retired) table row already render via `_custody_html` -- no new
+   status vocabulary, just a smaller stacked line under the title/id. Absent
+   for every non-held row (see `_row_html`'s `extra_html=""` default). */
+.wtb-holder{display:block;margin-top:1px;font-family:var(--sans);font-size:11px;
+  color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* -- density toggle (goal wtv3/project-page): the SAME `body.density-compact`
+   class `webtheme.list_controls_js` already toggles workspace-wide -- this
+   view just supplies its OWN compact values for its OWN squircle-row
+   geometry (webtheme.py's `.tbl` rules do not apply to `a.wtb-row`, a
+   different element entirely). */
+body.density-compact .wtb-row{padding:5px 12px;min-height:0}
+body.density-compact .wtb-rows{gap:3px}
+body.density-compact .wtb-title{font-size:12.5px}
+body.density-compact .wtb-id,body.density-compact .wtb-age{font-size:10px}
+body.density-compact .wtb-pane-head{padding:10px 16px 8px}
+
+/* -- keyboard-nav highlight (goal wtv3/project-page): `webtheme.
+   list_controls_js`'s shared `j`/`k`/`Enter` row navigation now also
+   targets `a.wtb-row[data-t]` (see that function's own comment) and toggles
+   the SAME `.kbd-sel` class the item table's `tr.kbd-sel` already uses.
+   Only the box-shadow ring is added here (not a background override): a
+   selected row's own `.selected` background wash must still show through
+   when both classes land on the same row at once. */
+a.wtb-row.kbd-sel{box-shadow:inset 0 0 0 1px var(--rule-hi)}
 
 /* -- list rows -- squircle glass cards (visual-fidelity pass, gap 4): each
    row is its own rounded glass-fill card with real spacing between rows,
@@ -281,9 +326,25 @@ def browse_js() -> str:
 """
 
 
-def _row_html(name: str, item: A.Item, *, selected: bool) -> str:
+def _row_html(
+    name: str,
+    item: A.Item,
+    *,
+    selected: bool,
+    href: str | None = None,
+    extra_html: str = "",
+) -> str:
     """One list row: priority tick + status glyph (gutter), title, mono id, and
-    relative age. The whole row is the selection link (`?item=<id>`)."""
+    relative age. The whole row is the selection link (`?item=<id>` by default).
+
+    `href` lets a caller (e.g. `project_view`'s split-pane, goal wtv3/
+    project-page) point the row at its OWN selection URL -- preserving
+    query params this module knows nothing about (`?status=`/`?q=`/`?page=`)
+    -- instead of this route's own `/browse?item=`. `extra_html`, when
+    given, renders as a third stacked line inside `.wtb-main` (e.g. a held/
+    custody reading) -- both default to the exact prior behavior so the
+    `/browse` route itself is byte-for-byte unchanged.
+    """
     prefix = f"{name}-"
     id_shown = item.id[len(prefix) :] if item.id.startswith(prefix) else item.id
     # Same searchable key vocabulary the item table's own rows use, so a future
@@ -292,27 +353,54 @@ def _row_html(name: str, item: A.Item, *, selected: bool) -> str:
     gutter = _priority_bar_html(item.priority) + _status_icon_html(item.status)
     title = _esc(item.title) or "&mdash;"
     age = _item_age_html(item.created_at)
-    href = f"/projects/{_esc(name)}/browse?item={quote(item.id)}"
+    row_href = href if href is not None else f"/projects/{_esc(name)}/browse?item={quote(item.id)}"
     sel_cls = " selected" if selected else ""
     aria = ' aria-current="true"' if selected else ""
+    extra = f'<span class="wtb-holder">{extra_html}</span>' if extra_html else ""
     return (
-        f'<a class="wtb-row{sel_cls}" role="listitem" href="{href}" '
+        f'<a class="wtb-row{sel_cls}" role="listitem" href="{row_href}" '
         f'data-t="{_esc(key)}"{aria}>'
         f'<span class="wtb-gutter">{gutter}</span>'
         f'<span class="wtb-main">'
         f'<span class="wtb-title">{title}</span>'
         f'<span class="wtb-id" title="{_esc(item.id)}">{_esc(id_shown)}</span>'
+        f"{extra}"
         f"</span>"
         f'<span class="wtb-age">{age}</span>'
         f"</a>"
     )
 
 
-def render_list_html(name: str, items: list[A.Item], selected_id: str | None) -> str:
-    """The left pane's scrollable list body."""
+def render_list_html(
+    name: str,
+    items: list[A.Item],
+    selected_id: str | None,
+    *,
+    href_builder: Callable[[A.Item], str] | None = None,
+    row_extra_builder: Callable[[A.Item], str] | None = None,
+    empty_html: str | None = None,
+) -> str:
+    """The left pane's scrollable list body.
+
+    `href_builder`/`row_extra_builder`/`empty_html` are the same optional
+    generalization hooks `render_browse_body` documents -- all default to
+    `None`, which reproduces this route's original, unparameterized output
+    exactly.
+    """
     if not items:
+        if empty_html is not None:
+            return empty_html
         return '<div class="wtb-empty"><p>No work items in this project yet.</p></div>'
-    rows = "".join(_row_html(name, i, selected=(i.id == selected_id)) for i in items)
+    rows = "".join(
+        _row_html(
+            name,
+            i,
+            selected=(i.id == selected_id),
+            href=href_builder(i) if href_builder else None,
+            extra_html=row_extra_builder(i) if row_extra_builder else "",
+        )
+        for i in items
+    )
     return f'<div class="wtb-rows" role="list">{rows}</div>'
 
 
@@ -422,15 +510,53 @@ def render_browse_body(
     selected_id: str | None = None,
     detail_error: str | None = None,
     flash_html: str = "",
+    list_header_extra: str = "",
+    list_footer_html: str = "",
+    href_builder: Callable[[A.Item], str] | None = None,
+    row_extra_builder: Callable[[A.Item], str] | None = None,
+    empty_html: str | None = None,
 ) -> str:
     """The full split-pane body: `<style>` + list pane + detail pane.
+
+    This is the SHARED split-pane machinery -- goal wtv3/project-page reuses
+    it verbatim for `project_view`'s own list+detail layout rather than a
+    second, drift-prone copy (see that route's own comment for why reuse
+    won over recreate). Every new parameter below is optional and defaults
+    to exactly the prior behavior, so this route's OWN `/browse` output is
+    byte-for-byte unchanged when called with none of them:
+
+      * `list_header_extra` -- extra markup rendered inside the list pane's
+        head, below the "Items N" count and above the column headers (e.g.
+        `project_view`'s status tabs + search field). Wrapped in its own
+        `.wtb-list-extra` div so it gets sensible spacing without a caller
+        needing to know this pane's own padding.
+      * `list_footer_html` -- extra markup rendered BELOW the scrollable
+        list (e.g. `project_view`'s existing pagination control) -- outside
+        `.wtb-scroll`, so it never scrolls out of view. Wrapped in
+        `.wtb-pane-foot`, absent entirely when not given (so `class=
+        "pagination"` truly never appears when there is nothing to
+        paginate, matching the pre-existing pagination-reachability
+        contract).
+      * `href_builder`/`row_extra_builder`/`empty_html` -- threaded straight
+        through to `render_list_html` (see its own docstring).
 
     The two `id="browse-list"` / `id="browse-detail"` scroll containers are the
     stable hooks `browse_js` keys its scroll-preservation and detail-swap on --
     keep those ids if the markup changes.
     """
-    list_html = render_list_html(name, items, selected_id)
+    list_html = render_list_html(
+        name,
+        items,
+        selected_id,
+        href_builder=href_builder,
+        row_extra_builder=row_extra_builder,
+        empty_html=empty_html,
+    )
     detail_html = render_detail_html(name, selected_item, activity, detail_error=detail_error)
+    header_extra = (
+        f'<div class="wtb-list-extra">{list_header_extra}</div>' if list_header_extra else ""
+    )
+    footer = f'<div class="wtb-pane-foot">{list_footer_html}</div>' if list_footer_html else ""
     return (
         f"<style>{_BROWSE_CSS}</style>"
         f"{flash_html}"
@@ -438,6 +564,7 @@ def render_browse_body(
         '<section class="wtb-pane wtb-list" aria-label="Work items">'
         '<div class="wtb-pane-head"><span class="eyebrow">Items</span>'
         f'<span class="wtb-count">{len(items)}</span></div>'
+        f"{header_extra}"
         # C2 (goal wtv3/components): the blend-3 mockup's exact left-pane
         # column set -- Priority . Status . Item ID . Task title . Relative
         # age -- ported from the approved gallery's own `.col-headers`
@@ -447,6 +574,7 @@ def render_browse_body(
         "<span>Pri</span><span>St</span><span>Item</span><span>Age</span>"
         "</div>"
         f'<div class="wtb-scroll" id="browse-list">{list_html}</div>'
+        f"{footer}"
         "</section>"
         '<section class="wtb-pane wtb-detail" aria-label="Item detail">'
         f'<div class="wtb-scroll" id="browse-detail">{detail_html}</div>'

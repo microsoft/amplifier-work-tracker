@@ -1476,9 +1476,10 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
    layer sitting on top (a border-image would paint square corners; this
    respects `border-radius:inherit`). Chrome only -- no status meaning
    ever travels on this gradient. */
-.hero,.verdict,.comp,.needs,.dispatch,.context>.beat,.thru,.projoverview{position:relative}
+.hero,.verdict,.comp,.needs,.dispatch,.context>.beat,.thru,.projoverview,.itemcard{
+  position:relative}
 .hero::before,.verdict::before,.comp::before,.needs::before,.dispatch::before,
-.context>.beat::before,.thru::before,.projoverview::before{
+.context>.beat::before,.thru::before,.projoverview::before,.itemcard::before{
   content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
   background:var(--brand-gradient-rim);
   -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
@@ -1517,6 +1518,19 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
    the STRONGER hero-tier fill + float shadow, matching the design
    system's own token map ("Hero verdict panel: --glass-fill-strong"). */
 .hero{background:var(--glass-fill-strong);box-shadow:var(--glass-shadow-float)}
+
+/* -- item-detail page wrapper (goal wtv3/project-page, task 3): the same
+   glass card treatment `.hero`/`.comp`/`.needs` already give every other
+   major panel, applied to the standalone editable item page's own
+   content -- it was the one remaining bare `<section class="sec">` with
+   no glass chrome at all. The shared blocker-chain/timeline/priority-chip/
+   status-icon helpers rendered INSIDE this card were already at standard
+   (goal wtv3/components); only the surrounding card was missing. */
+.itemcard{background:var(--glass-fill-strong);box-shadow:var(--glass-shadow-float);
+  border:1px solid var(--glass-hairline);border-radius:var(--radius-lg);
+  padding:28px 32px;backdrop-filter:blur(var(--glass-blur-strong));
+  -webkit-backdrop-filter:blur(var(--glass-blur-strong))}
+@media (max-width:600px){.itemcard{padding:20px 18px}}
 
 /* -- the "N NEED YOU / ALL CLEAR" verdict panel: promoted from a flat,
    glass-less banner (the prior port's deliberate choice) to the DOMINANT
@@ -2139,9 +2153,14 @@ def list_controls_js() -> str:
        `search_js`'s own binding, e.g. `project_view`'s server-side search;
        harmless if BOTH bind on a page that has both, since focusing an
        already-focused element is a no-op); `j`/`k` move a `.kbd-sel`
-       highlight over `main table.tbl tbody tr[data-t]` rows (skipping any
-       `search_js`-hidden ones); `Enter` follows the highlighted row's
-       first link; `Esc` clears the search box's typed text when it has
+       highlight over `main table.tbl tbody tr[data-t]` rows -- OR, on the
+       split-pane project/browse views (goal wtv3/project-page), `main
+       a.wtb-row[data-t]` rows; the shared selector covers BOTH element
+       shapes so this one script never needs a per-page variant (skipping
+       any `search_js`-hidden ones); `Enter` follows the highlighted row's
+       own link -- its FIRST descendant `<a>` for a `<tr>` (the item
+       table), or its OWN `href` when the row itself is the `<a>` (a
+       `wtb-row`); `Esc` clears the search box's typed text when it has
        focus, else clears the row highlight; `g g` / `G` jump to the
        first/last row. This DOES need the standard `window`-level
        "attach once" guard (`window.__wtKeyNavBound`) -- it is a
@@ -2193,7 +2212,9 @@ def list_controls_js() -> str:
     return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   }
   function rows(){
-    return [].slice.call(document.querySelectorAll('main table.tbl tbody tr[data-t]'))
+    return [].slice.call(document.querySelectorAll(
+        'main table.tbl tbody tr[data-t], main a.wtb-row[data-t]'
+      ))
       .filter(function(r){ return !r.classList.contains('hidden'); });
   }
   function paint(rs){
@@ -2221,8 +2242,16 @@ def list_controls_js() -> str:
   function openSelected(){
     var rs=rows();
     if(selIndex<0 || selIndex>=rs.length) return;
-    var a=rs[selIndex].querySelector('a');
-    if(a && a.getAttribute('href')){ window.location.href = a.getAttribute('href'); }
+    var el = rs[selIndex];
+    // A `wtb-row` IS the anchor (goal wtv3/project-page); an item-table row
+    // is a `<tr>` whose FIRST descendant `<a>` is the real link -- same
+    // "look up the href fresh" discipline this whole script already uses.
+    var href = el.tagName === 'A' ? el.getAttribute('href') : null;
+    if(!href){
+      var a=el.querySelector('a');
+      href = a ? a.getAttribute('href') : null;
+    }
+    if(href){ window.location.href = href; }
   }
   document.addEventListener('keydown', function(e){
     var active=document.activeElement, tag=active && active.tagName;

@@ -248,14 +248,26 @@ def test_item_detail_shows_description_and_acceptance_criteria(client, project_f
 
 
 def test_item_detail_reachable_from_project_listing(client, project_factory):
-    """The headline finding: every item id/title in the project table must
-    be a real link to its own detail page -- not inert text."""
+    """The headline finding: every item in the project's split-pane list
+    must be a real link -- not inert text -- reachable through to its own
+    editable detail page.
+
+    goal wtv3/project-page: the list row's own href now SELECTS the item
+    inline (matching the already-shipped `/browse` split-pane view), and
+    the populated detail pane's "Open full item" link is the second hop to
+    the real, editable `/items/<id>` page. Both hops are real, clickable
+    navigation -- never a guessed/typed URL."""
     _login(client)
     name, bd = project_factory("linkproj")
     item_id = bd.create("clickable row", tags=[A.LANE_WORK])
+
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
-    assert f'href="/projects/{name}/items/{item_id}"' in r.text
+    assert f"item={item_id}" in r.text  # row's own selection href
+
+    selected = client.get(f"/projects/{name}", params={"item": item_id})
+    assert selected.status_code == 200
+    assert f'href="/projects/{name}/items/{item_id}"' in selected.text
 
 
 def test_item_detail_open_item_shows_no_lifecycle_action(client, project_factory):
@@ -532,6 +544,17 @@ def test_project_view_pagination_reachability_and_no_cli_flag_leak(
     "raise --limit" (a CLI flag a browser user has no way to pass) must be
     gone. One project, exercised in two phases, to keep the (real, slow)
     project bootstrap cost down to a single call.
+
+    goal wtv3/project-page: reachability is now a deliberate TWO-hop model,
+    matching the already-shipped `/browse` split-pane view (see
+    `test_webbrowse_route.py`'s own selection test, which established this
+    exact pattern): a row's own href SELECTS it inline (`?...&item=<id>`,
+    preserving `page`/`status`/`q`), and the populated (read-only) detail
+    pane carries an "Open full item" link to the real, editable
+    `/items/<id>` page. Every item is still reachable by clicking -- never
+    by guessing/typing a URL, never a CLI flag -- just one hop further than
+    the retired single-column table's direct link. This test verifies both
+    hops.
     """
     _login(client)
     name, bd = project_factory("paginateproj")
@@ -544,7 +567,7 @@ def test_project_view_pagination_reachability_and_no_cli_flag_leak(
     assert r0.status_code == 200
     assert 'class="pagination"' not in r0.text
     for i in few_ids:
-        assert f'href="/projects/{name}/items/{i}"' in r0.text
+        assert f"item={i}" in r0.text  # every item's own selection href present
 
     # Phase 2 -- push past one page's worth of items.
     page_size = A.LIST_DEFAULT_LIMIT
@@ -558,11 +581,10 @@ def test_project_view_pagination_reachability_and_no_cli_flag_leak(
     assert f'href="{next_href}"' in page1_text
     assert "--limit" not in page1_text  # no CLI flag anywhere in the web copy
 
-    # Every title cell is a real link to its own item detail page, not
-    # text-width-only.
-    assert 'class="ti"' in page1_text
+    # Every row is a real split-pane selection link, not text-width-only.
+    assert 'class="wtb-rows"' in page1_text
 
-    missing_from_page1 = [i for i in all_ids if f"/items/{i}" not in page1_text]
+    missing_from_page1 = [i for i in all_ids if f"item={i}" not in page1_text]
     assert missing_from_page1, "expected at least one item to be unreachable on page 1 alone"
 
     # Reachable by clicking Next -- not by guessing/typing a per-item URL.
@@ -570,7 +592,7 @@ def test_project_view_pagination_reachability_and_no_cli_flag_leak(
     assert r2.status_code == 200
     assert "--limit" not in r2.text
     for i in missing_from_page1:
-        assert f'href="/projects/{name}/items/{i}"' in r2.text
+        assert f"item={i}" in r2.text
     assert f'href="/projects/{name}?page=1"' in r2.text  # Previous goes back
 
     # A stale/hand-typed page far beyond the real last page lands on the
@@ -579,12 +601,20 @@ def test_project_view_pagination_reachability_and_no_cli_flag_leak(
     assert r3.status_code == 200
     assert "No items yet" not in r3.text
     for i in missing_from_page1:
-        assert f'href="/projects/{name}/items/{i}"' in r3.text
+        assert f"item={i}" in r3.text
 
     # The status filter survives across a page link.
     r4 = client.get(f"/projects/{name}", params={"status": "open"})
     assert r4.status_code == 200
     assert f'href="/projects/{name}?page=2&status=open"' in r4.text
+
+    # Second hop: selecting any one item surfaces the real, editable item
+    # page -- genuine end-to-end reachability, not just a selection href
+    # that goes nowhere further.
+    one_id = few_ids[0]
+    r5 = client.get(f"/projects/{name}", params={"item": one_id})
+    assert r5.status_code == 200
+    assert f'href="/projects/{name}/items/{one_id}"' in r5.text
 
 
 # ------------------------------------------------- cycle 2: numeric alignment
@@ -950,8 +980,15 @@ def test_resolved_item_row_shows_no_holder_chip_though_it_has_a_stale_assignee(
     """Regression guard for the reported contradiction: a resolved item
     keeps its last assignee (`holder`) as a real historical fact, but that
     is NOT a current custody holder -- the project's `held` stat is (and
-    must stay) 0. The row must show the same honest dash a never-held item
-    shows, never a holder-looking chip."""
+    must stay) 0.
+
+    goal wtv3/project-page: the split-pane row (`webbrowse._row_html`, via
+    `project_view`'s `row_extra_builder` -- see that route's own
+    `_item_held_html`) renders NO held/custody line at all for a non-held
+    item -- absent entirely, the same "absent when calm, never a dimmed
+    placeholder" convention the attention banner already uses -- never a
+    holder-looking chip with a dash standing in for "not held."
+    """
     _login(client)
     name, bd = project_factory("resolvedholderproj")
     bd.create("will be claimed then resolved", tags=[A.LANE_WORK])
@@ -960,17 +997,12 @@ def test_resolved_item_row_shows_no_holder_chip_though_it_has_a_stale_assignee(
 
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
-    # The rendered Holder CELL for this row is the honest dash, not the
-    # item's real (but historical/no-longer-current) assignee. Checked via
-    # the specific `<span class="holder">` cell, not a blanket substring
-    # scan of the whole page -- the row's own `data-t` search-index
-    # attribute legitimately still carries the actor's name for
-    # search-by-holder purposes (see `_item_row`'s `key`), which is a
-    # separate, deliberate concern from what's visibly rendered.
-    holder_cell = re.search(r'<span class="holder">(.*?)</span>', r.text)
-    assert holder_cell, r.text
-    assert unique_actor not in holder_cell.group(1)
-    assert "mdash" in holder_cell.group(1)
+    # No held/custody line rendered for this (resolved, not held) row at
+    # all. The row's own `data-t` search-index attribute legitimately still
+    # carries the actor's name for search-by-holder purposes (see
+    # `webbrowse._row_html`'s `key`), which is a separate, deliberate
+    # concern from what's visibly rendered.
+    assert 'class="wtb-holder"' not in r.text
     # The project's own "Held" tally agrees: 0 currently held, even though
     # this project has exactly one resolved item with a real leftover holder.
     assert '<div class="v">0</div><span class="k">Held</span>' in r.text
@@ -1075,22 +1107,27 @@ def test_project_view_status_tabs_show_real_counts(client, project_factory, uniq
 def test_project_view_clicking_a_status_tab_filters_the_list(client, project_factory, unique_lane):
     """Note: the ready-queue HERO (`_project_hero_html`, "oldest unclaimed
     in this queue") legitimately names this item's title regardless of the
-    table's own status filter -- it is a project-wide reading, not part of
+    list's own status filter -- it is a project-wide reading, not part of
     the filtered list. So the filtering assertion is scoped to the item
-    TABLE itself (absent entirely -- an honest empty-state -- once
+    LIST itself (absent entirely -- an honest empty-state -- once
     filtered to a status this item doesn't have), not a blanket "title
-    appears nowhere on the page" check."""
+    appears nowhere on the page" check.
+
+    goal wtv3/project-page: the item list is now the split-pane's
+    `.wtb-rows` (squircle row cards), not the retired `<table class="tbl">`
+    -- see webapp.py's `project_view`, which reuses webbrowse.py's shared
+    split-pane machinery."""
     _login(client)
     name, bd = project_factory("tabfilterproj")
     bd.create("only an open item", tags=[unique_lane, A.LANE_WORK])
 
     all_view = client.get(f"/projects/{name}")
     assert "only an open item" in all_view.text
-    assert 'class="tbl"' in all_view.text
+    assert 'class="wtb-rows"' in all_view.text
 
     filtered = client.get(f"/projects/{name}", params={"status": "blocked"})
     assert filtered.status_code == 200
-    assert 'class="tbl"' not in filtered.text  # no rows -- filtered to nothing
+    assert 'class="wtb-rows"' not in filtered.text  # no rows -- filtered to nothing
     assert "No items match status" in filtered.text
     assert f'href="/projects/{name}?status=blocked"' in filtered.text
     assert 'class="tab active"' in filtered.text
@@ -1164,7 +1201,10 @@ def test_project_view_item_rows_include_priority_bar_and_status_icon(
 
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
-    assert 'class="c gutter"' in r.text
+    # goal wtv3/project-page: the row's gutter is now the split-pane's
+    # `.wtb-gutter` (squircle row card), not the retired table cell's
+    # `class="c gutter"` -- see webbrowse.py's `_row_html`, reused verbatim.
+    assert 'class="wtb-gutter"' in r.text
     # v3 fidelity pass (goal wtv3/components, B3/B4): a priority CHIP, not
     # the prior coloured bar.
     assert "priority-chip" in r.text
