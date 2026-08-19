@@ -103,6 +103,34 @@ _BROWSE_CSS = r"""
 .wtb-scroll{flex:1 1 auto;overflow-y:auto;overscroll-behavior:contain}
 .wtb-list .wtb-scroll{padding:6px}
 .wtb-detail .wtb-scroll{padding:22px 26px 40px}
+/* Visible scroll affordance (goal wtv3/finish, task 5): `.wtb-scroll` was
+   already mechanically `overflow-y:auto` (long content DOES scroll), but
+   on several platforms an unstyled scrollbar renders as an invisible
+   overlay -- nothing hints that a long description/timeline continues
+   below the fold, so it reads as clipped even though it isn't. Styling
+   `::-webkit-scrollbar` also has the side effect of switching Chromium
+   away from that invisible-overlay default to a real, always-rendered
+   (while scrollable) thumb -- the fix and the affordance are the same
+   change. `--dim` (not `--glass-hairline*`) is deliberate: measured via a
+   real render, `--glass-hairline`'s rgba alpha (.14/.08 -- tuned for a
+   barely-there PANEL border, sitting beside a brighter rim-glow edge) was
+   verified functionally present (scrollbar-gutter reserved, `scrollbar-
+   color` applied) but too faint to read as a scrollbar at all against the
+   dark glass fill -- exactly the invisible-affordance defect this task
+   exists to fix, just moved from "no scrollbar" to "a scrollbar no one
+   can see". `--dim` is the SAME already-used, contrast-verified ink token
+   `.wtb-count`/`.wtb-age` on this very page already render small print in
+   -- no new token defined here, just a more legible existing one.
+   `scrollbar-gutter:stable` reserves the thumb's width up front so its
+   appearance never shifts the content underneath by a few pixels once a
+   pane becomes scrollable. */
+.wtb-scroll{scrollbar-width:thin;scrollbar-color:var(--dim) transparent;
+  scrollbar-gutter:stable}
+.wtb-scroll::-webkit-scrollbar{width:8px}
+.wtb-scroll::-webkit-scrollbar-track{background:transparent}
+.wtb-scroll::-webkit-scrollbar-thumb{background:var(--dim);
+  border-radius:4px;border:2px solid transparent;background-clip:padding-box}
+.wtb-scroll::-webkit-scrollbar-thumb:hover{background:var(--mid)}
 
 /* -- column headers (goal wtv3/components, C2) -- the blend-3 mockup's
    left-pane column set: Priority . Status . Item ID . Task title .

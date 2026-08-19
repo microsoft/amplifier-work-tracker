@@ -1177,6 +1177,36 @@ td.link-cell > a:hover::after{color:var(--brand-cyan-ink)}
   display:block;margin-bottom:14px}
 .formsec.danger{border-top-color:var(--crimson)}
 .formsec.danger .flegend{color:var(--crimson)}
+
+/* -- CREATE-PROJECT disclosure (goal wtv3/finish, task 3) -- a collapsed
+   glass trigger that expands to a proper glass card, replacing the prior
+   always-visible bare `.formsec` strip (the one genuinely unstyled widget
+   on the dashboard). Scoped to its own classes rather than restyling the
+   shared `.formsec` -- that class is also used by unrelated forms
+   elsewhere (webapp.py's rename/resolve/delete flows, webtrust.py's setup
+   page with its OWN local `.formsec` override) this task never asked to
+   touch. Every value below is an EXISTING token also used by
+   `.wtb-pane`/`.projcard` -- no new token defined here. */
+details.createproj{margin:8px 0 0}
+details.createproj>summary.cp-trigger{
+  display:inline-flex;align-items:center;gap:8px;cursor:pointer;list-style:none;
+  font-family:var(--sans);font-size:12.5px;font-weight:600;letter-spacing:.02em;
+  color:var(--ink-tertiary);padding:9px 18px;border-radius:var(--radius-pill);
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  transition:color var(--duration-fast,.15s),background var(--duration-fast,.15s);
+}
+details.createproj>summary.cp-trigger::-webkit-details-marker{display:none}
+details.createproj>summary.cp-trigger::marker{content:""}
+details.createproj>summary.cp-trigger:hover{color:var(--ink);background:var(--glass-fill-row-hover)}
+details.createproj[open]>summary.cp-trigger{color:var(--ink);background:var(--glass-fill-row-hover)}
+.cp-card{margin-top:14px;max-width:420px;padding:20px 22px;border-radius:var(--radius-lg);
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  box-shadow:var(--glass-shadow-float);backdrop-filter:blur(var(--glass-blur));
+  -webkit-backdrop-filter:blur(var(--glass-blur));}
+.cp-card .flegend{margin-bottom:14px}
+.cp-card input[type="text"]{max-width:280px;background:var(--glass-fill-strong);
+  border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm)}
+.cp-card input[type="text"]:focus{outline:0;border-color:var(--brand-cyan)}
 label{display:block;margin:0.7rem 0 0.3rem;font-size:11px;font-weight:600;
   letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
 .field-hint{font-size:11.5px;color:var(--quiet);margin:0.15rem 0 0.3rem}
@@ -1848,7 +1878,7 @@ def statusbar(left_html: str, right_html: str = "") -> str:
     return f'<footer class="statusbar">{left_html}<span class="sp"></span>{right_html}</footer>'
 
 
-def search_field(hint: str, field_id: str = "q", *, shortcut: str = "/") -> str:
+def search_field(hint: str, field_id: str = "q", *, shortcut: str | None = "/") -> str:
     """The dashboard's client-filtered search field (see `search_js` below).
 
     `shortcut`, when given (default `\"/\"`), is printed as a quiet trailing
@@ -1859,6 +1889,12 @@ def search_field(hint: str, field_id: str = "q", *, shortcut: str = "/") -> str:
     `aria-label` on purpose: a screen reader announcing \"...state slash\"
     would be noise, not help -- the printed hint is a sighted-user affordance,
     the field's actual accessible name stays just `hint`.
+
+    Pass `shortcut=None` (goal wtv3/finish, task 2) for a SECOND search
+    field on the same page: only one field can own the document-level `/`
+    binding (`search_js` guards it to fire once, for whichever field's
+    `search_js` call runs first), so printing the `/` hint on a field that
+    shortcut will never reach would be a false affordance.
     """
     hint_html = _esc(hint)
     if shortcut:
@@ -1876,11 +1912,24 @@ def search_field(hint: str, field_id: str = "q", *, shortcut: str = "/") -> str:
     )
 
 
-def search_js(total: int, noun: str, row_sel: str = "[data-t]", field_id: str = "q") -> str:
+def search_js(
+    total: int,
+    noun: str,
+    row_sel: str = "[data-t]",
+    field_id: str = "q",
+    count_id: str = "qc",
+) -> str:
     """Genuinely filters the live DOM by the `data-t` attribute on each row,
     with a truthful `N OF total NOUN` counter -- ported verbatim (logic
     unchanged) from the reference's `shell.search_js`, which claims.py
     verified filters truthfully on all five reference screens.
+
+    `count_id` (goal wtv3/finish, task 2) lets a SECOND, independent filter
+    field coexist on the same page (e.g. the per-project-overview grid's
+    own filter alongside the queue table's) without both trying to write
+    their counter into the same `#qc` element -- each call targets its own
+    counter span. Defaults to `"qc"`, the queue table's original id, so
+    every existing caller is unaffected.
 
     Re-invocation safe: `auto_refresh_js` re-executes this same script
     (via a fresh `<script>` element, since a `.innerHTML` swap never runs
@@ -1893,12 +1942,13 @@ def search_js(total: int, noun: str, row_sel: str = "[data-t]", field_id: str = 
     the body swap, so re-registering that listener on every re-invocation
     would silently accumulate one duplicate per refresh tick forever --
     guarded by a `window`-level flag so it is attached exactly once for
-    the life of the page, however many times this function itself reruns.
+    the life of the page, however many times this function itself reruns
+    (and however many independent filter fields call it).
     """
     return f"""
 (function(){{
   var q=document.getElementById('{field_id}'), field=document.getElementById('field'),
-      out=document.getElementById('qc'),
+      out=document.getElementById('{count_id}'),
       rows=[].slice.call(document.querySelectorAll('{row_sel}')),
       groups=[].slice.call(document.querySelectorAll('tr.grp'));
   if(!q) return;
