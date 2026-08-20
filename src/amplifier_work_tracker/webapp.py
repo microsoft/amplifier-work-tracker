@@ -4474,7 +4474,7 @@ def create_app(
           <form method="post" action="/projects/{_esc(name)}/items/{_esc(item.id)}/update"
                 style="margin-top:18px">
             <label for="title">Title</label>
-            <textarea id="title" name="title" required rows="3"
+            <textarea id="title" name="title" required rows="2"
                       style="{title_input_style}">{_esc(item.title)}</textarea>
 
             <div class="kv" style="margin-top:18px">{facts_kv}</div>

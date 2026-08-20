@@ -182,6 +182,29 @@ _BROWSE_CSS = r"""
 .wtb-list-extra{padding:0 20px 14px;display:flex;flex-direction:column;gap:12px}
 .wtb-list-extra .tabs{margin:0}
 .wtb-list-extra .controls{padding:0}
+/* D3 fixup (consistency pass, round 2): the round-1 `gap:12px` only fixed the
+   spacing BETWEEN the tabs/search/controls blocks -- it never touched the two
+   things that actually read as "untidy" inside this narrow (~300-440px) list
+   pane:
+     (a) the search input still SHARED its row with the Search button whenever
+         the pane happened to be wide enough for `.field`'s min-width (240px)
+         + the button to both fit -- leaving the input at ~60-70% width with
+         the button (and a chunk of dead space) beside it. Measured live at a
+         real project width. The desktop base rule (`.field{flex:1;
+         max-width:520px}`) is written for a WIDE full-page controls bar, not
+         a skinny column. Here we force the field to own its whole row
+         (`flex-basis:100%`, cap removed) so the button/count/toggle always
+         wrap cleanly beneath it -- the SAME thing the global <=600px rule
+         already does for phones, applied to this narrow pane at every width.
+     (b) `.controls`' own inter-row gap was still its desktop 14px while the
+         blocks around it use 12px -- one value now, so the whole toolbar
+         reads on a single vertical rhythm.
+   Also tighten the status-tab pills (smaller pad + gap) so 6 tabs read as one
+   compact block instead of sprawling across three ragged lines. */
+.wtb-list-extra .controls{gap:12px}
+.wtb-list-extra .controls .field{flex:1 1 100%;min-width:0;max-width:none}
+.wtb-list-extra .tabs{gap:6px}
+.wtb-list-extra .tabs .tab{padding:6px 12px}
 .wtb-pane-foot{flex:0 0 auto;padding:10px 20px;border-top:1px solid var(--rule)}
 .wtb-pane-foot .pagination{margin:0}
 

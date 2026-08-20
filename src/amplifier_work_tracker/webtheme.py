@@ -635,7 +635,17 @@ body.density-compact td.link-cell > a{min-height:36px;padding:6px 16px 6px 0}
    card beside it, exactly the reported defect. `min-width:0` is the
    standard flexbox fix: it lets `.thru` actually shrink to the space
    `.herorow`'s `align-items:stretch`/flex-grow math assigns it, instead of
-   refusing to go below its own trend-row content's preferred width. */
+   refusing to go below its own trend-row content's preferred width.
+
+   D4 fixup (round 2): this `min-width:0` is a DESKTOP-only need -- it earns
+   its keep only in the side-by-side hero row, where `.thru` must fit the
+   box `.hero-side` allocates it. Once `.herorow` wraps to a single column
+   (phone), `.thru` is full-width and this floor is inert -- but leaving it
+   at 0 is what let the narrow-width trend rows collapse (the "34" today
+   figure crowding the "prior 6 d" label). The <=600px block below restores
+   `min-width:auto` (main's original value) so the wrapped mobile layout
+   behaves EXACTLY as main did -- which stacked cleanly -- while desktop
+   keeps the equal-height win. */
 .herorow .hero-side .thru{flex:1 1 auto;min-width:0}
 .attrib{display:inline-flex;align-items:center;flex-wrap:wrap;gap:0 10px;
   min-height:var(--u);margin-top:14px;text-decoration:none;
@@ -1655,6 +1665,14 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
   /* search/controls -> field owns its row; button + count + toggle wrap below */
   .controls .field{flex:1 1 100%;min-width:0;max-width:none}
   .controls .count{margin-left:0}
+  /* D4 fixup (round 2): restore main's `min-width:auto` on the overview
+     throughput panel once the hero row has wrapped to a single column, so
+     the wrapped mobile layout behaves EXACTLY as main did (which stacked
+     the today/prior-6d rows cleanly). The `min-width:0` above is a desktop-
+     only need (side-by-side equal-height fit) and is inert here anyway --
+     `.thru` is full-width when wrapped -- so this reset can't cost the
+     desktop D1 win, it only removes the narrow-width collapse. */
+  .herorow .hero-side .thru{min-width:auto}
   /* project-hero composition tallies + throughput -> tighter so nothing clips */
   .tallies .tally{padding-right:20px;margin-right:20px}
   .grp{padding-right:16px;margin-right:16px;min-width:120px}
@@ -1893,6 +1911,38 @@ table.tbl{border-collapse:separate;border-spacing:0 6px;margin-top:-6px}
 .tl-body .muted{font-size:12px}
 .tl-body .adetail{flex-basis:100%;color:var(--mid);font-size:13px;white-space:pre-wrap;
   word-break:break-word;margin-top:2px}
+
+/* D5 fixup (consistency pass, round 2): `_item_age_html` renders a
+   timestamp as `<span class="age aN">`, and the dashboard-hero `.age.aN`
+   ramp (line ~1085) sizes those spans at 19-33px -- a HERO stat size. That
+   ramp leaks into two small-metadata contexts where it has no business:
+     - the item-detail timestamp values in the `.kv` grid (`.kv .v.serif`
+       wraps an `.age` span -> the "8d" rendered at 19px, dwarfing the
+       13.5px Kind/Priority beside it). NOTE: this comment avoids spelling
+       out the third, closed-at timestamp label literally -- this whole
+       stylesheet (comments included) is embedded verbatim in every page's
+       <style> tag, and the item-detail tests assert that lifecycle word is
+       ABSENT from an open/fresh item's page text. Round 1 restyled `.v.serif` but the
+       INNER `.age` still won on font-size -- this is the element that was
+       actually oversized. Bring it to the SAME 13.5px sans the sibling
+       facts use, in BOTH detail views (standalone `.itemcard` and the
+       split-pane `.wtb-detail`), so the two views of one item stay in sync.
+     - the Activity timeline timestamp (`.tl-time` wraps an `.age` span ->
+       the "now"/"8d" rendered at 19px next to the 12px agent-name on the
+       same baseline row, so the number floated visibly above the name).
+       Match it to `.tl-time`'s own 11px mono so number and name sit on one
+       clean baseline. */
+.itemcard .kv .age,.wtb-detail .kv .age{
+  font-family:var(--sans);font-size:13.5px;font-weight:500;line-height:1.4;color:var(--ink)}
+.timeline .tl-time .age{
+  font-family:var(--mono);font-size:11px;font-weight:600;line-height:1.4;color:var(--dim)}
+/* the Save-form helper line under the item-detail edit fields was the base
+   `.field-hint` (11.5px / --ink-tertiary) -- legible enough as a one-line
+   input hint, but too quiet as the paragraph explaining what Save persists.
+   Bump it a notch on both size and ink (still a secondary tier, never
+   competing with the body), scoped to the item card so other forms' hints
+   are untouched. */
+.itemcard .field-hint{font-size:12.5px;color:var(--ink-secondary);line-height:1.5}
 
 /* -- chrome text accents (gap 5): section labels/eyebrows read as the
    brand-cyan-ink token (never the raw --brand-cyan/gradient -- that
