@@ -785,7 +785,7 @@ def test_item_detail_edit_form_is_present_and_prefilled(client, project_factory)
     # would otherwise clip with no way to see the rest) -- the prefilled
     # value is its element CONTENT, not a `value=` attribute, so it's
     # asserted the same way the other prefilled textareas below already are.
-    assert '<textarea id="title" name="title" required rows="3"' in r.text
+    assert '<textarea id="title" name="title" required rows="2"' in r.text
     assert ">prefill probe</textarea>" in r.text
     assert "<textarea" in r.text
     assert "prefill description" in r.text
