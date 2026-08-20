@@ -1942,7 +1942,7 @@ table.tbl{border-collapse:separate;border-spacing:0 6px;margin-top:-6px}
    Bump it a notch on both size and ink (still a secondary tier, never
    competing with the body), scoped to the item card so other forms' hints
    are untouched. */
-.itemcard .field-hint{font-size:12.5px;color:var(--ink-secondary);line-height:1.5}
+.itemcard .field-hint{font-size:13px;color:var(--ink);line-height:1.55;opacity:.85}
 
 /* -- chrome text accents (gap 5): section labels/eyebrows read as the
    brand-cyan-ink token (never the raw --brand-cyan/gradient -- that

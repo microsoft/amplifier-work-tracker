@@ -201,8 +201,15 @@ _BROWSE_CSS = r"""
          reads on a single vertical rhythm.
    Also tighten the status-tab pills (smaller pad + gap) so 6 tabs read as one
    compact block instead of sprawling across three ragged lines. */
-.wtb-list-extra .controls{gap:12px}
-.wtb-list-extra .controls .field{flex:1 1 100%;min-width:0;max-width:none}
+.wtb-list-extra .controls{gap:12px;row-gap:12px}
+/* The search field owns its OWN full-width row: `flex-basis:100%` alone can
+   still share a line with the Search button when the pane is wide enough for
+   both, so force the following siblings past it with an explicit line break
+   (`::after` flex-basis:100%) -- the field spans the row, button/count/toggle
+   wrap beneath, at every pane width. */
+.wtb-list-extra .controls .field{flex:1 1 100%;min-width:0;max-width:none;order:0}
+.wtb-list-extra .controls::after{content:"";flex-basis:100%;height:0;order:1}
+.wtb-list-extra .controls>:not(.field){order:2}
 .wtb-list-extra .tabs{gap:6px}
 .wtb-list-extra .tabs .tab{padding:6px 12px}
 .wtb-pane-foot{flex:0 0 auto;padding:10px 20px;border-top:1px solid var(--rule)}
