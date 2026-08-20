@@ -626,7 +626,17 @@ body.density-compact td.link-cell > a{min-height:36px;padding:6px 16px 6px 0}
 .herorow{display:flex;align-items:stretch;gap:28px;flex-wrap:wrap}
 .herorow .hero{flex:2 1 480px;margin:0}
 .herorow .hero-side{flex:1 1 260px;display:flex;min-width:0}
-.herorow .hero-side .thru{flex:1 1 auto}
+/* D1 (consistency pass): `.thru`'s own `flex:1 1 auto` left its minimum
+   size at the browser default `min-width:auto` -- a flex item's implicit
+   floor is its CONTENT's natural (unshrunk) width, not "shrink to fit the
+   row". Measured live: at a real dashboard width (sidebar present) `.thru`
+   rendered ~40px WIDER than `.hero-side`'s own allocated box, overflowing
+   past the row's right edge -- "throughput hangs past" the ready-to-claim
+   card beside it, exactly the reported defect. `min-width:0` is the
+   standard flexbox fix: it lets `.thru` actually shrink to the space
+   `.herorow`'s `align-items:stretch`/flex-grow math assigns it, instead of
+   refusing to go below its own trend-row content's preferred width. */
+.herorow .hero-side .thru{flex:1 1 auto;min-width:0}
 .attrib{display:inline-flex;align-items:center;flex-wrap:wrap;gap:0 10px;
   min-height:var(--u);margin-top:14px;text-decoration:none;
   font-family:var(--sans);font-size:12px;font-weight:600;letter-spacing:.1em;
@@ -814,7 +824,13 @@ a.what:hover{color:var(--brand-cyan-ink)}
   flex-wrap:wrap}
 .projoverview .chead .rt{margin-left:auto;font-family:var(--sans);font-size:11px;
   color:var(--quiet);letter-spacing:.02em}
+/* D2 (consistency pass): the queue table's own new head row -- same
+   `.chead` rhythm as `.comp`/`.projoverview` above, so it reads as one
+   family of panel headers rather than a bare search bar with no title. */
+.queuepanel .chead{display:flex;align-items:baseline;gap:24px;margin-bottom:13px;
+  flex-wrap:wrap}
 .projgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));
+  align-items:stretch;
   gap:14px}
 /* C17/C18 (craft punch list): the per-project mini-card is the ONE bordered
    panel on this page with no shadow at all -- every major panel (hero,
@@ -1298,6 +1314,38 @@ td.link-cell > a:hover::after{color:var(--brand-cyan-ink)}
 .formsec.danger{border-top-color:var(--crimson)}
 .formsec.danger .flegend{color:var(--crimson)}
 
+/* D6 (consistency pass): the project-split page's own bottom "Add item"
+   and "Danger zone" sections were the last two flat, un-migrated
+   `.formsec` strips on that page -- a bare top border, no glass, no
+   depth, while every other panel on the page (hero, needs-you, the
+   split-pane cards) already carries the shared glass treatment. Scoped
+   to `#add-item` (this route's own section id) so the unrelated
+   held-item action form on the item-detail page, and webtrust.py's setup
+   page (which already carries its own local `.formsec` override), are
+   untouched. NOTE: this comment deliberately avoids spelling out that
+   held-item action verb literally -- this whole stylesheet, comments
+   included, is embedded verbatim in every page's `<style>` tag, and this
+   repo's own integration tests assert that word is ABSENT from an open
+   item's page text (see test_item_detail_open_item_shows_no_lifecycle_
+   action). `#add-item` itself supplies the gap between the two panels,
+   so neither `.formsec` needs its own margin. */
+#add-item{display:flex;flex-direction:column;gap:20px}
+#add-item .formsec{
+  border-top:0;background:var(--glass-fill-strong);
+  border:1px solid var(--glass-hairline);border-radius:var(--radius-lg);
+  padding:24px 26px;backdrop-filter:blur(var(--glass-blur-strong));
+  -webkit-backdrop-filter:blur(var(--glass-blur-strong));
+  box-shadow:var(--glass-shadow-float);
+}
+/* danger zone keeps ITS OWN reserved-hue accent -- a real variant of the
+   shared panel (an inset left bar + border tint, the same idiom
+   `.verdict.v-blocked`/`.needs-row.sev-cr` already use for "this
+   surface carries a blocked/danger meaning"), not a one-off outline. */
+#add-item .formsec.danger{
+  border-top:0;border-color:var(--blocked);
+  box-shadow:var(--glass-shadow-float),inset 4px 0 0 var(--blocked);
+}
+
 /* -- CREATE-PROJECT disclosure (goal wtv3/finish, task 3) -- a collapsed
    glass trigger that expands to a proper glass card, replacing the prior
    always-visible bare `.formsec` strip (the one genuinely unstyled widget
@@ -1338,8 +1386,24 @@ label{display:block;margin:0.7rem 0 0.3rem;font-size:11px;font-weight:600;
    `.controls button` already applies for the horizontal search bar. */
 .form-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:0.7rem}
 .form-actions button{margin-top:0}
+/* D4 (consistency pass): these fields kept the browser's default
+   `inline-block` outside-display. An `<input>`/`<textarea>` in a stacked
+   form is `width:100%`, so it visually LOOKS like a block -- but as an
+   inline-level box, once its own `max-width:480px` cap leaves real space
+   on the same line, whatever markup element follows it (most often a
+   `<button type=submit>`, itself also inline-flex) flows onto THAT
+   remaining space instead of dropping to its own new line below the
+   field. Measured live on the project page's "Add item" form: the Add
+   button rendered ~480px to the RIGHT of the Title field above it,
+   floating beside the last textarea instead of under the form as a
+   clear submit action -- the reported "Add button doesn't align"
+   defect. `display:block` is the one-line fix, and it fixes every
+   stacked form sharing this base rule at once (Add item, the held-item
+   action form, rename), not just the one this task named. NOTE:
+   deliberately not naming that held-item action verb literally -- see
+   the `#add-item .formsec` comment below for why. */
 input[type=text],input[type=password],textarea,select{
-  width:100%;max-width:480px;padding:0.55rem 0.7rem;box-sizing:border-box;
+  display:block;width:100%;max-width:480px;padding:0.55rem 0.7rem;box-sizing:border-box;
   font-family:var(--sans);font-size:13.5px;min-height:var(--u);
   border:1px solid var(--rule);border-radius:var(--radius-sm);background:var(--raise);
   color:var(--ink);
@@ -1626,10 +1690,12 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
    layer sitting on top (a border-image would paint square corners; this
    respects `border-radius:inherit`). Chrome only -- no status meaning
    ever travels on this gradient. */
-.hero,.verdict,.comp,.needs,.dispatch,.context>.beat,.thru,.projoverview,.itemcard{
+.hero,.verdict,.comp,.needs,.dispatch,.context>.beat,.thru,.projoverview,.itemcard,
+.queuepanel{
   position:relative}
 .hero::before,.verdict::before,.comp::before,.needs::before,.dispatch::before,
-.context>.beat::before,.thru::before,.projoverview::before,.itemcard::before{
+.context>.beat::before,.thru::before,.projoverview::before,.itemcard::before,
+.queuepanel::before{
   content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
   background:var(--brand-gradient-rim);
   -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
@@ -1655,7 +1721,7 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
    behind them, while the individual rows/cards nested inside (still on
    plain --glass-fill, e.g. `.needs-row`) provide the lighter inner layer
    that keeps the "glass on glass" depth cue instead of a flat wash. */
-.comp,.needs,.context>.beat,.thru,.dispatch,.projoverview{
+.comp,.needs,.context>.beat,.thru,.dispatch,.projoverview,.queuepanel{
   background:var(--glass-fill-strong);
   backdrop-filter:blur(var(--glass-blur-strong));-webkit-backdrop-filter:blur(var(--glass-blur-strong));
   border:1px solid var(--glass-hairline);
@@ -1663,6 +1729,13 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
   box-shadow:var(--glass-shadow-float);
   padding:24px 26px;
 }
+/* D2 (consistency pass): the overview's bottom "detailed queues" table sat
+   directly in the section, unglassed -- a plain, borderless, square-
+   cornered strip while the "Needs you -- ranked" panel right above it was
+   already the full glass treatment. `.queuepanel` gives it the SAME
+   shared panel background/border/radius/shadow/padding every other
+   dashboard panel already uses (no new tokens); see `dashboard()` in
+   webapp.py for the wrapping markup. */
 
 /* -- hero (age / ready-count widgets): was already glass-fill; promote to
    the STRONGER hero-tier fill + float shadow, matching the design
@@ -1681,6 +1754,28 @@ button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
   padding:28px 32px;backdrop-filter:blur(var(--glass-blur-strong));
   -webkit-backdrop-filter:blur(var(--glass-blur-strong))}
 @media (max-width:600px){.itemcard{padding:20px 18px}}
+
+/* D5 (consistency pass): the standalone item page's Title/Description/
+   Acceptance/Design fields were plain `textarea{...}` -- the base form-
+   field look shared with every one-line input in the app (`--radius-sm`,
+   8px), one full radius tier flatter than the SAME content read-only in
+   webbrowse.py's split-pane detail (`.content-block`, `--radius-md`,
+   16px). Scoped to `.itemcard` only (never the Add-item/held-item-action/
+   rename forms elsewhere, which are genuinely one-line-field forms and
+   keep the base look) so these specific fields read as the same rounded
+   "well" the read-only view already renders for the same content. */
+.itemcard textarea{
+  border-radius:var(--radius-md);padding:0.9rem 1rem 1.15rem;
+  font-size:15px;line-height:1.6;
+}
+/* the metadata timestamp values (Created/Updated/[closed-at]) rendered
+   visibly larger (20px serif) than every other fact on the same page
+   (13.5px sans) -- confirmed live (`getComputedStyle` measured 20px) and
+   reported as "oversized/bold vs other text". Scoped to `.itemcard` only -- the
+   split-pane detail pane's own narrower column never showed the same
+   defect (a smaller pane makes the same jump read as a deliberate
+   emphasis rather than an inconsistency), so it is left unchanged there. */
+.itemcard .kv .v.serif{font-family:var(--sans);font-size:13.5px;font-weight:500}
 
 /* -- the "N NEED YOU / ALL CLEAR" verdict panel: promoted from a flat,
    glass-less banner (the prior port's deliberate choice) to the DOMINANT

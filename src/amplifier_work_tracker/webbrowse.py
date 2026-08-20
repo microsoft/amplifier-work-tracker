@@ -53,15 +53,14 @@ from amplifier_work_tracker.webapp import (
     _activity_feed_html,
     _content_block_html,
     _crumb,
-    _custody_html,
-    _custody_reading,
     _dependency_sections_html,
     _esc,
-    _fact_value_html,
     _flash,
-    _identity_html,
     _item_age_html,
+    _item_facts_kv_html,
+    _item_held_chip_html,
     _item_state_html,
+    _item_time_kv_html,
     _not_found_body,
     _page,
     _priority_bar_html,
@@ -170,8 +169,19 @@ _BROWSE_CSS = r"""
    BELOW the scrollable list (outside `.wtb-scroll`), so a control placed
    there (e.g. `project_view`'s existing pagination) never scrolls out of
    view with the rows above it. */
-.wtb-list-extra{padding:0 20px 14px}
-.wtb-list-extra .tabs{margin-bottom:0}
+/* D3 (consistency pass): this narrow list-pane header previously mixed
+   THREE different vertical rhythms for what should read as one toolbar --
+   `.tabs`'s own row-wrap gap (.25rem), a forced 0 between the tabs block
+   and the search controls below it, and `.controls`'s own 14px gap for
+   its own wrapped sub-rows (the field row vs. the button/count/toggle
+   row it wraps to at this column's ~300-440px width). `display:flex;
+   flex-direction:column;gap:12px` makes ONE value -- not three -- the
+   single source of truth for "space between toolbar blocks"; the tabs'
+   own inter-pill gap and `.controls`'s own inter-field gap are a
+   different, smaller-scale spacing concern and are left alone. */
+.wtb-list-extra{padding:0 20px 14px;display:flex;flex-direction:column;gap:12px}
+.wtb-list-extra .tabs{margin:0}
+.wtb-list-extra .controls{padding:0}
 .wtb-pane-foot{flex:0 0 auto;padding:10px 20px;border-top:1px solid var(--rule)}
 .wtb-pane-foot .pagination{margin:0}
 
@@ -454,39 +464,14 @@ def render_detail_html(
             "fields, blocker chain, and activity timeline.</p></div>"
         )
 
-    # Holder chip -- only when GENUINELY held right now (bd's assignee survives
-    # resolution as history, not current custody), with the same claim-age +
-    # staleness reading the table row and item page use.
-    custody_html = _custody_html(_custody_reading(item))
-    if custody_html:
-        held_chip = f'<span class="chip">{custody_html}</span>'
-    elif item.holder and item.status == "held":
-        held_chip = f'<span class="chip">held by {_identity_html(item.holder)}</span>'
-    else:
-        held_chip = ""
-
-    facts = [
-        ("Queue", f'<a class="prose-link" href="/projects/{_esc(name)}">{_esc(name)}</a>'),
-        ("Kind", _fact_value_html(item.kind or "--")),
-        ("Priority", _fact_value_html(str(item.priority) if item.priority is not None else "--")),
-    ]
-    owner = item.raw.get("owner")
-    if owner:
-        facts.append(("Reported by", _identity_html(str(owner))))
-    facts_kv = "".join(
-        f'<div><span class="k">{_esc(k)}</span><span class="v">{v}</span></div>' for k, v in facts
-    )
-
-    time_parts = [
-        ("Created", _item_age_html(item.created_at)),
-        ("Updated", _item_age_html(item.updated_at)),
-    ]
-    if item.status == "resolved" and item.closed_at:
-        time_parts.append(("Resolved", _item_age_html(item.closed_at)))
-    time_kv = "".join(
-        f'<div><span class="k">{_esc(k)}</span><span class="v serif">{v}</span></div>'
-        for k, v in time_parts
-    )
+    # D5 (consistency pass): facts/timestamps/held-chip are now the SAME
+    # shared builders the standalone item-detail page calls
+    # (`_item_facts_kv_html`/`_item_time_kv_html`/`_item_held_chip_html`,
+    # defined in webapp.py) -- one computation, not two independently-
+    # drifting copies of the same three things.
+    held_chip = _item_held_chip_html(item)
+    facts_kv = _item_facts_kv_html(name, item)
+    time_kv = _item_time_kv_html(item)
 
     description = _content_block_html(item.description, empty_message="No description provided.")
     acceptance = _content_block_html(

@@ -2537,6 +2537,66 @@ def _fact_value_html(value: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# D5 (consistency pass): the standalone item-detail page (below) and
+# webbrowse.py's split-pane detail (`render_detail_html`) had each grown
+# their OWN, nearly-identical inline copy of "compute the facts/timestamp
+# kv rows and the held/custody chip" -- the exact drift risk the two pages
+# looking inconsistent already demonstrated (a stray missing `prose-link`
+# class on this route's own Queue link, invisible until compared side by
+# side). Both pages now call these three shared builders instead, so the
+# two views of the same item can never silently diverge again.
+# ---------------------------------------------------------------------------
+
+
+def _item_facts_kv_html(name: str, item: A.Item) -> str:
+    """Queue/Kind/Priority[/Reported by] as `.kv` row spans (caller wraps
+    the `<div class="kv">`, since the two callers use slightly different
+    top margins for their own layouts)."""
+    facts = [
+        ("Queue", f'<a class="prose-link" href="/projects/{_esc(name)}">{_esc(name)}</a>'),
+        ("Kind", _fact_value_html(item.kind or "--")),
+        ("Priority", _fact_value_html(str(item.priority) if item.priority is not None else "--")),
+    ]
+    owner = item.raw.get("owner")
+    if owner:
+        facts.append(("Reported by", _identity_html(str(owner))))
+    return "".join(
+        f'<div><span class="k">{_esc(k)}</span><span class="v">{v}</span></div>' for k, v in facts
+    )
+
+
+def _item_time_kv_html(item: A.Item) -> str:
+    """Created/Updated[/Resolved] as `.kv` row spans -- same compact
+    relative-age vocabulary the item table's own Age column uses
+    (`_item_age_html`), never a second, coarser "12m ago" format for the
+    same kind of value."""
+    parts = [
+        ("Created", _item_age_html(item.created_at)),
+        ("Updated", _item_age_html(item.updated_at)),
+    ]
+    if item.status == "resolved" and item.closed_at:
+        parts.append(("Resolved", _item_age_html(item.closed_at)))
+    return "".join(
+        f'<div><span class="k">{_esc(k)}</span><span class="v serif">{v}</span></div>'
+        for k, v in parts
+    )
+
+
+def _item_held_chip_html(item: A.Item) -> str:
+    """The item's held/custody chip -- empty when the item is not
+    genuinely held right now. Reuses the SAME claim-age + staleness
+    reading (`_custody_reading`/`_custody_html`) the table row and both
+    detail views already show, so no two renderings of the same item can
+    disagree about whether a hold is stale."""
+    custody_html = _custody_html(_custody_reading(item))
+    if custody_html:
+        return f'<span class="chip">{custody_html}</span>'
+    if item.holder and item.status == "held":
+        return f'<span class="chip">held by {_identity_html(item.holder)}</span>'
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # item-detail blocker chain -- Beadbox-inspired enrichment #7.
 #
 # Built entirely from `Item.links` (`adapter.Beads.get`'s enriched
@@ -2777,9 +2837,19 @@ def _activity_feed_html(events: list) -> str:
     if not events:
         return ""
     rows = "".join(_activity_event_html(ev) for ev in events)
+    # D6 (consistency pass): every OTHER section on both detail views
+    # (Description/Acceptance/Design, even Resolution) sits in its own
+    # `.content-block` sub-card "well" on the glass background; Activity
+    # was the one section left floating directly on the outer glass with
+    # no boundary of its own. Reusing `.content-block` here (rather than a
+    # new class) is itself the fix for "make it consistent" -- one shared
+    # rule, used identically everywhere, cannot drift from the others.
+    # Shared by BOTH the standalone item page and webbrowse.py's split-pane
+    # detail (this function is imported there), so both views gain the fix
+    # at once.
     return (
         '<h2 class="eyebrow" style="display:block;margin-top:30px">Activity</h2>'
-        f'<div class="timeline">{rows}</div>'
+        f'<div class="content-block"><div class="timeline">{rows}</div></div>'
     )
 
 
@@ -3867,14 +3937,17 @@ def create_app(
         {needs_section}
         <div class="hr bleed"></div>
         <section class="sec tight">
-          <div class="controls">
-            {T.search_field("Filter queues by name or state")}
-            <span class="count" id="qc">{len(summaries)} QUEUES</span>
-            {T.density_toggle_html()}
+          <div class="queuepanel">
+            <div class="chead"><span class="eyebrow">All queues</span></div>
+            <div class="controls">
+              {T.search_field("Filter queues by name or state")}
+              <span class="count" id="qc">{len(summaries)} QUEUES</span>
+              {T.density_toggle_html()}
+            </div>
+            {table}
+            {_units_legend_html()}
+            {broken_foot}
           </div>
-          {table}
-          {_units_legend_html()}
-          {broken_foot}
         </section>
         <div class="hr bleed"></div>
         <section class="sec">{_create_project_form()}</section>
@@ -4347,64 +4420,16 @@ def create_app(
                 f'<div class="content-block">{_esc(item.resolution)}</div>'
             )
 
-        # Read-only facts use `_fact_value_html` -- explicitly non-interactive
-        # (`cursor:default`, no border/background) so they read as inert data
-        # sitting beside the genuinely editable title/body fields below, not
-        # as more form fields. "Queue" and "Reported by" keep their own
-        # existing treatment (a real link; a humanized identity span) --
-        # neither looks like an input either, so the distinction holds for
-        # them too.
-        facts = [
-            ("Queue", f'<a href="/projects/{_esc(name)}">{_esc(name)}</a>'),
-            ("Kind", _fact_value_html(item.kind or "--")),
-            (
-                "Priority",
-                _fact_value_html(str(item.priority) if item.priority is not None else "--"),
-            ),
-        ]
-        owner = item.raw.get("owner")
-        if owner:
-            facts.append(("Reported by", _identity_html(str(owner))))
-        facts_kv = "".join(
-            f'<div><span class="k">{_esc(k)}</span><span class="v">{v}</span></div>'
-            for k, v in facts
-        )
-
-        # D2/#2 -- the SAME compact relative-age vocabulary the item table's
-        # own Age column uses (`_item_age_html`), not a second, coarser
-        # "12m ago" format for the same kind of value -- see that helper's
-        # docstring.
-        time_kv_parts = [
-            ("Created", _item_age_html(item.created_at)),
-            ("Updated", _item_age_html(item.updated_at)),
-        ]
-        if item.status == "resolved" and item.closed_at:
-            time_kv_parts.append(("Resolved", _item_age_html(item.closed_at)))
-        time_kv = "".join(
-            f'<div><span class="k">{_esc(k)}</span><span class="v serif">{v}</span></div>'
-            for k, v in time_kv_parts
-        )
-
-        # Same rule as `_item_row`'s Holder column: `item.holder` (bd's
-        # `assignee`) survives resolution as a historical "who last held
-        # this" fact -- real, but not a current custody holder. A "held by"
-        # chip next to a RESOLVED/blocked/deferred status badge read as a
-        # live contradiction (this project's `held` stat says 0). Only show
-        # it when the item is genuinely held right now -- and, when it is,
-        # show the SAME claim-age + staleness reading the row does (see
-        # `_custody_reading`/`_custody_html`), not a bare identity, so the
-        # detail page and the table row can never disagree about whether
-        # this hold is stale.
-        custody_html = _custody_html(_custody_reading(item))
-        held_chip = (
-            f'<span class="chip">{custody_html}</span>'
-            if custody_html
-            else (
-                f'<span class="chip">held by {_identity_html(item.holder)}</span>'
-                if (item.holder and item.status == "held")
-                else ""
-            )
-        )
+        # D5 (consistency pass): facts/timestamps/held-chip are now the SAME
+        # shared builders webbrowse.py's split-pane detail pane calls
+        # (`_item_facts_kv_html`/`_item_time_kv_html`/`_item_held_chip_html`,
+        # defined above) -- one computation, not two independently-drifting
+        # copies. This also fixes a real inconsistency the duplication had
+        # already produced: this route's own Queue link was missing the
+        # `prose-link` class the split-pane's version always had.
+        facts_kv = _item_facts_kv_html(name, item)
+        time_kv = _item_time_kv_html(item)
+        held_chip = _item_held_chip_html(item)
 
         # Title is styled to read at the same visual weight the old plain
         # `<h1>` had (26px/500), but AS an input -- the shared input rule's
@@ -4430,7 +4455,13 @@ def create_app(
             "letter-spacing:-.008em;color:var(--ink);max-width:900px;min-height:52px;"
             "resize:vertical;white-space:pre-wrap;overflow-wrap:anywhere"
         )
-        textarea_style = "max-width:80ch;min-height:7rem"
+        # D5 (consistency pass): was `max-width:80ch` (~640px) -- narrower
+        # than the Title field right above it (900px) for no reason, on a
+        # card that itself spans the page's full ~1300px content width.
+        # Widened to match Title's own cap, closing most of the "big dead
+        # margin on the right" gap a 1440px render measured (the card's
+        # content occupied only ~65% of the card at the old cap).
+        textarea_style = "max-width:900px;min-height:7rem"
         body = f"""
         {_flash(request)}
         <section class="sec">
