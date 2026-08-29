@@ -1,11 +1,20 @@
 """Amplifier tool module for amplifier-work-tracker.
 
 Exposes `work_claim`, `work_declare`, `work_resolve`, `work_release`,
-`work_status`, `work_stats`, `work_file`, `work_add`, and `work_list` as
-agent-callable tools, backed directly by `amplifier_work_tracker.adapter` /
-`amplifier_work_tracker.custody`.
+`work_status`, `work_stats`, `work_file`, `work_add`, `work_move`, and
+`work_list` as agent-callable tools, backed directly by
+`amplifier_work_tracker.adapter` / `amplifier_work_tracker.custody`.
 This module contains no Beads knowledge of its own and shells out to nothing --
 all domain logic lives in the `amplifier_work_tracker` package it imports.
+
+`work_move` is the sanctioned way to migrate a work item from one project's
+queue to another -- before it existed, there was no supported path for an
+agent (or a human, via the CLI's `move` counterpart) to do this at all. No
+held item required (unlike `work_file`/`work_resolve`/`work_release`); it
+delegates entirely to `adapter.move_item` (via `Workspace.move_item`) for the
+refusal/atomicity contract -- see that function's docstring for the full
+story on HELD-item safety, id preservation, and cross-project dependency
+handling.
 
 `work_list` is the read-only per-item view `work_status` deliberately does
 not provide (that tool reports project-level counts only). It exists because
@@ -593,6 +602,30 @@ class WorkTrackerSession:
             success=True, output={"added": new_id, "project": project, "lane": A.LANE_WORK}
         )
 
+    async def move(self, item_id: str, from_project: str, to_project: str) -> ToolResult:
+        """Move one item from `from_project` to `to_project`, preserving its
+        id -- no held item required (unlike `file`/`resolve`/`unclaim`, this
+        never touches `self._held`/`self._lock` at all). Delegates entirely
+        to `adapter.move_item` (via `Workspace.move_item`) for the actual
+        refusal/atomicity contract: refuses if the item is currently HELD,
+        does not exist in `from_project`, or already exists in
+        `to_project`; a dependency edge to an item that is NOT moving is
+        dropped rather than silently corrupted, and reported back here.
+        """
+        try:
+            report = self._ws.move_item(from_project, to_project, item_id)
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        return ToolResult(
+            success=True,
+            output={
+                "moved": report.item_id,
+                "from": report.src,
+                "to": report.dst,
+                "dropped_dependency_edges": report.dropped_dependency_edges,
+            },
+        )
+
 
 # --------------------------------------------------------------------------
 # Tool classes -- one per work_* tool, all sharing one WorkTrackerSession.
@@ -928,6 +961,56 @@ class WorkAddTool:
         )
 
 
+class WorkMoveTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_move"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Move one item from one project to another, preserving its id -- the feature request "
+            "behind this tool: before it existed, there was no sanctioned way (for an agent OR a "
+            "human) to migrate a work item to a different project's queue at all. No held item "
+            "required -- unlike work_file/work_resolve/work_release, this never touches this "
+            "session's custody state. Refuses (mutating nothing) if the item is currently HELD (an "
+            "agent may be actively working it -- resolve or reap it first), does not exist in the "
+            "source project, or already exists at the destination. A dependency edge to an item "
+            "that is NOT also moving cannot be expressed once the two live in different projects "
+            "-- such an edge is dropped (never silently left dangling) and reported back in "
+            "dropped_dependency_edges so you can see exactly what did not survive."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "item_id": {"type": "string", "description": "Item id to move."},
+                "from_project": {
+                    "type": "string",
+                    "description": "Project the item currently lives in.",
+                },
+                "to_project": {
+                    "type": "string",
+                    "description": "Project to move the item into.",
+                },
+            },
+            "required": ["item_id", "from_project", "to_project"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.move(
+            input["item_id"],
+            input["from_project"],
+            input["to_project"],
+        )
+
+
 class WorkListTool:
     def __init__(self, session: WorkTrackerSession):
         self._session = session
@@ -1000,7 +1083,7 @@ class WorkListTool:
 
 
 async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Mount all nine work_* tools, sharing one WorkTrackerSession.
+    """Mount all ten work_* tools, sharing one WorkTrackerSession.
 
     IRON LAW: every tool below is registered via `coordinator.mount()`.
     Skipping any of them (or returning without mounting) fails
@@ -1016,6 +1099,7 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
         WorkStatsTool(session),
         WorkFileTool(session),
         WorkAddTool(session),
+        WorkMoveTool(session),
         WorkListTool(session),
         WorkTrackerStatusTool(config),
         WorkTrackerInstallTool(config),

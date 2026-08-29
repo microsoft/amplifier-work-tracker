@@ -970,6 +970,334 @@ def _drop_database_best_effort(name: str) -> None:
         logger.warning("best-effort drop of database %r failed during cleanup", name)
 
 
+#: Tables holding rows keyed to exactly one item via `issue_id` (a plain FK to
+#: `issues`.`id`, `ON DELETE CASCADE`) -- everything `move_item` copies/deletes
+#: alongside the item's own `issues` row, EXCEPT `dependencies`, which has a
+#: second possible FK (`depends_on_issue_id`) and is handled separately (see
+#: `move_item`'s docstring on cross-project edges). Deliberately excludes the
+#: parallel `wisp_*` tables and every OTHER per-database table (`config`,
+#: `issue_counter`, `metadata`, `schema_migrations`, `federation_peers`,
+#: `routes`, `local_metadata`, `repo_mtimes`, `child_counters`) -- a normal
+#: work item is not a wisp, and those tables describe the DATABASE, not any
+#: one item within it.
+_ITEM_CHILD_TABLES = (
+    "labels",
+    "comments",
+    "events",
+    "issue_snapshots",
+    "interactions",
+    "compaction_snapshots",
+)
+
+
+def _item_row_counts(db: str, item_id: str) -> dict[str, int]:
+    """Row count, in `db`, of `issues` (by `id`) and each of
+    `_ITEM_CHILD_TABLES` (by `issue_id`) for exactly `item_id` -- one round
+    trip via `UNION ALL`, the same shape `_dolt_table_counts` uses to prove
+    `copy_database` complete, scoped here to a single item rather than a
+    whole table. `move_item` uses this BEFORE it copies anything (the
+    source-of-truth counts to verify the copy against), AFTER copying (to
+    verify `dst` landed everything), and once more after deleting from
+    `src` (to prove no residue survives there).
+    """
+    lit = _sql_literal(item_id)
+    parts = [f"SELECT 'issues' AS t, COUNT(*) AS n FROM `{db}`.`issues` WHERE `id` = '{lit}'"]
+    parts += [
+        f"SELECT '{t}' AS t, COUNT(*) AS n FROM `{db}`.`{t}` WHERE `issue_id` = '{lit}'"
+        for t in _ITEM_CHILD_TABLES
+    ]
+    query = " UNION ALL ".join(parts)
+    p = _dolt_sql(query)
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not count item {item_id!r}'s rows in database {db!r}: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    counts: dict[str, int] = {}
+    for line in (p.stdout or "").splitlines()[1:]:  # drop CSV header
+        if not line.strip():
+            continue
+        name, _, n = line.partition(",")
+        counts[name.strip()] = int(n.strip())
+    return counts
+
+
+def _delete_item_rows_best_effort(
+    db: str, item_id: str, *, dep_ids: list[str] | None = None
+) -> None:
+    """Best-effort cleanup of one item's rows in `db`, swallowing any
+    BeadsError -- `move_item`'s rollback path when the copy-into-`dst`
+    phase fails, or its completeness verification fails. Mirrors
+    `_drop_database_best_effort`: a cleanup failure must never mask the
+    ORIGINAL error already being raised.
+
+    Deletes in child-before-parent order (`dependencies` rows named by
+    `dep_ids` first, then every other `_ITEM_CHILD_TABLES` row, then the
+    `issues` row itself last) rather than relying on `ON DELETE CASCADE` --
+    this runs under `foreign_key_checks=0`, and whether dolt still honors
+    cascade actions in that mode is unverified, so the explicit order is
+    what actually guarantees no orphaned child row survives regardless.
+    """
+    lit = _sql_literal(item_id)
+    statements: list[str] = []
+    if dep_ids:
+        ids_sql = ", ".join(f"'{_sql_literal(d)}'" for d in dep_ids)
+        statements.append(f"DELETE FROM `{db}`.`dependencies` WHERE `id` IN ({ids_sql})")
+    statements += [
+        f"DELETE FROM `{db}`.`{t}` WHERE `issue_id` = '{lit}'" for t in _ITEM_CHILD_TABLES
+    ]
+    statements.append(f"DELETE FROM `{db}`.`issues` WHERE `id` = '{lit}'")
+    script = "SET foreign_key_checks=0;\n" + ";\n".join(statements) + ";"
+    p = _run_bounded(
+        ["dolt", *_dolt_conn_args(), "sql", "-q", script],
+        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+    )
+    if p.returncode != 0:
+        logger.warning(
+            "best-effort cleanup of partially-moved item %r in %r failed: %s",
+            item_id,
+            db,
+            (p.stderr or p.stdout or "").strip()[:300],
+        )
+
+
+@dataclass
+class MoveReport:
+    """Outcome of `move_item` -- what actually happened, honestly, so a
+    caller never has to guess at what a bare `None` return would hide.
+    """
+
+    item_id: str
+    src: str
+    dst: str
+    #: Dependency edges that existed in `src` and touched this item, but
+    #: whose OTHER endpoint is a different issue that is NOT moving --
+    #: these cannot be expressed once the two ends live in different
+    #: databases, so they were dropped rather than moved or left dangling.
+    #: Each entry is `{"id", "issue_id", "depends_on_issue_id", "type"}`,
+    #: straight off the `dependencies` row that was dropped.
+    dropped_dependency_edges: list[dict] = field(default_factory=list)
+
+
+def move_item(src: str, dst: str, item_id: str) -> MoveReport:
+    """Move ONE item -- and every row keyed to it across the issues-family
+    tables (`labels`, `comments`, `events`, `issue_snapshots`,
+    `interactions`, `compaction_snapshots`, `dependencies`) -- from database
+    `src` to database `dst` on the shared dolt server.
+
+    The item's id is preserved EXACTLY, never re-minted: ids are plain
+    varchar primary keys, project-prefixed by convention but not validated
+    against any prefix on read, and a database's own `issue_counter`/
+    `config` rows only govern minting NEW ids -- they never validate an
+    existing one. A foreign-prefixed id living in another database (e.g.
+    `work_tracker_v2-3r2` inside `work_tracker`) is valid and collision-safe
+    by construction; this is exactly why `copy_database`/`rename` also
+    preserve ids verbatim rather than rewriting them (see that function's
+    docstring for the same reasoning applied at whole-database grain).
+
+    Refuses (no mutation) when:
+      - `src` and `dst` are the same project;
+      - `src` or `dst` is not a valid project name (`NAME_RE`) -- both are
+        interpolated into backtick-quoted identifiers below, the same
+        guarantee every other `_dolt_*` helper relies on (see
+        `database_exists`'s docstring);
+      - `src` or `dst` does not exist on the shared dolt server;
+      - `item_id` does not exist in `src`;
+      - the item is currently HELD -- an agent may be actively working it.
+        This mirrors `Workspace.rename`/`Workspace.remove`'s safety property
+        (refuse while HELD, no override), applied here at the single-item
+        grain rather than a whole project;
+      - an item with this id already exists in `dst`. Should not normally
+        happen (ids are project-prefixed), but checked rather than assumed
+        -- a silent overwrite of someone else's item would be unforgivable.
+
+    Cross-project dependency edges: a `dependencies` row FKs to `issues`
+    either via `issue_id` (the owning side, always) and optionally via
+    `depends_on_issue_id` (an issue<->issue edge -- the other two possible
+    targets, `depends_on_wisp_id`/`depends_on_external`, are opaque
+    references with no FK of their own). Every edge touching `item_id` is
+    inspected:
+
+      - `depends_on_issue_id` is NULL (the edge targets a wisp/external ref,
+        not another issue) -- moves along with the item unchanged; it can
+        only have matched via `issue_id = item_id`, so it belongs entirely
+        to the moving item and does not reference anything staying behind.
+      - `depends_on_issue_id` is set and BOTH endpoints are `item_id` (a
+        self-referential edge) -- moves along with the item unchanged, for
+        the same reason.
+      - Otherwise, the OTHER endpoint is a different issue that stays in
+        `src` -- this edge cannot be expressed once the two ends live in
+        different databases, so it is DROPPED: never copied to `dst`, and
+        removed from `src` too (the id it names on the moving side is gone
+        from `src` either way). Named in
+        `MoveReport.dropped_dependency_edges` so the caller can see exactly
+        what did not survive, rather than a silent, invisible data loss.
+
+    Atomic from the caller's view, mirroring `copy_database`/`rename`:
+    every row is copied into `dst` and the copy is VERIFIED complete (real
+    row counts against `src`'s counts taken before anything moved, not just
+    a non-erroring exit) BEFORE anything is deleted from `src`. If the copy
+    or the verification fails, the partial rows already written to `dst`
+    are deleted and the error is raised -- `src` is left completely
+    untouched. Only once `dst` is proven complete does `src` lose its copy;
+    the delete-from-`src` phase is itself verified the same way (a final
+    `_item_row_counts` read on `src` proving zero residue).
+    """
+    if not NAME_RE.match(src):
+        raise BeadsError(f"invalid project name {src!r}: must match {NAME_RE.pattern}")
+    if not NAME_RE.match(dst):
+        raise BeadsError(f"invalid project name {dst!r}: must match {NAME_RE.pattern}")
+    if src == dst:
+        raise BeadsError(
+            f"cannot move item {item_id!r}: source and destination are the same project ({src!r})"
+        )
+    if not database_exists(src):
+        raise BeadsError(
+            f"cannot move {item_id!r}: source project {src!r} does not exist on the shared "
+            f"dolt server"
+        )
+    if not database_exists(dst):
+        raise BeadsError(
+            f"cannot move {item_id!r}: destination project {dst!r} does not exist on the shared "
+            f"dolt server"
+        )
+
+    lit = _sql_literal(item_id)
+
+    src_items = _list_rows_via_sql(src, where_sql=f"`issues`.`id` = '{lit}'", limit=1)
+    if not src_items:
+        raise BeadsError(f"cannot move {item_id!r}: no such item in project {src!r}")
+    item = src_items[0]
+    if item.status == "held":
+        raise BeadsError(
+            f"refusing to move {item_id!r}: currently HELD by {item.holder!r}. An agent may be "
+            f"actively working it. Resolve or reap the item first, then move again."
+        )
+
+    dst_items = _list_rows_via_sql(dst, where_sql=f"`issues`.`id` = '{lit}'", limit=1)
+    if dst_items:
+        raise BeadsError(
+            f"cannot move {item_id!r} to {dst!r}: an item with this id already exists there. "
+            f"ids are project-prefixed and should never collide across projects -- investigate "
+            f"before forcing anything."
+        )
+
+    dep_p = _dolt_sql(
+        f"SELECT `id`, `issue_id`, `depends_on_issue_id`, `type` FROM `{src}`.`dependencies` "
+        f"WHERE `issue_id` = '{lit}' OR `depends_on_issue_id` = '{lit}'"
+    )
+    if dep_p.returncode != 0:
+        raise BeadsError(
+            f"could not read dependency edges for {item_id!r} in {src!r}: "
+            f"{_clean_bd_error(dep_p.stderr or dep_p.stdout)}"
+        )
+    movable_dep_ids: list[str] = []
+    dropped: list[dict] = []
+    for row in csv.reader((dep_p.stdout or "").splitlines()[1:]):  # drop CSV header
+        if len(row) < 4:
+            continue
+        dep_id, issue_id_val, depends_on_val, dtype = row[0], row[1], row[2] or None, row[3]
+        if not depends_on_val or (issue_id_val == item_id and depends_on_val == item_id):
+            movable_dep_ids.append(dep_id)
+        else:
+            dropped.append(
+                {
+                    "id": dep_id,
+                    "issue_id": issue_id_val,
+                    "depends_on_issue_id": depends_on_val,
+                    "type": dtype,
+                }
+            )
+
+    src_counts = _item_row_counts(src, item_id)
+
+    insert_statements = [
+        f"INSERT INTO `{dst}`.`issues` SELECT * FROM `{src}`.`issues` WHERE `id` = '{lit}'"
+    ]
+    insert_statements += [
+        f"INSERT INTO `{dst}`.`{t}` SELECT * FROM `{src}`.`{t}` WHERE `issue_id` = '{lit}'"
+        for t in _ITEM_CHILD_TABLES
+    ]
+    if movable_dep_ids:
+        ids_sql = ", ".join(f"'{_sql_literal(d)}'" for d in movable_dep_ids)
+        insert_statements.append(
+            f"INSERT INTO `{dst}`.`dependencies` SELECT * FROM `{src}`.`dependencies` "
+            f"WHERE `id` IN ({ids_sql})"
+        )
+    script = "SET foreign_key_checks=0;\n" + ";\n".join(insert_statements) + ";"
+
+    p = _run_bounded(
+        ["dolt", *_dolt_conn_args(), "sql", "-q", script],
+        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+    )
+    if p.returncode != 0:
+        _delete_item_rows_best_effort(dst, item_id, dep_ids=movable_dep_ids)
+        raise BeadsError(
+            f"moving {item_id!r} from {src!r} to {dst!r} failed while copying: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}. {dst!r} was left untouched (any partial "
+            f"rows were cleaned up); {src!r} is untouched."
+        )
+
+    dst_counts = _item_row_counts(dst, item_id)
+    mismatches = [
+        t for t in ("issues", *_ITEM_CHILD_TABLES) if src_counts.get(t) != dst_counts.get(t)
+    ]
+
+    dep_count_p = _dolt_sql(
+        f"SELECT COUNT(*) FROM `{dst}`.`dependencies` WHERE `issue_id` = '{lit}' "
+        f"OR `depends_on_issue_id` = '{lit}'"
+    )
+    if dep_count_p.returncode != 0:
+        _delete_item_rows_best_effort(dst, item_id, dep_ids=movable_dep_ids)
+        raise BeadsError(
+            f"moving {item_id!r} from {src!r} to {dst!r}: could not verify dependency rows landed "
+            f"in {dst!r}: {_clean_bd_error(dep_count_p.stderr or dep_count_p.stdout)}. The partial "
+            f"copy was removed from {dst!r}; {src!r} is untouched."
+        )
+    dep_lines = [ln for ln in (dep_count_p.stdout or "").splitlines() if ln.strip()][1:]
+    dst_dep_count = int(dep_lines[0]) if dep_lines else 0
+
+    if mismatches or dst_dep_count != len(movable_dep_ids):
+        _delete_item_rows_best_effort(dst, item_id, dep_ids=movable_dep_ids)
+        raise BeadsError(
+            f"moving {item_id!r} from {src!r} to {dst!r} left an incomplete copy in {dst!r} "
+            f"(mismatched table row counts: {mismatches or 'none'}; dependency rows "
+            f"{dst_dep_count}/{len(movable_dep_ids)}). The incomplete copy was removed from "
+            f"{dst!r}; {src!r} is untouched."
+        )
+
+    delete_statements = [
+        f"DELETE FROM `{src}`.`dependencies` WHERE `issue_id` = '{lit}' "
+        f"OR `depends_on_issue_id` = '{lit}'"
+    ]
+    delete_statements += [
+        f"DELETE FROM `{src}`.`{t}` WHERE `issue_id` = '{lit}'" for t in _ITEM_CHILD_TABLES
+    ]
+    delete_statements.append(f"DELETE FROM `{src}`.`issues` WHERE `id` = '{lit}'")
+    script = "SET foreign_key_checks=0;\n" + ";\n".join(delete_statements) + ";"
+    p = _run_bounded(
+        ["dolt", *_dolt_conn_args(), "sql", "-q", script],
+        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+    )
+    if p.returncode != 0:
+        raise BeadsError(
+            f"moved {item_id!r} into {dst!r} successfully, but removing it from {src!r} "
+            f"afterward failed: {_clean_bd_error(p.stderr or p.stdout)}. The item now exists in "
+            f"BOTH {src!r} and {dst!r} -- this must be resolved by hand (drop it from {src!r}) "
+            f"before either project is used for this id again."
+        )
+
+    final_src_counts = _item_row_counts(src, item_id)
+    if any(final_src_counts.values()):
+        raise BeadsError(
+            f"moved {item_id!r} into {dst!r}, but {src!r} still has residue rows after the "
+            f"delete reported success: {final_src_counts}. Investigate before using this id in "
+            f"either project again."
+        )
+
+    return MoveReport(item_id=item_id, src=src, dst=dst, dropped_dependency_edges=dropped)
+
+
 def _repoint_beads_metadata(beads_dir: Path, db_name: str) -> None:
     """Point a project's local bd metadata at shared-server database
     `db_name`. bd records which database a `.beads` directory maps to in
@@ -3036,6 +3364,24 @@ class Workspace:
             item_count=item_count,
             old_database_dropped=old_database_dropped,
         )
+
+    def move_item(self, src: str, dst: str, item_id: str) -> MoveReport:
+        """Move one item from project `src` to project `dst` -- the
+        single-item counterpart to `rename`/`remove`'s whole-project
+        operations, exposed here purely for call-site symmetry
+        (`workspace.move_item(...)` reads the same way as
+        `workspace.rename(...)`/`workspace.remove(...)`).
+
+        Delegates entirely to the free `move_item` function; adds no
+        validation or behavior of its own. Unlike `rename`/`remove`, this
+        needs no awareness of either project's local `.beads` directory --
+        `move_item` operates purely on the shared dolt server's databases,
+        which is the only place an item's rows actually live -- so a plain
+        delegation is the whole implementation. See `move_item`'s own
+        docstring for the full contract (refusals, HELD-item safety,
+        cross-project dependency handling, atomicity).
+        """
+        return move_item(src, dst, item_id)
 
 
 #: Real-world day age bands for `ready_age_buckets` -- see that field's
