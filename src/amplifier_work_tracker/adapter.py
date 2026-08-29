@@ -16,6 +16,7 @@ improvements without its churn reaching our domain logic.
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import os
@@ -570,6 +571,109 @@ def _dolt_table_counts(db: str, tables: list[str]) -> dict[str, int]:
     return counts
 
 
+# Only the columns `project_summary`'s downstream derivation actually reads off
+# each Item (status, tags, holder, the three timestamps -- plus id/priority/kind
+# for faithful shape) -- deliberately NOT title/description/close_reason, which
+# are free-text `longtext` that would need CSV-escaping and are never consulted
+# by a summary. Keeping the projection to short scalar columns is what lets the
+# CSV parse below stay simple AND keeps the read transaction tiny.
+_SUMMARY_ITEM_COLUMNS = (
+    "id",
+    "status",
+    "assignee",
+    "priority",
+    "issue_type",
+    "created_at",
+    "updated_at",
+    "closed_at",
+)
+
+
+def _summary_items_via_sql(db: str) -> list[Item]:
+    """Read `db`'s items as `Item`s straight off the shared dolt server over a
+    READ-ONLY SQL SELECT -- the drop-in replacement for `bd list --all` that
+    `project_summary` uses, existing purely to sidestep the serialization
+    conflict that failing path suffered.
+
+    Why this exists (the bug this fixes): `bd list --all` on a large project
+    (cortex: 465 items) runs through `bd`, which does a read+WRITE transaction
+    (it appends an interaction-log row per invocation). Materialising 465 rows
+    keeps that read+write transaction open long enough that, under the normal
+    concurrent write traffic of the shared single-writer dolt server (the
+    reap/notify sweeps + parallel agent claims), its write set is reliably
+    invalidated by a committed transaction from another client -- a dolt
+    serialization failure (MySQL 1213/1205). `Beads._run` retries that up to
+    `_MAX_RETRIES` (8) with exponential backoff and, for a 465-row read,
+    exhausts the whole budget (~23s measured) before giving up. Small projects
+    (attractor: 17 rows) almost never lose the race, so the failure LOOKED
+    per-project-deterministic but is really a result-set-size x contention
+    interaction. See work_tracker items pipeline-exz / pipeline-knu.
+
+    Why a raw SELECT is the fix, not a bigger retry budget: a pure `SELECT`
+    over the direct `_dolt_sql` path has NO write set, so it CANNOT
+    serialization-conflict with a concurrent writer, at any project size --
+    the conflict window is eliminated rather than merely widened-tolerance.
+    `_dolt_sql` is also a one-shot autocommit connection, so it never holds a
+    long transaction of its own.
+
+    Faithfulness: verified empirically that `bd list --all` returns EXACTLY the
+    `issues` table's rows, one-to-one, for both a small clean project
+    (attractor: 17==17) and a large busy one (cortex: 465==465), with zero
+    non-listable rows (wisp/event/ephemeral/template) present -- so no `bd`
+    listing filter needs reproducing here; every `issues` row is an item. Each
+    field is mapped through the SAME seams `Item.from_beads` uses -- status via
+    `_map_status`, `assignee`->holder per `_FIELD_MAP`, labels from the
+    `labels` table (bd's `labels` JSON field), timestamps as UTC via
+    `_parse_dolt_timestamp` -- so the `Item`s this returns derive byte-identical
+    counts/aging/throughput downstream. Only the summary-relevant fields are
+    populated (see `_SUMMARY_ITEM_COLUMNS`); body text a summary never reads is
+    left at its dataclass default, deliberately.
+
+    `db` has already passed `NAME_RE` at every call site (it is a project name),
+    so it carries no SQL-relevant character -- same guarantee `database_exists`
+    and the other `_dolt_*` helpers rely on.
+    """
+    cols = ", ".join(f"`{c}`" for c in _SUMMARY_ITEM_COLUMNS)
+    p = _dolt_sql(f"SELECT {cols} FROM `{db}`.`issues`")
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not read items of database {db!r} over SQL: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    lp = _dolt_sql(f"SELECT `issue_id`, `label` FROM `{db}`.`labels`")
+    if lp.returncode != 0:
+        raise BeadsError(
+            f"could not read labels of database {db!r} over SQL: "
+            f"{_clean_bd_error(lp.stderr or lp.stdout)}"
+        )
+    tags_by_id: dict[str, list[str]] = {}
+    for row in csv.reader((lp.stdout or "").splitlines()[1:]):  # drop CSV header
+        if len(row) < 2:
+            continue
+        tags_by_id.setdefault(row[0], []).append(row[1])
+    items: list[Item] = []
+    for row in csv.reader((p.stdout or "").splitlines()[1:]):  # drop CSV header
+        if len(row) < len(_SUMMARY_ITEM_COLUMNS):
+            continue
+        rec = dict(zip(_SUMMARY_ITEM_COLUMNS, row, strict=False))
+        iid = rec["id"]
+        pr = rec["priority"].strip()
+        items.append(
+            Item(
+                id=iid,
+                status=_map_status(rec["status"]),
+                holder=rec["assignee"] or None,
+                kind=rec["issue_type"] or "task",
+                priority=int(pr) if pr else None,
+                tags=tags_by_id.get(iid, []),
+                created_at=_parse_dolt_timestamp(rec["created_at"]),
+                updated_at=_parse_dolt_timestamp(rec["updated_at"]),
+                closed_at=_parse_dolt_timestamp(rec["closed_at"]),
+            )
+        )
+    return items
+
+
 def copy_database(src: str, dst: str) -> None:
     """Create database `dst` as a faithful copy of `src` on the shared dolt
     server: identical schema (every base table, view, and foreign key) and
@@ -715,6 +819,35 @@ def _parse_bd_timestamp(v: object) -> datetime | None:
     except ValueError:
         logger.debug("could not parse bd timestamp %r", v)
         return None
+
+
+def _parse_dolt_timestamp(v: object) -> datetime | None:
+    """Parse a `datetime` column as dolt's SQL CSV renders it -- `YYYY-MM-DD
+    HH:MM:SS`, a NAIVE wall-clock with no zone marker -- into the SAME
+    timezone-aware UTC `datetime` `_parse_bd_timestamp` would have produced
+    for the identical instant.
+
+    Why a second parser: `project_summary` reads its items straight off the
+    shared dolt server now (see `_summary_items_via_sql`), not through `bd`,
+    so timestamps arrive in dolt's bare SQL shape rather than bd's ISO-8601
+    `...Z`. bd stores these columns in UTC (verified: bd's own `--json`
+    reports `created_at` as `...Z` for the exact same row dolt renders bare),
+    so the correct reconstruction is "parse the wall-clock, stamp it UTC" --
+    NOT `fromisoformat` alone, which would yield a naive datetime and then
+    raise the moment `project_activity` subtracts it from an aware `now`.
+
+    Returns `None` for empty/NULL (dolt renders a NULL `closed_at` as an
+    empty CSV field) or anything unparseable -- never a fabricated instant,
+    the same discipline as `_parse_bd_timestamp`.
+    """
+    if not isinstance(v, str) or not v.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(v.strip())
+    except ValueError:
+        logger.debug("could not parse dolt timestamp %r", v)
+        return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
 def _uuid7_timestamp(v: object) -> datetime | None:
@@ -2963,7 +3096,7 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
     if state == "abandoned":
         return ProjectSummary(name=name, status=STATUS_BROKEN)
     try:
-        items = ws.project(name).list(include_resolved=True)
+        items = _summary_items_via_sql(name)
     except BeadsError as e:
         return ProjectSummary(name=name, status=truncate_status(f"ERROR: {e}"))
     held_items = [i for i in items if i.status == "held"]

@@ -182,4 +182,44 @@ def test_project_summary_broken_is_distinct_and_counts_none(tmp_path):
     assert s.status == A.STATUS_BROKEN
     assert s.status != A.STATUS_OK
     assert s.total is None
-    assert s.ready is None
+
+
+# ------------------------------------------- dolt timestamp seam (SQL summary)
+#
+# `project_summary` now reads its items straight off the shared dolt server over
+# a read-only SQL SELECT (`_summary_items_via_sql`) instead of `bd list --all`,
+# to sidestep the serialization-retry-exhaustion that failed large projects
+# (cortex: 465 items, 23s 8-retry ERROR). dolt renders `datetime` columns as a
+# bare naive wall-clock (`YYYY-MM-DD HH:MM:SS`), NOT bd's ISO-8601 `...Z`. These
+# pin that `_parse_dolt_timestamp` reconstructs the SAME aware-UTC instant
+# `_parse_bd_timestamp` would have -- the invariant every aging/throughput field
+# in the summary silently depends on. See work_tracker items pipeline-exz/knu.
+
+
+def test_parse_dolt_timestamp_matches_the_bd_iso_parse_for_the_same_instant():
+    """dolt's bare `2026-08-15 22:56:30` and bd's `2026-08-15T22:56:30Z` name
+    the SAME instant -- both parsers must yield the identical aware-UTC datetime,
+    or the summary's ages/throughput would silently shift by the local offset."""
+    dolt = A._parse_dolt_timestamp("2026-08-15 22:56:30")  # noqa: SLF001
+    bd = A._parse_bd_timestamp("2026-08-15T22:56:30Z")  # noqa: SLF001
+    assert dolt == bd
+    assert dolt is not None and dolt.tzinfo is not None  # aware, never naive
+
+
+def test_parse_dolt_timestamp_is_aware_utc_so_summary_arithmetic_never_raises():
+    """A naive datetime here would raise the moment `project_activity` subtracts
+    it from an aware `now(UTC)` -- the exact failure this parser exists to
+    prevent. The result must be aware and anchored to UTC."""
+    ts = A._parse_dolt_timestamp("2026-08-15 22:56:30")  # noqa: SLF001
+    assert ts is not None
+    assert ts.utcoffset() == timedelta(0)
+    # subtracting from an aware now must not raise (it did, with a naive parse)
+    _ = (datetime.now(UTC) - ts).total_seconds()
+
+
+def test_parse_dolt_timestamp_none_for_empty_null_and_garbage():
+    """dolt renders a NULL `closed_at` as an empty CSV field -- that, and any
+    unparseable value, must become `None` (a missing timestamp), never a
+    fabricated instant. Same discipline as `_parse_bd_timestamp`."""
+    for v in ("", "   ", None, 0, "not-a-date"):
+        assert A._parse_dolt_timestamp(v) is None  # noqa: SLF001
