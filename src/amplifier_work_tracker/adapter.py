@@ -136,6 +136,21 @@ LANE_INTAKE = "lane:intake"
 LANE_WORK = "lane:eng"
 LINK_DISCOVERED_FROM = "discovered-from"
 
+# Our public "related item" vocabulary (the `work_add`/`create` `related`
+# param, and the CLI's/tool's `dep` verb), mapped to bd's own dependency-type
+# strings (`bd dep add ... -t <type>`). "follow-up-of" reuses `discovered-
+# from` rather than inventing a new bd-side type: bd already treats it as
+# non-blocking (ASSUMPTION link.nonblocking) and it is semantically the same
+# relationship -- "this item followed on from working on that one" -- that
+# `work_file`'s own discovered-from linking already expresses. See
+# docs/dependency-expression.md for the full recommendation on when to use
+# which kind.
+RELATION_KINDS = {
+    "relates-to": "relates-to",
+    "supersedes": "supersedes",
+    "follow-up-of": LINK_DISCOVERED_FROM,
+}
+
 # Dolt raises these when two writers touch one row. Beads manufactures the
 # collision deliberately so claims serialize. Retrying is the documented,
 # expected response -- not a fallback masking a failure.
@@ -884,6 +899,52 @@ def _list_rows_via_sql(db: str, *, where_sql: str | None, limit: int) -> list[It
                 del d[optional_text_field]
         items.append(Item.from_beads(d))
     return items
+
+
+def _get_item_via_sql(db: str, item_id: str) -> Item | None:
+    """Read exactly ONE item as a full-field `Item`, straight off the shared
+    dolt server over a READ-ONLY SQL SELECT -- the drop-in replacement for
+    `bd show <id>`'s core-item read that `Beads.get()` uses, for the same
+    reason `_list_rows_via_sql` replaces `bd list`.
+
+    Why this exists: `bd show` -- like `bd list` -- does a read+WRITE
+    transaction (verified empirically: same interaction-log-row-per-
+    invocation mechanism `_list_rows_via_sql`'s docstring documents for `bd
+    list`), so it CAN lose a dolt serialization conflict (MySQL 1213/1205)
+    against the shared server's concurrent write traffic, however briefly
+    -- `Beads._run` then burns retries on a call that need never have had a
+    write set at all. `get()`/`get_readonly()` are the MOST-called single-
+    item read in this codebase (every fencing check in `claim_item`/
+    `resolve`, every readback in `update`/`resolve`, `get_custody`, the
+    CLI's `show`, the web item-detail page's base fields) -- routing this
+    one path through a pure `SELECT` removes the write set from all of them
+    at once. A pure SELECT has no write set and cannot conflict, at any
+    contention level -- see `_list_rows_via_sql`'s docstring for the full
+    mechanism this shares.
+
+    Thin wrapper over `_list_rows_via_sql`: same column set, same field
+    mapping (`Item.from_beads` via `_FIELD_MAP`), same free-text/metadata/
+    priority/timestamp faithfulness guarantees already proven equivalent to
+    bd for the multi-row case -- an `id =` filter with `limit=1` is exactly
+    that same query, narrowed to one row. Returns `None` (not an error)
+    when no such row exists -- callers translate that into their own "not
+    found" wording (see `Beads.get`/`get_readonly`), the same shape `bd
+    show`'s own "no issues found" produced before.
+
+    Deliberately does NOT attempt to reproduce `bd show --include-
+    dependents`'s dependency/dependent graph here -- that enrichment
+    (`Item.links`) stays sourced from bd in `Beads.get(with_links=True)`.
+    Only the base item fields move to SQL; see that method's docstring for
+    why splitting the two is the right scope for this fix.
+
+    `item_id` is interpolated via `_sql_literal` (the same discipline
+    `Beads.list()`'s `lane`/`status` values already use): unlike a project
+    `db` name (constrained by `NAME_RE` before it ever reaches here), an
+    item id arrives as caller-supplied text with no upstream format
+    validation, so it is escaped rather than assumed safe.
+    """
+    rows = _list_rows_via_sql(db, where_sql=f"`issues`.`id` = '{_sql_literal(item_id)}'", limit=1)
+    return rows[0] if rows else None
 
 
 def copy_database(src: str, dst: str) -> None:
@@ -1661,11 +1722,19 @@ def _is_active_blocker(dependency_type: str | None, raw_status: str | None) -> b
 
 def _active_blockers(item: Item) -> list[dict]:
     """Which of `item`'s forward dependencies are still-open `blocks`-type
-    links -- i.e. actually blocking `claim_item`.
+    links -- i.e. actually blocking a claim.
 
     Read straight from the raw `show` payload's `dependencies` field, which
     IS present without `--include-dependents` (that flag only gates the
-    REVERSE direction -- ASSUMPTION show.dependents).
+    REVERSE direction -- ASSUMPTION show.dependents). Only ever populated
+    when `item` came from `bd show` itself (`Beads.get(with_links=True)`,
+    or the frozen pre-fix reconstruction in
+    `tests/integration/test_get_via_sql_equivalence.py`) -- an `Item` read
+    via `_get_item_via_sql` (the default, `with_links=False` path) carries
+    no `dependencies` key in `raw` at all, so this always returns `[]` for
+    one of those. `claim_item` -- the one caller that needs this check --
+    uses `_forward_active_blockers_via_sql` instead, precisely so its
+    blocker-refusal check never depends on `bd show` having been called.
     """
     deps = item.raw.get("dependencies") or []
     return [
@@ -1673,6 +1742,135 @@ def _active_blockers(item: Item) -> list[dict]:
         for d in deps
         if isinstance(d, dict) and _is_active_blocker(d.get("dependency_type"), d.get("status"))
     ]
+
+
+def _forward_active_blockers_via_sql(db: str, item_id: str) -> list[dict]:
+    """Which of `item_id`'s forward `blocks`-type dependencies are still
+    open, read via a READ-ONLY SQL SELECT -- the `claim_item`-only
+    equivalent of `_active_blockers` (which reads `Item.raw["dependencies"]`,
+    a field only bd's own `show` JSON populates), so a directed claim's
+    refusal-check read can never itself lose a serialization conflict --
+    same motivation as `_get_item_via_sql` replacing `bd show` for the base
+    item read; see that function's docstring for the shared mechanism.
+
+    Joins the `dependencies` table (`issue_id`, `depends_on_issue_id`,
+    `type`) to `issues` on the TARGET side to learn each blocker's own
+    current `status` -- exactly what `_is_active_blocker` (reused
+    unchanged) needs to decide whether an edge still blocks. An INNER JOIN
+    naturally excludes any edge whose `depends_on_issue_id` is NULL (a
+    wisp/external ref, not a real issue -- see `copy_database`'s own note
+    on the same distinction): a `blocks`-type edge is issue-to-issue only
+    in practice, so this can never silently drop a real blocker.
+
+    Returns dicts shaped `{"id", "status"}` -- the same two fields
+    `claim_item`'s own error message reads off each blocker
+    (`b["id"]`/`b.get("status")`); `dependency_type` is consulted here,
+    at the seam, and not carried through (nothing downstream needs it once
+    the "active blocker" filter has already been applied).
+    """
+    p = _dolt_sql_json(
+        "SELECT `dep`.`type` AS `dependency_type`, `tgt`.`id` AS `id`, "
+        "`tgt`.`status` AS `status` "
+        f"FROM `{db}`.`dependencies` `dep` "
+        f"JOIN `{db}`.`issues` `tgt` ON `tgt`.`id` = `dep`.`depends_on_issue_id` "
+        f"WHERE `dep`.`issue_id` = '{_sql_literal(item_id)}'"
+    )
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not read dependencies of {item_id!r} over SQL: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    try:
+        rows = json.loads(p.stdout or "{}").get("rows", [])
+    except json.JSONDecodeError as e:
+        raise BeadsError(f"could not parse dependencies of {item_id!r} over SQL: {e}") from e
+    return [
+        {"id": r.get("id"), "status": r.get("status")}
+        for r in rows
+        if isinstance(r, dict) and _is_active_blocker(r.get("dependency_type"), r.get("status"))
+    ]
+
+
+def _forward_dependency_links_via_sql(db: str, item_id: str) -> list[dict]:
+    """`item_id`'s forward (`direction: "from"`) dependency edges -- i.e.
+    what THIS item depends on / is blocked by / supersedes / etc -- read via
+    a READ-ONLY SQL SELECT, in the exact `Item.links` entry shape `Beads.get`'s
+    own `_link()` helper produces for its `with_links=True` path (`id`/
+    `direction`/`type`/`title`/`status`/`holder`/`created_by`/`blocking`).
+
+    Why this exists: forward edges are meant to be present on EVERY `get()`
+    regardless of `with_links` -- bd's own `dependencies` field needs no
+    `--include-dependents` flag, so this was always the pre-existing
+    behavior back when the base-item read went through `bd show` directly
+    (see `Beads.get`'s docstring, and `tests/integration/test_dependency.py`'s
+    `test_get_readonly_with_links_displays_the_same_edge`, which pins the
+    invariant explicitly). Moving the base-item read to `_get_item_via_sql`
+    (a pure SELECT against `issues` alone) dropped that invariant, since
+    that helper deliberately does not touch the `dependencies` table at all
+    -- this function restores it, over the same contention-safe mechanism
+    (a pure SELECT has no write set and cannot serialization-conflict, at
+    any project size; see `_get_item_via_sql`'s docstring for the shared
+    reasoning). Only the REVERSE direction (`dependents`, gated by bd's own
+    `--include-dependents`) stays on `bd show` in `Beads.get`'s
+    `with_links=True` branch -- seeing everything that points AT this item
+    is a comparatively rare, heavier need (bd's own `--help` warns it "may
+    be slow on hub beads"), unlike this item's OWN handful of forward
+    edges, which is cheap and needed unconditionally.
+
+    Joins `dependencies` to `issues` on the TARGET side (`depends_on_issue_id`)
+    to pull the referenced item's own title/status/holder/created_by --
+    exactly the fields `Beads.get`'s `_link()` populates for a `direction:
+    "from"` entry (bd's own asymmetry: only the forward direction embeds
+    the FULL referenced item; see that method's docstring). An INNER JOIN
+    naturally excludes an edge whose `depends_on_issue_id` is NULL (a
+    wisp/external ref, not a real issue -- same exclusion
+    `_forward_active_blockers_via_sql` already relies on), so a real
+    issue-to-issue edge can never be silently dropped.
+
+    `status` is translated through `_map_status` (our vocabulary, not bd's
+    raw one) -- the same translation `_link()` applies -- and `blocking`
+    is computed via the SAME `_is_active_blocker` check `claim_item`'s own
+    refusal read uses, so the two can never disagree on what "still
+    blocking" means.
+    """
+    p = _dolt_sql_json(
+        "SELECT `dep`.`type` AS `dependency_type`, `tgt`.`id` AS `id`, "
+        "`tgt`.`title` AS `title`, `tgt`.`status` AS `status`, "
+        "`tgt`.`assignee` AS `assignee`, `tgt`.`created_by` AS `created_by` "
+        f"FROM `{db}`.`dependencies` `dep` "
+        f"JOIN `{db}`.`issues` `tgt` ON `tgt`.`id` = `dep`.`depends_on_issue_id` "
+        f"WHERE `dep`.`issue_id` = '{_sql_literal(item_id)}'"
+    )
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not read forward dependency links of {item_id!r} over SQL: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    try:
+        rows = json.loads(p.stdout or "{}").get("rows", [])
+    except json.JSONDecodeError as e:
+        raise BeadsError(
+            f"could not parse forward dependency links of {item_id!r} over SQL: {e}"
+        ) from e
+    links: list[dict] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        dep_type = r.get("dependency_type")
+        raw_status = r.get("status")
+        links.append(
+            {
+                "id": r.get("id"),
+                "direction": "from",
+                "type": dep_type,
+                "title": r.get("title"),
+                "status": _map_status(raw_status) if raw_status else None,
+                "holder": r.get("assignee"),
+                "created_by": r.get("created_by"),
+                "blocking": _is_active_blocker(dep_type, raw_status),
+            }
+        )
+    return links
 
 
 def _retryable(blob: str) -> bool:
@@ -2201,8 +2399,23 @@ class Beads:
         acceptance: str | None = None,
         design: str | None = None,
         discovered_from: list[str] | None = None,
+        related: list[tuple[str, str]] | None = None,
         actor: str | None = None,
     ) -> str:
+        """Create a new item. `related` is an optional list of `(id,
+        relation_kind)` pairs -- our vocabulary for a loose cross-reference
+        recorded structurally, the SAME dependency-edge mechanism
+        `add_dependency`/`get(with_links=True)` already write/read, not a
+        separate, second linking system. `relation_kind` is one of
+        `RELATION_KINDS` ("relates-to", "supersedes", "follow-up-of" --
+        mapped to bd's own dependency-type vocabulary via that constant);
+        an unrecognized kind refuses the WHOLE create (raised before any
+        `bd` call), rather than creating the item and silently dropping an
+        edge nobody could later discover was requested. Passed through
+        bd's own `--deps` flag alongside `discovered_from`, so both land in
+        the SAME atomic `bd create` call -- no separate, unverified
+        follow-up write.
+        """
         args = ["create", title, "-t", kind, "-p", str(priority)]
         if tags:
             args += ["-l", ",".join(tags)]
@@ -2214,11 +2427,20 @@ class Beads:
             args += ["--acceptance", acceptance]
         if design:
             args += ["--design", design]
+        deps: list[str] = []
         if discovered_from:
-            args += [
-                "--deps",
-                ",".join(f"{LINK_DISCOVERED_FROM}:{i}" for i in discovered_from),
-            ]
+            deps += [f"{LINK_DISCOVERED_FROM}:{i}" for i in discovered_from]
+        if related:
+            for other_id, relation_kind in related:
+                dep_type = RELATION_KINDS.get(relation_kind)
+                if dep_type is None:
+                    raise BeadsError(
+                        f"create: unknown relation kind {relation_kind!r} for related id "
+                        f"{other_id!r} -- must be one of {sorted(RELATION_KINDS)}"
+                    )
+                deps.append(f"{dep_type}:{other_id}")
+        if deps:
+            args += ["--deps", ",".join(deps)]
         args += ["--silent"]
         p = self._run(args, actor=actor)
         new_id = (p.stdout or "").strip().splitlines()[-1].strip() if p.stdout else ""
@@ -2283,6 +2505,129 @@ class Beads:
             )
         return back
 
+    def comment(self, item_id: str, text: str, *, actor: str | None = None) -> None:
+        """Append a comment to an item -- bd's own audit-trail mechanism
+        (`bd comment <id> "<text>"`; the read side, `bd comments <id>
+        --json`, already backs `activity`). Attributed via bd's own
+        `--actor` audit trail, same identity `resolve`/`claim` carry.
+
+        Used by `edit_item` to record who changed what on a content edit,
+        and available standalone for any other audit-trail note a caller
+        wants attached to an item without touching its own fields.
+        """
+        p = self._run(["comment", item_id, text], actor=actor)
+        if p.returncode != 0:
+            raise BeadsError(f"comment {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
+
+    def edit_item(
+        self,
+        item_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        acceptance: str | None = None,
+        design: str | None = None,
+        actor: str | None = None,
+    ) -> Item:
+        """Amend an existing item's free-text fields IN PLACE, leaving an
+        audit-trail comment recording WHO changed WHAT -- the sanctioned
+        way to correct or refine an item's own content after filing,
+        WITHOUT resolving it. For the "this item is fully replaced by a
+        different one" case (which DOES close the original), see
+        `supersede` instead -- that is a structural merge, not a content
+        edit, and this method deliberately does not attempt it.
+
+        Delegates the actual field write + verified-readback discipline to
+        `update` -- this method's only reason to exist on top of it is the
+        attribution trail: `update` alone leaves no record of who changed
+        what, or when, beyond bd's own uncurated dolt-commit history.
+        Refuses (raises `BeadsError`, no write attempted) if every field is
+        `None` -- there is nothing to edit and nothing to attribute.
+
+        The audit comment names only the fields that actually changed (by
+        name, not value -- an item's `description` can be arbitrarily large
+        free text, and a comment repeating it in full would double the
+        item's total text on every edit), e.g. `"jdoe edited: title,
+        description"`. A comment failure (bd flaked between the verified
+        field write and the comment call) is surfaced as a `BeadsError`
+        too -- the field write already landed and verified, but a caller
+        must not be told the edit succeeded silently missing its own audit
+        trail.
+        """
+        changed = [
+            name
+            for name, value in (
+                ("title", title),
+                ("description", description),
+                ("acceptance", acceptance),
+                ("design", design),
+            )
+            if value is not None
+        ]
+        if not changed:
+            raise BeadsError(f"edit {item_id}: no field given -- nothing to change")
+        back = self.update(
+            item_id,
+            title=title,
+            description=description,
+            acceptance=acceptance,
+            design=design,
+            actor=actor,
+        )
+        who = actor or self._actor or "unknown"
+        self.comment(item_id, f"{who} edited: {', '.join(changed)}", actor=actor)
+        return back
+
+    def supersede(self, item_id: str, replacement_id: str, *, actor: str | None = None) -> Item:
+        """Mark `item_id` as superseded by `replacement_id` -- bd's own
+        `supersede` command closes the original AUTOMATICALLY with a
+        structural reference to the replacement, verified here by
+        readback (never merely a non-erroring exit). This is the "true
+        merge" case `edit_item` deliberately does not handle: the original
+        is genuinely done, replaced wholesale by a different item, and its
+        own resolution should say so structurally -- never a fake
+        `resolve(..., reason="merged into X")` that loses the replacement's
+        actual, machine-readable id.
+
+        Surfaces bd's own error (unchanged) if `replacement_id` does not
+        exist or `item_id` is already closed -- no override.
+
+        The readback uses `with_links=True` (verified empirically against
+        the real bd binary: `bd supersede` records the replacement as a
+        genuine `supersedes`-type dependency edge from `item_id` to
+        `replacement_id` -- there is no `close_reason`/resolution text at
+        all -- so `replacement_id` is only readable back off `Item.links`/
+        `Item.raw["dependencies"]`, never off `Item.resolution`). This is
+        the SAME `bd show --include-dependents` path `add_dependency`
+        already uses for its own write-verification readback: a single
+        one-item bd call for a write method's own post-write proof is the
+        established pattern here, not a hot repeated-read path, so it is
+        not a candidate for the `_get_item_via_sql` contention fix (see
+        `Beads.get`'s docstring for why `with_links=True` deliberately
+        stays on bd).
+        """
+        p = self._run(["supersede", item_id, "--with", replacement_id], actor=actor)
+        if p.returncode != 0:
+            raise BeadsError(
+                f"supersede {item_id} with {replacement_id}: "
+                f"{_clean_bd_error(p.stderr or p.stdout)}"
+            )
+        back = self.get(item_id, with_links=True)
+        if back.status != "resolved":
+            raise BeadsError(
+                f"supersede {item_id} reported success but readback shows status="
+                f"{back.status!r} -- refusing to report success"
+            )
+        if not any(
+            link.get("id") == replacement_id and link.get("direction") == "from"
+            for link in back.links
+        ):
+            raise BeadsError(
+                f"supersede {item_id} with {replacement_id} reported success but readback "
+                f"shows no structural reference to the replacement -- refusing to report success"
+            )
+        return back
+
     def claim_next(self, *, lane: str = LANE_WORK, actor: str) -> Item | None:
         """THE claim. Single atomic operation, never read-then-write.
 
@@ -2318,17 +2663,25 @@ class Beads:
         which is blocker-aware by construction (its own --help: "open
         issues with no active blockers"). Claiming work whose prerequisite
         isn't done produces wasted or conflicting work, so we check first
-        and refuse before ever calling bd's --claim, naming the blocker(s)
-        bd's own `show` already told us about. No override flag: if a
-        named blocker doesn't actually apply, resolve it or remove the
-        dependency link, then claim again.
+        and refuse before ever calling bd's --claim, naming the blocker(s).
+        No override flag: if a named blocker doesn't actually apply,
+        resolve it or remove the dependency link, then claim again.
+
+        The blocker check itself reads via `_forward_active_blockers_via_sql`
+        -- a READ-ONLY SQL query, not `_active_blockers` (which reads
+        `Item.raw["dependencies"]`, a field only `bd show`'s own JSON ever
+        populates, and `get()`'s base-item path no longer calls `bd show`
+        at all -- see `Beads.get`'s docstring). This is strictly safer than
+        the previous `bd show`-backed check: a directed claim's own
+        refusal-check read can no longer itself lose a serialization
+        conflict either.
         """
         try:
-            current = self.get(item_id)
+            self.get(item_id)  # existence check only -- raises if missing
         except BeadsError as e:
             raise BeadsError(f"cannot claim {item_id}: item not found ({e})") from e
 
-        blockers = _active_blockers(current)
+        blockers = _forward_active_blockers_via_sql(self.project_name, item_id)
         if blockers:
             names = ", ".join(f"{b['id']} ({b.get('status', 'unknown')})" for b in blockers)
             raise BeadsError(
@@ -2353,8 +2706,53 @@ class Beads:
         return Item.from_beads(items[0])
 
     def get(self, item_id: str, *, with_links: bool = False) -> Item:
-        """Read one item, optionally with its dependency graph attached as
-        `Item.links`.
+        """Read one item, with its FORWARD dependency graph always attached
+        as `Item.links` (`direction: "from"` entries -- what THIS item
+        depends on / is blocked by / supersedes / etc), plus its REVERSE
+        graph (`direction: "to"`, what depends on THIS item) when
+        `with_links=True`.
+
+        The base item -- every field `with_links=False` (the overwhelming
+        majority of callers: every fencing check in `claim_item`/`resolve`,
+        every readback in `update`/`resolve`, `get_custody`, the CLI's
+        `show`, `get_readonly`) ever sees -- is read via `_get_item_via_sql`,
+        a READ-ONLY SQL SELECT, NOT `bd show`. `bd show`, like `bd list`,
+        does a read+WRITE transaction (an interaction-log row per
+        invocation), so it CAN lose a dolt serialization conflict against
+        the shared server's concurrent write traffic; a pure SELECT has no
+        write set and cannot conflict, at any contention level -- see
+        `_get_item_via_sql`'s and `_list_rows_via_sql`'s docstrings for the
+        full mechanism this shares with the `list()`/`project_summary`
+        fixes. Raises `BeadsError` if no such row exists -- the same "not
+        found" shape `bd show` produced before, so `get_readonly`'s
+        wrong-project-prefix-vs-genuinely-missing disambiguation (which
+        only inspects `item_id`/`project_name`, never this message's text)
+        is unaffected.
+
+        Forward (`"from"`) links are populated via
+        `_forward_dependency_links_via_sql` regardless of `with_links` --
+        another pure SELECT, so this never reintroduces the serialization-
+        conflict exposure the base-item read was just fixed to avoid. This
+        restores an invariant that predates the SQL-based base-item read:
+        bd's own `dependencies` field needs no `--include-dependents` flag,
+        so a plain `bd show` always populated forward edges too -- see
+        `tests/integration/test_dependency.py`'s
+        `test_get_readonly_with_links_displays_the_same_edge`, which pins
+        this explicitly, and `_forward_dependency_links_via_sql`'s own
+        docstring for the full reasoning.
+
+        `with_links=True` ADDITIONALLY asks bd for the REVERSE
+        (`dependents`) side of the graph -- that enrichment is DELIBERATELY
+        left on `bd show --include-dependents`, not reproduced over SQL
+        here: it is a smaller, one-item read (not the 465-row case that
+        motivated the `list()`/`project_summary` fixes), and reproducing
+        bd's own dependents cross-reference (title/status only, holder/
+        created_by always `None`, its own lean-by-design asymmetry
+        documented below) over SQL would mean re-deriving bd's exact
+        `--include-dependents` semantics a second time for comparatively
+        little contention-safety benefit. See work_tracker item
+        pipeline-bug for the full contention hardening this method's
+        base-item change is part of.
 
         Each link entry carries `id`/`direction`/`type` (unchanged from
         before -- `supervisor.notify_project`/`cli.cmd_notify`/`gateway`/
@@ -2387,11 +2785,14 @@ class Beads:
         entries too (same helper, same fields), for symmetry; nothing in
         this app currently colors that direction.
         """
-        args = ["show", item_id]
-        if with_links:
-            # ASSUMPTION show.dependents -- reverse links are omitted by default.
-            args += ["--include-dependents"]
-        d = self._json(args)
+        if not with_links:
+            it = _get_item_via_sql(self.project_name, item_id)
+            if it is None:
+                raise BeadsError(f"show {item_id}: no issues found matching the provided IDs")
+            it.links = _forward_dependency_links_via_sql(self.project_name, item_id)
+            return it
+
+        d = self._json(["show", item_id, "--include-dependents"])
         d = d[0] if isinstance(d, list) else d
         if not isinstance(d, dict):
             raise BeadsError(f"show {item_id} returned no object")
@@ -2485,7 +2886,7 @@ class Beads:
         """
         return self._dir.parent.name
 
-    def get_readonly(self, item_id: str) -> Item:
+    def get_readonly(self, item_id: str, *, with_links: bool = False) -> Item:
         """Read one item's full record -- WITHOUT claiming, mutating, or
         touching custody. This is `bd show` and nothing else: no `--claim`,
         no `--update`, no assignee change, no custody metadata write. See
@@ -2500,6 +2901,11 @@ class Beads:
         `context/awareness.md` and the `claiming-work-safely` skill for the
         agent-facing framing of that gap.
 
+        `with_links=True` additionally populates `Item.links` (see `get`'s
+        own docstring for the shape) -- the dependency-graph DISPLAY this
+        read pairs with `add_dependency`'s WRITE side. Default `False`
+        matches every existing caller's behavior unchanged.
+
         Distinguishes two failure shapes bd's own error text does not (both
         read as the IDENTICAL "no issues found matching the provided IDs"):
           - `item_id` does not even carry this project's own id prefix
@@ -2512,7 +2918,7 @@ class Beads:
             exist here.
         """
         try:
-            return self.get(item_id)
+            return self.get(item_id, with_links=with_links)
         except BeadsError as e:
             prefix = f"{self.project_name}-"
             if not item_id.startswith(prefix):
@@ -2654,39 +3060,50 @@ class Beads:
     def resolve(self, item_id: str, reason: str, *, actor: str | None = None) -> Item:
         """Close an item and VERIFY the write landed. Exit code is not proof.
 
-        FENCED: refuses if we are not the current holder. Without this a zombie
-        agent whose claim was reclaimed can still close work it no longer owns,
-        and every party gets exit 0 -- the same silent shape as the double-claim
-        we banned the two-step path for.
+        FENCED, but only while the item is ACTUALLY currently held --
+        resolving an unheld item (open/blocked/deferred/resolved), even one
+        filed or last held by someone else entirely, is a single call, no
+        fence, no override needed. Without the status gate below, a STALE
+        custody record from a hold that ended long ago (released, reaped,
+        or simply never re-claimed) would keep naming a "current holder"
+        who no longer holds anything -- refusing an integrator's plain
+        resolve of someone else's already-unheld report. That was the
+        measured bug (work_tracker item 79t): the custody-based fence used
+        to fire on custody metadata ALONE, with no check that the item was
+        still `held` at all.
 
-        Two fence sources, checked together, because they cover different
-        gaps: bd's own assignee catches a live takeover by another holder
-        (assignee is now someone else). It does NOT catch our own
-        custody-based reclaim, because reclaiming an item clears bd's
-        assignee back to empty rather than reassigning it -- measured: a
-        stale holder's resolve on a released-but-not-yet-reclaimed item sailed
-        through with exit 0 because "no current holder" looked the same as
-        "never held at all." A custody record, once it exists, is left in
-        place across a reclaim precisely so it can still answer "who held
-        this last" -- so when one exists, it is authoritative over bd's own
-        (now-cleared) assignee field.
+        Two fence sources, checked together ONLY when `current.status ==
+        "held"`, because they cover different gaps: bd's own assignee
+        catches a live takeover by another holder (assignee is now someone
+        else). It does NOT catch our own custody-based reclaim, because
+        reclaiming an item clears bd's assignee back to empty rather than
+        reassigning it -- measured: a stale holder's resolve on a
+        released-but-not-yet-reclaimed item sailed through with exit 0
+        because "no current holder" looked the same as "never held at
+        all." A custody record, once it exists, is left in place across a
+        reclaim precisely so it can still answer "who held this last" --
+        so when one exists AND the item is still held, it is authoritative
+        over bd's own (now-cleared) assignee field. The refusal always
+        names the real holder -- the exact recovery is to resolve as that
+        holder, or wait for `reap` to reclaim a stale hold.
         """
         who = actor or self._actor
         if who:
             current = self.get(item_id)
-            cust = current.meta.get(C.CUSTODY_KEY) if isinstance(current.meta, dict) else None
-            if isinstance(cust, dict) and cust.get("holder"):
-                if current.holder != who or cust.get("holder") != who:
+            if current.status == "held":
+                cust = current.meta.get(C.CUSTODY_KEY) if isinstance(current.meta, dict) else None
+                if isinstance(cust, dict) and cust.get("holder"):
+                    if current.holder != who or cust.get("holder") != who:
+                        raise FencedError(
+                            f"refusing to close {item_id}: current holder is "
+                            f"{current.holder!r} (custody holder {cust.get('holder')!r}), "
+                            f"not {who!r}. Your claim was reclaimed while you were away."
+                        )
+                elif current.holder and current.holder != who:
                     raise FencedError(
-                        f"refusing to close {item_id}: current holder is "
-                        f"{current.holder!r} (custody holder {cust.get('holder')!r}), "
+                        f"refusing to close {item_id}: it is held by {current.holder!r}, "
                         f"not {who!r}. Your claim was reclaimed while you were away."
                     )
-            elif current.status == "held" and current.holder and current.holder != who:
-                raise FencedError(
-                    f"refusing to close {item_id}: it is held by {current.holder!r}, "
-                    f"not {who!r}. Your claim was reclaimed while you were away."
-                )
         p = self._run(["close", item_id, "--reason", reason], actor=actor)
         if p.returncode != 0:
             raise BeadsError(f"close {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
@@ -2704,6 +3121,182 @@ class Beads:
         if p.returncode != 0:
             detail = _clean_bd_error(p.stderr or p.stdout, limit=200)
             raise BeadsError(f"release {item_id}: {detail}")
+
+    # -------------------------------------------------------- defer / block
+    #
+    # Both set the item's own top-level `status` -- `_STATUS_MAP` already
+    # knows the raw bd values `deferred`/`blocked` and maps them straight
+    # through (see that map's own comment: an unrecognized status passes
+    # through rather than being coerced, and these two are recognized).
+    # This is a DIFFERENT mechanism from bd's own `update --defer <date>`
+    # flag (a scheduling hide-until-date on an otherwise-open item) --
+    # these instead move the item's status itself, which is what makes
+    # `bd ready`/`claim_next` skip it (bd's status-category system treats
+    # `blocked`/`deferred` as non-`active`, so neither appears in `bd
+    # ready`) and what makes it render with an honest status in list
+    # output, rather than merely hidden with no explanation.
+    #
+    # The reason is stored in metadata (`metadata.roundtrip` is an already-
+    # proven assumption: arbitrary JSON metadata survives a write/read
+    # cycle, and `bd update --metadata` merges at the top level rather than
+    # replacing wholesale) under a status-specific key, so a defer reason
+    # and a block reason never collide, and undefer/unblock only ever
+    # clear the key for the status they own.
+
+    _DEFER_REASON_KEY = "defer_reason"
+    _BLOCK_REASON_KEY = "block_reason"
+
+    def _set_status_with_reason(
+        self, item_id: str, *, status: str, reason: str, reason_key: str, actor: str | None
+    ) -> Item:
+        if not reason or not reason.strip():
+            raise BeadsError(f"{status} {item_id}: a reason is required")
+        p = self._run(
+            [
+                "update",
+                item_id,
+                "--status",
+                status,
+                "--metadata",
+                json.dumps({reason_key: reason}),
+            ],
+            actor=actor,
+        )
+        if p.returncode != 0:
+            raise BeadsError(f"{status} {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
+        back = self.get(item_id)
+        if back.status != _map_status(status):
+            raise BeadsError(
+                f"{status} {item_id} reported success but readback shows status="
+                f"{back.status!r} -- refusing to report success"
+            )
+        return back
+
+    def _clear_status_with_reason(
+        self, item_id: str, *, from_status: str, reason_key: str, actor: str | None
+    ) -> Item:
+        current = self.get(item_id)
+        if current.status != _map_status(from_status):
+            raise BeadsError(
+                f"cannot un-{from_status} {item_id}: it is {current.status!r}, not "
+                f"{_map_status(from_status)!r}"
+            )
+        p = self._run(
+            [
+                "update",
+                item_id,
+                "--status",
+                "open",
+                "--unset-metadata",
+                reason_key,
+            ],
+            actor=actor,
+        )
+        if p.returncode != 0:
+            raise BeadsError(f"un-{from_status} {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
+        back = self.get(item_id)
+        if back.status != "open":
+            raise BeadsError(
+                f"un-{from_status} {item_id} reported success but readback shows status="
+                f"{back.status!r} -- refusing to report success"
+            )
+        return back
+
+    def defer(self, item_id: str, reason: str, *, actor: str | None = None) -> Item:
+        """Defer an open item with a reason -- it leaves `bd ready`/
+        `claim_next` (bd's own status-category system excludes non-active
+        statuses from `bd ready`), but stays visible in `list()`'s own
+        default view (which only ever excludes `closed`, never
+        `blocked`/`deferred` -- see that method's docstring) AND via an
+        explicit `--status deferred` read, with its reason attached. Move
+        it back to the queue with `undefer`.
+        """
+        return self._set_status_with_reason(
+            item_id,
+            status="deferred",
+            reason=reason,
+            reason_key=self._DEFER_REASON_KEY,
+            actor=actor,
+        )
+
+    def undefer(self, item_id: str, *, actor: str | None = None) -> Item:
+        """Move a deferred item back to `open` (ready to be claimed again),
+        clearing its defer reason. Refuses if the item is not currently
+        deferred -- there is nothing to undo.
+        """
+        return self._clear_status_with_reason(
+            item_id, from_status="deferred", reason_key=self._DEFER_REASON_KEY, actor=actor
+        )
+
+    def block(self, item_id: str, reason: str, *, actor: str | None = None) -> Item:
+        """Block an open item with a reason -- same visibility contract as
+        `defer` (leaves `bd ready`/`claim_next`, stays visible in `list()`'s
+        default view and on an explicit status read, reason attached).
+        Deliberately
+        distinct from the DEPENDENCY-based blocker chain (`add_dependency`
+        / `claim_item`'s blocker refusal): this is a direct, reasoned
+        status change with no other issue involved, for "this can't
+        proceed right now" situations that are not really "issue B must
+        close first." Move it back to the queue with `unblock`.
+        """
+        return self._set_status_with_reason(
+            item_id,
+            status="blocked",
+            reason=reason,
+            reason_key=self._BLOCK_REASON_KEY,
+            actor=actor,
+        )
+
+    def unblock(self, item_id: str, *, actor: str | None = None) -> Item:
+        """Move a blocked item back to `open`, clearing its block reason.
+        Refuses if the item is not currently blocked -- there is nothing
+        to undo.
+        """
+        return self._clear_status_with_reason(
+            item_id, from_status="blocked", reason_key=self._BLOCK_REASON_KEY, actor=actor
+        )
+
+    def add_dependency(
+        self,
+        item_id: str,
+        depends_on_id: str,
+        *,
+        dep_type: str = "blocks",
+        actor: str | None = None,
+    ) -> None:
+        """Declare `item_id` depends on (per `dep_type`) `depends_on_id` --
+        the CREATE side of the dependency graph `claim_item` already
+        ENFORCES (its blocker refusal reads exactly this edge back via
+        `_active_blockers`) and `get(with_links=True)` already DISPLAYS
+        (as `Item.links`). This method is what WRITES the edge those two
+        read -- before it existed, the only way to create one was the
+        forbidden raw `bd dep add` shell-out.
+
+        `dep_type` is bd's own vocabulary (`blocks` -- the default, and the
+        only type `claim_item` treats as an active blocker --, plus
+        `tracks`/`related`/`parent-child`/`discovered-from`/`until`/
+        `caused-by`/`validates`/`relates-to`/`supersedes`). Verified by
+        readback: `get(item_id, with_links=True)` must show the new edge,
+        never merely a non-erroring exit.
+        """
+        p = self._run(
+            ["dep", "add", item_id, depends_on_id, "-t", dep_type],
+            actor=actor,
+        )
+        if p.returncode != 0:
+            raise BeadsError(
+                f"dep add {item_id} -> {depends_on_id} ({dep_type}): "
+                f"{_clean_bd_error(p.stderr or p.stdout)}"
+            )
+        back = self.get(item_id, with_links=True)
+        if not any(
+            link.get("id") == depends_on_id and link.get("direction") == "from"
+            for link in back.links
+        ):
+            raise BeadsError(
+                f"dep add {item_id} -> {depends_on_id} reported success but readback shows "
+                f"no such edge -- refusing to report success"
+            )
 
     # ------------------------------------------------------------------ custody
     #

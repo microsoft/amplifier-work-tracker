@@ -1,0 +1,33 @@
+[project]
+name = "amplifier-module-hooks-work-subscribe-reminder"
+version = "0.1.0"
+description = "Amplifier hook module: compact, cadence-gated work-tracker subscription status reminders (ready/held/holding/custody-stale), sourced entirely from tool-work-tracker's `work_tracker.reminder_snapshot` capability."
+requires-python = ">=3.11"
+# Empty deliberately -- this module has NO Beads/dolt knowledge of its own and
+# no runtime dependency on amplifier_work_tracker or the tool module: it reads
+# everything it needs via `coordinator.get_capability("work_tracker.reminder_snapshot")`,
+# a capability registered by amplifier_module_tool_work_tracker at mount time.
+# amplifier-core is a peer dependency and is never declared here either (see
+# modules/tool-work-tracker/pyproject.toml's identical note).
+dependencies = []
+
+[project.entry-points."amplifier.modules"]
+hooks-work-subscribe-reminder = "amplifier_module_hooks_work_subscribe_reminder:mount"
+
+[project.optional-dependencies]
+dev = [
+    "amplifier-core",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["amplifier_module_hooks_work_subscribe_reminder"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"

@@ -32,6 +32,26 @@ Five things here fail **silently** if you get them wrong — no error, no undo:
    retry resolving or declaring that item — someone else may hold it now.
    `work_claim` can still be used afterward to pick up new work.
 
+6. **A reported write failure means the write did NOT land — but never
+   blindly retry the same operation either; re-read first.** You're sharing
+   a single-writer dolt server with every other agent's claims, renewals,
+   and resolves. A write occasionally loses a serialization race and
+   `work_resolve`/`work_file`/the CLI raises an error like "still
+   conflicting after 8 retries." That specific error family (dolt/MySQL
+   1213/1205/"serialization failure"/"try restarting transaction") means
+   the transaction was aborted — by database guarantee, never partially
+   committed — so the write genuinely did not happen. The unsafe move is
+   resubmitting blind: for a non-idempotent write (creating a new item) a
+   blind retry after an ambiguous-looking failure can leave a duplicate.
+   The safe move is always the same: re-read the item first (`work_list`'s
+   `item_id` form, or `get_readonly` — a read-only path that cannot itself
+   conflict) to see its real current state, then decide whether the
+   original operation still needs doing. A *reported success*, by contrast,
+   is already independently verified — `resolve`/`unclaim` read the item
+   back and raise rather than report success if the change didn't actually
+   land — so this caution is specifically about what to do after a
+   *reported failure*, not a general distrust of success responses.
+
 ## Where to go next
 
 - No server running, or unsure → `work_tracker_status`; it names the exact

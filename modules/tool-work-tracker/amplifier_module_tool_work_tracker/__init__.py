@@ -1,11 +1,26 @@
 """Amplifier tool module for amplifier-work-tracker.
 
 Exposes `work_claim`, `work_declare`, `work_resolve`, `work_release`,
-`work_status`, `work_stats`, `work_file`, `work_add`, `work_move`, and
-`work_list` as agent-callable tools, backed directly by
-`amplifier_work_tracker.adapter` / `amplifier_work_tracker.custody`.
+`work_status`, `work_stats`, `work_file`, `work_add`, `work_move`,
+`work_list`, `work_subscribe`, `work_unsubscribe`, and `work_subscriptions`
+as agent-callable tools, backed directly by `amplifier_work_tracker.adapter`
+/ `amplifier_work_tracker.custody`.
 This module contains no Beads knowledge of its own and shells out to nothing --
 all domain logic lives in the `amplifier_work_tracker` package it imports.
+
+`work_subscribe`/`work_unsubscribe`/`work_subscriptions` (amplifier-bxq) let a
+session opt a project's status IN to (or out of) a compact, cadence-gated
+reminder injected into its context by the separate `hooks-work-subscribe-
+reminder` hook module -- ready/held counts, whether this session holds
+anything, and whether that held item's custody is stale. `work_claim`
+auto-subscribes to whatever project it claims from (see `claim`'s
+`lane:gb-subscribe` note), so the common case needs no extra call. This tool
+module never injects anything itself: it only computes and exposes
+`WorkTrackerSession.reminder_snapshot` as the `work_tracker.reminder_snapshot`
+CAPABILITY (`coordinator.register_capability`, see `mount`), which the hook
+module reads. Subscriptions are session-scoped, in-memory only -- see
+`WorkTrackerSession.__init__`'s `lane:gb-subscribe` note for why that is an
+explicit design choice, not an oversight.
 
 `work_move` is the sanctioned way to migrate a work item from one project's
 queue to another -- before it existed, there was no supported path for an
@@ -181,6 +196,22 @@ class WorkTrackerSession:
         self._ws = A.Workspace(Path(root_raw) if root_raw else None)
         self._held: _Held | None = None
         self._lock = threading.Lock()
+        # lane:gb-subscribe -- session-scoped subscription list (see
+        # `subscribe`/`unsubscribe`/`subscriptions`/`reminder_snapshot` below).
+        # Ordered, de-duplicated project names. Deliberately in-memory only:
+        # this list lives exactly as long as `_held` does above -- for the
+        # life of THIS mounted session's process, never persisted to disk and
+        # never inherited by a forked sub-session (each gets its own fresh
+        # `WorkTrackerSession`, per amplifier-core's one-mount()-per-session
+        # contract -- see hooks-status-context's docstring for the same
+        # invariant applied to its own per-session cache). A session that
+        # wants reminders again after a restart must re-subscribe (or rely on
+        # auto-subscribe-on-claim, see `claim` below) -- this is an explicit
+        # design choice, not an oversight: durable cross-session subscription
+        # state would need its own identity/storage story (which session
+        # "is" which across a restart?) that nothing else in this module has
+        # today, and nothing in the source request asked for it.
+        self._subscriptions: list[str] = []
 
     def _project(self, name: str) -> A.Beads:
         return self._ws.project(name, actor=self._actor)
@@ -292,6 +323,13 @@ class WorkTrackerSession:
             )
             held.thread.start()
             self._held = held
+            # lane:gb-subscribe -- auto-subscribe to the project this session
+            # just claimed from. A reasonable default (an agent that is now
+            # actively working a project's queue is exactly who benefits from
+            # its status reminders), and additive-only: it never removes an
+            # existing subscription, and an explicit `unsubscribe` still wins
+            # if the agent doesn't want it.
+            self._subscribe_locked(project)
             return ToolResult(
                 success=True,
                 output={
@@ -441,6 +479,111 @@ class WorkTrackerSession:
             success=not _summary_errored(summary), output=_project_summary_row(summary)
         )
 
+    # ------------------------------------------------------- lane:gb-subscribe
+    # Subscription management + the reminder-hook data source. See this
+    # module's docstring for the design (session-scoped, not persisted; the
+    # separate hook module never computes status itself -- it only reads
+    # `reminder_snapshot()` below via the `work_tracker.reminder_snapshot`
+    # capability registered in `mount()`).
+
+    def _subscribe_locked(self, project: str) -> bool:
+        """Add `project` to the subscription list if not already present.
+        Caller must hold `self._lock`. Returns True if this call actually
+        added it (False if already subscribed) -- used by `claim`'s
+        auto-subscribe to report only genuine changes, and by `subscribe`
+        to report idempotency honestly rather than always claiming success
+        added something new.
+        """
+        if project in self._subscriptions:
+            return False
+        self._subscriptions.append(project)
+        return True
+
+    async def subscribe(self, project: str) -> ToolResult:
+        """Subscribe this session to `project`'s status reminders.
+
+        Validates the project actually exists first (`Workspace.project` --
+        a local filesystem check, no dolt round trip) so a typo'd name fails
+        loudly here rather than silently reminding about nothing forever.
+        Idempotent: subscribing to an already-subscribed project is a
+        no-op that still reports success.
+        """
+        try:
+            self._project(project)
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        with self._lock:
+            added = self._subscribe_locked(project)
+        return ToolResult(
+            success=True,
+            output={
+                "subscribed": project,
+                "already_subscribed": not added,
+                "subscriptions": list(self._subscriptions),
+            },
+        )
+
+    async def unsubscribe(self, project: str) -> ToolResult:
+        """Unsubscribe this session from `project`'s status reminders.
+        Idempotent: unsubscribing from a project never subscribed to is a
+        no-op that still reports success (mutating nothing, refusing
+        nothing -- there is nothing unsafe about this operation, unlike
+        `unclaim`/`resolve`, so it needs no ownership fence).
+        """
+        with self._lock:
+            was_subscribed = project in self._subscriptions
+            if was_subscribed:
+                self._subscriptions.remove(project)
+            subs = list(self._subscriptions)
+        return ToolResult(
+            success=True,
+            output={
+                "unsubscribed": project,
+                "was_subscribed": was_subscribed,
+                "subscriptions": subs,
+            },
+        )
+
+    async def subscriptions(self) -> ToolResult:
+        """List this session's current subscriptions. Read-only."""
+        with self._lock:
+            subs = list(self._subscriptions)
+        return ToolResult(success=True, output={"subscriptions": subs})
+
+    async def reminder_snapshot(self) -> dict[str, Any]:
+        """Compact status snapshot for the reminder-injection hook -- NOT a
+        `ToolResult` (this is called directly by the hook module via the
+        `work_tracker.reminder_snapshot` capability, not by an agent).
+
+        For each subscribed project: the SAME `project_summary` row
+        `status()`/`stats()` return (never a second, independently-computed
+        set of counts). Plus this session's own holding pointer and, ONLY
+        when holding something, whether that ONE held item's custody is
+        currently reclaim-eligible -- a single extra `get_readonly` read,
+        bounded to at most one item (never a project-wide scan), using the
+        exact same `custody.reclaim_eligible` check `project_summary`'s own
+        `held_stale` count is built from (see `_held_stale_count`). Never
+        raises: a project that cannot be read reports `project_summary`'s
+        own truncated `"ERROR: ..."` status like every other consumer; a
+        failure reading the held item's fresh custody state reports
+        `custody_stale=None` (unknown), never a fabricated True/False.
+        """
+        with self._lock:
+            subs = list(self._subscriptions)
+            held = self._held
+        projects = [_project_summary_row(A.project_summary(self._ws, name)) for name in subs]
+        holding: dict[str, Any] | None = None
+        if held is not None:
+            holding = {"project": held.project, "id": held.item_id, "custody_stale": None}
+            try:
+                bd = self._project(held.project)
+                item = bd.get_readonly(held.item_id)
+                meta = item.meta.get(C.CUSTODY_KEY) if isinstance(item.meta, dict) else None
+                holding["custody_stale"] = C.reclaim_eligible(meta)[0]
+            except A.BeadsError:
+                pass  # custody_stale stays None -- unknown, not fabricated
+        return {"subscriptions": projects, "holding": holding}
+
     async def unclaim(self, item_id: str) -> ToolResult:
         """Voluntarily hand a HELD item back to the queue -- the inverse of
         `claim`, and a sibling of `resolve` that sets NO resolution. Returns
@@ -580,12 +723,22 @@ class WorkTrackerSession:
         *,
         description: str | None = None,
         acceptance: str | None = None,
+        related: list[dict[str, str]] | None = None,
     ) -> ToolResult:
         """File a new engineering-lane item directly -- no held item
         required. THE sanctioned path for seeding a project's first item(s)
         (see this module's docstring for why that gap otherwise forces a
         raw-`bd` escape). Applies A.LANE_WORK itself; callers never need to
-        know the label vocabulary."""
+        know the label vocabulary.
+
+        `related` is optional first-class linking (work_tracker item 9e4):
+        each entry `{"id": ..., "kind": "relates-to"|"supersedes"|
+        "follow-up-of"}` is recorded as a real dependency edge in the SAME
+        atomic `bd create --deps` call `discovered_from` already uses --
+        see `adapter.RELATION_KINDS` for the kind-to-bd-type mapping. An
+        unrecognized kind refuses the whole create (surfaced as a failed
+        ToolResult), never a partially-linked item.
+        """
         try:
             bd = self._project(project)
             new_id = bd.create(
@@ -594,6 +747,11 @@ class WorkTrackerSession:
                 tags=[A.LANE_WORK],
                 description=description,
                 acceptance=acceptance,
+                related=(
+                    [(r["id"], r["kind"]) for r in related if isinstance(r, dict)]
+                    if related
+                    else None
+                ),
                 actor=self._actor,
             )
         except A.BeadsError as e:
@@ -625,6 +783,127 @@ class WorkTrackerSession:
                 "dropped_dependency_edges": report.dropped_dependency_edges,
             },
         )
+
+    async def edit(
+        self,
+        project: str,
+        item_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        acceptance: str | None = None,
+        design: str | None = None,
+        merge_into: str | None = None,
+    ) -> ToolResult:
+        """Amend `item_id`'s own free-text fields IN PLACE, attributed via
+        an audit-trail comment -- or, with `merge_into`, mark it superseded
+        by a different item instead (a structural close, never a content
+        edit; the two cannot be combined in one call). No held item
+        required -- content editing is not lifecycle, same as `move`.
+        """
+        bd = self._project(project)
+        try:
+            if merge_into is not None:
+                if any(v is not None for v in (title, description, acceptance, design)):
+                    return ToolResult(
+                        success=False,
+                        output=(
+                            "merge_into cannot be combined with field edits -- a merge "
+                            "closes the item; edit its content first, then merge"
+                        ),
+                    )
+                item = bd.supersede(item_id, merge_into, actor=self._actor)
+                return ToolResult(
+                    success=True,
+                    output={"superseded": item.id, "with": merge_into, "status": item.status},
+                )
+            item = bd.edit_item(
+                item_id,
+                title=title,
+                description=description,
+                acceptance=acceptance,
+                design=design,
+                actor=self._actor,
+            )
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        return ToolResult(
+            success=True,
+            output={
+                "edited": item.id,
+                "title": item.title,
+                "description": item.description,
+                "acceptance": item.acceptance,
+                "design": item.design,
+            },
+        )
+
+    async def defer(
+        self, project: str, item_id: str, *, reason: str | None = None, clear: bool = False
+    ) -> ToolResult:
+        """Defer an open item with `reason` (it leaves `bd ready`/
+        `work_claim`'s queue, but stays visible in the default `list()`
+        view and via an explicit status filter), or -- with `clear=True`
+        -- move a deferred item back to open. No held item required. See
+        `adapter.Beads.defer`/`undefer`.
+        """
+        bd = self._project(project)
+        try:
+            if clear:
+                item = bd.undefer(item_id, actor=self._actor)
+            else:
+                if not reason:
+                    return ToolResult(success=False, output="reason is required unless clear=true")
+                item = bd.defer(item_id, reason, actor=self._actor)
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        return ToolResult(success=True, output={"id": item.id, "status": item.status})
+
+    async def block(
+        self, project: str, item_id: str, *, reason: str | None = None, clear: bool = False
+    ) -> ToolResult:
+        """Block an open item with `reason` (same visibility contract as
+        `defer`), or -- with `clear=True` -- move a blocked item back to
+        open. No held item required. Distinct from a dependency-based
+        blocker (`dep`) -- this is a direct, reasoned status change with no
+        other issue involved. See `adapter.Beads.block`/`unblock`.
+        """
+        bd = self._project(project)
+        try:
+            if clear:
+                item = bd.unblock(item_id, actor=self._actor)
+            else:
+                if not reason:
+                    return ToolResult(success=False, output="reason is required unless clear=true")
+                item = bd.block(item_id, reason, actor=self._actor)
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        return ToolResult(success=True, output={"id": item.id, "status": item.status})
+
+    async def dep(
+        self,
+        project: str,
+        item_id: str,
+        *,
+        depends_on: str | None = None,
+        dep_type: str = "blocks",
+    ) -> ToolResult:
+        """Declare `item_id` depends on `depends_on` (per `dep_type`), then
+        return every dependency/dependent edge `item_id` now carries --
+        or, with `depends_on` omitted, just DISPLAY the current edges
+        without writing anything. No held item required. See
+        `adapter.Beads.add_dependency` / `adapter.Beads.get`'s `links` for
+        the full contract, including what makes an edge an active
+        claim-blocker (`work_claim` refuses naming it).
+        """
+        bd = self._project(project)
+        try:
+            if depends_on:
+                bd.add_dependency(item_id, depends_on, dep_type=dep_type, actor=self._actor)
+            item = bd.get_readonly(item_id, with_links=True)
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        return ToolResult(success=True, output={"id": item.id, "links": item.links})
 
 
 # --------------------------------------------------------------------------
@@ -947,6 +1226,26 @@ class WorkAddTool:
                     "type": "string",
                     "description": "Given/When/Then acceptance criteria, if known.",
                 },
+                "related": {
+                    "type": "array",
+                    "description": (
+                        "Optional first-class links to other items, recorded as real "
+                        "dependency edges (see the CLI's/work_dep's dep verb for the same "
+                        "underlying mechanism). Each entry: {id, kind}."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "description": "The other item's id."},
+                            "kind": {
+                                "type": "string",
+                                "enum": ["relates-to", "supersedes", "follow-up-of"],
+                                "description": "The relationship this item has to id.",
+                            },
+                        },
+                        "required": ["id", "kind"],
+                    },
+                },
             },
             "required": ["project", "title"],
         }
@@ -958,6 +1257,7 @@ class WorkAddTool:
             input["title"],
             description=input.get("description"),
             acceptance=input.get("acceptance"),
+            related=input.get("related"),
         )
 
 
@@ -1008,6 +1308,219 @@ class WorkMoveTool:
             input["item_id"],
             input["from_project"],
             input["to_project"],
+        )
+
+
+class WorkEditTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_edit"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Amend an existing item's own title/description/acceptance/design IN PLACE, "
+            "attributed via an audit-trail comment naming who changed what -- never a "
+            "silent edit. No held item required (like work_move/work_add, this never "
+            "touches this session's custody state). Pass merge_into instead of any field "
+            "to mark the item superseded by a different item id -- bd's own supersede "
+            "mechanism, which CLOSES the item automatically with a structural reference "
+            "to the replacement -- rather than resolving it with an invented reason that "
+            "loses the replacement's real id. merge_into cannot be combined with field "
+            "edits in the same call."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project the item lives in."},
+                "item_id": {"type": "string", "description": "Item id to edit."},
+                "title": {"type": "string", "description": "New title, if changing."},
+                "description": {"type": "string", "description": "New description, if changing."},
+                "acceptance": {
+                    "type": "string",
+                    "description": "New acceptance criteria, if changing.",
+                },
+                "design": {"type": "string", "description": "New design notes, if changing."},
+                "merge_into": {
+                    "type": "string",
+                    "description": (
+                        "Mark item_id as superseded by this item id instead of editing "
+                        "content -- closes item_id structurally. Cannot combine with "
+                        "title/description/acceptance/design."
+                    ),
+                },
+            },
+            "required": ["project", "item_id"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.edit(
+            input["project"],
+            input["item_id"],
+            title=input.get("title"),
+            description=input.get("description"),
+            acceptance=input.get("acceptance"),
+            design=input.get("design"),
+            merge_into=input.get("merge_into"),
+        )
+
+
+class WorkDeferTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_defer"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Defer an open item with a reason -- it leaves work_claim's queue (bd's own "
+            "status-category system excludes non-active statuses from 'ready'), but stays "
+            "visible in the default list view and via an explicit status filter, reason "
+            "attached. Pass clear=true (no reason needed) to move a deferred item back to "
+            "open. No held item required."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project the item lives in."},
+                "item_id": {"type": "string", "description": "Item id to defer/undefer."},
+                "reason": {
+                    "type": "string",
+                    "description": "Why this item is deferred. Required unless clear=true.",
+                },
+                "clear": {
+                    "type": "boolean",
+                    "description": "Move a deferred item back to open, clearing its reason.",
+                },
+            },
+            "required": ["project", "item_id"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.defer(
+            input["project"],
+            input["item_id"],
+            reason=input.get("reason"),
+            clear=bool(input.get("clear", False)),
+        )
+
+
+class WorkBlockTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_block"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Block an open item with a reason -- same visibility contract as work_defer "
+            "(leaves work_claim's queue, stays visible in the default list view and via an "
+            "explicit status filter, reason attached). Distinct from a dependency-based "
+            "blocker (work_dep) -- this is a direct, reasoned status change with no other "
+            "issue involved. Pass clear=true (no reason needed) to move a blocked item back "
+            "to open. No held item required."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project the item lives in."},
+                "item_id": {"type": "string", "description": "Item id to block/unblock."},
+                "reason": {
+                    "type": "string",
+                    "description": "Why this item is blocked. Required unless clear=true.",
+                },
+                "clear": {
+                    "type": "boolean",
+                    "description": "Move a blocked item back to open, clearing its reason.",
+                },
+            },
+            "required": ["project", "item_id"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.block(
+            input["project"],
+            input["item_id"],
+            reason=input.get("reason"),
+            clear=bool(input.get("clear", False)),
+        )
+
+
+class WorkDepTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_dep"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Declare item_id depends on (per dep_type, default 'blocks') depends_on, then "
+            "return every dependency/dependent edge item_id now carries -- or, with "
+            "depends_on omitted, just DISPLAY the current edges without writing anything. "
+            "A 'blocks'-type edge is enforced at claim time: work_claim on item_id refuses, "
+            "naming depends_on, until depends_on is resolved. No held item required."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project the item lives in."},
+                "item_id": {
+                    "type": "string",
+                    "description": "Item id to declare a dependency on, or display edges for.",
+                },
+                "depends_on": {
+                    "type": "string",
+                    "description": (
+                        "Optional. The item id that item_id depends on (per dep_type). "
+                        "Omit to only display item_id's current edges."
+                    ),
+                },
+                "dep_type": {
+                    "type": "string",
+                    "description": (
+                        "Dependency type (default 'blocks'; bd also accepts tracks/related/"
+                        "parent-child/discovered-from/until/caused-by/validates/relates-to/"
+                        "supersedes). Ignored when depends_on is omitted."
+                    ),
+                },
+            },
+            "required": ["project", "item_id"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.dep(
+            input["project"],
+            input["item_id"],
+            depends_on=input.get("depends_on"),
+            dep_type=input.get("dep_type") or "blocks",
         )
 
 
@@ -1082,12 +1595,123 @@ class WorkListTool:
         )
 
 
+# --------------------------------------------------------------------------
+# lane:gb-subscribe -- subscription management tools (amplifier-bxq).
+# --------------------------------------------------------------------------
+
+
+class WorkSubscribeTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_subscribe"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Subscribe THIS session to a project's status reminders -- a compact, cadence-gated "
+            "note (ready/held counts, whether you hold anything, whether it's stale) injected "
+            "into your context by the hooks-work-subscribe-reminder hook, shaped like the "
+            "existing todo/status system-reminders. work_claim already auto-subscribes you to "
+            "whatever project you claim from; call this to also watch a project you have not "
+            "(yet) claimed anything in. Subscriptions live only for this session -- they do NOT "
+            "persist across a restart and are NOT inherited by a forked sub-session. Idempotent: "
+            "subscribing again is a no-op that still reports success."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Named project to subscribe to."},
+            },
+            "required": ["project"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.subscribe(input["project"])
+
+
+class WorkUnsubscribeTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_unsubscribe"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Stop THIS session's status reminders for a project (see work_subscribe). Does not "
+            "touch custody or any held item -- purely a reminder-noise preference. Idempotent: "
+            "unsubscribing from a project you were never subscribed to is a no-op that still "
+            "reports success."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Named project to unsubscribe from.",
+                },
+            },
+            "required": ["project"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.unsubscribe(input["project"])
+
+
+class WorkSubscriptionsTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_subscriptions"
+
+    @property
+    def description(self) -> str:
+        return (
+            "List the projects THIS session is currently subscribed to for status reminders "
+            "(see work_subscribe/work_unsubscribe). Read-only; never claims, mutates, or "
+            "touches custody."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.subscriptions()
+
+
 async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Mount all ten work_* tools, sharing one WorkTrackerSession.
+    """Mount all thirteen work_* tools, sharing one WorkTrackerSession.
 
     IRON LAW: every tool below is registered via `coordinator.mount()`.
     Skipping any of them (or returning without mounting) fails
     `protocol_compliance` for every agent that uses this behavior.
+
+    lane:gb-subscribe -- also registers the `work_tracker.reminder_snapshot`
+    CAPABILITY (`coordinator.register_capability`), a bound method on this
+    session that the separate `hooks-work-subscribe-reminder` hook module
+    reads to build its context injection. This is the ONLY channel that hook
+    uses to learn anything about work-tracker state -- it contains no Beads
+    knowledge of its own (see that module's docstring). A session that never
+    mounts this tool module simply has no capability registered; the hook
+    treats that as a silent no-op (`get_capability` returns `None`), never an
+    error.
     """
     session = WorkTrackerSession(config)
     tools = [
@@ -1100,12 +1724,20 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
         WorkFileTool(session),
         WorkAddTool(session),
         WorkMoveTool(session),
+        WorkEditTool(session),
+        WorkDeferTool(session),
+        WorkBlockTool(session),
+        WorkDepTool(session),
         WorkListTool(session),
+        WorkSubscribeTool(session),
+        WorkUnsubscribeTool(session),
+        WorkSubscriptionsTool(session),
         WorkTrackerStatusTool(config),
         WorkTrackerInstallTool(config),
     ]
     for tool in tools:
         await coordinator.mount("tools", tool, name=tool.name)
+    coordinator.register_capability("work_tracker.reminder_snapshot", session.reminder_snapshot)
     return {
         "name": "tool-work-tracker",
         "version": "0.1.0",

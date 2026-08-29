@@ -86,6 +86,28 @@ async def test_add_then_claim_end_to_end(project):
 
 
 @pytest.mark.asyncio
+async def test_add_with_related_records_a_visible_edge(project):
+    """work_tracker item 9e4: `related` on `work_add` records a real
+    dependency edge in the same atomic create call."""
+    session = WorkTrackerSession({"actor": _unique("actor")})
+    other = await session.add(project, "the other item")
+    other_output: dict[str, Any] = other.output  # type: ignore[assignment]
+    other_id = other_output["added"]
+
+    result = await session.add(
+        project,
+        "the new item",
+        related=[{"id": other_id, "kind": "relates-to"}],
+    )
+    assert result.success is True
+    output: dict[str, Any] = result.output  # type: ignore[assignment]
+    new_id = output["added"]
+
+    item = A.Workspace(session._ws.root).project(project).get(new_id, with_links=True)  # noqa: SLF001
+    assert any(link["id"] == other_id and link["type"] == "relates-to" for link in item.links)
+
+
+@pytest.mark.asyncio
 async def test_add_reports_beads_errors_without_raising(tmp_path, monkeypatch):
     """A nonexistent project must come back as a failed ToolResult, never a
     raised exception -- consistent with every other work_* tool's error
