@@ -430,6 +430,42 @@ def _dolt_sql(query: str) -> subprocess.CompletedProcess:
     )
 
 
+def _sql_literal(s: str) -> str:
+    """Escape `s` for embedding as a single-quoted SQL string literal.
+
+    Minimal defense-in-depth for values interpolated into a `_dolt_sql*`
+    query that -- unlike a project `db` name (constrained by `NAME_RE`
+    before it ever reaches a `_dolt_*` helper) -- carry no such upstream
+    validation: `Beads.list()`'s `lane` and mapped `status` values. Doubles
+    any embedded single quote (`'` -> `''`), the standard SQL escape, so a
+    stray quote in a future caller's value cannot break out of the
+    surrounding literal.
+    """
+    return s.replace("'", "''")
+
+
+def _dolt_sql_json(query: str) -> subprocess.CompletedProcess:
+    """Like `_dolt_sql`, but requests dolt's JSON result format (`-r json`)
+    instead of CSV.
+
+    Required for any query that projects a free-text `longtext` column --
+    `title`/`description`/`close_reason`/`acceptance_criteria`/`design` --
+    which can legitimately contain commas AND embedded newlines. A naive
+    CSV-then-`splitlines()` parse (the trick `_summary_items_via_sql` gets
+    away with, because its own projection is deliberately restricted to
+    short scalar columns) would silently corrupt those fields: a comma
+    inside a title would shift every column after it, and a newline inside
+    a description would split one logical row into two. dolt's JSON output
+    (an object with a top-level `rows` list of field-name-keyed dicts, see
+    `_dolt_show_create`'s own use of the same format) carries each field as
+    a single JSON string with no such ambiguity.
+    """
+    return _run_bounded(
+        ["dolt", *_dolt_conn_args(), "sql", "-q", query, "-r", "json"],
+        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
+    )
+
+
 def database_exists(name: str) -> bool:
     """Does a database named `name` exist on the shared dolt server --
     independent of whether ANY project directory / `.beads` dir exists for
@@ -671,6 +707,182 @@ def _summary_items_via_sql(db: str) -> list[Item]:
                 closed_at=_parse_dolt_timestamp(rec["closed_at"]),
             )
         )
+    return items
+
+
+# Full-field columns for `Beads.list()`'s read-only SQL replacement -- every
+# field `Item.from_beads` (via `_FIELD_MAP`) can consume, MINUS `labels`
+# (joined separately from the `labels` table, same as
+# `_summary_items_via_sql`) and the three timestamp columns (projected
+# separately in `_list_rows_via_sql`, reformatted to bd's own ISO-8601 `...Z`
+# wire shape so `Item.from_beads`'s existing `_parse_bd_timestamp` parses
+# them unchanged -- no second timestamp parser needed for this path).
+_LIST_ITEM_SCALAR_COLUMNS = (
+    "id",
+    "title",
+    "status",
+    "assignee",
+    "issue_type",
+    "close_reason",
+    "acceptance_criteria",
+    "description",
+    "design",
+    "priority",
+    "created_by",
+    "metadata",
+)
+
+
+def _list_rows_via_sql(db: str, *, where_sql: str | None, limit: int) -> list[Item]:
+    """Read `db`'s items as full-field `Item`s straight off the shared dolt
+    server over a READ-ONLY SQL SELECT -- the drop-in replacement for
+    `Beads.list()`'s `bd list [--all] [--status ...] [--label ...] [--limit
+    ...]`, which suffers the identical serialization-conflict failure mode
+    `_summary_items_via_sql` was built to sidestep (see that function's
+    docstring for the full mechanism), but for EVERY caller of `list()` --
+    not just `project_summary`. The web project-page list pane, the reap
+    sweep, the gateway, and the CLI's own `list` subcommand all go through
+    this same method, so all of them get the fix at once.
+
+    Unlike `_summary_items_via_sql` (a narrow, summary-only projection of
+    short scalar columns, safe to parse as CSV), this reads every field
+    `Item.from_beads` maps -- including free-text `longtext` columns
+    (title/description/close_reason/acceptance_criteria/design) that can
+    contain commas and embedded newlines -- so the issues projection goes
+    over `_dolt_sql_json` (`-r json`), never CSV. Labels stay on the CSV
+    path (`_dolt_sql`), same as `_summary_items_via_sql`: label values are
+    a short, controlled vocabulary (`lane:eng`-shaped slugs) that cannot
+    contain a comma.
+
+    `where_sql`, if given, is ANDed into the query's WHERE clause verbatim
+    by the caller (`Beads.list()`) from values that have already been
+    validated: a domain `status` has already been mapped through
+    `_STATUS_MAP_REVERSE`, which only ever yields one of bd's own five
+    fixed raw status strings, and `lane` is interpolated as a string
+    literal the same way `_summary_items_via_sql`'s `db` and
+    `_dolt_table_counts`'s `table` names already are (see those functions'
+    notes on the same discipline). `limit` of `0` means unlimited (no
+    `LIMIT` clause at all), matching bd's own `--limit 0` convention that
+    `Beads.list()` already documents.
+
+    Timestamps are projected via `DATE_FORMAT(..., '%Y-%m-%dT%H:%i:%sZ')`
+    -- bd's OWN ISO-8601 wire shape (verified empirically: bd's `--json`
+    reports `created_at` as `...Z` for the exact same row dolt stores in
+    UTC) -- so `Item.from_beads`'s existing `_parse_bd_timestamp` parses
+    them completely unchanged; a NULL `closed_at` formats to SQL NULL,
+    which `Item.from_beads` already treats as "no closed_at". `metadata`
+    comes back from dolt's JSON output as a STRING (e.g. `"{}"`), not a
+    nested object the way bd's own `--json` nests it -- so it is decoded
+    here at the seam, before reaching `Item.from_beads`, which expects
+    `meta` to already be a dict.
+
+    Ordering: ``ORDER BY `issues`.`priority` ASC, `issues`.`created_at`
+    DESC, `issues`.`id` ASC``. bd's DEFAULT (no explicit `--sort`) order is
+    NOT chronological -- verified empirically (against a fresh, controlled
+    isolated-server project, disentangled from creation order by giving
+    the FIRST-created item the WORST/highest priority number and the
+    SECOND-created item the BEST/lowest): bd's plain `bd list` returns
+    byte-identical output to explicit `bd list --sort priority`, and that
+    order is priority-ascending, not creation-order. Every project used to
+    validate the PREVIOUS (`created_at`-only) ordering hypothesis
+    (production `attractor`, `cortex`, etc.) happens to carry a uniform
+    `priority=2` on nearly every row, which is exactly why a `created_at`-
+    only order looked correct there -- it silently degenerates to the
+    correct order whenever priority is constant, and only diverges once
+    two items in one project genuinely differ in priority (a case this
+    repo's own test suite -- not production sampling -- is what surfaced
+    it: see `tests/integration/test_list_via_sql_equivalence.py`).
+    `created_at DESC` remains the verified secondary key WITHIN a tied
+    priority (the common case, since most real items share one priority),
+    and `id ASC` remains the verified tertiary tie-break within a tied
+    `(priority, created_at)` pair (dolt's own natural, unordered table-scan
+    order for the `issues` table already returns ascending primary-key
+    order, which is what bd's own tie order for such rows turned out to
+    be -- see the git history of this function for the earlier, narrower
+    empirical check). All three columns are qualified with the `issues`
+    table name specifically so `ORDER BY` resolves to the real
+    columns, never a `DATE_FORMAT`-string alias of the same name in the
+    SELECT list. `priority` is `int NOT NULL` in every real project
+    checked (verified via `information_schema.COLUMNS`), so no NULL
+    ordering case needs to be special-cased here.
+
+    `db` has already passed `NAME_RE` at every call site (it is a project
+    name), so it carries no SQL-relevant character -- same guarantee
+    `_summary_items_via_sql` and the other `_dolt_*` helpers rely on.
+    """
+    scalar_cols = ", ".join(f"`{c}`" for c in _LIST_ITEM_SCALAR_COLUMNS)
+    ts_cols = ", ".join(
+        f"DATE_FORMAT(`issues`.`{c}`, '%Y-%m-%dT%H:%i:%sZ') AS `{c}`"
+        for c in ("created_at", "updated_at", "closed_at")
+    )
+    query = f"SELECT {scalar_cols}, {ts_cols} FROM `{db}`.`issues`"
+    if where_sql:
+        query += f" WHERE {where_sql}"
+    query += " ORDER BY `issues`.`priority` ASC, `issues`.`created_at` DESC, `issues`.`id` ASC"
+    if limit:
+        query += f" LIMIT {int(limit)}"
+    p = _dolt_sql_json(query)
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not read items of database {db!r} over SQL: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    try:
+        rows = json.loads(p.stdout or "{}").get("rows", [])
+    except json.JSONDecodeError as e:
+        raise BeadsError(f"could not parse items of database {db!r} over SQL: {e}") from e
+
+    lp = _dolt_sql(f"SELECT `issue_id`, `label` FROM `{db}`.`labels`")
+    if lp.returncode != 0:
+        raise BeadsError(
+            f"could not read labels of database {db!r} over SQL: "
+            f"{_clean_bd_error(lp.stderr or lp.stdout)}"
+        )
+    tags_by_id: dict[str, list[str]] = {}
+    for row in csv.reader((lp.stdout or "").splitlines()[1:]):  # drop CSV header
+        if len(row) < 2:
+            continue
+        tags_by_id.setdefault(row[0], []).append(row[1])
+
+    items: list[Item] = []
+    for rec in rows:
+        d = dict(rec)
+        meta = d.get("metadata")
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta) if meta.strip() else {}
+            except json.JSONDecodeError:
+                meta = {}
+        d["metadata"] = meta if isinstance(meta, dict) else {}
+        d["labels"] = tags_by_id.get(str(d.get("id", "")), [])
+        # `priority` comes back from dolt's JSON output as a STRING (e.g.
+        # `"2"`), unlike bd's own `--json`, which reports it as a real
+        # number -- `Item.from_beads` copies it through verbatim (see
+        # `_FIELD_MAP`), so left uncorrected every item's `priority` would
+        # be a `str` where bd's is an `int`. Cast here, at the seam, the
+        # same discipline `_summary_items_via_sql` already applies.
+        pr = d.get("priority")
+        d["priority"] = int(pr) if isinstance(pr, str) and pr.strip() else None
+        # bd's own `--json` OMITS an optional free-text field entirely when
+        # it is empty (verified empirically: an unset `close_reason` or
+        # `design` never appears as a JSON key at all for such an item) --
+        # so `Item.from_beads`'s `if their in d` guard never fires for it,
+        # and the dataclass default (`None`) applies. A SQL row, by
+        # contrast, always carries every requested column, with an unset
+        # `longtext` rendered as an empty string rather than an absent key.
+        # Dropping an empty-string value back down to an absent key here
+        # reproduces bd's own omission exactly, rather than leaving a
+        # `resolution=""`/`design=""` where bd would have left `None`.
+        for optional_text_field in (
+            "close_reason",
+            "design",
+            "acceptance_criteria",
+            "description",
+            "assignee",
+        ):
+            if d.get(optional_text_field) == "":
+                del d[optional_text_field]
+        items.append(Item.from_beads(d))
     return items
 
 
@@ -1994,39 +2206,75 @@ class Beads:
         """List items, optionally filtered by lane and/or OUR domain status
         ("open", "held", "resolved", "blocked", "deferred"), optionally capped.
 
-        `status`, when given, takes priority over `include_resolved`: passing
-        an explicit `--status` to bd shows closed items without needing
-        `--all` at all (ASSUMPTION list.status_filter_includes_closed,
-        verified empirically against bd 1.1.2 -- `bd list --status closed
-        --json` returns closed items with no `--all` present). This means a
-        caller asking for `status="resolved"` sees resolved items regardless
-        of `include_resolved`.
+        `status`, when given, takes priority over `include_resolved`: an
+        explicit status shows closed items without needing "all resolved"
+        at all (ASSUMPTION list.status_filter_includes_closed, verified
+        empirically against bd 1.1.2 -- `bd list --status closed --json`
+        returns closed items with no `--all` present, and the SQL path
+        below reproduces that: an explicit `status` filters on it alone,
+        `include_resolved` never additionally applies). This means a
+        caller asking for `status="resolved"` sees resolved items
+        regardless of `include_resolved`.
 
-        `limit`, when given, is passed straight through as bd's own
-        `--limit`/`-n` (0 means unlimited to bd). `None` leaves bd's own
-        default (50) in place -- unchanged behavior for every existing
-        caller that never specified `limit`. Callers that need the TRUE
-        total count (not just bd's own default-capped view) should pass
-        `limit=0` explicitly -- see `list_bounded`, which does exactly that.
+        `limit`, when given, behaves like bd's own `--limit`/`-n` (0 means
+        unlimited). `None` leaves the same default (50) bd itself defaults
+        to in place -- unchanged behavior for every existing caller that
+        never specified `limit`. Callers that need the TRUE total count
+        (not just a default-capped view) should pass `limit=0` explicitly
+        -- see `list_bounded`, which does exactly that.
+
+        Reads via a read-only SQL SELECT (`_list_rows_via_sql`), not `bd
+        list [--all]`, for the same reason `project_summary` does (see
+        `_summary_items_via_sql`'s docstring for the full mechanism): `bd
+        list` does a read+WRITE transaction (it appends an interaction-log
+        row per invocation), and on a large project (cortex: 465 items)
+        materialising that many rows keeps the transaction open long
+        enough to reliably lose a dolt serialization conflict against the
+        shared single-writer server's concurrent write traffic -- `_run`
+        retries up to `_MAX_RETRIES` (8) with exponential backoff and, for
+        cortex, exhausts the whole ~23s budget before giving up. A pure
+        SELECT over the direct `_dolt_sql*` path has no write set, so it
+        cannot serialization-conflict at any project size. Every caller of
+        `list()` -- the web project-page list pane, the reap sweep, the
+        gateway, and the CLI's own `list` subcommand -- gets this fix at
+        once, since they all go through this one method. See work_tracker
+        items pipeline-exz / pipeline-knu.
+
+        WHERE-clause construction replicates bd's own filter semantics
+        exactly (verified empirically against bd 1.1.2, and pinned by an
+        equivalence test comparing this path's output to bd's for every
+        working project on the shared server): with neither `status` nor
+        `include_resolved` given, bd's plain `bd list` excludes only
+        `status='closed'` (measured: attractor's default list returns
+        exactly its non-closed rows -- `open` + `in_progress`/held --
+        never `blocked`/`deferred` excluded) -- reproduced here as
+        ``status <> 'closed'``. `lane` filters via a `labels` subquery
+        (bd's own `--label` does the equivalent join). Ordering
+        (``created_at DESC, id ASC``) is `_list_rows_via_sql`'s own
+        concern -- see that function's docstring for why the `id ASC`
+        tie-break reproduces bd's tied-timestamp order exactly.
         """
-        args = ["list"]
+        where_parts: list[str] = []
         if status is not None:
             raw = _STATUS_MAP_REVERSE.get(status)
             if raw is None:
                 raise BeadsError(
                     f"unknown status {status!r}: must be one of {sorted(_STATUS_MAP_REVERSE)}"
                 )
-            args += ["--status", raw]
-        elif include_resolved:
-            # ASSUMPTION list.includes_closed -- without this a resolved report
-            # vanishes exactly when its answer is ready.
-            args += ["--all"]
+            where_parts.append(f"`issues`.`status` = '{_sql_literal(raw)}'")
+        elif not include_resolved:
+            # ASSUMPTION list.includes_closed -- mirrored: an omitted status
+            # AND include_resolved=False excludes only closed items, never
+            # blocked/deferred/held, matching bd's own plain `bd list`.
+            where_parts.append("`issues`.`status` <> 'closed'")
         if lane:
-            args += ["--label", lane]
-        if limit is not None:
-            args += ["--limit", str(limit)]
-        data = self._json(args) or []
-        return [Item.from_beads(d) for d in data if isinstance(d, dict)]
+            where_parts.append(
+                f"`issues`.`id` IN (SELECT `issue_id` FROM `{self.project_name}`.`labels` "
+                f"WHERE `label` = '{_sql_literal(lane)}')"
+            )
+        where_sql = " AND ".join(where_parts)
+        effective_limit = LIST_DEFAULT_LIMIT if limit is None else limit
+        return _list_rows_via_sql(self.project_name, where_sql=where_sql, limit=effective_limit)
 
     def list_bounded(
         self, *, status: str | None = None, limit: int | None = None, offset: int = 0
