@@ -1,11 +1,26 @@
 """Amplifier tool module for amplifier-work-tracker.
 
 Exposes `work_claim`, `work_declare`, `work_resolve`, `work_release`,
-`work_status`, `work_stats`, `work_file`, `work_add`, `work_move`, and
-`work_list` as agent-callable tools, backed directly by
-`amplifier_work_tracker.adapter` / `amplifier_work_tracker.custody`.
+`work_status`, `work_stats`, `work_file`, `work_add`, `work_move`,
+`work_list`, `work_subscribe`, `work_unsubscribe`, and `work_subscriptions`
+as agent-callable tools, backed directly by `amplifier_work_tracker.adapter`
+/ `amplifier_work_tracker.custody`.
 This module contains no Beads knowledge of its own and shells out to nothing --
 all domain logic lives in the `amplifier_work_tracker` package it imports.
+
+`work_subscribe`/`work_unsubscribe`/`work_subscriptions` (amplifier-bxq) let a
+session opt a project's status IN to (or out of) a compact, cadence-gated
+reminder injected into its context by the separate `hooks-work-subscribe-
+reminder` hook module -- ready/held counts, whether this session holds
+anything, and whether that held item's custody is stale. `work_claim`
+auto-subscribes to whatever project it claims from (see `claim`'s
+`lane:gb-subscribe` note), so the common case needs no extra call. This tool
+module never injects anything itself: it only computes and exposes
+`WorkTrackerSession.reminder_snapshot` as the `work_tracker.reminder_snapshot`
+CAPABILITY (`coordinator.register_capability`, see `mount`), which the hook
+module reads. Subscriptions are session-scoped, in-memory only -- see
+`WorkTrackerSession.__init__`'s `lane:gb-subscribe` note for why that is an
+explicit design choice, not an oversight.
 
 `work_move` is the sanctioned way to migrate a work item from one project's
 queue to another -- before it existed, there was no supported path for an
@@ -181,6 +196,22 @@ class WorkTrackerSession:
         self._ws = A.Workspace(Path(root_raw) if root_raw else None)
         self._held: _Held | None = None
         self._lock = threading.Lock()
+        # lane:gb-subscribe -- session-scoped subscription list (see
+        # `subscribe`/`unsubscribe`/`subscriptions`/`reminder_snapshot` below).
+        # Ordered, de-duplicated project names. Deliberately in-memory only:
+        # this list lives exactly as long as `_held` does above -- for the
+        # life of THIS mounted session's process, never persisted to disk and
+        # never inherited by a forked sub-session (each gets its own fresh
+        # `WorkTrackerSession`, per amplifier-core's one-mount()-per-session
+        # contract -- see hooks-status-context's docstring for the same
+        # invariant applied to its own per-session cache). A session that
+        # wants reminders again after a restart must re-subscribe (or rely on
+        # auto-subscribe-on-claim, see `claim` below) -- this is an explicit
+        # design choice, not an oversight: durable cross-session subscription
+        # state would need its own identity/storage story (which session
+        # "is" which across a restart?) that nothing else in this module has
+        # today, and nothing in the source request asked for it.
+        self._subscriptions: list[str] = []
 
     def _project(self, name: str) -> A.Beads:
         return self._ws.project(name, actor=self._actor)
@@ -292,6 +323,13 @@ class WorkTrackerSession:
             )
             held.thread.start()
             self._held = held
+            # lane:gb-subscribe -- auto-subscribe to the project this session
+            # just claimed from. A reasonable default (an agent that is now
+            # actively working a project's queue is exactly who benefits from
+            # its status reminders), and additive-only: it never removes an
+            # existing subscription, and an explicit `unsubscribe` still wins
+            # if the agent doesn't want it.
+            self._subscribe_locked(project)
             return ToolResult(
                 success=True,
                 output={
@@ -440,6 +478,111 @@ class WorkTrackerSession:
         return ToolResult(
             success=not _summary_errored(summary), output=_project_summary_row(summary)
         )
+
+    # ------------------------------------------------------- lane:gb-subscribe
+    # Subscription management + the reminder-hook data source. See this
+    # module's docstring for the design (session-scoped, not persisted; the
+    # separate hook module never computes status itself -- it only reads
+    # `reminder_snapshot()` below via the `work_tracker.reminder_snapshot`
+    # capability registered in `mount()`).
+
+    def _subscribe_locked(self, project: str) -> bool:
+        """Add `project` to the subscription list if not already present.
+        Caller must hold `self._lock`. Returns True if this call actually
+        added it (False if already subscribed) -- used by `claim`'s
+        auto-subscribe to report only genuine changes, and by `subscribe`
+        to report idempotency honestly rather than always claiming success
+        added something new.
+        """
+        if project in self._subscriptions:
+            return False
+        self._subscriptions.append(project)
+        return True
+
+    async def subscribe(self, project: str) -> ToolResult:
+        """Subscribe this session to `project`'s status reminders.
+
+        Validates the project actually exists first (`Workspace.project` --
+        a local filesystem check, no dolt round trip) so a typo'd name fails
+        loudly here rather than silently reminding about nothing forever.
+        Idempotent: subscribing to an already-subscribed project is a
+        no-op that still reports success.
+        """
+        try:
+            self._project(project)
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        with self._lock:
+            added = self._subscribe_locked(project)
+        return ToolResult(
+            success=True,
+            output={
+                "subscribed": project,
+                "already_subscribed": not added,
+                "subscriptions": list(self._subscriptions),
+            },
+        )
+
+    async def unsubscribe(self, project: str) -> ToolResult:
+        """Unsubscribe this session from `project`'s status reminders.
+        Idempotent: unsubscribing from a project never subscribed to is a
+        no-op that still reports success (mutating nothing, refusing
+        nothing -- there is nothing unsafe about this operation, unlike
+        `unclaim`/`resolve`, so it needs no ownership fence).
+        """
+        with self._lock:
+            was_subscribed = project in self._subscriptions
+            if was_subscribed:
+                self._subscriptions.remove(project)
+            subs = list(self._subscriptions)
+        return ToolResult(
+            success=True,
+            output={
+                "unsubscribed": project,
+                "was_subscribed": was_subscribed,
+                "subscriptions": subs,
+            },
+        )
+
+    async def subscriptions(self) -> ToolResult:
+        """List this session's current subscriptions. Read-only."""
+        with self._lock:
+            subs = list(self._subscriptions)
+        return ToolResult(success=True, output={"subscriptions": subs})
+
+    async def reminder_snapshot(self) -> dict[str, Any]:
+        """Compact status snapshot for the reminder-injection hook -- NOT a
+        `ToolResult` (this is called directly by the hook module via the
+        `work_tracker.reminder_snapshot` capability, not by an agent).
+
+        For each subscribed project: the SAME `project_summary` row
+        `status()`/`stats()` return (never a second, independently-computed
+        set of counts). Plus this session's own holding pointer and, ONLY
+        when holding something, whether that ONE held item's custody is
+        currently reclaim-eligible -- a single extra `get_readonly` read,
+        bounded to at most one item (never a project-wide scan), using the
+        exact same `custody.reclaim_eligible` check `project_summary`'s own
+        `held_stale` count is built from (see `_held_stale_count`). Never
+        raises: a project that cannot be read reports `project_summary`'s
+        own truncated `"ERROR: ..."` status like every other consumer; a
+        failure reading the held item's fresh custody state reports
+        `custody_stale=None` (unknown), never a fabricated True/False.
+        """
+        with self._lock:
+            subs = list(self._subscriptions)
+            held = self._held
+        projects = [_project_summary_row(A.project_summary(self._ws, name)) for name in subs]
+        holding: dict[str, Any] | None = None
+        if held is not None:
+            holding = {"project": held.project, "id": held.item_id, "custody_stale": None}
+            try:
+                bd = self._project(held.project)
+                item = bd.get_readonly(held.item_id)
+                meta = item.meta.get(C.CUSTODY_KEY) if isinstance(item.meta, dict) else None
+                holding["custody_stale"] = C.reclaim_eligible(meta)[0]
+            except A.BeadsError:
+                pass  # custody_stale stays None -- unknown, not fabricated
+        return {"subscriptions": projects, "holding": holding}
 
     async def unclaim(self, item_id: str) -> ToolResult:
         """Voluntarily hand a HELD item back to the queue -- the inverse of
@@ -1082,12 +1225,123 @@ class WorkListTool:
         )
 
 
+# --------------------------------------------------------------------------
+# lane:gb-subscribe -- subscription management tools (amplifier-bxq).
+# --------------------------------------------------------------------------
+
+
+class WorkSubscribeTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_subscribe"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Subscribe THIS session to a project's status reminders -- a compact, cadence-gated "
+            "note (ready/held counts, whether you hold anything, whether it's stale) injected "
+            "into your context by the hooks-work-subscribe-reminder hook, shaped like the "
+            "existing todo/status system-reminders. work_claim already auto-subscribes you to "
+            "whatever project you claim from; call this to also watch a project you have not "
+            "(yet) claimed anything in. Subscriptions live only for this session -- they do NOT "
+            "persist across a restart and are NOT inherited by a forked sub-session. Idempotent: "
+            "subscribing again is a no-op that still reports success."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Named project to subscribe to."},
+            },
+            "required": ["project"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.subscribe(input["project"])
+
+
+class WorkUnsubscribeTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_unsubscribe"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Stop THIS session's status reminders for a project (see work_subscribe). Does not "
+            "touch custody or any held item -- purely a reminder-noise preference. Idempotent: "
+            "unsubscribing from a project you were never subscribed to is a no-op that still "
+            "reports success."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Named project to unsubscribe from.",
+                },
+            },
+            "required": ["project"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.unsubscribe(input["project"])
+
+
+class WorkSubscriptionsTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_subscriptions"
+
+    @property
+    def description(self) -> str:
+        return (
+            "List the projects THIS session is currently subscribed to for status reminders "
+            "(see work_subscribe/work_unsubscribe). Read-only; never claims, mutates, or "
+            "touches custody."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.subscriptions()
+
+
 async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Mount all ten work_* tools, sharing one WorkTrackerSession.
+    """Mount all thirteen work_* tools, sharing one WorkTrackerSession.
 
     IRON LAW: every tool below is registered via `coordinator.mount()`.
     Skipping any of them (or returning without mounting) fails
     `protocol_compliance` for every agent that uses this behavior.
+
+    lane:gb-subscribe -- also registers the `work_tracker.reminder_snapshot`
+    CAPABILITY (`coordinator.register_capability`), a bound method on this
+    session that the separate `hooks-work-subscribe-reminder` hook module
+    reads to build its context injection. This is the ONLY channel that hook
+    uses to learn anything about work-tracker state -- it contains no Beads
+    knowledge of its own (see that module's docstring). A session that never
+    mounts this tool module simply has no capability registered; the hook
+    treats that as a silent no-op (`get_capability` returns `None`), never an
+    error.
     """
     session = WorkTrackerSession(config)
     tools = [
@@ -1101,11 +1355,15 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
         WorkAddTool(session),
         WorkMoveTool(session),
         WorkListTool(session),
+        WorkSubscribeTool(session),
+        WorkUnsubscribeTool(session),
+        WorkSubscriptionsTool(session),
         WorkTrackerStatusTool(config),
         WorkTrackerInstallTool(config),
     ]
     for tool in tools:
         await coordinator.mount("tools", tool, name=tool.name)
+    coordinator.register_capability("work_tracker.reminder_snapshot", session.reminder_snapshot)
     return {
         "name": "tool-work-tracker",
         "version": "0.1.0",

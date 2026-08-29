@@ -53,8 +53,12 @@ this table whenever that module's tools change.
 | Tool | `work_status` | Read-only: projects, queue depths, what this session holds |
 | Tool | `work_file` | File newly discovered work, linked `discovered-from` the held item |
 | Tool | `work_add` | File a new engineering-lane item directly, no held item required -- the sanctioned way to seed a project's FIRST item(s) |
+| Tool | `work_move` | Move one item from one project's queue to another, preserving its id |
+| Tool | `work_list` | Read-only per-item listing (or one item's full record via `item_id`) |
+| Tool | `work_subscribe` / `work_unsubscribe` / `work_subscriptions` | Opt a project's status IN/OUT of this session's reminders (see the reminder hook below); `work_claim` auto-subscribes to whatever it claims from |
 | Tool | `work_tracker_status` | Read-only: is the background service (shared dolt server + reap/notify sweeps) installed and healthy on this machine |
 | Tool | `work_tracker_install` | Install and start the background service -- the only tool here that changes system state |
+| Hook | `hooks-work-subscribe-reminder` | Compact, cadence-gated status reminder (ready/held/holding/custody-stale) for subscribed projects, injected like the todo/status system-reminders |
 | Agent | `work-tracker:work-executor` | Claims and works engineering-lane items to resolution |
 | Skill | `claiming-work-safely` | The claim/custody procedure, freshness model, and post-reap recovery |
 | Skill | `work-tracker-operations` | Reading `doctor`, the seam, version floor, and scheduling reap/notify |
