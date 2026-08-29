@@ -699,9 +699,10 @@ class WorkTrackerSession:
         self, project: str, item_id: str, *, reason: str | None = None, clear: bool = False
     ) -> ToolResult:
         """Defer an open item with `reason` (it leaves `bd ready`/
-        `work_claim`'s queue and default list views), or -- with
-        `clear=True` -- move a deferred item back to open. No held item
-        required. See `adapter.Beads.defer`/`undefer`.
+        `work_claim`'s queue, but stays visible in the default `list()`
+        view and via an explicit status filter), or -- with `clear=True`
+        -- move a deferred item back to open. No held item required. See
+        `adapter.Beads.defer`/`undefer`.
         """
         bd = self._project(project)
         try:
@@ -1239,9 +1240,9 @@ class WorkDeferTool:
     @property
     def description(self) -> str:
         return (
-            "Defer an open item with a reason -- it leaves work_claim's queue and default "
-            "list views (bd's own status-category system excludes non-active statuses from "
-            "'ready'), but stays visible via an explicit status filter with its reason "
+            "Defer an open item with a reason -- it leaves work_claim's queue (bd's own "
+            "status-category system excludes non-active statuses from 'ready'), but stays "
+            "visible in the default list view and via an explicit status filter, reason "
             "attached. Pass clear=true (no reason needed) to move a deferred item back to "
             "open. No held item required."
         )
@@ -1287,11 +1288,11 @@ class WorkBlockTool:
     def description(self) -> str:
         return (
             "Block an open item with a reason -- same visibility contract as work_defer "
-            "(leaves work_claim's queue and default list views, stays visible via an "
-            "explicit status filter with its reason attached). Distinct from a "
-            "dependency-based blocker (work_dep) -- this is a direct, reasoned status "
-            "change with no other issue involved. Pass clear=true (no reason needed) to "
-            "move a blocked item back to open. No held item required."
+            "(leaves work_claim's queue, stays visible in the default list view and via an "
+            "explicit status filter, reason attached). Distinct from a dependency-based "
+            "blocker (work_dep) -- this is a direct, reasoned status change with no other "
+            "issue involved. Pass clear=true (no reason needed) to move a blocked item back "
+            "to open. No held item required."
         )
 
     @property

@@ -999,9 +999,10 @@ def cmd_edit(a):
 
 
 def cmd_defer(a):
-    """Defer an open item with a reason (leaves `bd ready`/list views), or
-    -- with `--clear` -- move a deferred item back to open. See
-    `adapter.Beads.defer`/`undefer`.
+    """Defer an open item with a reason (leaves `bd ready`/`claim`'s queue,
+    but stays visible in the default `list` view and via an explicit
+    `--status deferred` filter), or -- with `--clear` -- move a deferred
+    item back to open. See `adapter.Beads.defer`/`undefer`.
     """
     _guard()
     bd = _ws(a).project(a.project)
@@ -1018,11 +1019,12 @@ def cmd_defer(a):
 
 
 def cmd_block(a):
-    """Block an open item with a reason (leaves `bd ready`/list views), or
-    -- with `--clear` -- move a blocked item back to open. See
-    `adapter.Beads.block`/`unblock`. Distinct from a dependency-based
-    blocker (`dep`) -- this is a direct, reasoned status change with no
-    other issue involved.
+    """Block an open item with a reason (leaves `bd ready`/`claim`'s queue,
+    but stays visible in the default `list` view and via an explicit
+    `--status blocked` filter), or -- with `--clear` -- move a blocked
+    item back to open. See `adapter.Beads.block`/`unblock`. Distinct from a
+    dependency-based blocker (`dep`) -- this is a direct, reasoned status
+    change with no other issue involved.
     """
     _guard()
     bd = _ws(a).project(a.project)

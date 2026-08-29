@@ -2944,9 +2944,11 @@ class Beads:
     def defer(self, item_id: str, reason: str, *, actor: str | None = None) -> Item:
         """Defer an open item with a reason -- it leaves `bd ready`/
         `claim_next` (bd's own status-category system excludes non-active
-        statuses from `bd ready`) and every default list view, but stays
-        fully visible via an explicit `--status deferred` read, with its
-        reason attached. Move it back to the queue with `undefer`.
+        statuses from `bd ready`), but stays visible in `list()`'s own
+        default view (which only ever excludes `closed`, never
+        `blocked`/`deferred` -- see that method's docstring) AND via an
+        explicit `--status deferred` read, with its reason attached. Move
+        it back to the queue with `undefer`.
         """
         return self._set_status_with_reason(
             item_id,
@@ -2967,8 +2969,9 @@ class Beads:
 
     def block(self, item_id: str, reason: str, *, actor: str | None = None) -> Item:
         """Block an open item with a reason -- same visibility contract as
-        `defer` (leaves `bd ready`/`claim_next`, stays visible on an
-        explicit status read with its reason attached). Deliberately
+        `defer` (leaves `bd ready`/`claim_next`, stays visible in `list()`'s
+        default view and on an explicit status read, reason attached).
+        Deliberately
         distinct from the DEPENDENCY-based blocker chain (`add_dependency`
         / `claim_item`'s blocker refusal): this is a direct, reasoned
         status change with no other issue involved, for "this can't
