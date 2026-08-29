@@ -7,3 +7,6 @@ __pycache__/
 build/
 dist/
 DONE.json
+
+# goal-batch orchestration scratch (per-run, never repo content)
+.amplifier/goals/
