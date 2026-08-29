@@ -9,6 +9,30 @@ domain logic.
 assertions of every behaviour we depend on, checked against the live binary.
 Run it after any bd upgrade. It is how a breaking change reaches us as a loud
 failure instead of silently corrupted parallel work.
+
+CONTENTION / RETRY CONTRACT -- read this before treating any error as final.
+Every write (`claim`, `resolve`, `unclaim`, `add`, ...) runs against a shared,
+single-writer dolt server that other agents' claims/renewals/resolves are
+hitting concurrently. `adapter.Beads._run` rides out dolt serialization
+conflicts (MySQL 1213/1205, "serialization failure", "try restarting
+transaction") with up to 8 retries and exponential backoff before giving up
+and raising -- a message of the shape "still conflicting after 8 retries" (or
+any `BeadsError` at all from a write command) means the underlying
+transaction was ABORTED, never partially committed: those specific error
+signatures are, by dolt/MySQL's own transaction semantics, "this transaction
+did not happen," not "it might have happened." VERIFY, DO NOT BLINDLY RETRY:
+before resubmitting the same logical operation, re-read the item (`list --id`
+/ `work_list`'s `item_id` form -- a read-only SQL path that cannot itself
+conflict) to confirm its actual current state. This matters most for
+non-idempotent writes (`add`/`create` -- retrying blind can create a
+duplicate item) and less for idempotent ones (`resolve` on an already-
+resolved item is a readback-checked no-op) -- but re-reading first is always
+the safe move. `resolve`/`unclaim` additionally verify their OWN write landed
+by reading the item back before reporting success (exit code is not proof by
+itself) -- so a reported SUCCESS is independently confirmed already; this
+contract is about what to do after a reported FAILURE. See `context/
+awareness.md` for the same contract in agent-facing form, and work_tracker
+item pipeline-bug for the contention-hardening work this documents.
 """
 
 from __future__ import annotations
