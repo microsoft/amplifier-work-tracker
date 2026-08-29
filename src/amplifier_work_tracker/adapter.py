@@ -1707,17 +1707,72 @@ def _is_active_blocker(dependency_type: str | None, raw_status: str | None) -> b
 
 def _active_blockers(item: Item) -> list[dict]:
     """Which of `item`'s forward dependencies are still-open `blocks`-type
-    links -- i.e. actually blocking `claim_item`.
+    links -- i.e. actually blocking a claim.
 
     Read straight from the raw `show` payload's `dependencies` field, which
     IS present without `--include-dependents` (that flag only gates the
-    REVERSE direction -- ASSUMPTION show.dependents).
+    REVERSE direction -- ASSUMPTION show.dependents). Only ever populated
+    when `item` came from `bd show` itself (`Beads.get(with_links=True)`,
+    or the frozen pre-fix reconstruction in
+    `tests/integration/test_get_via_sql_equivalence.py`) -- an `Item` read
+    via `_get_item_via_sql` (the default, `with_links=False` path) carries
+    no `dependencies` key in `raw` at all, so this always returns `[]` for
+    one of those. `claim_item` -- the one caller that needs this check --
+    uses `_forward_active_blockers_via_sql` instead, precisely so its
+    blocker-refusal check never depends on `bd show` having been called.
     """
     deps = item.raw.get("dependencies") or []
     return [
         d
         for d in deps
         if isinstance(d, dict) and _is_active_blocker(d.get("dependency_type"), d.get("status"))
+    ]
+
+
+def _forward_active_blockers_via_sql(db: str, item_id: str) -> list[dict]:
+    """Which of `item_id`'s forward `blocks`-type dependencies are still
+    open, read via a READ-ONLY SQL SELECT -- the `claim_item`-only
+    equivalent of `_active_blockers` (which reads `Item.raw["dependencies"]`,
+    a field only bd's own `show` JSON populates), so a directed claim's
+    refusal-check read can never itself lose a serialization conflict --
+    same motivation as `_get_item_via_sql` replacing `bd show` for the base
+    item read; see that function's docstring for the shared mechanism.
+
+    Joins the `dependencies` table (`issue_id`, `depends_on_issue_id`,
+    `type`) to `issues` on the TARGET side to learn each blocker's own
+    current `status` -- exactly what `_is_active_blocker` (reused
+    unchanged) needs to decide whether an edge still blocks. An INNER JOIN
+    naturally excludes any edge whose `depends_on_issue_id` is NULL (a
+    wisp/external ref, not a real issue -- see `copy_database`'s own note
+    on the same distinction): a `blocks`-type edge is issue-to-issue only
+    in practice, so this can never silently drop a real blocker.
+
+    Returns dicts shaped `{"id", "status"}` -- the same two fields
+    `claim_item`'s own error message reads off each blocker
+    (`b["id"]`/`b.get("status")`); `dependency_type` is consulted here,
+    at the seam, and not carried through (nothing downstream needs it once
+    the "active blocker" filter has already been applied).
+    """
+    p = _dolt_sql_json(
+        "SELECT `dep`.`type` AS `dependency_type`, `tgt`.`id` AS `id`, "
+        "`tgt`.`status` AS `status` "
+        f"FROM `{db}`.`dependencies` `dep` "
+        f"JOIN `{db}`.`issues` `tgt` ON `tgt`.`id` = `dep`.`depends_on_issue_id` "
+        f"WHERE `dep`.`issue_id` = '{_sql_literal(item_id)}'"
+    )
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not read dependencies of {item_id!r} over SQL: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    try:
+        rows = json.loads(p.stdout or "{}").get("rows", [])
+    except json.JSONDecodeError as e:
+        raise BeadsError(f"could not parse dependencies of {item_id!r} over SQL: {e}") from e
+    return [
+        {"id": r.get("id"), "status": r.get("status")}
+        for r in rows
+        if isinstance(r, dict) and _is_active_blocker(r.get("dependency_type"), r.get("status"))
     ]
 
 
@@ -2364,17 +2419,25 @@ class Beads:
         which is blocker-aware by construction (its own --help: "open
         issues with no active blockers"). Claiming work whose prerequisite
         isn't done produces wasted or conflicting work, so we check first
-        and refuse before ever calling bd's --claim, naming the blocker(s)
-        bd's own `show` already told us about. No override flag: if a
-        named blocker doesn't actually apply, resolve it or remove the
-        dependency link, then claim again.
+        and refuse before ever calling bd's --claim, naming the blocker(s).
+        No override flag: if a named blocker doesn't actually apply,
+        resolve it or remove the dependency link, then claim again.
+
+        The blocker check itself reads via `_forward_active_blockers_via_sql`
+        -- a READ-ONLY SQL query, not `_active_blockers` (which reads
+        `Item.raw["dependencies"]`, a field only `bd show`'s own JSON ever
+        populates, and `get()`'s base-item path no longer calls `bd show`
+        at all -- see `Beads.get`'s docstring). This is strictly safer than
+        the previous `bd show`-backed check: a directed claim's own
+        refusal-check read can no longer itself lose a serialization
+        conflict either.
         """
         try:
-            current = self.get(item_id)
+            self.get(item_id)  # existence check only -- raises if missing
         except BeadsError as e:
             raise BeadsError(f"cannot claim {item_id}: item not found ({e})") from e
 
-        blockers = _active_blockers(current)
+        blockers = _forward_active_blockers_via_sql(self.project_name, item_id)
         if blockers:
             names = ", ".join(f"{b['id']} ({b.get('status', 'unknown')})" for b in blockers)
             raise BeadsError(
