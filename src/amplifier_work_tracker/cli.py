@@ -387,6 +387,38 @@ def cmd_rename(a):
     )
 
 
+def cmd_move(a):
+    """Move one item from project `--from` to project `--to`, preserving its
+    id -- the single-item counterpart to `rename`/`remove`'s whole-project
+    operations.
+
+    Unlike `remove`/`rename`, this is NOT operator-only: it is also exposed
+    as the `work_move` agent tool (see `modules/tool-work-tracker`), since
+    moving a single item is a far narrower, safer operation than deleting or
+    renaming an entire project's queue. Refuses (no override) if the item is
+    currently HELD, does not exist in `--from`, or already exists in `--to`
+    -- see `Workspace.move_item`/`adapter.move_item`'s docstring for the full
+    contract, including how a dependency edge to an item that is NOT moving
+    is dropped (and reported) rather than silently corrupted.
+    """
+    _guard()
+    try:
+        report = _ws(a).move_item(a.from_project, a.to_project, a.item)
+    except A.BeadsError as e:
+        die(str(e))
+    print(
+        json.dumps(
+            {
+                "moved": report.item_id,
+                "from": report.src,
+                "to": report.dst,
+                "dropped_dependency_edges": report.dropped_dependency_edges,
+            },
+            indent=2,
+        )
+    )
+
+
 def cmd_add(a):
     """File a new engineering-lane work item directly -- the sanctioned path
     for seeding a project's FIRST item(s), or adding more later.
@@ -1357,6 +1389,20 @@ def main():
     p.add_argument("old", help="current project name")
     p.add_argument("new", help="new project name (same rules as `new`: lowercase/underscore)")
     p.set_defaults(fn=cmd_rename)
+
+    p = sub.add_parser(
+        "move",
+        help=(
+            "move one item from one project to another, preserving its id "
+            "(refuses if the item is HELD, missing, or already exists at the destination; "
+            "dependency edges to an item NOT moving are dropped and reported)"
+        ),
+        parents=[root_parent],
+    )
+    p.add_argument("--item", required=True, help="item id to move")
+    p.add_argument("--from", dest="from_project", required=True, help="current project name")
+    p.add_argument("--to", dest="to_project", required=True, help="destination project name")
+    p.set_defaults(fn=cmd_move)
 
     p = sub.add_parser(
         "add",
