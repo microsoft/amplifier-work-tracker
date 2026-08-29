@@ -947,6 +947,114 @@ def cmd_unclaim(a):
     print(json.dumps({"unclaimed": a.id, "status": back.status, "holder": back.holder}, indent=2))
 
 
+def cmd_edit(a):
+    """Amend an item's own free-text fields IN PLACE (title/description/
+    acceptance/design), attributed via an audit-trail comment -- or, with
+    `--merge-into`, mark it superseded by a different item instead (a
+    structural close, never a content edit). See `adapter.Beads.edit_item`
+    / `adapter.Beads.supersede` for the full contract; this command is a
+    thin wrapper, exactly like `add`/`move`.
+    """
+    _guard()
+    bd = _ws(a).project(a.project)
+    if a.merge_into:
+        if any([a.title, a.description, a.acceptance, a.design]):
+            die(
+                "--merge-into cannot be combined with field edits -- "
+                "edit the content first, then merge"
+            )
+        try:
+            item = bd.supersede(a.id, a.merge_into, actor=a.actor)
+        except A.BeadsError as e:
+            die(str(e))
+        print(
+            json.dumps(
+                {"superseded": item.id, "with": a.merge_into, "status": item.status}, indent=2
+            )
+        )
+        return
+    try:
+        item = bd.edit_item(
+            a.id,
+            title=a.title,
+            description=a.description,
+            acceptance=a.acceptance,
+            design=a.design,
+            actor=a.actor,
+        )
+    except A.BeadsError as e:
+        die(str(e))
+    print(
+        json.dumps(
+            {
+                "edited": item.id,
+                "title": item.title,
+                "description": item.description,
+                "acceptance": item.acceptance,
+                "design": item.design,
+            },
+            indent=2,
+        )
+    )
+
+
+def cmd_defer(a):
+    """Defer an open item with a reason (leaves `bd ready`/list views), or
+    -- with `--clear` -- move a deferred item back to open. See
+    `adapter.Beads.defer`/`undefer`.
+    """
+    _guard()
+    bd = _ws(a).project(a.project)
+    try:
+        if a.clear:
+            item = bd.undefer(a.id, actor=a.actor)
+        else:
+            if not a.reason:
+                die("--reason is required unless --clear is given")
+            item = bd.defer(a.id, a.reason, actor=a.actor)
+    except A.BeadsError as e:
+        die(str(e))
+    print(json.dumps({"id": item.id, "status": item.status}, indent=2))
+
+
+def cmd_block(a):
+    """Block an open item with a reason (leaves `bd ready`/list views), or
+    -- with `--clear` -- move a blocked item back to open. See
+    `adapter.Beads.block`/`unblock`. Distinct from a dependency-based
+    blocker (`dep`) -- this is a direct, reasoned status change with no
+    other issue involved.
+    """
+    _guard()
+    bd = _ws(a).project(a.project)
+    try:
+        if a.clear:
+            item = bd.unblock(a.id, actor=a.actor)
+        else:
+            if not a.reason:
+                die("--reason is required unless --clear is given")
+            item = bd.block(a.id, a.reason, actor=a.actor)
+    except A.BeadsError as e:
+        die(str(e))
+    print(json.dumps({"id": item.id, "status": item.status}, indent=2))
+
+
+def cmd_dep(a):
+    """Declare a dependency edge (`--depends-on`), or -- with neither flag
+    -- display every dependency/dependent edge already on `--id`. See
+    `adapter.Beads.add_dependency` / `adapter.Beads.get`'s `links` for the
+    full contract, including what makes an edge an active claim-blocker.
+    """
+    _guard()
+    bd = _ws(a).project(a.project)
+    try:
+        if a.depends_on:
+            bd.add_dependency(a.id, a.depends_on, dep_type=a.type, actor=a.actor)
+        item = bd.get_readonly(a.id, with_links=True)
+    except A.BeadsError as e:
+        die(str(e))
+    print(json.dumps({"id": item.id, "links": item.links}, indent=2))
+
+
 def cmd_notify(a):
     """Propagate resolved work back to the reports that prompted it.
 
@@ -1549,6 +1657,69 @@ def main():
     p.add_argument("--id", required=True)
     p.add_argument("--actor", default="agent")
     p.set_defaults(fn=cmd_unclaim)
+
+    p = sub.add_parser(
+        "edit",
+        help="amend an item's title/description/acceptance/design, or --merge-into another item",
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("--id", required=True)
+    p.add_argument("--title", default=None)
+    p.add_argument("--description", default=None)
+    p.add_argument("--acceptance", default=None)
+    p.add_argument("--design", default=None)
+    p.add_argument(
+        "--merge-into",
+        dest="merge_into",
+        default=None,
+        help="mark --id as superseded by this item id instead of editing content",
+    )
+    p.add_argument("--actor", default="agent")
+    p.set_defaults(fn=cmd_edit)
+
+    p = sub.add_parser(
+        "defer",
+        help="defer an open item with --reason, or --clear a deferral back to open",
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("--id", required=True)
+    p.add_argument("--reason", default=None)
+    p.add_argument("--clear", action="store_true")
+    p.add_argument("--actor", default="agent")
+    p.set_defaults(fn=cmd_defer)
+
+    p = sub.add_parser(
+        "block",
+        help="block an open item with --reason, or --clear a block back to open",
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("--id", required=True)
+    p.add_argument("--reason", default=None)
+    p.add_argument("--clear", action="store_true")
+    p.add_argument("--actor", default="agent")
+    p.set_defaults(fn=cmd_block)
+
+    p = sub.add_parser(
+        "dep",
+        help="declare (--depends-on) or display dependency/dependent edges on --id",
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("--id", required=True)
+    p.add_argument(
+        "--depends-on",
+        dest="depends_on",
+        default=None,
+        help="declare --id depends on (is blocked by, per --type) this item id",
+    )
+    p.add_argument(
+        "--type", dest="type", default="blocks", help="dependency type (default: blocks)"
+    )
+    p.add_argument("--actor", default="agent")
+    p.set_defaults(fn=cmd_dep)
 
     p = sub.add_parser(
         "notify", help="propagate resolved work back to reporters", parents=[root_parent]

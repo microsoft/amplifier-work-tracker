@@ -580,12 +580,22 @@ class WorkTrackerSession:
         *,
         description: str | None = None,
         acceptance: str | None = None,
+        related: list[dict[str, str]] | None = None,
     ) -> ToolResult:
         """File a new engineering-lane item directly -- no held item
         required. THE sanctioned path for seeding a project's first item(s)
         (see this module's docstring for why that gap otherwise forces a
         raw-`bd` escape). Applies A.LANE_WORK itself; callers never need to
-        know the label vocabulary."""
+        know the label vocabulary.
+
+        `related` is optional first-class linking (work_tracker item 9e4):
+        each entry `{"id": ..., "kind": "relates-to"|"supersedes"|
+        "follow-up-of"}` is recorded as a real dependency edge in the SAME
+        atomic `bd create --deps` call `discovered_from` already uses --
+        see `adapter.RELATION_KINDS` for the kind-to-bd-type mapping. An
+        unrecognized kind refuses the whole create (surfaced as a failed
+        ToolResult), never a partially-linked item.
+        """
         try:
             bd = self._project(project)
             new_id = bd.create(
@@ -594,6 +604,11 @@ class WorkTrackerSession:
                 tags=[A.LANE_WORK],
                 description=description,
                 acceptance=acceptance,
+                related=(
+                    [(r["id"], r["kind"]) for r in related if isinstance(r, dict)]
+                    if related
+                    else None
+                ),
                 actor=self._actor,
             )
         except A.BeadsError as e:
@@ -625,6 +640,126 @@ class WorkTrackerSession:
                 "dropped_dependency_edges": report.dropped_dependency_edges,
             },
         )
+
+    async def edit(
+        self,
+        project: str,
+        item_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        acceptance: str | None = None,
+        design: str | None = None,
+        merge_into: str | None = None,
+    ) -> ToolResult:
+        """Amend `item_id`'s own free-text fields IN PLACE, attributed via
+        an audit-trail comment -- or, with `merge_into`, mark it superseded
+        by a different item instead (a structural close, never a content
+        edit; the two cannot be combined in one call). No held item
+        required -- content editing is not lifecycle, same as `move`.
+        """
+        bd = self._project(project)
+        try:
+            if merge_into is not None:
+                if any(v is not None for v in (title, description, acceptance, design)):
+                    return ToolResult(
+                        success=False,
+                        output=(
+                            "merge_into cannot be combined with field edits -- a merge "
+                            "closes the item; edit its content first, then merge"
+                        ),
+                    )
+                item = bd.supersede(item_id, merge_into, actor=self._actor)
+                return ToolResult(
+                    success=True,
+                    output={"superseded": item.id, "with": merge_into, "status": item.status},
+                )
+            item = bd.edit_item(
+                item_id,
+                title=title,
+                description=description,
+                acceptance=acceptance,
+                design=design,
+                actor=self._actor,
+            )
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        return ToolResult(
+            success=True,
+            output={
+                "edited": item.id,
+                "title": item.title,
+                "description": item.description,
+                "acceptance": item.acceptance,
+                "design": item.design,
+            },
+        )
+
+    async def defer(
+        self, project: str, item_id: str, *, reason: str | None = None, clear: bool = False
+    ) -> ToolResult:
+        """Defer an open item with `reason` (it leaves `bd ready`/
+        `work_claim`'s queue and default list views), or -- with
+        `clear=True` -- move a deferred item back to open. No held item
+        required. See `adapter.Beads.defer`/`undefer`.
+        """
+        bd = self._project(project)
+        try:
+            if clear:
+                item = bd.undefer(item_id, actor=self._actor)
+            else:
+                if not reason:
+                    return ToolResult(success=False, output="reason is required unless clear=true")
+                item = bd.defer(item_id, reason, actor=self._actor)
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        return ToolResult(success=True, output={"id": item.id, "status": item.status})
+
+    async def block(
+        self, project: str, item_id: str, *, reason: str | None = None, clear: bool = False
+    ) -> ToolResult:
+        """Block an open item with `reason` (same visibility contract as
+        `defer`), or -- with `clear=True` -- move a blocked item back to
+        open. No held item required. Distinct from a dependency-based
+        blocker (`dep`) -- this is a direct, reasoned status change with no
+        other issue involved. See `adapter.Beads.block`/`unblock`.
+        """
+        bd = self._project(project)
+        try:
+            if clear:
+                item = bd.unblock(item_id, actor=self._actor)
+            else:
+                if not reason:
+                    return ToolResult(success=False, output="reason is required unless clear=true")
+                item = bd.block(item_id, reason, actor=self._actor)
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        return ToolResult(success=True, output={"id": item.id, "status": item.status})
+
+    async def dep(
+        self,
+        project: str,
+        item_id: str,
+        *,
+        depends_on: str | None = None,
+        dep_type: str = "blocks",
+    ) -> ToolResult:
+        """Declare `item_id` depends on `depends_on` (per `dep_type`), then
+        return every dependency/dependent edge `item_id` now carries --
+        or, with `depends_on` omitted, just DISPLAY the current edges
+        without writing anything. No held item required. See
+        `adapter.Beads.add_dependency` / `adapter.Beads.get`'s `links` for
+        the full contract, including what makes an edge an active
+        claim-blocker (`work_claim` refuses naming it).
+        """
+        bd = self._project(project)
+        try:
+            if depends_on:
+                bd.add_dependency(item_id, depends_on, dep_type=dep_type, actor=self._actor)
+            item = bd.get_readonly(item_id, with_links=True)
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        return ToolResult(success=True, output={"id": item.id, "links": item.links})
 
 
 # --------------------------------------------------------------------------
@@ -947,6 +1082,26 @@ class WorkAddTool:
                     "type": "string",
                     "description": "Given/When/Then acceptance criteria, if known.",
                 },
+                "related": {
+                    "type": "array",
+                    "description": (
+                        "Optional first-class links to other items, recorded as real "
+                        "dependency edges (see the CLI's/work_dep's dep verb for the same "
+                        "underlying mechanism). Each entry: {id, kind}."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "description": "The other item's id."},
+                            "kind": {
+                                "type": "string",
+                                "enum": ["relates-to", "supersedes", "follow-up-of"],
+                                "description": "The relationship this item has to id.",
+                            },
+                        },
+                        "required": ["id", "kind"],
+                    },
+                },
             },
             "required": ["project", "title"],
         }
@@ -958,6 +1113,7 @@ class WorkAddTool:
             input["title"],
             description=input.get("description"),
             acceptance=input.get("acceptance"),
+            related=input.get("related"),
         )
 
 
@@ -1008,6 +1164,219 @@ class WorkMoveTool:
             input["item_id"],
             input["from_project"],
             input["to_project"],
+        )
+
+
+class WorkEditTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_edit"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Amend an existing item's own title/description/acceptance/design IN PLACE, "
+            "attributed via an audit-trail comment naming who changed what -- never a "
+            "silent edit. No held item required (like work_move/work_add, this never "
+            "touches this session's custody state). Pass merge_into instead of any field "
+            "to mark the item superseded by a different item id -- bd's own supersede "
+            "mechanism, which CLOSES the item automatically with a structural reference "
+            "to the replacement -- rather than resolving it with an invented reason that "
+            "loses the replacement's real id. merge_into cannot be combined with field "
+            "edits in the same call."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project the item lives in."},
+                "item_id": {"type": "string", "description": "Item id to edit."},
+                "title": {"type": "string", "description": "New title, if changing."},
+                "description": {"type": "string", "description": "New description, if changing."},
+                "acceptance": {
+                    "type": "string",
+                    "description": "New acceptance criteria, if changing.",
+                },
+                "design": {"type": "string", "description": "New design notes, if changing."},
+                "merge_into": {
+                    "type": "string",
+                    "description": (
+                        "Mark item_id as superseded by this item id instead of editing "
+                        "content -- closes item_id structurally. Cannot combine with "
+                        "title/description/acceptance/design."
+                    ),
+                },
+            },
+            "required": ["project", "item_id"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.edit(
+            input["project"],
+            input["item_id"],
+            title=input.get("title"),
+            description=input.get("description"),
+            acceptance=input.get("acceptance"),
+            design=input.get("design"),
+            merge_into=input.get("merge_into"),
+        )
+
+
+class WorkDeferTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_defer"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Defer an open item with a reason -- it leaves work_claim's queue and default "
+            "list views (bd's own status-category system excludes non-active statuses from "
+            "'ready'), but stays visible via an explicit status filter with its reason "
+            "attached. Pass clear=true (no reason needed) to move a deferred item back to "
+            "open. No held item required."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project the item lives in."},
+                "item_id": {"type": "string", "description": "Item id to defer/undefer."},
+                "reason": {
+                    "type": "string",
+                    "description": "Why this item is deferred. Required unless clear=true.",
+                },
+                "clear": {
+                    "type": "boolean",
+                    "description": "Move a deferred item back to open, clearing its reason.",
+                },
+            },
+            "required": ["project", "item_id"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.defer(
+            input["project"],
+            input["item_id"],
+            reason=input.get("reason"),
+            clear=bool(input.get("clear", False)),
+        )
+
+
+class WorkBlockTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_block"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Block an open item with a reason -- same visibility contract as work_defer "
+            "(leaves work_claim's queue and default list views, stays visible via an "
+            "explicit status filter with its reason attached). Distinct from a "
+            "dependency-based blocker (work_dep) -- this is a direct, reasoned status "
+            "change with no other issue involved. Pass clear=true (no reason needed) to "
+            "move a blocked item back to open. No held item required."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project the item lives in."},
+                "item_id": {"type": "string", "description": "Item id to block/unblock."},
+                "reason": {
+                    "type": "string",
+                    "description": "Why this item is blocked. Required unless clear=true.",
+                },
+                "clear": {
+                    "type": "boolean",
+                    "description": "Move a blocked item back to open, clearing its reason.",
+                },
+            },
+            "required": ["project", "item_id"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.block(
+            input["project"],
+            input["item_id"],
+            reason=input.get("reason"),
+            clear=bool(input.get("clear", False)),
+        )
+
+
+class WorkDepTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_dep"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Declare item_id depends on (per dep_type, default 'blocks') depends_on, then "
+            "return every dependency/dependent edge item_id now carries -- or, with "
+            "depends_on omitted, just DISPLAY the current edges without writing anything. "
+            "A 'blocks'-type edge is enforced at claim time: work_claim on item_id refuses, "
+            "naming depends_on, until depends_on is resolved. No held item required."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project the item lives in."},
+                "item_id": {
+                    "type": "string",
+                    "description": "Item id to declare a dependency on, or display edges for.",
+                },
+                "depends_on": {
+                    "type": "string",
+                    "description": (
+                        "Optional. The item id that item_id depends on (per dep_type). "
+                        "Omit to only display item_id's current edges."
+                    ),
+                },
+                "dep_type": {
+                    "type": "string",
+                    "description": (
+                        "Dependency type (default 'blocks'; bd also accepts tracks/related/"
+                        "parent-child/discovered-from/until/caused-by/validates/relates-to/"
+                        "supersedes). Ignored when depends_on is omitted."
+                    ),
+                },
+            },
+            "required": ["project", "item_id"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.dep(
+            input["project"],
+            input["item_id"],
+            depends_on=input.get("depends_on"),
+            dep_type=input.get("dep_type") or "blocks",
         )
 
 
@@ -1100,6 +1469,10 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
         WorkFileTool(session),
         WorkAddTool(session),
         WorkMoveTool(session),
+        WorkEditTool(session),
+        WorkDeferTool(session),
+        WorkBlockTool(session),
+        WorkDepTool(session),
         WorkListTool(session),
         WorkTrackerStatusTool(config),
         WorkTrackerInstallTool(config),
