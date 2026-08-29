@@ -886,6 +886,52 @@ def _list_rows_via_sql(db: str, *, where_sql: str | None, limit: int) -> list[It
     return items
 
 
+def _get_item_via_sql(db: str, item_id: str) -> Item | None:
+    """Read exactly ONE item as a full-field `Item`, straight off the shared
+    dolt server over a READ-ONLY SQL SELECT -- the drop-in replacement for
+    `bd show <id>`'s core-item read that `Beads.get()` uses, for the same
+    reason `_list_rows_via_sql` replaces `bd list`.
+
+    Why this exists: `bd show` -- like `bd list` -- does a read+WRITE
+    transaction (verified empirically: same interaction-log-row-per-
+    invocation mechanism `_list_rows_via_sql`'s docstring documents for `bd
+    list`), so it CAN lose a dolt serialization conflict (MySQL 1213/1205)
+    against the shared server's concurrent write traffic, however briefly
+    -- `Beads._run` then burns retries on a call that need never have had a
+    write set at all. `get()`/`get_readonly()` are the MOST-called single-
+    item read in this codebase (every fencing check in `claim_item`/
+    `resolve`, every readback in `update`/`resolve`, `get_custody`, the
+    CLI's `show`, the web item-detail page's base fields) -- routing this
+    one path through a pure `SELECT` removes the write set from all of them
+    at once. A pure SELECT has no write set and cannot conflict, at any
+    contention level -- see `_list_rows_via_sql`'s docstring for the full
+    mechanism this shares.
+
+    Thin wrapper over `_list_rows_via_sql`: same column set, same field
+    mapping (`Item.from_beads` via `_FIELD_MAP`), same free-text/metadata/
+    priority/timestamp faithfulness guarantees already proven equivalent to
+    bd for the multi-row case -- an `id =` filter with `limit=1` is exactly
+    that same query, narrowed to one row. Returns `None` (not an error)
+    when no such row exists -- callers translate that into their own "not
+    found" wording (see `Beads.get`/`get_readonly`), the same shape `bd
+    show`'s own "no issues found" produced before.
+
+    Deliberately does NOT attempt to reproduce `bd show --include-
+    dependents`'s dependency/dependent graph here -- that enrichment
+    (`Item.links`) stays sourced from bd in `Beads.get(with_links=True)`.
+    Only the base item fields move to SQL; see that method's docstring for
+    why splitting the two is the right scope for this fix.
+
+    `item_id` is interpolated via `_sql_literal` (the same discipline
+    `Beads.list()`'s `lane`/`status` values already use): unlike a project
+    `db` name (constrained by `NAME_RE` before it ever reaches here), an
+    item id arrives as caller-supplied text with no upstream format
+    validation, so it is escaped rather than assumed safe.
+    """
+    rows = _list_rows_via_sql(db, where_sql=f"`issues`.`id` = '{_sql_literal(item_id)}'", limit=1)
+    return rows[0] if rows else None
+
+
 def copy_database(src: str, dst: str) -> None:
     """Create database `dst` as a faithful copy of `src` on the shared dolt
     server: identical schema (every base table, view, and foreign key) and
@@ -2356,6 +2402,35 @@ class Beads:
         """Read one item, optionally with its dependency graph attached as
         `Item.links`.
 
+        The base item -- every field `with_links=False` (the overwhelming
+        majority of callers: every fencing check in `claim_item`/`resolve`,
+        every readback in `update`/`resolve`, `get_custody`, the CLI's
+        `show`, `get_readonly`) ever sees -- is read via `_get_item_via_sql`,
+        a READ-ONLY SQL SELECT, NOT `bd show`. `bd show`, like `bd list`,
+        does a read+WRITE transaction (an interaction-log row per
+        invocation), so it CAN lose a dolt serialization conflict against
+        the shared server's concurrent write traffic; a pure SELECT has no
+        write set and cannot conflict, at any contention level -- see
+        `_get_item_via_sql`'s and `_list_rows_via_sql`'s docstrings for the
+        full mechanism this shares with the `list()`/`project_summary`
+        fixes. Raises `BeadsError` if no such row exists -- the same "not
+        found" shape `bd show` produced before, so `get_readonly`'s
+        wrong-project-prefix-vs-genuinely-missing disambiguation (which
+        only inspects `item_id`/`project_name`, never this message's text)
+        is unaffected.
+
+        `with_links=True` additionally asks bd for the dependency/dependent
+        graph (`Item.links`) -- that enrichment is DELIBERATELY left on
+        `bd show --include-dependents`, not reproduced over SQL here: it is
+        a smaller, one-item read (not the 465-row case that motivated the
+        `list()`/`project_summary` fixes), and reproducing bd's own
+        dependents cross-reference (title/status only, holder/created_by
+        always `None`, its own lean-by-design asymmetry documented below)
+        over SQL would mean re-deriving bd's exact `--include-dependents`
+        semantics a second time for comparatively little contention-safety
+        benefit. See work_tracker item pipeline-bug for the full contention
+        hardening this method's base-item change is part of.
+
         Each link entry carries `id`/`direction`/`type` (unchanged from
         before -- `supervisor.notify_project`/`cli.cmd_notify`/`gateway`/
         `contract` all key off exactly these three fields and nothing
@@ -2387,11 +2462,13 @@ class Beads:
         entries too (same helper, same fields), for symmetry; nothing in
         this app currently colors that direction.
         """
-        args = ["show", item_id]
-        if with_links:
-            # ASSUMPTION show.dependents -- reverse links are omitted by default.
-            args += ["--include-dependents"]
-        d = self._json(args)
+        if not with_links:
+            it = _get_item_via_sql(self.project_name, item_id)
+            if it is None:
+                raise BeadsError(f"show {item_id}: no issues found matching the provided IDs")
+            return it
+
+        d = self._json(["show", item_id, "--include-dependents"])
         d = d[0] if isinstance(d, list) else d
         if not isinstance(d, dict):
             raise BeadsError(f"show {item_id} returned no object")
