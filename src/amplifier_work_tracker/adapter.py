@@ -1791,6 +1791,88 @@ def _forward_active_blockers_via_sql(db: str, item_id: str) -> list[dict]:
     ]
 
 
+def _forward_dependency_links_via_sql(db: str, item_id: str) -> list[dict]:
+    """`item_id`'s forward (`direction: "from"`) dependency edges -- i.e.
+    what THIS item depends on / is blocked by / supersedes / etc -- read via
+    a READ-ONLY SQL SELECT, in the exact `Item.links` entry shape `Beads.get`'s
+    own `_link()` helper produces for its `with_links=True` path (`id`/
+    `direction`/`type`/`title`/`status`/`holder`/`created_by`/`blocking`).
+
+    Why this exists: forward edges are meant to be present on EVERY `get()`
+    regardless of `with_links` -- bd's own `dependencies` field needs no
+    `--include-dependents` flag, so this was always the pre-existing
+    behavior back when the base-item read went through `bd show` directly
+    (see `Beads.get`'s docstring, and `tests/integration/test_dependency.py`'s
+    `test_get_readonly_with_links_displays_the_same_edge`, which pins the
+    invariant explicitly). Moving the base-item read to `_get_item_via_sql`
+    (a pure SELECT against `issues` alone) dropped that invariant, since
+    that helper deliberately does not touch the `dependencies` table at all
+    -- this function restores it, over the same contention-safe mechanism
+    (a pure SELECT has no write set and cannot serialization-conflict, at
+    any project size; see `_get_item_via_sql`'s docstring for the shared
+    reasoning). Only the REVERSE direction (`dependents`, gated by bd's own
+    `--include-dependents`) stays on `bd show` in `Beads.get`'s
+    `with_links=True` branch -- seeing everything that points AT this item
+    is a comparatively rare, heavier need (bd's own `--help` warns it "may
+    be slow on hub beads"), unlike this item's OWN handful of forward
+    edges, which is cheap and needed unconditionally.
+
+    Joins `dependencies` to `issues` on the TARGET side (`depends_on_issue_id`)
+    to pull the referenced item's own title/status/holder/created_by --
+    exactly the fields `Beads.get`'s `_link()` populates for a `direction:
+    "from"` entry (bd's own asymmetry: only the forward direction embeds
+    the FULL referenced item; see that method's docstring). An INNER JOIN
+    naturally excludes an edge whose `depends_on_issue_id` is NULL (a
+    wisp/external ref, not a real issue -- same exclusion
+    `_forward_active_blockers_via_sql` already relies on), so a real
+    issue-to-issue edge can never be silently dropped.
+
+    `status` is translated through `_map_status` (our vocabulary, not bd's
+    raw one) -- the same translation `_link()` applies -- and `blocking`
+    is computed via the SAME `_is_active_blocker` check `claim_item`'s own
+    refusal read uses, so the two can never disagree on what "still
+    blocking" means.
+    """
+    p = _dolt_sql_json(
+        "SELECT `dep`.`type` AS `dependency_type`, `tgt`.`id` AS `id`, "
+        "`tgt`.`title` AS `title`, `tgt`.`status` AS `status`, "
+        "`tgt`.`assignee` AS `assignee`, `tgt`.`created_by` AS `created_by` "
+        f"FROM `{db}`.`dependencies` `dep` "
+        f"JOIN `{db}`.`issues` `tgt` ON `tgt`.`id` = `dep`.`depends_on_issue_id` "
+        f"WHERE `dep`.`issue_id` = '{_sql_literal(item_id)}'"
+    )
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not read forward dependency links of {item_id!r} over SQL: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    try:
+        rows = json.loads(p.stdout or "{}").get("rows", [])
+    except json.JSONDecodeError as e:
+        raise BeadsError(
+            f"could not parse forward dependency links of {item_id!r} over SQL: {e}"
+        ) from e
+    links: list[dict] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        dep_type = r.get("dependency_type")
+        raw_status = r.get("status")
+        links.append(
+            {
+                "id": r.get("id"),
+                "direction": "from",
+                "type": dep_type,
+                "title": r.get("title"),
+                "status": _map_status(raw_status) if raw_status else None,
+                "holder": r.get("assignee"),
+                "created_by": r.get("created_by"),
+                "blocking": _is_active_blocker(dep_type, raw_status),
+            }
+        )
+    return links
+
+
 def _retryable(blob: str) -> bool:
     low = blob.lower()
     return any(t.lower() in low for t in _RETRYABLE)
@@ -2509,6 +2591,20 @@ class Beads:
 
         Surfaces bd's own error (unchanged) if `replacement_id` does not
         exist or `item_id` is already closed -- no override.
+
+        The readback uses `with_links=True` (verified empirically against
+        the real bd binary: `bd supersede` records the replacement as a
+        genuine `supersedes`-type dependency edge from `item_id` to
+        `replacement_id` -- there is no `close_reason`/resolution text at
+        all -- so `replacement_id` is only readable back off `Item.links`/
+        `Item.raw["dependencies"]`, never off `Item.resolution`). This is
+        the SAME `bd show --include-dependents` path `add_dependency`
+        already uses for its own write-verification readback: a single
+        one-item bd call for a write method's own post-write proof is the
+        established pattern here, not a hot repeated-read path, so it is
+        not a candidate for the `_get_item_via_sql` contention fix (see
+        `Beads.get`'s docstring for why `with_links=True` deliberately
+        stays on bd).
         """
         p = self._run(["supersede", item_id, "--with", replacement_id], actor=actor)
         if p.returncode != 0:
@@ -2516,11 +2612,19 @@ class Beads:
                 f"supersede {item_id} with {replacement_id}: "
                 f"{_clean_bd_error(p.stderr or p.stdout)}"
             )
-        back = self.get(item_id)
+        back = self.get(item_id, with_links=True)
         if back.status != "resolved":
             raise BeadsError(
                 f"supersede {item_id} reported success but readback shows status="
                 f"{back.status!r} -- refusing to report success"
+            )
+        if not any(
+            link.get("id") == replacement_id and link.get("direction") == "from"
+            for link in back.links
+        ):
+            raise BeadsError(
+                f"supersede {item_id} with {replacement_id} reported success but readback "
+                f"shows no structural reference to the replacement -- refusing to report success"
             )
         return back
 
@@ -2602,8 +2706,11 @@ class Beads:
         return Item.from_beads(items[0])
 
     def get(self, item_id: str, *, with_links: bool = False) -> Item:
-        """Read one item, optionally with its dependency graph attached as
-        `Item.links`.
+        """Read one item, with its FORWARD dependency graph always attached
+        as `Item.links` (`direction: "from"` entries -- what THIS item
+        depends on / is blocked by / supersedes / etc), plus its REVERSE
+        graph (`direction: "to"`, what depends on THIS item) when
+        `with_links=True`.
 
         The base item -- every field `with_links=False` (the overwhelming
         majority of callers: every fencing check in `claim_item`/`resolve`,
@@ -2622,17 +2729,30 @@ class Beads:
         only inspects `item_id`/`project_name`, never this message's text)
         is unaffected.
 
-        `with_links=True` additionally asks bd for the dependency/dependent
-        graph (`Item.links`) -- that enrichment is DELIBERATELY left on
-        `bd show --include-dependents`, not reproduced over SQL here: it is
-        a smaller, one-item read (not the 465-row case that motivated the
-        `list()`/`project_summary` fixes), and reproducing bd's own
-        dependents cross-reference (title/status only, holder/created_by
-        always `None`, its own lean-by-design asymmetry documented below)
-        over SQL would mean re-deriving bd's exact `--include-dependents`
-        semantics a second time for comparatively little contention-safety
-        benefit. See work_tracker item pipeline-bug for the full contention
-        hardening this method's base-item change is part of.
+        Forward (`"from"`) links are populated via
+        `_forward_dependency_links_via_sql` regardless of `with_links` --
+        another pure SELECT, so this never reintroduces the serialization-
+        conflict exposure the base-item read was just fixed to avoid. This
+        restores an invariant that predates the SQL-based base-item read:
+        bd's own `dependencies` field needs no `--include-dependents` flag,
+        so a plain `bd show` always populated forward edges too -- see
+        `tests/integration/test_dependency.py`'s
+        `test_get_readonly_with_links_displays_the_same_edge`, which pins
+        this explicitly, and `_forward_dependency_links_via_sql`'s own
+        docstring for the full reasoning.
+
+        `with_links=True` ADDITIONALLY asks bd for the REVERSE
+        (`dependents`) side of the graph -- that enrichment is DELIBERATELY
+        left on `bd show --include-dependents`, not reproduced over SQL
+        here: it is a smaller, one-item read (not the 465-row case that
+        motivated the `list()`/`project_summary` fixes), and reproducing
+        bd's own dependents cross-reference (title/status only, holder/
+        created_by always `None`, its own lean-by-design asymmetry
+        documented below) over SQL would mean re-deriving bd's exact
+        `--include-dependents` semantics a second time for comparatively
+        little contention-safety benefit. See work_tracker item
+        pipeline-bug for the full contention hardening this method's
+        base-item change is part of.
 
         Each link entry carries `id`/`direction`/`type` (unchanged from
         before -- `supervisor.notify_project`/`cli.cmd_notify`/`gateway`/
@@ -2669,6 +2789,7 @@ class Beads:
             it = _get_item_via_sql(self.project_name, item_id)
             if it is None:
                 raise BeadsError(f"show {item_id}: no issues found matching the provided IDs")
+            it.links = _forward_dependency_links_via_sql(self.project_name, item_id)
             return it
 
         d = self._json(["show", item_id, "--include-dependents"])
