@@ -1,688 +1,844 @@
-"""Split-pane BROWSE view: a scrollable work-item list (left) beside the
-selected item's read-only detail (right).
+"""wt-v4 "Observatory" L1 (Project Observatory) and L2 (Item Detail) --
+see `.amplifier/design-gauntlet/wt-v4-observatory/{mock-L1-project,
+mock-L2-item}.html` for the approved mockups these routes match, and
+`GAUNTLET-SYNTHESIS.md` for the build-phase requirements list.
 
-This is a NEW, self-contained module. It OWNS this file only. It reuses
-`webapp.py` / `webtheme.py` / `adapter.py` by IMPORT and never edits them
-(another lane owns those). Mounting is a one-liner -- `register(app, workspace)`
--- so the only residual the orchestrator applies to `webapp.py` is that single
-call plus one nav link (see DONE.json).
+This module OWNS the `/projects/{name}` and `/projects/{name}/items/{item_id}`
+GET routes (mounted by `register`, called from `webapp.create_app` AFTER
+every OTHER route is registered -- see that function's own call site). It
+reuses `webapp.py`/`webtheme.py`/`adapter.py`/`widgets.py`/`chartsvg.py` by
+IMPORT and never edits them (`webapp.py`'s own mutation/POST routes --
+add/update/resolve/rename/remove -- are untouched and still live there).
 
-Design firewall (already shipped in the app; enforced here by referencing the
-existing tokens, never redefining them):
-
-  * Glass/gradient live on CHROME only (the two panes, the selected-row rim);
-    data-ink stays flat and legible.
-  * amber (`--amber`) = alarm and crimson (`--crimson`) = blocked are the ONLY
-    status colors. cyan/purple (`--brand-*`, `--glass-fill-row-selected`) mean
-    interaction/selection, NEVER status.
-  * State is never color-only: a row carries a per-status GLYPH (distinct shape
-    per status) with a text `title`; the detail pane carries the full text badge.
-  * All color/space/type values come from `webtheme.py`'s `:root` custom
-    properties by `var(...)`. This module defines no new tokens.
-
-Correctness contract (goal item #2): the view survives its OWN ~20s
-auto-refresh full-body swap AND any post-mutation redirect that lands on it,
-without a stale-model error and without losing the reader's selection or scroll
-position:
-
-  * Selection lives in the URL (`?item=<id>`), so `webtheme.auto_refresh_js`'s
-    re-fetch of the same URL re-renders the same selection server-side.
-  * Every request reads the item FRESH from bd, so an auto-refresh (or a
-    redirect landing here) never renders a stale model; a vanished/renamed
-    selection degrades to a graceful "not found" detail pane, never a 500.
-  * Scroll position for both panes (and the page) is preserved across the
-    body swap via `window`-scoped variables restored by `browse_js` -- which
-    the auto-refresh swap re-executes on every tick (see its docstring).
-  * Selecting a row is progressively enhanced: the `<a>` works as a plain
-    navigation with JS off; with JS on, `browse_js` swaps ONLY the detail
-    pane (leaving the list DOM -- and its scroll -- untouched) and updates the
-    URL so the next auto-refresh keeps the selection.
+Retired: the v3 split-pane BROWSE view (`/projects/{name}/browse`, and its
+supporting `_row_html`/`render_list_html`/`render_detail_html`/
+`render_browse_body`/`browse_js`) is superseded by this module's own L1
+items list + L2 detail page -- the OLD route now REDIRECTS (302) to its L1/
+L2 equivalent rather than 404ing (see `register`'s `browse_redirect`).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from amplifier_work_tracker import adapter as A
+from amplifier_work_tracker import chartsvg as CH
+from amplifier_work_tracker import webtheme as T
+from amplifier_work_tracker import widgets as WD
 from amplifier_work_tracker.webapp import (
     _AUTO_REFRESH_MS,
+    _OBSERVATORY_THEME_JS,
     _activity_feed_html,
-    _content_block_html,
+    _agent_freshness_label,
+    _compound_duration,
     _crumb,
     _dependency_sections_html,
     _esc,
     _flash,
+    _identity,
     _item_age_html,
     _item_facts_kv_html,
     _item_held_chip_html,
-    _item_state_html,
     _item_time_kv_html,
     _not_found_body,
+    _observatory_help_and_theme_html,
+    _observatory_icon_sprite_html,
+    _observatory_nav_extras_html,
     _page,
+    _pluralize,
     _priority_bar_html,
-    _status_icon_html,
+    _public_error_message,
+    _relative_time,
+    _short_item_id,
+    _velocity_chart_shell_html,
+    _window_days,
 )
 
+#: Python 3.11 forbids a backslash escape (`"\u2014"`) inside an f-string's
+#: `{...}` expression part (that syntax needs 3.12) -- a real constraint of
+#: this repo's supported interpreter, not a style choice. Every "no real
+#: value, show an honest dash" spot inside an f-string template below uses
+#: this pre-built constant instead of an inline escaped literal.
+_EM_DASH = "\u2014"
+
 # ---------------------------------------------------------------------------
-# Namespaced CSS. Every rule references an EXISTING `webtheme.py` token via
-# `var(...)`; nothing here defines or overrides a token. The `.wtb-` prefix
-# keeps this view's structural rules from colliding with any existing class.
+# status tabs -- real `?status=` links (GAUNTLET-SYNTHESIS.md item 6), never
+# client-side JS state. Order matches the mockup's own tab row and the
+# donut/legend's fixed status order.
 # ---------------------------------------------------------------------------
-_BROWSE_CSS = r"""
-.wtb-grid{display:flex;gap:26px;align-items:stretch;margin-top:8px;
-  height:calc(100vh - 176px);min-height:440px}
-/* Glass lives on the pane CHROME only -- the data inside each pane stays flat.
-   `backdrop-filter` + the rim-glow pseudo (below) port the same gallery
-   materials/lighting the overview panels use (visual-fidelity pass); the
-   pane's OWN background/border/radius/shadow are unchanged. */
-.wtb-pane{background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
-  border-radius:var(--radius-lg);box-shadow:var(--glass-shadow-float);
-  backdrop-filter:blur(var(--glass-blur));-webkit-backdrop-filter:blur(var(--glass-blur));
-  display:flex;flex-direction:column;min-height:0;position:relative}
-/* gradient rim-glow -- chrome only, carries no status meaning; see
-   webtheme.py's own `.hero::before` etc for the identical mask-composite
-   technique (kept local here per this module's own no-shared-token-file
-   convention rather than importing a mixin). */
-.wtb-pane::before{
-  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
-  background:var(--brand-gradient-rim);
-  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
-  -webkit-mask-composite:xor;mask-composite:exclude;
-  opacity:.5;pointer-events:none;
+
+_STATUS_TABS: tuple[tuple[str, str], ...] = (
+    ("all", "All"),
+    ("ready", "Ready"),
+    ("held", "Held"),
+    ("blocked", "Blocked"),
+    ("deferred", "Deferred"),
+    ("intake", "Intake"),
+    ("resolved", "Resolved"),
+)
+
+# Our domain status value each tab's `?status=` should filter `bd.list` by --
+# "all"/"ready"/"intake" don't map onto a single raw bd status the way
+# held/blocked/deferred/resolved do (see `adapter._STATUS_MAP_REVERSE`):
+# "ready"/"intake" are both bd's raw `open` status, distinguished only by
+# lane tag, and "all" means no filter at all.
+_TAB_STATUS_FILTER: dict[str, str | None] = {
+    "all": None,
+    "ready": "open",
+    "held": "held",
+    "blocked": "blocked",
+    "deferred": "deferred",
+    "intake": "open",
+    "resolved": "resolved",
 }
-.wtb-list{flex:0 0 clamp(300px,32%,440px)}
-.wtb-detail{flex:1 1 auto;min-width:0}
-.wtb-pane-head{flex:0 0 auto;display:flex;align-items:baseline;justify-content:space-between;
-  gap:10px;padding:15px 20px 12px;border-bottom:1px solid var(--rule)}
-.wtb-count{font-family:var(--serif);font-size:13px;color:var(--dim);
-  font-variant-numeric:tabular-nums}
-.wtb-scroll{flex:1 1 auto;overflow-y:auto;overscroll-behavior:contain}
-.wtb-list .wtb-scroll{padding:6px}
-.wtb-detail .wtb-scroll{padding:22px 26px 40px}
-/* Visible scroll affordance (goal wtv3/finish, task 5): `.wtb-scroll` was
-   already mechanically `overflow-y:auto` (long content DOES scroll), but
-   on several platforms an unstyled scrollbar renders as an invisible
-   overlay -- nothing hints that a long description/timeline continues
-   below the fold, so it reads as clipped even though it isn't. Styling
-   `::-webkit-scrollbar` also has the side effect of switching Chromium
-   away from that invisible-overlay default to a real, always-rendered
-   (while scrollable) thumb -- the fix and the affordance are the same
-   change. `--dim` (not `--glass-hairline*`) is deliberate: measured via a
-   real render, `--glass-hairline`'s rgba alpha (.14/.08 -- tuned for a
-   barely-there PANEL border, sitting beside a brighter rim-glow edge) was
-   verified functionally present (scrollbar-gutter reserved, `scrollbar-
-   color` applied) but too faint to read as a scrollbar at all against the
-   dark glass fill -- exactly the invisible-affordance defect this task
-   exists to fix, just moved from "no scrollbar" to "a scrollbar no one
-   can see". `--dim` is the SAME already-used, contrast-verified ink token
-   `.wtb-count`/`.wtb-age` on this very page already render small print in
-   -- no new token defined here, just a more legible existing one.
-   `scrollbar-gutter:stable` reserves the thumb's width up front so its
-   appearance never shifts the content underneath by a few pixels once a
-   pane becomes scrollable. */
-/* C7 (craft punch list): `--dim` still read as barely-there against the
-   glass panel fill -- the SAME invisible-affordance defect this rule's own
-   comment above already fixed once, just not far enough. `--mid` (one
-   step up the same ink ramp, still <=4.5:1-verified in both schemes) is
-   the next real, legible stop -- hover moves to the strongest step
-   (`--ink`) so the thumb clearly brightens under the pointer. */
-.wtb-scroll{scrollbar-width:thin;scrollbar-color:var(--mid) transparent;
-  scrollbar-gutter:stable}
-.wtb-scroll::-webkit-scrollbar{width:8px}
-.wtb-scroll::-webkit-scrollbar-track{background:transparent}
-.wtb-scroll::-webkit-scrollbar-thumb{background:var(--mid);
-  border-radius:4px;border:2px solid transparent;background-clip:padding-box}
-.wtb-scroll::-webkit-scrollbar-thumb:hover{background:var(--ink)}
-
-/* -- column headers (goal wtv3/components, C2) -- the blend-3 mockup's
-   left-pane column set: Priority . Status . Item ID . Task title .
-   Relative age. Purely a label row over the SAME implicit grid `a.wtb-row`
-   lays out (gutter . main . age) -- "Pri"/"St" label the gutter's two
-   icons, "Item" the id+title stack, "Age" the trailing age. */
-/* C9 (craft punch list): this grid declares 3 tracks (gutter . main . age),
-   mirroring `a.wtb-row`'s own 3-column grid -- but the markup below used to
-   emit 4 flat sibling <span>s ("Pri","St","Item","Age"), so CSS grid
-   auto-placement wrapped the 4th ("Age") onto a new implicit row at column
-   1, instead of landing over the row's actual right-aligned Age column.
-   Nesting "Pri"+"St" inside ONE wrapping span (matching `:first-child`'s
-   existing `display:flex` rule below, which was written for exactly that
-   nesting) restores 3 real top-level items -- gutter/main/age -- so "Age"
-   lands in the grid's 3rd (auto-width, right-hand) track like the data
-   rows' own `.wtb-age`, and `text-align:right` on it now means something. */
-.wtb-col-headers{display:grid;grid-template-columns:auto minmax(0,1fr) auto;
-  column-gap:11px;padding:0 12px 6px;font-family:var(--sans);font-size:9.5px;
-  font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
-.wtb-col-headers span:first-child{display:flex;gap:14px}
-.wtb-col-headers span:last-child{text-align:right}
-
-/* -- list-pane header/footer EXTRA slots (goal wtv3/project-page) -- optional,
-   only rendered when a caller passes them (`render_browse_body`'s
-   `list_header_extra`/`list_footer_html`), so this route's own `/browse`
-   output is byte-identical when it doesn't. `.wtb-list-extra` sits between
-   the "Items N" head and the column headers -- `project_view` renders its
-   status tabs + search field there, reusing those UNCHANGED shared classes
-   (`.tabs`/`.controls`/`.field`), never a second copy. `.wtb-pane-foot` sits
-   BELOW the scrollable list (outside `.wtb-scroll`), so a control placed
-   there (e.g. `project_view`'s existing pagination) never scrolls out of
-   view with the rows above it. */
-/* D3 (consistency pass): this narrow list-pane header previously mixed
-   THREE different vertical rhythms for what should read as one toolbar --
-   `.tabs`'s own row-wrap gap (.25rem), a forced 0 between the tabs block
-   and the search controls below it, and `.controls`'s own 14px gap for
-   its own wrapped sub-rows (the field row vs. the button/count/toggle
-   row it wraps to at this column's ~300-440px width). `display:flex;
-   flex-direction:column;gap:12px` makes ONE value -- not three -- the
-   single source of truth for "space between toolbar blocks"; the tabs'
-   own inter-pill gap and `.controls`'s own inter-field gap are a
-   different, smaller-scale spacing concern and are left alone. */
-.wtb-list-extra{padding:0 20px 14px;display:flex;flex-direction:column;gap:12px}
-.wtb-list-extra .tabs{margin:0}
-.wtb-list-extra .controls{padding:0}
-/* D3 fixup (consistency pass, round 2): the round-1 `gap:12px` only fixed the
-   spacing BETWEEN the tabs/search/controls blocks -- it never touched the two
-   things that actually read as "untidy" inside this narrow (~300-440px) list
-   pane:
-     (a) the search input still SHARED its row with the Search button whenever
-         the pane happened to be wide enough for `.field`'s min-width (240px)
-         + the button to both fit -- leaving the input at ~60-70% width with
-         the button (and a chunk of dead space) beside it. Measured live at a
-         real project width. The desktop base rule (`.field{flex:1;
-         max-width:520px}`) is written for a WIDE full-page controls bar, not
-         a skinny column. Here we force the field to own its whole row
-         (`flex-basis:100%`, cap removed) so the button/count/toggle always
-         wrap cleanly beneath it -- the SAME thing the global <=600px rule
-         already does for phones, applied to this narrow pane at every width.
-     (b) `.controls`' own inter-row gap was still its desktop 14px while the
-         blocks around it use 12px -- one value now, so the whole toolbar
-         reads on a single vertical rhythm.
-   Also tighten the status-tab pills (smaller pad + gap) so 6 tabs read as one
-   compact block instead of sprawling across three ragged lines. */
-/* The search field owns its OWN full-width row, with the Search button + count
-   + density toggle wrapping onto ONE compact row beneath it. `column-gap` for
-   inter-item spacing, a small `row-gap` for the wrap -- NOT the 12px block gap,
-   which (via an `::after` full-height spacer) made the header tall enough to
-   push the button past the fixed-height pane's bottom edge. The field spans the
-   row via `flex-basis:100%`; a zero-height full-basis `::after` forces the wrap
-   without adding its own row height. */
-.wtb-list-extra .controls{column-gap:12px;row-gap:8px}
-.wtb-list-extra .controls .field{flex:1 1 100%;min-width:0;max-width:none;order:0}
-.wtb-list-extra .controls::after{content:"";flex:1 1 100%;height:0;margin:0;order:1}
-.wtb-list-extra .controls>:not(.field){order:2;flex:0 0 auto}
-.wtb-list-extra .tabs{gap:6px}
-.wtb-list-extra .tabs .tab{padding:6px 12px}
-.wtb-pane-foot{flex:0 0 auto;padding:10px 20px;border-top:1px solid var(--rule)}
-.wtb-pane-foot .pagination{margin:0}
-
-/* -- optional third row-line: a held/custody reading (goal wtv3/project-page,
-   task 2 -- "held custody / staleness readings...brought to standard"). Reuses
-   the SAME `.held-custody`/`.stale`/`.fresh` tokens the item-detail pane and
-   the (retired) table row already render via `_custody_html` -- no new
-   status vocabulary, just a smaller stacked line under the title/id. Absent
-   for every non-held row (see `_row_html`'s `extra_html=""` default). */
-.wtb-holder{display:block;margin-top:1px;font-family:var(--sans);font-size:11px;
-  color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-
-/* -- density toggle (goal wtv3/project-page): the SAME `body.density-compact`
-   class `webtheme.list_controls_js` already toggles workspace-wide -- this
-   view just supplies its OWN compact values for its OWN squircle-row
-   geometry (webtheme.py's `.tbl` rules do not apply to `a.wtb-row`, a
-   different element entirely). */
-body.density-compact .wtb-row{padding:5px 12px;min-height:0}
-body.density-compact .wtb-rows{gap:3px}
-body.density-compact .wtb-title{font-size:12.5px}
-body.density-compact .wtb-id,body.density-compact .wtb-age{font-size:10px}
-body.density-compact .wtb-pane-head{padding:10px 16px 8px}
-
-/* -- keyboard-nav highlight (goal wtv3/project-page): `webtheme.
-   list_controls_js`'s shared `j`/`k`/`Enter` row navigation now also
-   targets `a.wtb-row[data-t]` (see that function's own comment) and toggles
-   the SAME `.kbd-sel` class the item table's `tr.kbd-sel` already uses.
-   Only the box-shadow ring is added here (not a background override): a
-   selected row's own `.selected` background wash must still show through
-   when both classes land on the same row at once. */
-a.wtb-row.kbd-sel{box-shadow:inset 0 0 0 1px var(--rule-hi)}
-
-/* -- list rows -- squircle glass cards (visual-fidelity pass, gap 4): each
-   row is its own rounded glass-fill card with real spacing between rows,
-   the same "row-list" language the needs-you queue and the design system
-   gallery both use, rather than a flush 1px-gap flat list. */
-.wtb-rows{display:flex;flex-direction:column;gap:6px}
-a.wtb-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;column-gap:11px;
-  align-items:center;padding:9px 12px;border-radius:var(--radius-md);position:relative;
-  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
-  text-decoration:none;color:var(--mid);min-height:var(--u)}
-a.wtb-row:hover{background:var(--glass-fill-row-hover);color:var(--ink)}
-/* cyan wash = SELECTION (interaction), never a status color -- the same token
-   the rest of the app uses for a selected row. */
-a.wtb-row.selected{background:var(--glass-fill-row-selected);color:var(--ink)}
-a.wtb-row.selected::before{content:"";position:absolute;left:-1px;top:8px;bottom:8px;
-  width:2px;border-radius:1px;background:var(--brand-gradient-rim)}
-.wtb-gutter{display:inline-flex;align-items:center;gap:6px}
-.wtb-main{display:flex;flex-direction:column;gap:3px;min-width:0}
-.wtb-title{font-family:var(--sans);font-size:13.5px;font-weight:500;color:var(--ink);
-  letter-spacing:-.004em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wtb-id{font-family:var(--mono);font-size:11px;color:var(--dim);
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wtb-age{font-family:var(--serif);font-size:12px;color:var(--dim);
-  font-variant-numeric:tabular-nums;white-space:nowrap;justify-self:end}
-
-/* -- detail pane -- */
-.wtb-idline{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.wtb-idline .muted{font-family:var(--mono);font-size:12px}
-.wtb-dt{font-family:var(--sans);font-size:20px;font-weight:500;letter-spacing:-.008em;
-  color:var(--ink);margin:14px 0 0;max-width:72ch}
-.wtb-open{margin-left:auto;font-family:var(--sans);font-size:12px;
-  color:var(--brand-cyan-ink);text-decoration:none;border-bottom:1px solid var(--link-underline)}
-.wtb-open:hover{color:var(--brand-cyan-ink)}
-.wtb-label{display:block;margin:28px 0 8px;font-family:var(--sans);font-size:10px;
-  font-weight:500;letter-spacing:.26em;text-transform:uppercase;color:var(--mid);line-height:1.5}
-.wtb-label.am{color:var(--amber)}
-.wtb-empty{display:flex;height:100%;min-height:220px;align-items:center;justify-content:center;
-  text-align:center;color:var(--dim);padding:36px;max-width:46ch;margin:0 auto}
-
-/* Narrow viewports: stack the panes and let the page scroll. Height/overflow
-   are relaxed so neither pane is a cramped fixed box on a phone. No JS toggle
-   -- a pure media-query reflow, so nothing here can fight the body swap. */
-@media (max-width:860px){
-  .wtb-grid{flex-direction:column;height:auto;gap:16px}
-  .wtb-list{flex:none;width:auto}
-  .wtb-list .wtb-scroll{max-height:46vh}
-  .wtb-detail{overflow:visible}
-  .wtb-detail .wtb-scroll{overflow:visible}
-}
-"""
 
 
-def browse_js() -> str:
-    """Client script for the browse view. `_page` appends
-    `webtheme.auto_refresh_js` after this, in the SAME `<script>` element, and
-    the auto-refresh body swap re-executes every `<script>` in the replaced
-    body -- so this runs on first load AND again after each 20s swap. That
-    re-run is exactly what restores scroll and keeps the selection highlight
-    after the DOM has been replaced.
-
-    Two jobs:
-
-    1. Scroll survival. `window` survives the body swap (only
-       `document.body.innerHTML` is replaced), so per-pane scroll offsets and
-       the page scroll are stashed on `window` and restored here after the
-       swap. The window-level scroll listener is bound once (guard flag);
-       per-pane listeners re-bind harmlessly onto the fresh pane elements each
-       run (the old elements, and their listeners, are discarded with the old
-       body).
-
-    2. Progressive-enhancement selection. A plain click on a row `<a>` fetches
-       the same URL, swaps ONLY `#browse-detail` (leaving the list DOM and its
-       scroll untouched), moves the `.selected` highlight, and updates the URL
-       via `replaceState` so the next auto-refresh re-fetch keeps the
-       selection. Modifier/middle clicks fall through to normal open-in-new-tab
-       behavior; any fetch failure falls back to a full navigation.
-    """
-    return r"""
-(function(){
-  var W = window;
-  function byId(id){ return document.getElementById(id); }
-
-  // -- 1. scroll survival across the auto-refresh body swap --
-  if (!W.__wtBrowseWinBound) {
-    W.__wtBrowseWinBound = true;
-    W.addEventListener('scroll', function(){ W.__wtBrowseWinScroll = W.scrollY; }, {passive:true});
-  }
-  var listEl = byId('browse-list');
-  if (listEl) {
-    listEl.addEventListener('scroll', function(){
-      W.__wtBrowseListScroll = listEl.scrollTop;
-    }, {passive:true});
-    if (W.__wtBrowseListScroll != null) listEl.scrollTop = W.__wtBrowseListScroll;
-  }
-  var detailEl = byId('browse-detail');
-  if (detailEl) {
-    detailEl.addEventListener('scroll', function(){
-      W.__wtBrowseDetailScroll = detailEl.scrollTop;
-    }, {passive:true});
-    if (W.__wtBrowseDetailScroll != null) detailEl.scrollTop = W.__wtBrowseDetailScroll;
-  }
-  if (W.__wtBrowseWinScroll != null) W.scrollTo(0, W.__wtBrowseWinScroll);
-
-  // -- 2. select a row without a full reload (keeps list scroll) --
-  if (listEl) {
-    listEl.addEventListener('click', function(ev){
-      var a = ev.target && ev.target.closest ? ev.target.closest('a.wtb-row') : null;
-      if (!a) return;
-      if (ev.defaultPrevented) return;
-      if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button === 1) return;
-      ev.preventDefault();
-      var url = a.getAttribute('href');
-      fetch(url, {credentials:'same-origin', headers:{'X-Requested-With':'wt-browse-select'}})
-        .then(function(r){ return r.ok ? r.text() : null; })
-        .then(function(html){
-          if (!html) { W.location.href = url; return; }
-          var parsed = new DOMParser().parseFromString(html, 'text/html');
-          var fresh = parsed.getElementById('browse-detail');
-          var cur = byId('browse-detail');
-          if (fresh && cur) {
-            cur.innerHTML = fresh.innerHTML;
-            cur.scrollTop = 0;
-            W.__wtBrowseDetailScroll = 0;
-          }
-          var prev = listEl.querySelectorAll('a.wtb-row.selected');
-          for (var i = 0; i < prev.length; i++) {
-            prev[i].classList.remove('selected');
-            prev[i].removeAttribute('aria-current');
-          }
-          a.classList.add('selected');
-          a.setAttribute('aria-current', 'true');
-          if (W.history && W.history.replaceState) W.history.replaceState(null, '', url);
-        })
-        .catch(function(){ W.location.href = url; });
-    });
-  }
-})();
-"""
+def _status_tab_counts(summary: A.ProjectSummary) -> dict[str, int]:
+    if summary.status != A.STATUS_OK:
+        return dict.fromkeys((k for k, _ in _STATUS_TABS), 0)
+    return {
+        "all": summary.total or 0,
+        "ready": summary.ready or 0,
+        "held": summary.held or 0,
+        "blocked": summary.blocked or 0,
+        "deferred": summary.deferred or 0,
+        "intake": summary.intake or 0,
+        "resolved": summary.resolved or 0,
+    }
 
 
-def _row_html(
-    name: str,
-    item: A.Item,
-    *,
-    selected: bool,
-    href: str | None = None,
-    extra_html: str = "",
-) -> str:
-    """One list row: priority tick + status glyph (gutter), title, mono id, and
-    relative age. The whole row is the selection link (`?item=<id>` by default).
-
-    `href` lets a caller (e.g. `project_view`'s split-pane, goal wtv3/
-    project-page) point the row at its OWN selection URL -- preserving
-    query params this module knows nothing about (`?status=`/`?q=`/`?page=`)
-    -- instead of this route's own `/browse?item=`. `extra_html`, when
-    given, renders as a third stacked line inside `.wtb-main` (e.g. a held/
-    custody reading) -- both default to the exact prior behavior so the
-    `/browse` route itself is byte-for-byte unchanged.
-    """
-    prefix = f"{name}-"
-    id_shown = item.id[len(prefix) :] if item.id.startswith(prefix) else item.id
-    # Same searchable key vocabulary the item table's own rows use, so a future
-    # `data-t` client filter (or a test) can match on id/title/status/holder.
-    key = f"{item.id} {item.title} {item.status} {item.holder or ''}".lower()
-    gutter = _priority_bar_html(item.priority) + _status_icon_html(item.status)
-    title = _esc(item.title) or "&mdash;"
-    # v3 firewall polish: this IS the item-table Age column (the old,
-    # now-dead `_item_row`/.tbl component's replacement) -- amber-as-
-    # neglect is legitimate here ONLY for a genuinely ready/unclaimed
-    # item (matches `_item_row`'s own historical `if i.status == "open"
-    # else "a0"` gate); a held/blocked/deferred/resolved row's age is a
-    # calm fact, never an alarm.
-    age = _item_age_html(item.created_at, alarm_eligible=(item.status == "open"))
-    row_href = href if href is not None else f"/projects/{_esc(name)}/browse?item={quote(item.id)}"
-    sel_cls = " selected" if selected else ""
-    aria = ' aria-current="true"' if selected else ""
-    extra = f'<span class="wtb-holder">{extra_html}</span>' if extra_html else ""
-    return (
-        f'<a class="wtb-row{sel_cls}" role="listitem" href="{row_href}" '
-        f'data-t="{_esc(key)}"{aria}>'
-        f'<span class="wtb-gutter">{gutter}</span>'
-        f'<span class="wtb-main">'
-        f'<span class="wtb-title">{title}</span>'
-        f'<span class="wtb-id" title="{_esc(item.id)}">{_esc(id_shown)}</span>'
-        f"{extra}"
-        f"</span>"
-        f'<span class="wtb-age">{age}</span>'
-        f"</a>"
-    )
-
-
-def render_list_html(
-    name: str,
-    items: list[A.Item],
-    selected_id: str | None,
-    *,
-    href_builder: Callable[[A.Item], str] | None = None,
-    row_extra_builder: Callable[[A.Item], str] | None = None,
-    empty_html: str | None = None,
-) -> str:
-    """The left pane's scrollable list body.
-
-    `href_builder`/`row_extra_builder`/`empty_html` are the same optional
-    generalization hooks `render_browse_body` documents -- all default to
-    `None`, which reproduces this route's original, unparameterized output
-    exactly.
-    """
-    if not items:
-        if empty_html is not None:
-            return empty_html
-        return '<div class="wtb-empty"><p>No work items in this project yet.</p></div>'
-    rows = "".join(
-        _row_html(
-            name,
-            i,
-            selected=(i.id == selected_id),
-            href=href_builder(i) if href_builder else None,
-            extra_html=row_extra_builder(i) if row_extra_builder else "",
+def _status_tabs_html(name: str, status: str, counts: dict[str, int]) -> str:
+    tabs = []
+    for key, label in _STATUS_TABS:
+        active = " is-active" if key == status else ""
+        blocked_cls = " tab-blocked" if key == "blocked" else ""
+        dot = '<span class="dot"></span> ' if key == "blocked" else ""
+        title = (
+            ' title="Newly filed, not yet triaged into ready or deferred"'
+            if key == "intake"
+            else ""
         )
-        for i in items
+        tabs.append(
+            f'<a href="/projects/{quote(name)}?status={quote(key)}" '
+            f'class="status-tab{blocked_cls}{active}"{title}>{dot}{_esc(label)} '
+            f'<span style="opacity:.7">{counts.get(key, 0)}</span></a>'
+        )
+    return f'<div class="status-tabs">{"".join(tabs)}</div>'
+
+
+# ---------------------------------------------------------------------------
+# items list -- L1's own `.item-row` grid (status chip, priority chip,
+# name+id, holder, age, chevron) -- links straight to L2, no split-pane
+# selection state.
+# ---------------------------------------------------------------------------
+
+_ITEM_STATUS_CHIP_CLASS: dict[str, str] = {
+    "open": "st-ready",
+    "held": "st-held",
+    "blocked": "st-blocked",
+    "deferred": "st-deferred",
+    "resolved": "st-resolved",
+}
+_ITEM_STATUS_CHIP_LABEL: dict[str, str] = {
+    "open": "READY",
+    "held": "HELD",
+    "blocked": "BLOCKED",
+    "deferred": "DEFERRED",
+    "resolved": "RESOLVED",
+}
+
+
+def _item_row_html(name: str, item: A.Item) -> str:
+    status_cls = _ITEM_STATUS_CHIP_CLASS.get(item.status, "st-ready")
+    status_label = _ITEM_STATUS_CHIP_LABEL.get(item.status, item.status.upper())
+    priority_chip = _priority_bar_html(item.priority)
+    short_id = _short_item_id(name, item.id)
+    holder_html = "unclaimed"
+    if item.status == "held" and item.holder:
+        holder_html = _esc(item.holder)
+    elif item.status == "blocked":
+        active = [b for b in item.links if b.get("type") == "blocks" and b.get("blocking")]
+        holder_html = f"blocked by {_esc(active[0]['id'])}" if active else "blocked, no owner"
+    elif item.holder:
+        holder_html = _esc(item.holder)
+    else:
+        holder_html = "\u2014"
+    now = datetime.now(UTC)
+    basis = {"open": item.created_at, "held": item.updated_at, "resolved": item.closed_at}.get(
+        item.status, item.updated_at
     )
-    return f'<div class="wtb-rows" role="list">{rows}</div>'
+    age_label = _compound_duration((now - basis).total_seconds()) if basis else "\u2014"
+    href = f"/projects/{quote(name)}/items/{quote(item.id)}"
+    return (
+        f'<a href="{_esc(href)}" class="item-row">'
+        f'<span class="status-chip {status_cls}">{_esc(status_label)}</span>'
+        f"{priority_chip}"
+        f'<span class="name"><span class="id">{_esc(short_id)}</span>{_esc(item.title)}</span>'
+        f'<span class="holder">{holder_html}</span>'
+        f'<span class="age">{_esc(age_label)}</span>'
+        '<span class="icon sm chev"><svg><use href="#i-chevron"/></svg></span>'
+        "</a>"
+    )
 
 
-def render_detail_html(
-    name: str,
-    item: A.Item | None,
-    activity: list[A.ActivityEvent],
-    *,
-    detail_error: str | None = None,
-) -> str:
-    """The right pane's read-only detail for the selected item.
+# ---------------------------------------------------------------------------
+# agents panel -- group `A.project_agents`' one-row-per-held-item rows by
+# agent (that function is already sorted stale-first-then-freshness, so the
+# FIRST row seen for a given agent is either its stalest hold or -- if it
+# has no stale hold at all -- its freshest).
+# ---------------------------------------------------------------------------
 
-    Read-only ON PURPOSE: this view enables `auto_refresh_ms`, and the app's
-    own convention (see `webapp._page`'s docstring) is to never ship the
-    self-polling body-swap to a page carrying a live, unsaved edit form. The
-    editable form stays on the canonical item page, reachable here via the
-    "Open full item" link.
-    """
-    if item is None:
-        if detail_error:
-            return (
-                '<div class="wtb-empty"><p><strong>'
-                f"{_esc(detail_error)}</strong> could not be found. It may have been "
-                "removed or renamed. Select another item from the list.</p></div>"
+
+def _agent_panel_rows(name: str, rows: list[dict]) -> list[WD.AgentPanelRow]:
+    held_counts: dict[str, int] = {}
+    first_row: dict[str, dict] = {}
+    for r in rows:
+        agent = r["agent"]
+        held_counts[agent] = held_counts.get(agent, 0) + 1
+        first_row.setdefault(agent, r)
+    out: list[WD.AgentPanelRow] = []
+    for agent, r in first_row.items():
+        out.append(
+            WD.AgentPanelRow(
+                agent_id=agent,
+                held_count=held_counts[agent],
+                recent_kind="stalest" if r["stale"] else "latest",
+                recent_item_id=_short_item_id(name, r["item_id"]),
+                freshness_label=_agent_freshness_label(r),
+                is_stale=r["stale"],
+                href=f"/projects/{quote(name)}/items/{quote(r['item_id'])}",
             )
-        return (
-            '<div class="wtb-empty"><p>Select a work item from the list to see its '
-            "fields, blocker chain, and activity timeline.</p></div>"
         )
+    return out
 
-    # D5 (consistency pass): facts/timestamps/held-chip are now the SAME
-    # shared builders the standalone item-detail page calls
-    # (`_item_facts_kv_html`/`_item_time_kv_html`/`_item_held_chip_html`,
-    # defined in webapp.py) -- one computation, not two independently-
-    # drifting copies of the same three things.
-    held_chip = _item_held_chip_html(item)
-    facts_kv = _item_facts_kv_html(name, item)
-    time_kv = _item_time_kv_html(item)
 
-    description = _content_block_html(item.description, empty_message="No description provided.")
-    acceptance = _content_block_html(
-        item.acceptance, empty_message="No acceptance criteria provided."
-    )
-    design = _content_block_html(item.design, empty_message="No design notes provided.")
+# ---------------------------------------------------------------------------
+# ready-age histogram
+# ---------------------------------------------------------------------------
 
-    resolution_html = ""
-    if item.status == "resolved" and item.resolution:
-        resolution_html = (
-            '<span class="wtb-label am">Resolution</span>'
-            f'<div class="content-block">{_esc(item.resolution)}</div>'
+_READY_AGE_LABELS: dict[str, str] = {"0-1": "0-1d", "2-3": "2-3d", "4-6": "4-6d", "7+": "7+d"}
+
+
+def _ready_age_histogram_data(
+    summary: A.ProjectSummary, reopened: int, window: str
+) -> WD.ReadyAgeHistogramData:
+    buckets_raw = summary.ready_age_buckets or {}
+    buckets = [
+        CH.AgeBucket(label=label, count=buckets_raw.get(key, 0), is_watch=(key == "7+"))
+        for key, label in _READY_AGE_LABELS.items()
+    ]
+    ready_total = summary.ready or 0
+    aging = buckets_raw.get("7+", 0)
+    parts = []
+    if aging:
+        parts.append(
+            f"7+ day bucket flagged \u2014 {_pluralize(aging, 'item')} aging past the point "
+            "they'd surface in the global attention queue."
         )
-
-    links_html = _dependency_sections_html(name, item.links)
-    activity_html = _activity_feed_html(activity)
-    open_href = f"/projects/{_esc(name)}/items/{quote(item.id)}"
-
-    return (
-        '<div class="wtb-idline">'
-        f'<span class="muted">{_esc(item.id)}</span>'
-        f"{_item_state_html(item.status)}"
-        f"{held_chip}"
-        f'<a class="wtb-open" href="{open_href}">Open full item &rarr;</a>'
-        "</div>"
-        f'<h2 class="wtb-dt">{_esc(item.title)}</h2>'
-        f'<div class="kv" style="margin-top:16px">{facts_kv}</div>'
-        f'<div class="kv" style="margin-top:10px">{time_kv}</div>'
-        f'<span class="wtb-label">Description</span>{description}'
-        f'<span class="wtb-label">Acceptance criteria</span>{acceptance}'
-        f'<span class="wtb-label">Design notes</span>{design}'
-        f"{resolution_html}"
-        f"{links_html}"
-        f"{activity_html}"
-    )
-
-
-def render_browse_body(
-    name: str,
-    items: list[A.Item],
-    selected_item: A.Item | None,
-    activity: list[A.ActivityEvent],
-    *,
-    selected_id: str | None = None,
-    detail_error: str | None = None,
-    flash_html: str = "",
-    list_header_extra: str = "",
-    list_footer_html: str = "",
-    href_builder: Callable[[A.Item], str] | None = None,
-    row_extra_builder: Callable[[A.Item], str] | None = None,
-    empty_html: str | None = None,
-) -> str:
-    """The full split-pane body: `<style>` + list pane + detail pane.
-
-    This is the SHARED split-pane machinery -- goal wtv3/project-page reuses
-    it verbatim for `project_view`'s own list+detail layout rather than a
-    second, drift-prone copy (see that route's own comment for why reuse
-    won over recreate). Every new parameter below is optional and defaults
-    to exactly the prior behavior, so this route's OWN `/browse` output is
-    byte-for-byte unchanged when called with none of them:
-
-      * `list_header_extra` -- extra markup rendered inside the list pane's
-        head, below the "Items N" count and above the column headers (e.g.
-        `project_view`'s status tabs + search field). Wrapped in its own
-        `.wtb-list-extra` div so it gets sensible spacing without a caller
-        needing to know this pane's own padding.
-      * `list_footer_html` -- extra markup rendered BELOW the scrollable
-        list (e.g. `project_view`'s existing pagination control) -- outside
-        `.wtb-scroll`, so it never scrolls out of view. Wrapped in
-        `.wtb-pane-foot`, absent entirely when not given (so `class=
-        "pagination"` truly never appears when there is nothing to
-        paginate, matching the pre-existing pagination-reachability
-        contract).
-      * `href_builder`/`row_extra_builder`/`empty_html` -- threaded straight
-        through to `render_list_html` (see its own docstring).
-
-    The two `id="browse-list"` / `id="browse-detail"` scroll containers are the
-    stable hooks `browse_js` keys its scroll-preservation and detail-swap on --
-    keep those ids if the markup changes.
-    """
-    list_html = render_list_html(
-        name,
-        items,
-        selected_id,
-        href_builder=href_builder,
-        row_extra_builder=row_extra_builder,
-        empty_html=empty_html,
-    )
-    detail_html = render_detail_html(name, selected_item, activity, detail_error=detail_error)
-    header_extra = (
-        f'<div class="wtb-list-extra">{list_header_extra}</div>' if list_header_extra else ""
-    )
-    footer = f'<div class="wtb-pane-foot">{list_footer_html}</div>' if list_footer_html else ""
-    return (
-        f"<style>{_BROWSE_CSS}</style>"
-        f"{flash_html}"
-        '<div class="wtb-grid">'
-        '<section class="wtb-pane wtb-list" aria-label="Work items">'
-        '<div class="wtb-pane-head"><span class="eyebrow">Items</span>'
-        f'<span class="wtb-count">{len(items)}</span></div>'
-        f"{header_extra}"
-        # C2 (goal wtv3/components): the blend-3 mockup's exact left-pane
-        # column set -- Priority . Status . Item ID . Task title . Relative
-        # age -- ported from the approved gallery's own `.col-headers`
-        # (design-system.html #list-detail). Purely a labelling row over
-        # the SAME grid `a.wtb-row` already lays out; no new data.
-        '<div class="wtb-col-headers" aria-hidden="true">'
-        "<span>Pri</span><span>St</span><span>Item</span><span>Age</span>"
-        "</div>"
-        f'<div class="wtb-scroll" id="browse-list">{list_html}</div>'
-        f"{footer}"
-        "</section>"
-        '<section class="wtb-pane wtb-detail" aria-label="Item detail">'
-        f'<div class="wtb-scroll" id="browse-detail">{detail_html}</div>'
-        "</section>"
-        "</div>"
+    parts.append(f"Reopened after resolve, {window}: {reopened}.")
+    return WD.ReadyAgeHistogramData(
+        buckets=buckets,
+        ready_total=ready_total,
+        aria_label=f"Ready item age histogram, {len(buckets)} buckets",
+        flagged_note=" ".join(parts),
     )
 
 
 def register(app: FastAPI, workspace: A.Workspace) -> None:
-    """Mount the browse route onto an existing FastAPI app.
-
-    Matches `webapp.create_app`'s idiom exactly: the handler closes over
-    `workspace` (rather than using `Depends`/`app.state`). Call this once inside
-    `create_app`, after `workspace` is in scope -- that single call is the only
-    residual this module needs applied to `webapp.py`.
-    """
+    """Mount L1 (`/projects/{name}`) and L2
+    (`/projects/{name}/items/{item_id}`) onto an existing FastAPI app, plus
+    a redirect for the retired `/projects/{name}/browse` split-pane view.
+    Matches `webapp.create_app`'s idiom exactly: handlers close over
+    `workspace`. Called ONCE, at the end of `create_app`, AFTER every other
+    route -- this is what lets these two paths win the route match (no
+    other handler in `webapp.py` registers them anymore)."""
 
     @app.get("/projects/{name}/browse", response_class=HTMLResponse)
-    async def browse(request: Request, name: str) -> HTMLResponse:
-        selected_id = request.query_params.get("item") or None
+    async def browse_redirect(request: Request, name: str):  # type: ignore[no-untyped-def]
+        """The retired v3 split-pane view. `?item=` (its own selection
+        param) redirects straight to that item's L2 page; otherwise to L1."""
+        item = request.query_params.get("item")
+        if item:
+            return RedirectResponse(
+                url=f"/projects/{quote(name)}/items/{quote(item)}", status_code=302
+            )
+        return RedirectResponse(url=f"/projects/{quote(name)}", status_code=302)
+
+    # ----------------------------------------------------------- L1: project
+
+    @app.get("/projects/{name}", response_class=HTMLResponse)
+    async def project_view(request: Request, name: str):  # type: ignore[no-untyped-def]
         try:
             bd = workspace.project(name)
         except A.BeadsError:
             return _page(
                 request,
-                f"{name} \u00b7 browse",
-                _not_found_body(heading=name, back_href="/", back_label="all projects"),
-                crumb_html=_crumb(("/", "All projects"), ("", name)),
+                name,
+                _not_found_body(heading=name, back_href="/", back_label="Mission Control"),
+                crumb_html=_crumb(("/", "Mission Control")),
+                body_class="wt-observatory",
+                extra_nav_html=_observatory_help_and_theme_html(),
             )
 
-        # Fresh read every request -- so an auto-refresh tick (or a redirect
-        # landing here) never renders a stale model.
+        summary = A.project_summary(workspace, name)
+        crumb = _crumb(("/", "Mission Control"), ("", name))
+        if summary.status != A.STATUS_OK:
+            heading = {
+                A.STATUS_CREATING: "This project is still being created.",
+                A.STATUS_BROKEN: "This project's creation never finished.",
+            }.get(summary.status, summary.status)
+            body = (
+                f"{_observatory_icon_sprite_html()}"
+                '<div class="container">'
+                f"{_flash(request)}"
+                f'<div class="glass-panel strong hero is-alarm"><div class="verdict">'
+                f'<span class="icon"><svg><use href="#i-alert-triangle"/></svg></span> '
+                f"{_esc(heading)}</div></div></div>"
+            )
+            return _page(
+                request,
+                name,
+                body,
+                crumb_html=crumb,
+                body_class="wt-observatory",
+                extra_nav_html=_observatory_help_and_theme_html(),
+                nav_project=name,
+            )
+
+        window, days = _window_days(request.query_params.get("window"))
+        status = request.query_params.get("status") or "all"
+        q = (request.query_params.get("q") or "").strip()
+
         try:
-            items = bd.list(include_resolved=True, limit=0)
-        except A.BeadsError:
-            items = []
+            status_filter = _TAB_STATUS_FILTER.get(status)
+            all_matching = bd.list(status=status_filter, include_resolved=True, limit=0)
+            if status == "ready":
+                all_matching = [i for i in all_matching if A.LANE_WORK in i.tags]
+            elif status == "intake":
+                all_matching = [i for i in all_matching if A.LANE_INTAKE in i.tags]
+        except A.BeadsError as e:
+            body = (
+                f"{_flash(request)}<h1>{_esc(name)}</h1>"
+                f'<div class="flash flash-error">{_esc(_public_error_message(e))}</div>'
+            )
+            return _page(request, name, body, crumb_html=crumb, nav_project=name)
 
-        selected_item: A.Item | None = None
-        activity: list[A.ActivityEvent] = []
-        detail_error: str | None = None
-        if selected_id:
-            try:
-                selected_item = bd.get(selected_id, with_links=True)
-            except A.BeadsError:
-                selected_item = None
-                detail_error = selected_id
-            if selected_item is not None:
-                try:
-                    activity = bd.activity(selected_item.id)
-                except A.BeadsError:
-                    activity = []
+        if q:
+            needle = q.lower()
+            all_matching = [
+                i
+                for i in all_matching
+                if needle in f"{i.id} {i.title} {i.status} {i.holder or ''}".lower()
+            ]
+        all_matching.sort(key=lambda i: i.updated_at or i.created_at or datetime.min, reverse=True)
+        page_size = A.LIST_DEFAULT_LIMIT
+        try:
+            page = max(1, int(request.query_params.get("page", "1")))
+        except ValueError:
+            page = 1
+        total_pages = max(1, -(-len(all_matching) // page_size))
+        page = min(page, total_pages)
+        offset = (page - 1) * page_size
+        shown = all_matching[offset : offset + page_size]
 
-        body = render_browse_body(
-            name,
-            items,
-            selected_item,
-            activity,
-            selected_id=selected_id,
-            detail_error=detail_error,
-            flash_html=_flash(request),
+        agent_rows_raw = A.project_agents(name)
+        agents_active_count = len({r["agent"] for r in agent_rows_raw})
+
+        velocity_days = A.velocity_series(name, days=days)
+        velocity_windows_data = A.velocity_windows(name, days=days)
+        reopened = A.reopened_count(name, days=days)
+
+        # NOT `summary.held_stale`: `project_summary`'s items come from
+        # `_summary_items_via_sql`, whose own column projection
+        # (`_SUMMARY_ITEM_COLUMNS`) never selects `metadata` -- so
+        # `held_stale` always reads every held item as stale (no custody
+        # record found), regardless of real freshness. `agent_rows_raw`
+        # (`A.project_agents`, already fetched above for the agents panel)
+        # reads via `_list_rows_via_sql`, which DOES select `metadata`, so
+        # its own `stale` flag (`custody.reclaim_eligible` against the
+        # REAL record) is the trustworthy source for this count.
+        stale_count = sum(1 for r in agent_rows_raw if r["stale"])
+        blocked_count = summary.blocked or 0
+        aging_count = (summary.ready_age_buckets or {}).get("7+", 0)
+        reasons: list[str] = []
+        if stale_count:
+            reasons.append(f"{_pluralize(stale_count, 'claim')} sitting past custody TTL")
+        if blocked_count:
+            reasons.append(f"{_pluralize(blocked_count, 'item')} blocked")
+        if aging_count:
+            reasons.append(f"{_pluralize(aging_count, 'ready item')} aging past 6 days")
+
+        cur = velocity_windows_data["current"]
+        verdict = WD.verdict_line(
+            WD.VerdictLineData(
+                scope="project",
+                attention_count=stale_count + blocked_count + aging_count,
+                reasons=reasons,
+                agents_active=agents_active_count,
+                resolved_count=cur["resolved"],
+                resolved_period_label=window,
+                created_count=cur["created"],
+            )
         )
-        crumb = _crumb(("/", "All projects"), (f"/projects/{name}", name), ("", "browse"))
+        oldest_ready_label = (
+            f"{int((summary.oldest_unclaimed_age_seconds or 0) // 86400)}d"
+            if summary.oldest_unclaimed_age_seconds is not None
+            else "\u2014"
+        )
+        hero_html = WD.render_verdict_hero(
+            WD.VerdictHeroData(
+                state=verdict["state"],
+                eyebrow=f"Project verdict \u00b7 {name}",
+                headline=verdict["headline"],
+                detail_html=verdict["detail_html"],
+                meta_row=[
+                    WD.MetaCell(k="Total items", v=str(summary.total or 0)),
+                    WD.MetaCell(k="Resolved 24h", v=str(summary.resolved_24h or 0)),
+                    WD.MetaCell(k="Oldest ready", v=oldest_ready_label),
+                    WD.MetaCell(
+                        k="Last activity",
+                        v=_relative_time(summary.last_activity)
+                        if summary.last_activity
+                        else _EM_DASH,
+                    ),
+                ],
+            )
+        )
+
+        status_donut_html = WD.render_status_breakdown(
+            WD.StatusBreakdownData(
+                counts=CH.StatusCounts(
+                    resolved=summary.resolved or 0,
+                    ready=summary.ready or 0,
+                    held=summary.held or 0,
+                    intake=summary.intake or 0,
+                    deferred=summary.deferred or 0,
+                    blocked=summary.blocked or 0,
+                ),
+                total=summary.total or 0,
+                aria_label=f"Status mix donut, {summary.total or 0} total items",
+            )
+        )
+        ready_age_html = WD.render_ready_age_histogram(
+            _ready_age_histogram_data(summary, reopened, window)
+        )
+        velocity_html = _velocity_chart_shell_html(
+            # Raw text, NOT pre-escaped: `_velocity_chart_shell_html` HTML-escapes
+            # `title` itself (once) when it renders the `<h3>` -- pre-encoding the
+            # "&" here as `&amp;` made that single escaping pass double-encode it
+            # to `&amp;amp;` (DOM-measured defect: heading rendered literally as
+            # "Velocity &amp; burn -- cortex"). One escaping layer, at the sink.
+            title=f"Velocity & burn \u2014 {name}",
+            base_href=f"/projects/{quote(name)}",
+            window=window,
+            days_data=velocity_days,
+            windows=velocity_windows_data,
+            reopened=reopened,
+            aria_label=f"{name} resolved vs created per day, last {days} days",
+        )
+        agents_panel_html = WD.render_agents_panel(
+            WD.AgentsPanelData(
+                rows=_agent_panel_rows(name, agent_rows_raw),
+                active_count=agents_active_count,
+                held_count=summary.held or 0,
+            )
+        )
+
+        items_html = "".join(_item_row_html(name, i) for i in shown)
+
+        def _page_href(p: int) -> str:
+            parts = [f"status={quote(status)}"]
+            if q:
+                parts.append(f"q={quote(q)}")
+            parts.append(f"page={p}")
+            return f"/projects/{quote(name)}?{'&'.join(parts)}"
+
+        pagination_html = ""
+        if total_pages > 1:
+            links = []
+            if page > 1:
+                links.append(f'<a href="{_page_href(page - 1)}">&laquo; Prev</a>')
+            links.append(f"Page {page} of {total_pages}")
+            if page < total_pages:
+                links.append(f'<a href="{_page_href(page + 1)}">Next &raquo;</a>')
+            sep = " \u00b7 "
+            pagination_html = f'<div class="pagination">{sep.join(links)}</div>'
+
+        truncation = (
+            f'<div class="truncation-note">Showing {len(shown)} of {len(all_matching)} items'
+            f" \u00b7 filter or page for more</div>{pagination_html}"
+            if len(all_matching) > len(shown) or pagination_html
+            else ""
+        )
+        empty_html = (
+            '<div class="empty-state" style="padding:2rem 0;text-align:center;'
+            'color:var(--ink-tertiary)">No items match this filter.</div>'
+            if not shown
+            else ""
+        )
+        tabs_html = _status_tabs_html(name, status, _status_tab_counts(summary))
+        search_value = f' value="{_esc(q)}"' if q else ""
+        manage_html = f"""
+        <details class="actions-drawer">
+          <summary>
+            <span class="icon"><svg><use href="#i-edit"/></svg></span>
+            Manage project
+            <span class="count">add item \u00b7 rename \u00b7 remove</span>
+            <span class="icon sm chev"><svg><use href="#i-chevron"/></svg></span>
+          </summary>
+          <div style="padding:0 var(--space-5) var(--space-5)">
+            <form method="post" action="/projects/{quote(name)}/items" id="add-item">
+              <label for="title">Title</label>
+              <input type="text" id="title" name="title" required>
+              <label for="description">Description</label>
+              <textarea id="description" name="description" rows="2"></textarea>
+              <label for="acceptance">Acceptance criteria</label>
+              <textarea id="acceptance" name="acceptance" rows="2"></textarea>
+              <button type="submit">Add</button>
+            </form>
+            <div style="margin-top:var(--space-5)">
+              <button type="button" id="rename-trigger" class="btn danger"
+                      aria-expanded="false" aria-controls="rename-form">Rename this
+                project&hellip;</button>
+              <form method="post" action="/projects/{quote(name)}/rename" id="rename-form"
+                    style="margin-top:var(--space-3)" hidden>
+                <label for="new_name">New project name</label>
+                <input type="text" id="new_name" name="new_name" autocomplete="off"
+                       pattern="[a-z][a-z0-9_]{{1,30}}" required placeholder="new_project_name">
+                <div class="form-actions">
+                  <button type="submit" class="btn danger">Save</button>
+                  <button type="button" id="rename-cancel" class="btn secondary">Cancel</button>
+                </div>
+              </form>
+              <script>{T.rename_disclosure_js()}</script>
+              <a class="btn danger" href="/projects/{quote(name)}/remove"
+                 style="margin-top:var(--space-3);display:inline-block">Remove this
+                project&hellip;</a>
+            </div>
+          </div>
+        </details>
+        """
+
+        body = f"""
+        {_observatory_icon_sprite_html()}
+        <div class="container">
+        {_flash(request)}
+        <div class="breadcrumb">{crumb}</div>
+        <div class="section">{hero_html}</div>
+        <div class="two-up section">
+          <div class="glass-panel chart-card">
+            <div class="chart-head"><h3>Status breakdown</h3></div>
+            {status_donut_html}
+          </div>
+          <div class="glass-panel chart-card">
+            <div class="chart-head"><h3>Ready-age</h3>
+              <span class="note">{summary.ready or 0} ready items</span></div>
+            {ready_age_html}
+          </div>
+        </div>
+        <div class="two-up section">
+          <div class="glass-panel chart-card">{velocity_html}</div>
+          <div class="glass-panel chart-card">
+            <div class="chart-head"><h3>Agents on {_esc(name)}</h3>
+              <span class="note">{agents_active_count} active \u00b7 {summary.held or 0} held</span>
+            </div>
+            {agents_panel_html}
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-title"><h2>Items</h2>
+            <span class="note">{summary.total or 0} total</span></div>
+          <div class="glass-panel chart-card">
+            <div class="items-toolbar">
+              {tabs_html}
+              <form method="get" action="/projects/{quote(name)}" class="search-input"
+                    style="min-width:180px;max-width:220px">
+                <input type="hidden" name="status" value="{_esc(status)}">
+                <span class="icon"><svg><use href="#i-search"/></svg></span>
+                <input type="search" name="q" placeholder="Filter\u2026" aria-label="Filter items"
+                       autocomplete="off"{search_value}>
+              </form>
+            </div>
+            <div class="items-col-head"><span>Status</span><span>Pri</span><span>Item</span>
+              <span>Holder</span><span>Age</span><span></span></div>
+            {items_html}
+            {empty_html}
+            {truncation}
+          </div>
+        </div>
+        <div class="section">{manage_html}</div>
+        </div>
+        """
         return _page(
             request,
-            f"{name} \u00b7 browse",
+            name,
             body,
             crumb_html=crumb,
-            js=browse_js(),
+            body_class="wt-observatory",
+            extra_nav_html=_observatory_nav_extras_html(),
+            js=_OBSERVATORY_THEME_JS,
             auto_refresh_ms=_AUTO_REFRESH_MS,
+            nav_project=name,
+        )
+
+    # -------------------------------------------------------- L2: item detail
+
+    @app.get("/projects/{name}/items/{item_id}", response_class=HTMLResponse)
+    async def item_detail(request: Request, name: str, item_id: str):  # type: ignore[no-untyped-def]
+        try:
+            bd = workspace.project(name)
+            item = bd.get(item_id, with_links=True)
+        except A.BeadsError:
+            return _page(
+                request,
+                item_id,
+                _not_found_body(
+                    heading=item_id, back_href=f"/projects/{name}", back_label=f"back to {name}"
+                ),
+                crumb_html=_crumb(("/", "Mission Control"), (f"/projects/{name}", name)),
+                body_class="wt-observatory",
+                extra_nav_html=_observatory_help_and_theme_html(),
+                nav_project=name,
+            )
+
+        identity_val = _esc(_identity(request))
+
+        try:
+            activity_events = bd.activity(item.id)
+        except A.BeadsError:
+            activity_events = []
+        activity_html = _activity_feed_html(activity_events)
+
+        resolution_html = ""
+        if item.status == "resolved" and item.resolution:
+            resolution_html = (
+                '<div class="blocker-banner resolved">'
+                '<span class="icon"><svg><use href="#i-check-circle"/></svg></span>'
+                f'<div><div class="btitle">Resolution</div>'
+                f'<div class="blink">{_esc(item.resolution)}</div></div></div>'
+            )
+
+        links_html = _dependency_sections_html(name, item.links)
+        # DOM-measured defect: the dependency-graph section only ever
+        # appeared when `item.links` had something to say -- an item with
+        # no open blockers (the common case) showed NOTHING here at all,
+        # never the mockup's own neutral "No open blockers" reassurance
+        # (`mock-L2-item.html`'s `.blocker-banner.resolved`). Computed
+        # directly from `item.links` (the SAME `blocking` flag
+        # `_blocked_by_list_html`/`claim_item` use) rather than string-
+        # sniffing `links_html`'s own output, so this can never disagree
+        # with what `_dependency_sections_html` decided to render: when
+        # there IS an unsatisfied blocker, `links_html` already carries its
+        # own crimson "Blocked by" banner and this stays "" (never a
+        # second, contradictory banner).
+        has_unsatisfied_blocker = any(
+            ln.get("direction") == "from" and ln.get("type") == "blocks" and ln.get("blocking")
+            for ln in (item.links or [])
+        )
+        blocker_status_html = (
+            ""
+            if has_unsatisfied_blocker
+            else (
+                '<div class="blocker-banner resolved">'
+                '<span class="icon"><svg><use href="#i-check-circle"/></svg></span>'
+                '<div><div class="btitle">No open blockers</div>'
+                '<div class="blink" style="text-decoration:none;opacity:.85">'
+                "This item has no unresolved blocking dependencies.</div></div>"
+                "</div>"
+            )
+        )
+        facts_kv = _item_facts_kv_html(name, item)
+        time_kv = _item_time_kv_html(item)
+        held_chip = _item_held_chip_html(item)
+        # "Held by"/"Custody" fields are only meaningful (and only rendered)
+        # while the item is genuinely held -- `item.holder` is bd's raw
+        # `assignee`, which persists as a real historical fact past a
+        # resolve/defer/block (see `_item_row_html`'s identical discipline);
+        # rendering them unconditionally would make a resolved item look
+        # like it still had an active holder.
+        holder_field_html = ""
+        custody_field_html = ""
+        if item.status == "held" and item.holder:
+            holder_field_html = (
+                '<div class="field"><span class="k">Held by</span>'
+                f'<span class="v mono">{_esc(item.holder)}</span></div>'
+            )
+            custody_field_html = (
+                '<div class="field"><span class="k" title="Which agent currently holds '
+                'this item, and whether that claim is still inside its TTL">Custody</span>'
+                f'<span class="v mono">{held_chip or _EM_DASH}</span></div>'
+            )
+
+        confirm_resolve = request.query_params.get("confirm_resolve") == "1" and (
+            item.status == "held"
+        )
+
+        # Edit -- ALWAYS available (title/description/acceptance/design are
+        # editable regardless of status; only Resolve is status-gated,
+        # below). Same fields, same POST route (`/update`) as before this
+        # fix -- only WHERE it renders moved: it used to sit as a bare,
+        # always-expanded form floating in the page body; the approved
+        # mockup (`mock-L2-item.html`'s collapsed `.actions-drawer`) puts
+        # every mutating action -- including Edit -- behind one collapsed
+        # drawer, read-first by default.
+        edit_section_html = f"""
+        <div class="drawer-section">
+          <h4>Edit</h4>
+          <form method="post" action="/projects/{quote(name)}/items/{quote(item.id)}/update"
+                class="prose" style="margin-top:var(--space-2)">
+            <label for="title" class="eyebrow">Title</label>
+            <textarea id="title" name="title" required rows="2"
+                      style="width:100%;max-width:900px;font-family:var(--font-sans);
+                      font-size:1rem;color:var(--ink-primary);background:var(--glass-fill);
+                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
+                      padding:.5rem .75rem">{_esc(item.title)}</textarea>
+            <h4>Description</h4>
+            <textarea name="description" rows="6" placeholder="No description provided."
+                      style="width:100%;max-width:900px;font-family:var(--font-sans);
+                      font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
+                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
+                      padding:.75rem 1rem">{_esc(item.description or "")}</textarea>
+            <h4>Acceptance criteria</h4>
+            <textarea name="acceptance" rows="4" placeholder="No acceptance criteria provided."
+                      style="width:100%;max-width:900px;font-family:var(--font-sans);
+                      font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
+                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
+                      padding:.75rem 1rem">{_esc(item.acceptance or "")}</textarea>
+            <h4>Design notes</h4>
+            <textarea name="design" rows="4" placeholder="No design notes provided."
+                      style="width:100%;max-width:900px;font-family:var(--font-sans);
+                      font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
+                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
+                      padding:.75rem 1rem">{_esc(item.design or "")}</textarea>
+            <p class="field-hint" style="color:var(--ink-tertiary);font-size:.8125rem">
+              Title/description/acceptance/design are editable here and persist on Save.
+              Status, holder and timestamps are lifecycle facts -- they change only
+              through claim/resolve.</p>
+            <button type="submit" class="action-btn" style="margin-top:.3rem">Save changes</button>
+          </form>
+        </div>
+        """
+
+        action_labels = ["edit"]
+        resolve_section_html = ""
+        if item.status == "held":
+            action_labels.append("resolve")
+            resolve_section_html = (
+                '<div class="drawer-section"><h4>Resolve</h4>'
+                '<a href="?confirm_resolve=1" class="action-btn">'
+                '<span class="icon"><svg><use href="#i-check-circle"/></svg></span> Resolve</a>'
+                "</div>"
+            )
+        actions_count = " \u00b7 ".join(action_labels)
+
+        if confirm_resolve:
+            # Resolve is a terminal action (it closes the item) -- its
+            # confirm sub-state takes over the WHOLE drawer (matching the
+            # mockup's own state-demo: a flat, always-open confirm card,
+            # not a second nested collapsible), rather than showing Edit
+            # and the confirm dialog side by side.
+            actions_html = f"""
+            <div class="actions-drawer" open>
+              <div style="padding:var(--space-4) var(--space-5);display:flex;
+                   align-items:center;gap:var(--space-3);font-weight:600;
+                   color:var(--ink-primary);font-size:.875rem">
+                <span class="icon" style="color:var(--ink-tertiary)">
+                  <svg><use href="#i-check-circle"/></svg></span> Resolve {_esc(item.id)}?
+              </div>
+              <div style="padding:0 var(--space-5) var(--space-4);color:var(--ink-tertiary);
+                   font-size:.8125rem">This closes the item. This cannot be undone.</div>
+              <form method="post"
+                    action="/projects/{quote(name)}/items/{quote(item.id)}/resolve"
+                    style="padding:0 var(--space-5) var(--space-5);display:flex;
+                    flex-direction:column;gap:var(--space-3);
+                    border-top:1px solid var(--glass-hairline-soft);padding-top:var(--space-4)">
+                <input type="hidden" name="confirm" value="yes">
+                <label for="reason">Resolution reason</label>
+                <textarea id="reason" name="reason" rows="2" required></textarea>
+                <label for="resolve_actor">Actor</label>
+                <input type="text" id="resolve_actor" name="actor"
+                       value="{identity_val}" required>
+                <div style="display:flex;gap:var(--space-3)">
+                  <button type="submit" class="action-btn" style="background:
+                      var(--brand-gradient-solid);color:var(--ink-on-solid);border-color:transparent">
+                    <span class="icon"><svg><use href="#i-check-circle"/></svg></span> Confirm
+                  </button>
+                  <a href="/projects/{quote(name)}/items/{quote(item.id)}" class="action-btn">
+                    <span class="icon"><svg><use href="#i-octagon-x"/></svg></span> Cancel</a>
+                </div>
+              </form>
+            </div>
+            """
+        else:
+            actions_html = f"""
+            <details class="actions-drawer">
+              <summary>
+                <span class="icon"><svg><use href="#i-edit"/></svg></span>
+                Actions
+                <span class="count">{actions_count}</span>
+                <span class="icon sm chev"><svg><use href="#i-chevron"/></svg></span>
+              </summary>
+              <div class="drawer-body">
+                {edit_section_html}
+                {resolve_section_html}
+              </div>
+            </details>
+            """
+
+        body = f"""
+        {_observatory_icon_sprite_html()}
+        <div class="container">
+        {_flash(request)}
+        <div class="breadcrumb">
+          {_crumb(("/", "Mission Control"), (f"/projects/{name}", name), ("", item.id))}
+        </div>
+        <div class="glass-panel strong detail-card">
+          <div class="detail-head">
+            <div class="detail-title">
+              <span class="id">{_esc(item.id)}</span> {_esc(item.title)}
+              <span class="status-chip">
+                <span class="icon sm" style="margin-right:4px">
+                  <svg><use href="#i-bot"/></svg></span>{_esc(item.status.upper())}</span>
+            </div>
+          </div>
+          <div class="detail-meta-row">
+            {"".join(f'<span class="tag-chip">{_esc(t)}</span>' for t in item.tags)}
+          </div>
+          <div style="height:var(--space-5)"></div>
+          <div class="field-grid">
+            <div class="field"><span class="k">Project</span>
+              <span class="v"><a href="/projects/{quote(name)}"
+                style="color:inherit;text-decoration:none;border-bottom:1px dashed
+                var(--ink-tertiary)">{_esc(name)}</a></span></div>
+            {holder_field_html}
+            {custody_field_html}
+            <div class="field"><span class="k">Created</span>
+              <span class="v mono">{_item_age_html(item.created_at)}</span></div>
+          </div>
+          <div class="kv" style="margin-top:10px">{facts_kv}</div>
+          <div class="kv" style="margin-top:10px">{time_kv}</div>
+          {resolution_html}
+          {blocker_status_html}
+          {links_html}
+          {actions_html}
+          <div class="section" style="margin-top:var(--space-6)">
+            <div class="section-title"><h2>Activity</h2></div>
+            {activity_html}
+          </div>
+        </div>
+        </div>
+        """
+        return _page(
+            request,
+            f"{item.id} - {item.title}",
+            body,
+            crumb_html=_crumb(("/", "Mission Control"), (f"/projects/{name}", name), ("", item.id)),
+            body_class="wt-observatory",
+            extra_nav_html=_observatory_help_and_theme_html(),
+            js=_OBSERVATORY_THEME_JS,
             nav_project=name,
         )

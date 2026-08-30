@@ -266,6 +266,36 @@ def test_dependency_sections_missing_id_is_skipped_not_rendered_as_broken_link()
     assert html == ""
 
 
+def test_dependency_sections_blocks_uses_link_chip_grid():
+    """Restored mockup IA (`mock-L2-item.html`'s `.links-grid`): `Blocks`
+    renders as a `.link-chip` (single-line-ellipsis id+title), inside a
+    `.links-grid` wrapper -- not the plain `_cheap_ref_list_html` bulleted
+    list `Other links` still uses (see the test above)."""
+    links = [_link("to", id="proj-b", title="Downstream thing", blocking=True)]
+    html = _dependency_sections_html("proj", links)
+    assert '<div class="links-grid">' in html
+    assert 'class="link-chip"' in html
+    assert '<span class="id">proj-b</span>' in html
+    assert '<span class="t">Downstream thing</span>' in html
+
+
+def test_dependency_sections_related_type_gets_its_own_column():
+    """The public `related` relation kind (`Beads.create`'s `related`
+    parameter) gets its own `Related` chip column -- distinct from the
+    `Other links` catch-all `parent-child`/`tracks`/... fall into."""
+    links = [_link("from", type="related", id="proj-r", title="Related thing")]
+    html = _dependency_sections_html("proj", links)
+    assert "Related" in html
+    assert "Other links" not in html
+    assert 'class="link-chip"' in html
+
+
+def test_dependency_sections_no_blocks_or_related_renders_no_links_grid():
+    links = [_link("from", type="parent-child", blocking=False)]
+    html = _dependency_sections_html("proj", links)
+    assert "links-grid" not in html
+
+
 # ------------------------------------------------------- _activity_feed_html
 
 
@@ -289,10 +319,22 @@ def test_activity_feed_empty_list_renders_nothing():
 def test_activity_feed_renders_summary_actor_and_detail():
     events = [_event(kind="comment", summary="Comment", actor="agent-zero", detail="hello there")]
     html = _activity_feed_html(events)
-    assert "Activity" in html
     assert "Comment" in html
     assert "agent-zero" in html
     assert "hello there" in html
+
+
+def test_activity_feed_does_not_render_its_own_heading():
+    """DOM-measured defect: this function used to render its own bare
+    `<h2 class="eyebrow">Activity</h2>` -- webbrowse.py's L2 item-detail
+    route ALSO wraps this function's output in its own
+    `<div class="section-title"><h2>Activity</h2></div>`, so the page
+    rendered two `<h2>Activity</h2>` elements. Only the CALLER's heading
+    exists now; this function renders the timeline body only."""
+    events = [_event(kind="comment", summary="Comment")]
+    html = _activity_feed_html(events)
+    assert "<h2" not in html
+    assert "Activity" not in html
 
 
 def test_activity_feed_preserves_caller_supplied_order():

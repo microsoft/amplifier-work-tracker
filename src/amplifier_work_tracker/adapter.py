@@ -4313,6 +4313,752 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
     )
 
 
+# ==========================================================================
+# --- wt-v4 observability aggregates (lane obs-data) ---
+#
+# Data layer for the "Observatory" re-design (see
+# `.amplifier/design-gauntlet/wt-v4-observatory/BRIEF.md` in the workspace
+# root, and `GAUNTLET-SYNTHESIS.md` alongside it): velocity/burn charts,
+# a "reopened after resolve" quality signal, a fleet-wide "agents now"
+# roster, a minimal per-agent stats panel, and the ranked cross-project
+# attention queue. Every read here goes over the same contention-free
+# `_dolt_sql`/`_dolt_sql_json` path the rest of this module already
+# established (see `_summary_items_via_sql`'s docstring for the full
+# serialization-conflict mechanism this sidesteps) -- nothing here shells
+# out to `bd list`/`bd show`, so the dashboard can poll this as
+# aggressively as it wants without ever contending with a concurrent
+# agent's write.
+#
+# TIMEZONE GOTCHA (read this before touching any query below): `issues`'s
+# `created_at`/`updated_at`/`closed_at` are written by bd's own application
+# code as UTC wall-clock (`_parse_dolt_timestamp`'s docstring already
+# documents this) -- but `events.created_at` is populated by dolt's own
+# `DEFAULT CURRENT_TIMESTAMP`, which is evaluated in the *server process's
+# system timezone*, not UTC (verified empirically against the isolated
+# test server: `@@system_time_zone` reported `PDT`, and a freshly-inserted
+# event's `created_at` matched the server's own `NOW()`, NOT its
+# `UTC_TIMESTAMP()`, by exactly the local UTC offset). So every query below
+# that filters `issues` timestamps compares against `UTC_TIMESTAMP()`, and
+# every query that filters `events.created_at` compares against `NOW()` --
+# using the wrong function for a given table would silently skew every
+# window by the host's UTC offset. This is self-consistent (both sides of
+# each comparison share one clock) and correct regardless of what
+# timezone the real production dolt server happens to run in.
+# ==========================================================================
+
+#: How many trailing days a ready item must sit before it enters the
+#: attention queue's "aging" tier. A module constant, not a buried literal,
+#: per the gauntlet's explicit requirement that ranking thresholds be
+#: server-adjustable (see `GAUNTLET-SYNTHESIS.md`'s "Attention-queue ranking
+#: weights" note: the ranking is a stated hypothesis, not a fixed law).
+ATTENTION_AGING_DAYS = 7
+
+#: Fallback per-project cap on how many attention-queue rows are collected
+#: from any ONE tier before the caller's own overall `limit` is applied --
+#: keeps one noisy project from starving every other project's rows out of
+#: a bounded fleet-wide query. Generous enough to never matter in practice.
+_ATTENTION_PER_PROJECT_CAP = 200
+
+
+def _velocity_raw_daily(db: str, days: int) -> dict[str, dict[str, int]]:
+    """Per-calendar-day `{"created": n, "resolved": n}` counts for `db`,
+    covering the trailing `days` UTC calendar days (today back through
+    `days - 1` days ago) -- the shared fetch behind both `velocity_series`
+    (asked for `days`) and `velocity_windows` (asked for `days * 2`, so one
+    fetch covers both the current and previous window).
+
+    Exactly 2 SQL round trips regardless of `days` or project size: one
+    `GROUP BY DATE(created_at)` over `issues` for creations, one `GROUP BY
+    DATE(closed_at)` for resolutions. No per-day query -- see this
+    function's own callers for why that matters at cortex scale (465
+    items): trivial either way, but the pattern is what stays cheap as
+    projects grow.
+
+    "Resolved" mirrors `_daily_resolved_counts`'s own definition exactly
+    (`status = 'closed' AND closed_at IS NOT NULL`) for the same honest
+    reason: `bd reopen` CLEARS `closed_at` back to NULL (verified
+    empirically), so an item resolved and later reopened stops counting
+    toward any day's resolved bucket at all, including the day it was
+    genuinely resolved on. This is a pre-existing, documented convention
+    inherited from `_daily_resolved_counts`, not a new gap introduced here.
+
+    Unlike `_daily_resolved_counts` (which buckets by rolling 24h periods
+    counted backward from `now`), this buckets by true UTC CALENDAR date
+    via SQL `DATE(...)` -- what a "resolved/day" chart with actual date
+    labels on its axis needs, not a rolling window. The two functions
+    answer different questions and are not expected to agree bucket-for-
+    bucket.
+
+    Returns a dict keyed by `YYYY-MM-DD` (only for dates with at least one
+    real creation or resolution -- callers zero-fill the rest, see
+    `velocity_series`), never a fabricated entry for a quiet day.
+    """
+    today = datetime.now(UTC).date()
+    start = today - timedelta(days=days - 1)
+    start_sql = _sql_literal(f"{start.isoformat()} 00:00:00")
+
+    out: dict[str, dict[str, int]] = {}
+
+    created_p = _dolt_sql_json(
+        f"SELECT DATE(`created_at`) AS d, COUNT(*) AS n FROM `{db}`.`issues` "
+        f"WHERE `created_at` >= '{start_sql}' GROUP BY DATE(`created_at`)"
+    )
+    if created_p.returncode != 0:
+        raise BeadsError(
+            f"could not compute created-per-day counts for database {db!r}: "
+            f"{_clean_bd_error(created_p.stderr or created_p.stdout)}"
+        )
+    for row in json.loads(created_p.stdout or "{}").get("rows", []):
+        d = str(row.get("d") or "")
+        if d:
+            out.setdefault(d, {"created": 0, "resolved": 0})["created"] = int(row.get("n") or 0)
+
+    resolved_p = _dolt_sql_json(
+        f"SELECT DATE(`closed_at`) AS d, COUNT(*) AS n FROM `{db}`.`issues` "
+        f"WHERE `status` = 'closed' AND `closed_at` >= '{start_sql}' "
+        f"GROUP BY DATE(`closed_at`)"
+    )
+    if resolved_p.returncode != 0:
+        raise BeadsError(
+            f"could not compute resolved-per-day counts for database {db!r}: "
+            f"{_clean_bd_error(resolved_p.stderr or resolved_p.stdout)}"
+        )
+    for row in json.loads(resolved_p.stdout or "{}").get("rows", []):
+        d = str(row.get("d") or "")
+        if d:
+            out.setdefault(d, {"created": 0, "resolved": 0})["resolved"] = int(row.get("n") or 0)
+
+    return out
+
+
+def velocity_series(db: str, days: int = 7) -> list[dict]:
+    """Per-day `{"date", "created", "resolved"}` for `db`'s trailing `days`
+    UTC calendar days, oldest first -- the real data source for a velocity/
+    burn chart's day-by-day bars (created-vs-resolved overlay), NOT an
+    aggregate window total (see `velocity_windows` for that).
+
+    Every day in the window is present -- a day with no real activity is a
+    genuine `{"created": 0, "resolved": 0}`, never a missing entry (the
+    same "zero-fill, never drop" discipline `_ready_age_buckets` already
+    applies to its own histogram). Cheap at any project size: exactly 2 SQL
+    round trips via `_velocity_raw_daily`, no per-day query.
+
+    Raises `BeadsError` if `db` cannot be read at all (surfaced, never
+    silently swallowed into an all-zero series that would misrepresent an
+    unreadable project as a genuinely quiet one).
+    """
+    raw = _velocity_raw_daily(db, days)
+    today = datetime.now(UTC).date()
+    out: list[dict] = []
+    for i in range(days - 1, -1, -1):
+        d = today - timedelta(days=i)
+        ds = d.isoformat()
+        counts = raw.get(ds, {"created": 0, "resolved": 0})
+        out.append({"date": ds, "created": counts["created"], "resolved": counts["resolved"]})
+    return out
+
+
+def _pct_delta(curr: int, prev: int) -> float | None:
+    """Percentage change from `prev` to `curr`, rounded to one decimal --
+    `None` (never a fabricated +inf%% or an arbitrary 100%%) when `prev` is
+    zero, since no meaningful percentage change is computable off a zero
+    baseline. Matches this module's standing "never fabricate a reading"
+    convention (see `_held_stale_oldest_age_seconds`'s docstring for the
+    same discipline applied to a different field).
+    """
+    if prev == 0:
+        return None
+    return round((curr - prev) / prev * 100.0, 1)
+
+
+def velocity_windows(db: str, days: int = 7) -> dict:
+    """Window totals for `db`'s trailing `days`-day period AND the
+    immediately-previous period of equal length -- what powers a "WoW:
+    ↑12%% vs previous 7d" delta line, which a per-day series alone cannot
+    answer (that needs two SUMS, not a list of daily bars).
+
+    Returns:
+        ``{"current": {"created": int, "resolved": int},
+           "previous": {"created": int, "resolved": int},
+           "delta_pct": {"created": float | None, "resolved": float | None}}``
+
+    `delta_pct` is `current` measured against `previous` via `_pct_delta`
+    (`None` when the previous window was genuinely zero -- see that
+    function's docstring).
+
+    Cheap regardless of `days`: ONE call to `_velocity_raw_daily` covering
+    `days * 2` calendar days (2 SQL round trips total, the same fetch
+    `velocity_series` would make for a window twice as wide), split in
+    half in Python -- never a third/fourth query just to get the previous
+    window's totals.
+    """
+    raw = _velocity_raw_daily(db, days * 2)
+    today = datetime.now(UTC).date()
+    current = {"created": 0, "resolved": 0}
+    previous = {"created": 0, "resolved": 0}
+    for i in range(days * 2 - 1, -1, -1):
+        d = today - timedelta(days=i)
+        counts = raw.get(d.isoformat(), {"created": 0, "resolved": 0})
+        bucket = current if i < days else previous
+        bucket["created"] += counts["created"]
+        bucket["resolved"] += counts["resolved"]
+    return {
+        "current": current,
+        "previous": previous,
+        "delta_pct": {
+            "created": _pct_delta(current["created"], previous["created"]),
+            "resolved": _pct_delta(current["resolved"], previous["resolved"]),
+        },
+    }
+
+
+def reopened_count(db: str, days: int = 7) -> int:
+    """How many `events` rows in `db` record an item being reopened after
+    a prior close, within the trailing `days` days -- the real, exact
+    "reopened after resolve" quality signal the gauntlet's punchlist asked
+    for (see `GAUNTLET-SYNTHESIS.md` item 11), not an approximated proxy.
+
+    WHAT THIS ACTUALLY MEASURES (the honest answer from empirical
+    investigation against a real bd binary + isolated dolt server): bd
+    itself writes a row with `event_type = 'reopened'` to the project's
+    `events` table every time a previously-closed issue transitions back
+    to open -- verified for BOTH the dedicated `bd reopen <id>` command AND
+    the less-explicit `bd update <id> --status open` path bd's own
+    `reopen --help` text warns is "less explicit" (its warning is about
+    audit-trail clarity, not about which events get recorded -- both paths
+    were verified, empirically, to emit the identical `event_type =
+    'reopened'` row). This is a first-class recorded fact, not a derived
+    proxy: no fallback to a `closed_at IS NOT NULL` heuristic was needed
+    (and would not have worked anyway -- `bd reopen`/`--status open` both
+    CLEAR `closed_at` back to NULL on reopen, verified empirically, so a
+    reopened item retains no trace of its prior close on the `issues` row
+    itself; the `events` table is the only place this fact survives).
+
+    Window filtering compares `events.created_at` against `NOW()`, not
+    `UTC_TIMESTAMP()` -- see this block's own module-level TIMEZONE GOTCHA
+    comment for why: `events.created_at` is populated by dolt's own local-
+    system-timezone `CURRENT_TIMESTAMP`, so `NOW()` (the same clock) is the
+    only comparison that stays correct regardless of what timezone the
+    real dolt server process happens to run in.
+
+    A single SQL round trip, `_dolt_sql` (CSV, not JSON) -- the query
+    projects one scalar count, no free-text column involved.
+    """
+    p = _dolt_sql(
+        f"SELECT COUNT(*) FROM `{db}`.`events` WHERE `event_type` = 'reopened' "
+        f"AND `created_at` >= NOW() - INTERVAL {int(days)} DAY"
+    )
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not count reopened events for database {db!r}: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    lines = [ln for ln in (p.stdout or "").splitlines() if ln.strip()][1:]  # drop CSV header
+    return int(lines[0].strip()) if lines else 0
+
+
+def _agent_row(project: str, item: Item) -> dict:
+    """One `project_agents`/`agents_snapshot` roster row for a single held
+    `item` -- custody freshness reused VERBATIM from `custody.reclaim_eligible`
+    (never re-derived, so this can never disagree with what `reap_project`
+    would actually reclaim), same discipline `_held_stale_count`/
+    `_held_stale_oldest_age_seconds` already apply for the aggregate counts
+    this is the per-item counterpart of.
+    """
+    meta = item.meta.get(C.CUSTODY_KEY) if isinstance(item.meta, dict) else None
+    stale, _reason = C.reclaim_eligible(meta)
+    age: float | None = None
+    if isinstance(meta, dict) and meta.get("last_seen"):
+        age = C.age_seconds(meta["last_seen"])
+    # A stale hold with NO custody record at all (dict-less -- "claimed but
+    # never renewed") is eligible per `reclaim_eligible` but un-ageable: no
+    # `last_seen` exists to measure an overage from. `None`, never a
+    # fabricated 0-second (or infinite) overage -- same discipline
+    # `_held_stale_oldest_age_seconds` already applies.
+    overage = (age - C.CUSTODY_TTL_SECONDS) if (stale and age is not None) else None
+    return {
+        "agent": item.holder,
+        "project": project,
+        "item_id": item.id,
+        "item_title": item.title,
+        "priority": item.priority,
+        "held_seconds_or_last_renewal_age": age,
+        "stale": stale,
+        "seconds_over_ttl_if_stale": overage,
+    }
+
+
+def _agent_row_sort_key(row: dict) -> tuple[int, float]:
+    """Stale rows first (worst overage first -- an un-measurable "no
+    custody record" overage sorts as worst-case, never merely "unknown,
+    sort last": a completely untracked hold is at least as concerning as a
+    long-measured one). Fresh rows follow, freshest (smallest renewal age)
+    first.
+    """
+    if row["stale"]:
+        overage = row["seconds_over_ttl_if_stale"]
+        return (0, -(overage if overage is not None else float("inf")))
+    age = row["held_seconds_or_last_renewal_age"]
+    return (1, age if age is not None else float("inf"))
+
+
+def project_agents(db: str) -> list[dict]:
+    """The "who holds what" roster for ONE project -- every currently-held
+    item's holder, with custody freshness -- the data behind L1's per-
+    project Agents panel (see `BRIEF.md`'s L1 section) and the per-project
+    building block `agents_snapshot` composes fleet-wide for L0's "Agents
+    now" roster.
+
+    Reuses `Beads.list()`'s own read-only SQL path (`_list_rows_via_sql`,
+    filtered to bd's raw `in_progress` status -- our domain `\"held\"`) so
+    this costs exactly one contention-free SQL round trip per project;
+    items with no holder (should not occur for `in_progress`, but guarded
+    rather than assumed) are skipped rather than emitted with a `None`
+    agent.
+
+    Sorted stale-first, then by freshness -- see `_agent_row_sort_key`.
+
+    Raises `BeadsError` if `db` cannot be read at all -- a single project's
+    read failure is this function's caller's concern (see
+    `agents_snapshot`, which tolerates exactly this for a FLEET-wide
+    roster); this function itself never silently substitutes an empty list
+    for a real read failure.
+    """
+    items = _list_rows_via_sql(
+        db, where_sql=f"`issues`.`status` = '{_STATUS_MAP_REVERSE['held']}'", limit=0
+    )
+    rows = [_agent_row(db, item) for item in items if item.holder]
+    rows.sort(key=_agent_row_sort_key)
+    return rows
+
+
+def agents_snapshot(ws: Workspace) -> list[dict]:
+    """The fleet-wide "Agents now" roster (see `BRIEF.md`'s L0 section) --
+    every project's `project_agents` rows, merged and re-sorted stale-first-
+    then-by-freshness across the WHOLE fleet, not just within one project.
+
+    A project mid-creation or left broken by an unfinished `new` (see
+    `Workspace.creation_state`, the same check `project_summary` runs
+    first) contributes nothing -- skipped, same as it has no items to
+    report. A project that fails to read for any OTHER reason (a genuine
+    `BeadsError`) is likewise skipped rather than aborting the whole
+    fleet's roster: one broken project must never hide every other
+    project's agents. This is the one place in this block that swallows a
+    read failure -- see `project_agents`'s own docstring for why it, taken
+    alone, does not.
+    """
+    rows: list[dict] = []
+    for project in ws.names():
+        if ws.creation_state(project) in ("creating", "abandoned"):
+            continue
+        try:
+            rows.extend(project_agents(project))
+        except BeadsError:
+            continue
+    rows.sort(key=_agent_row_sort_key)
+    return rows
+
+
+def agent_stats(db_or_ws: str | Workspace, agent: str, days: int = 7) -> dict:
+    """Minimal per-agent history -- the data behind a small "agent as door"
+    panel (see `GAUNTLET-SYNTHESIS.md`'s explicit-defer note: a full agent-
+    detail IA page is future work, this is deliberately not that).
+
+    `db_or_ws` is EITHER a single project's database name (scope to that
+    one project -- the L1 agents-panel use case) OR a `Workspace` (scope to
+    every project it knows about -- the L0 fleet-wide "Agents now" roster's
+    use case, since one agent can hold work in more than one project).
+    Aggregated identically either way: sum across whichever project set
+    applies. A project that fails to read (or one mid-creation/broken, when
+    given a `Workspace`) contributes nothing, same tolerance
+    `agents_snapshot` already applies -- one broken project must not blank
+    out an agent's stats from every OTHER project they work in.
+
+    Returns:
+        ``{"agent": str, "days": int, "resolved": int, "held": int,
+           "stale_incidents": int}``
+
+      - `resolved`: items whose raw `assignee` is `agent` and whose current
+        `status` is `closed` (bd retains `assignee` through a close --
+        verified empirically), with `closed_at` inside the trailing `days`
+        days (`UTC_TIMESTAMP()`-relative, per this block's TIMEZONE GOTCHA
+        -- `issues.closed_at` is UTC, unlike `events.created_at`).
+      - `held`: items whose raw `assignee` is `agent` and current `status`
+        is `in_progress`, right now (not window-scoped -- "currently held"
+        is a snapshot, not a per-day count).
+      - `stale_incidents`: a CHEAP, HONEST PROXY, not an exact "reclaimed
+        for staleness" count -- see below.
+
+    `stale_incidents`, honestly: bd's `events` table records a generic
+    `event_type = 'status_changed'` row for BOTH a stale-custody reclaim
+    (`reap_project`'s `bd.release`) and a voluntary hand-back (the
+    `work_release` tool's own use of the same `release` method) -- the two
+    are NOT distinguishable from `events` alone (both are written by
+    whatever actor's `Beads` handle happened to call `release`, which is
+    not reliably a fixed, filterable "reaper identity" -- verified
+    empirically that `release`'s own event carries no field naming WHY the
+    release happened). So this counts every `status_changed` event in the
+    window whose `old_value` shows `agent` as the assignee transitioning to
+    an unassigned, reopened-to-`open` state -- i.e. every "item was handed
+    back while `agent` held it" event, a strict SUPERSET of true stale-
+    reclaims that also includes voluntary releases. Named `stale_incidents`
+    per this function's requested contract, but a caller surfacing this
+    number should read it as "times work was taken back from this agent",
+    not a guaranteed staleness-only count. Cheap: one `JSON_EXTRACT`-based
+    SQL round trip per project (verified working against dolt), no
+    per-event fetch.
+    """
+    if isinstance(db_or_ws, Workspace):
+        ws = db_or_ws
+        dbs = [
+            name for name in ws.names() if ws.creation_state(name) not in ("creating", "abandoned")
+        ]
+    else:
+        dbs = [db_or_ws]
+
+    resolved = 0
+    held = 0
+    stale_incidents = 0
+    agent_lit = _sql_literal(agent)
+    for db in dbs:
+        try:
+            rp = _dolt_sql(
+                f"SELECT COUNT(*) FROM `{db}`.`issues` WHERE `status` = 'closed' "
+                f"AND `assignee` = '{agent_lit}' "
+                f"AND `closed_at` >= UTC_TIMESTAMP() - INTERVAL {int(days)} DAY"
+            )
+            if rp.returncode != 0:
+                continue
+            lines = [ln for ln in (rp.stdout or "").splitlines() if ln.strip()][1:]
+            resolved += int(lines[0].strip()) if lines else 0
+
+            hp = _dolt_sql(
+                f"SELECT COUNT(*) FROM `{db}`.`issues` WHERE `status` = 'in_progress' "
+                f"AND `assignee` = '{agent_lit}'"
+            )
+            if hp.returncode == 0:
+                lines = [ln for ln in (hp.stdout or "").splitlines() if ln.strip()][1:]
+                held += int(lines[0].strip()) if lines else 0
+
+            sp = _dolt_sql(
+                f"SELECT COUNT(*) FROM `{db}`.`events` WHERE `event_type` = 'status_changed' "
+                f"AND `created_at` >= NOW() - INTERVAL {int(days)} DAY "
+                f"AND JSON_EXTRACT(`old_value`, '$.assignee') = '{agent_lit}' "
+                f"AND JSON_EXTRACT(`new_value`, '$.status') = 'open'"
+            )
+            if sp.returncode == 0:
+                lines = [ln for ln in (sp.stdout or "").splitlines() if ln.strip()][1:]
+                stale_incidents += int(lines[0].strip()) if lines else 0
+        except BeadsError:
+            continue
+
+    return {
+        "agent": agent,
+        "days": days,
+        "resolved": resolved,
+        "held": held,
+        "stale_incidents": stale_incidents,
+    }
+
+
+def _attention_stale_rows(ws: Workspace, project: str) -> list[dict]:
+    """This project's stale-custody attention rows -- reuses `project_agents`
+    (already the exact `reclaim_eligible`-backed freshness computation, and
+    already carrying `priority` off the same one SQL read) so "stale" -- and
+    priority -- can never disagree between the Agents panel and the
+    attention queue.
+    """
+    try:
+        agent_rows = project_agents(project)
+    except BeadsError:
+        return []
+    out = []
+    for row in agent_rows[:_ATTENTION_PER_PROJECT_CAP]:
+        if not row["stale"]:
+            continue
+        age = row["held_seconds_or_last_renewal_age"]
+        age_detail = f"{age:.0f}s past TTL" if age is not None else "no custody record at all"
+        out.append(
+            {
+                "rank_reason": "stale-custody",
+                "project": project,
+                "item_id": row["item_id"],
+                "title": row["item_title"],
+                "priority": row["priority"],
+                "detail": f"held by {row['agent']}, {age_detail}",
+                "_sort": -(row["seconds_over_ttl_if_stale"] or float("inf")),
+            }
+        )
+    return out
+
+
+def _attention_blocked_rows(project: str) -> list[dict]:
+    """This project's blocked-with-a-still-active-blocker attention rows.
+    Deliberately the OPPOSITE selection from `_blocked_stale_count`: that
+    field counts blocked items with NO active blocker left (needs only an
+    unblock); the attention queue's "blocked" tier is for items genuinely
+    still waiting on something, which is what a person can actually act on
+    by chasing the blocker named in `detail`.
+
+    Reads full item bodies via `Beads.list`'s own SQL path
+    (`_list_rows_via_sql`), scoped to `status = 'blocked'` only -- cheap
+    even at cortex scale, since blocked items are a small minority. Which
+    blockers are still active is then read PER blocked item via
+    `_forward_active_blockers_via_sql` -- NOT `_active_blockers(item)`,
+    which reads `item.raw["dependencies"]`, a field only `bd show`
+    populates (see that function's own docstring): an item sourced from
+    `_list_rows_via_sql` carries no such key at all, so `_active_blockers`
+    would silently see every blocked item as blocker-free. One extra query
+    per blocked item is the honest cost of a correct answer here -- still
+    cheap, since blocked items are a small minority of any real project.
+    """
+    try:
+        items = _list_rows_via_sql(
+            project, where_sql=f"`issues`.`status` = '{_STATUS_MAP_REVERSE['blocked']}'", limit=0
+        )
+    except BeadsError:
+        return []
+    out = []
+    for item in items[:_ATTENTION_PER_PROJECT_CAP]:
+        try:
+            blockers = _forward_active_blockers_via_sql(project, item.id)
+        except BeadsError:
+            continue
+        if not blockers:
+            continue  # stale blocker chain -- needs only an unblock, not chasing; see docstring
+        names = ", ".join(b.get("id", "?") for b in blockers)
+        out.append(
+            {
+                "rank_reason": "blocked",
+                "project": project,
+                "item_id": item.id,
+                "title": item.title,
+                "priority": item.priority,
+                "detail": f"blocked by {names}",
+                "_sort": 0.0,
+            }
+        )
+    return out
+
+
+def _attention_aging_rows(project: str) -> list[dict]:
+    """This project's ready items aged past `ATTENTION_AGING_DAYS`, oldest
+    first -- the third and lowest-urgency attention tier (see `BRIEF.md`'s
+    "ranked attention: stale custody > blocked > oldest ready").
+    """
+    try:
+        items = _list_rows_via_sql(
+            project,
+            where_sql=(
+                f"`issues`.`status` = 'open' AND `issues`.`id` IN "
+                f"(SELECT `issue_id` FROM `{project}`.`labels` WHERE `label` = "
+                f"'{_sql_literal(LANE_WORK)}')"
+            ),
+            limit=0,
+        )
+    except BeadsError:
+        return []
+    now = datetime.now(UTC)
+    out = []
+    for item in items:
+        if item.created_at is None:
+            continue
+        age_days = (now - item.created_at).total_seconds() / 86400.0
+        if age_days < ATTENTION_AGING_DAYS:
+            continue
+        out.append(
+            {
+                "rank_reason": "aging",
+                "project": project,
+                "item_id": item.id,
+                "title": item.title,
+                "priority": item.priority,
+                "detail": f"ready {age_days:.1f}d",
+                "_sort": -age_days,  # oldest (largest age_days) first
+            }
+        )
+    out.sort(key=lambda r: r["_sort"])
+    return out[:_ATTENTION_PER_PROJECT_CAP]
+
+
+def attention_items(ws: Workspace, limit: int = 50) -> list[dict]:
+    """The ranked, cross-project "what needs me?" queue (see `BRIEF.md`'s
+    four-questions framing and `GAUNTLET-SYNTHESIS.md`'s explicit-defer
+    note: the ranking below is a stated HYPOTHESIS, adjustable server-side,
+    not a fixed law).
+
+    Three tiers, in order, each internally sorted worst/oldest first:
+      1. ``"stale-custody"`` -- held items whose custody has lapsed (or
+         never existed), from `_attention_stale_rows`.
+      2. ``"blocked"`` -- items genuinely still waiting on an active
+         blocker, from `_attention_blocked_rows`.
+      3. ``"aging"`` -- ready items older than `ATTENTION_AGING_DAYS`, from
+         `_attention_aging_rows`.
+
+    Each entry: ``{"rank_reason", "project", "item_id", "title",
+    "priority", "detail"}``. `priority` is `None` for a stale-custody row
+    (that tier is sourced from `project_agents`, which does not carry
+    priority -- adding it would mean a second, heavier item fetch per
+    project purely for a field this tier's own urgency does not depend on;
+    the other two tiers, already reading full items, carry it for free).
+
+    A project mid-creation/broken or unreadable for any other reason
+    contributes nothing to any tier (each per-tier helper degrades
+    independently) -- one broken project never blanks out the whole
+    queue's visibility into every other project, same tolerance
+    `agents_snapshot` already applies.
+
+    `limit` caps the FINAL merged, tier-ordered list -- never applied
+    per-project or per-tier first (which could starve a tier's later
+    entries in favor of an unrelated project's).
+    """
+    projects = [
+        name for name in ws.names() if ws.creation_state(name) not in ("creating", "abandoned")
+    ]
+
+    stale: list[dict] = []
+    blocked: list[dict] = []
+    aging: list[dict] = []
+    for project in projects:
+        stale.extend(_attention_stale_rows(ws, project))
+        blocked.extend(_attention_blocked_rows(project))
+        aging.extend(_attention_aging_rows(project))
+
+    stale.sort(key=lambda r: r["_sort"])
+    blocked.sort(key=lambda r: r["_sort"])
+    aging.sort(key=lambda r: r["_sort"])
+
+    merged = stale + blocked + aging
+    for row in merged:
+        del row["_sort"]
+    return merged[: int(limit)] if limit else merged
+
+
+# ---------------------------------------------------------------------------
+# lane:obs-pages -- the ONE new adapter function Lane C (obs-pages) is
+# permitted to add per its build spec, for L0 Mission Control's cross-project
+# "Activity feed" section (BRIEF.md / GAUNTLET-SYNTHESIS.md item 14).
+# ---------------------------------------------------------------------------
+
+# Real, EMPIRICALLY VERIFIED `events.event_type` values (probed live against
+# bd 1.1.2 + an isolated dolt server -- create/claim/resolve/block/defer/
+# release, then `SELECT * FROM events`): 'created', 'claimed', 'closed',
+# 'reopened' (documented by `reopened_count`), and a catch-all
+# 'status_changed' for every OTHER transition (block, defer, release/
+# reclaim, a plain `--status` edit) -- there is no dedicated 'blocked'
+# event_type. Only these four are fetched; a 'status_changed' row is kept
+# for the feed ONLY when its own `new_value` JSON shows the transition
+# landed on `blocked` (see `_feed_kind` below) -- defer/release/reclaim
+# transitions are real events but do not map onto this feed's fixed
+# claim/resolve/block/file vocabulary (`widgets.ActivityFeedItem.kind`), so
+# they are excluded rather than mis-labeled.
+_FEED_EVENT_TYPES = ("created", "claimed", "closed", "status_changed")
+
+
+def _feed_kind(event_type: str | None, new_value: str | None) -> str | None:
+    """Map one raw `events` row onto the feed's fixed `claim`/`resolve`/
+    `block`/`file` vocabulary, or `None` if this row doesn't correspond to
+    one of those four (see `_FEED_EVENT_TYPES`'s docstring)."""
+    if event_type == "created":
+        return "file"
+    if event_type == "claimed":
+        return "claim"
+    if event_type == "closed":
+        return "resolve"
+    if event_type == "status_changed":
+        try:
+            parsed = json.loads(new_value) if new_value else {}
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict) and parsed.get("status") == "blocked":
+            return "block"
+    return None
+
+
+def recent_activity_feed(ws: Workspace, *, hours: int = 12, limit: int = 50) -> list[dict]:
+    """Cross-project, reverse-chronological activity feed for L0 Mission
+    Control's "Activity feed" section -- every readable project's `events`
+    rows (claim/resolve/block/file only, see `_feed_kind`) within the
+    trailing `hours` hours, merged and capped to `limit`.
+
+    ONE SQL round trip regardless of project count: every readable
+    project's `events`-joined-`issues` query is combined into a single
+    `UNION ALL` (verified working against a real isolated dolt server --
+    dolt/MySQL execute a cross-database `UNION ALL` over fully-qualified
+    `` `db`.`table` `` references in one query, same as every other
+    fully-qualified reference already used throughout this module), with
+    the final `ORDER BY ... LIMIT` applied to the WHOLE union -- never
+    per-project, which could let one noisy project crowd out every other
+    project's rows before the merge even happened.
+
+    TIMEZONE GOTCHA (see this block's own module-level comment): compares
+    `events.created_at` against `NOW()`, not `UTC_TIMESTAMP()` -- that
+    column is written in the server's own local system timezone, not UTC.
+
+    A project mid-creation/broken contributes nothing (skipped up front,
+    same as every other aggregate in this block); an empty workspace
+    (`ws.names()` -> `[]`, or every project excluded) returns `[]` rather
+    than sending a syntactically invalid zero-armed `UNION ALL`.
+
+    Returns dicts shaped for `widgets.ActivityFeedItem` construction by the
+    caller: ``{"kind", "actor", "project", "item_id", "title",
+    "created_at"}`` -- `created_at` as the raw dolt string (local-tz, per
+    the gotcha above); the caller (webapp.py) is responsible for turning it
+    into a "Nm ago"-style label and for escaping/composing the final
+    `ActivityFeedItem`.
+    """
+    projects = [
+        name for name in ws.names() if ws.creation_state(name) not in ("creating", "abandoned")
+    ]
+    if not projects:
+        return []
+
+    types_sql = ", ".join(f"'{t}'" for t in _FEED_EVENT_TYPES)
+    selects = []
+    for db in projects:
+        db_lit = _sql_literal(db)
+        selects.append(
+            f"SELECT '{db_lit}' AS project, `e`.`event_type` AS event_type, "
+            "`e`.`actor` AS actor, `e`.`issue_id` AS issue_id, `i`.`title` AS title, "
+            "`e`.`new_value` AS new_value, `e`.`created_at` AS created_at "
+            f"FROM `{db}`.`events` `e` JOIN `{db}`.`issues` `i` ON `i`.`id` = `e`.`issue_id` "
+            f"WHERE `e`.`created_at` >= NOW() - INTERVAL {int(hours)} HOUR "
+            f"AND `e`.`event_type` IN ({types_sql})"
+        )
+    query = " UNION ALL ".join(selects) + f" ORDER BY `created_at` DESC LIMIT {int(limit) * 4}"
+    # `limit * 4` over-fetches past the caller's own cap because up to 3 of
+    # every 4 `status_changed` rows get filtered out by `_feed_kind` AFTER
+    # the SQL runs (defer/release/reclaim are real rows this query cannot
+    # exclude at the SQL layer without duplicating `_feed_kind`'s own JSON
+    # parse in SQL) -- a generous, cheap margin so a busy window doesn't
+    # under-fill the final, honestly-capped list.
+    p = _dolt_sql_json(query)
+    if p.returncode != 0:
+        detail = _clean_bd_error(p.stderr or p.stdout)
+        raise BeadsError(f"could not read the cross-project activity feed: {detail}")
+    rows = json.loads(p.stdout or "{}").get("rows", [])
+    out: list[dict] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        kind = _feed_kind(r.get("event_type"), r.get("new_value"))
+        if kind is None:
+            continue
+        out.append(
+            {
+                "kind": kind,
+                "actor": r.get("actor") or "unknown",
+                "project": r.get("project") or "",
+                "item_id": r.get("issue_id") or "",
+                "title": r.get("title") or "",
+                "created_at": r.get("created_at"),
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
 _CAPS: dict[str, bool] | None = None
 
 

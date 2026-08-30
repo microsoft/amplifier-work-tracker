@@ -161,6 +161,20 @@ CSS = r"""
   --blocked:#ef4444;
   --blocked-surface:rgba(239,68,68,.14);
   --blocked-ink-on-surface:#fca5a5;
+  /* --watch (wt-v4 Observatory, ported verbatim from
+     .amplifier/design-gauntlet/wt-v4-observatory/{mock-L0,mock-L1,mock-L2}.html):
+     a THIRD, genuinely distinct, cooler, sub-alarm "aging, not alarm" tier -- muted
+     slate-violet, deliberately NOT amber (alarm), NOT crimson (blocked), and NOT
+     brand-cyan (actor/interaction chrome). This does not violate the "only two
+     reserved status hues" firewall docstring above -- that doctrine predates the
+     Observatory gauntlet round, which explicitly introduced --watch as a THIRD
+     reserved hue (see GAUNTLET-SYNTHESIS.md item 1) so "aging past 7 days" and
+     "custody past its TTL" stop sharing --alarm for two different severities. Used
+     on the ready-age 7+d histogram bucket, the attention-queue's aging-ready rows,
+     and a fleet row's stale-custody indicator text. */
+  --watch:#9aa8cc;
+  --watch-surface:rgba(154,168,204,.14);
+  --watch-ink-on-surface:#d6def2;
   --calm-ink:var(--ink-secondary);  /* "all clear" / resolved = NEUTRAL, not colored */
 
   /* ---------- TYPE ---------- */
@@ -168,6 +182,18 @@ CSS = r"""
     "Helvetica Neue",Arial,sans-serif;
   --font-mono:ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",Menlo,Consolas,
     "Liberation Mono",monospace;
+
+  /* ---------- TYPE SCALE (wt-v4 Observatory) -- ported verbatim from the same
+     mockups' :root blocks. Used by the new observability widgets' CSS (hero
+     verdict, section-title eyebrows, KPI cards, chart headings, body copy) --
+     the pre-existing --hero-opsz/--fig-size/--beat-h tokens below are a
+     DIFFERENT, older sizing system (the age-figure hero) and are left
+     untouched; these are additive, not a replacement. */
+  --text-display-size:2rem; --text-display-weight:650; --text-display-line:1.15;
+  --text-section-label-size:.75rem; --text-section-label-weight:600;
+  --text-section-label-spacing:.08em;
+  --text-body-size:.9375rem; --text-body-weight:450; --text-body-line:1.5;
+  --text-body-strong-weight:600;
 
   /* ---------- SPACE (4px base) ---------- */
   --space-1:.25rem;--space-2:.5rem;--space-3:.75rem;--space-4:1rem;--space-5:1.25rem;
@@ -294,6 +320,12 @@ CSS = r"""
     --blocked:#991b1b;
     --blocked-surface:rgba(239,68,68,.07);
     --blocked-ink-on-surface:#7f1d1d;
+    /* --watch, light mode -- ported verbatim from the same mockups' light-mode
+       :root override blocks (>=6.8:1 non-text / >=8.4:1 text contrast verified
+       on this ground, per GAUNTLET-SYNTHESIS.md item 1). */
+    --watch:#3a4468;
+    --watch-surface:rgba(154,168,204,.16);
+    --watch-ink-on-surface:#232c4a;
     --brand-cyan-ink:#0b6b80;
     --brand-purple-ink:#7e22ce;
   }
@@ -308,6 +340,48 @@ CSS = r"""
      had this complaint. */
   .sidebar{border-right:1px solid var(--rule-hi)}
   @media (max-width:860px){.sidebar{border-right:0}}
+}
+
+/* ================= LIGHT MODE, MANUAL TOGGLE (wt-v4 Observatory) =================
+   The block above fires on the OS's own `prefers-color-scheme` -- the ONLY light-
+   mode trigger the pre-existing (v2/v3) dashboard pages use. The wt-v4 Observatory
+   mockups (.amplifier/design-gauntlet/wt-v4-observatory/*.html) add an explicit
+   Dark/Light toggle button instead (`wtSetTheme()`, sets `<html data-theme="...">`),
+   which needs a selector that responds to that ATTRIBUTE regardless of OS
+   preference -- `@media` cannot express that. Same token VALUES as the block
+   above, duplicated rather than derived: plain CSS custom properties have no
+   cross-block reference/import mechanism and this file has no preprocessor build
+   step. Keep the two blocks in sync if a light-mode value ever changes -- see the
+   media-query block above for the full rationale behind each value. */
+:root[data-theme="light"]{
+  color-scheme:light;
+  --color-ground:#eef2fb;
+  --color-ground-elevated:#e7ecf7;
+  --color-ground-sunken:#dde4f2;
+  --glass-fill:rgba(11,18,32,.045);
+  --glass-fill-strong:rgba(11,18,32,.07);
+  --glass-fill-row-hover:rgba(11,18,32,.06);
+  --glass-fill-row-selected:rgba(8,145,178,.10);
+  --glass-hairline:rgba(11,18,32,.22);
+  --glass-hairline-soft:rgba(11,18,32,.16);
+  --glass-shadow:0 8px 32px rgba(15,23,42,.10),inset 0 1px 0 rgba(255,255,255,.6);
+  --glass-shadow-float:0 24px 64px rgba(15,23,42,.16),inset 0 1px 0 rgba(255,255,255,.7);
+  --ink-primary:#0b1220;
+  --ink-secondary:#33415a;
+  --ink-tertiary:#526078;
+  --ink-quiet:#7c8ba0;
+  --ink-on-ground-inverse:#f8fafc;
+  --alarm:#92400e;
+  --alarm-surface:rgba(245,158,11,.08);
+  --alarm-ink-on-surface:#7c3009;
+  --blocked:#991b1b;
+  --blocked-surface:rgba(239,68,68,.07);
+  --blocked-ink-on-surface:#7f1d1d;
+  --watch:#3a4468;
+  --watch-surface:rgba(154,168,204,.16);
+  --watch-ink-on-surface:#232c4a;
+  --brand-cyan-ink:#0b6b80;
+  --brand-purple-ink:#7e22ce;
 }
 
 /* -- AFFORDANCE GRAMMAR (one documented convention) ----------------------
@@ -978,6 +1052,19 @@ a.what:hover{color:var(--brand-cyan-ink)}
 .nav-actions .icon-btn:hover{color:var(--ink);background:var(--glass-fill-row-hover)}
 .nav-actions a.btn-new{margin-top:0;padding:0 16px;height:32px;font-size:11.5px}
 @media (max-width:720px){.nav-actions .icon-btn{display:none}}
+/* DOM-measured mobile defect (L1, 430px): `.nav-actions` itself never wraps
+   (`display:flex` with no `flex-wrap`), so its full row of chrome (refresh
+   status/pause, glossary popover, theme toggle, ...) stays one un-breakable
+   488px-wide line even after the OUTER `.top`/`.top-nav` row has already
+   wrapped it onto its own line -- 488px still doesn't fit a ~390px-wide
+   mobile header, producing a 97px horizontal page scroll. Letting this
+   cluster wrap INTERNALLY (its children reflow onto a second line instead
+   of forcing the row wider than the viewport) is the fix; `justify-content:
+   flex-end` keeps the wrapped chips aligned to the same right edge they
+   read from at every wider width. */
+@media (max-width:430px){
+  .nav-actions{flex-wrap:wrap;justify-content:flex-end;row-gap:6px}
+}
 .count{font-family:var(--sans);font-size:11px;font-weight:600;
   letter-spacing:.14em;text-transform:uppercase;color:var(--dim);
   white-space:nowrap;margin-left:auto}
@@ -1971,6 +2058,907 @@ table.tbl{border-collapse:separate;border-spacing:0 6px;margin-top:-6px}
 """
 
 # ---------------------------------------------------------------------------
+# wt-v4 "Observatory" component CSS (Lane B: obs-widgets) -- extracted
+# faithfully from the approved mockups
+# (.amplifier/design-gauntlet/wt-v4-observatory/{mock-L0,mock-L1,mock-L2}.html),
+# which won the design/product council + simulated-user gauntlet and were
+# visually verified. Every selector below is scoped under `.wt-observatory`
+# (see the class's own docstring-equivalent comment just below) so it can
+# NEVER collide with the pre-existing v2/v3 dashboard's own rules for the
+# SAME class names the mockups happen to reuse (`.hero`, `.priority-chip`,
+# `.timeline`/`.tl-item`/`.tl-dot`, `.blocker-banner`, `.eyebrow`,
+# `.icon-btn`, `.search-input`, `.legend` -- all defined earlier in `CSS`
+# above with DIFFERENT box models/layouts for the old dashboard). Two
+# stylesheets, one shared token set, zero cascade interference.
+#
+# INTEGRATION: give the new v4 pages' `<body>` (or a single top-level
+# wrapper) `class="wt-observatory"` -- every rule below reads
+# `.wt-observatory ...`, so nothing renders without that ancestor class.
+# `:root`-level tokens (including `--watch`/`--text-*` and the
+# `:root[data-theme="light"]` block, both added above) are GLOBAL and need
+# no such scoping -- only the v4 COMPONENT rules do.
+#
+# Reset (`*{box-sizing:border-box}`) and the global `:focus-visible{outline:
+# ...}` rule are already provided, unscoped, by the base `CSS` above and
+# apply to v4 markup unchanged -- not duplicated here.
+# ---------------------------------------------------------------------------
+
+OBSERVATORY_CSS = r"""
+.wt-observatory{
+  background:var(--color-ground);color:var(--ink-primary);font-family:var(--font-sans);
+  font-size:var(--text-body-size);line-height:var(--text-body-line);
+-webkit-font-smoothing:antialiased;
+  min-height:100vh;position:relative;
+  /* DOM-measured desktop defect: htmlScrollWidth 1572 vs clientWidth 1425
+     (147px phantom horizontal scroll) with an exhaustive per-element walk
+     finding ZERO real DOM nodes exceeding the viewport -- the only thing
+     left that can extend past an edge un-measured is a PSEUDO-element (see
+     `.wt-observatory::before`'s decorative gradient, and `.rim-glow::before`
+     used throughout, both `position:absolute`/`fixed` with `inset:0`, which
+     can still nudge an ancestor's scrollable overflow in some engines).
+     `overflow-x:clip` (not `hidden`) is the fix: it guarantees no horizontal
+     scrollbar/scroll range can ever be produced by this element's box,
+     WITHOUT creating a new scroll container the way `hidden` does (`hidden`
+     is programmatically scrollable and establishes a scrolling box; `clip`
+     does neither) -- so it can never mask a REAL layout bug the way a
+     silent `overflow:hidden` sometimes does elsewhere in this file. */
+  overflow-x:clip;
+}
+/* The stray horizontal scroll range lives at the DOCUMENT level -- clipping
+   the body-level wrapper alone measurably did not remove it (html scrollWidth
+   1572 vs clientWidth 1425 with zero real DOM offenders; the source is a
+   decorative pseudo-element). Clip the html box itself, scoped via :has() so
+   only observatory pages are affected. */
+html:has(.wt-observatory){overflow-x:clip}
+.wt-observatory::before{
+  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:radial-gradient(circle at 15% -10%, rgba(34,211,238,.10), transparent 40%),
+             radial-gradient(circle at 110% 10%, rgba(168,85,247,.10), transparent 45%);
+}
+.wt-observatory .container{
+  position:relative;z-index:1;max-width:1400px;margin:0 auto;
+  padding:var(--space-6) var(--space-6) var(--space-16);
+}
+.wt-observatory .container.narrow{max-width:1100px}
+
+.wt-observatory .icon{width:1.1em;height:1.1em;display:inline-block;vertical-align:-.15em;
+flex-shrink:0}
+.wt-observatory .icon svg{
+  width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round;
+}
+.wt-observatory .icon.sm{width:.9em;height:.9em}
+
+.wt-observatory .glass-panel{
+  background:var(--glass-fill);border:1px solid var(--glass-hairline);
+border-radius:var(--radius-lg);
+  box-shadow:var(--glass-shadow);position:relative;
+}
+.wt-observatory .glass-panel.strong{background:var(--glass-fill-strong);
+box-shadow:var(--glass-shadow-float)}
+.wt-observatory .rim-glow::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;
+  background:var(--brand-gradient-rim);
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;opacity:.55;pointer-events:none;
+}
+
+/* -- nav -- */
+.wt-observatory .top-nav{
+  display:flex;align-items:center;gap:var(--space-4);padding:var(--space-3) var(--space-5);
+  border-radius:var(--radius-lg);margin-bottom:var(--space-5);flex-wrap:wrap;
+}
+.wt-observatory .brand-mark{
+  width:32px;height:32px;border-radius:9px;background:var(--brand-gradient-rim);
+  display:flex;align-items:center;justify-content:center;color:var(--ink-on-ground-inverse);
+flex-shrink:0;
+}
+.wt-observatory .wordmark{
+  font-weight:700;font-size:1.0625rem;letter-spacing:-.01em;color:var(--ink-primary);
+white-space:nowrap;
+}
+.wt-observatory .wordmark .accent{
+  background:var(--brand-gradient-rim);-webkit-background-clip:text;background-clip:text;
+color:transparent;
+}
+.wt-observatory .nav-spacer{flex:1 1 auto}
+.wt-observatory .status-pill{
+  display:inline-flex;align-items:center;gap:var(--space-2);padding:var(--space-1) var(--space-3);
+  border-radius:var(--radius-pill);font-size:.75rem;font-weight:600;
+border:1px solid var(--glass-hairline);
+  white-space:nowrap;text-decoration:none;
+}
+.wt-observatory .status-pill.calm{color:var(--calm-ink);background:var(--glass-fill)}
+.wt-observatory .status-pill.alarm{
+  color:var(--alarm-ink-on-surface);background:var(--alarm-surface);border-color:var(--alarm);
+}
+.wt-observatory .search-input{
+  display:flex;align-items:center;gap:var(--space-2);padding:var(--space-2) var(--space-4);
+  border-radius:var(--radius-pill);background:var(--glass-fill);
+border:1px solid var(--glass-hairline);
+  color:var(--ink-tertiary);font-size:.8125rem;min-width:140px;flex:0 1 240px;
+}
+.wt-observatory .search-input kbd{
+  margin-left:auto;font-family:var(--font-mono);font-size:.7rem;padding:1px 6px;border-radius:5px;
+  background:var(--glass-fill-strong);border:1px solid var(--glass-hairline);
+color:var(--ink-tertiary);
+}
+.wt-observatory .icon-btn{
+  width:34px;height:34px;border-radius:var(--radius-sm);display:inline-flex;align-items:center;
+  justify-content:center;background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  color:var(--ink-tertiary);cursor:pointer;flex-shrink:0;text-decoration:none;
+}
+.wt-observatory .icon-btn:hover{color:var(--ink-primary);background:var(--glass-fill-row-hover)}
+.wt-observatory .theme-toggle{
+  display:flex;gap:2px;padding:2px;border-radius:var(--radius-pill);background:var(--glass-fill);
+  border:1px solid var(--glass-hairline-soft);
+}
+.wt-observatory .theme-toggle button{
+  font-family:var(--font-sans);font-size:.7rem;font-weight:600;padding:5px 10px;
+  border-radius:var(--radius-pill);background:transparent;border:none;color:var(--ink-tertiary);
+cursor:pointer;
+}
+.wt-observatory .theme-toggle button[aria-pressed="true"]{
+  background:var(--glass-fill-strong);color:var(--ink-primary);
+}
+
+/* -- auto-refresh pause control (WCAG 2.2.2) -- BUILD-PHASE REQUIREMENT: the
+   real server-rendered app must keep the paused flag alive AND preserve
+   every open <details> + scroll position across the ~20s poll body-swap;
+   this CSS/markup only supplies the affordance. */
+.wt-observatory .refresh-status{
+  display:flex;align-items:center;gap:6px;font-size:.75rem;color:var(--ink-tertiary);
+white-space:nowrap;
+}
+.wt-observatory .refresh-status .refresh-text{font-family:var(--font-mono)}
+.wt-observatory .refresh-toggle{
+  width:26px;height:26px;border-radius:var(--radius-pill);display:inline-flex;align-items:center;
+  justify-content:center;background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  color:var(--ink-tertiary);cursor:pointer;flex-shrink:0;
+}
+.wt-observatory .refresh-toggle:hover{color:var(--ink-primary);
+background:var(--glass-fill-row-hover)}
+.wt-observatory .refresh-toggle[aria-pressed="true"]{color:var(--watch);border-color:var(--watch)}
+
+/* -- jargon glossary popover (native <details>, no JS) -- */
+.wt-observatory .help-popover{position:relative}
+.wt-observatory .help-popover summary{list-style:none}
+.wt-observatory .help-popover summary::-webkit-details-marker{display:none}
+.wt-observatory .help-panel{
+  position:absolute;right:0;top:calc(100% + 8px);width:310px;z-index:20;padding:var(--space-4);
+  border-radius:var(--radius-md);background:var(--glass-fill-strong);
+border:1px solid var(--glass-hairline);
+  box-shadow:var(--glass-shadow-float);font-size:.8125rem;color:var(--ink-secondary);
+}
+.wt-observatory .help-panel dt{font-weight:700;color:var(--ink-primary);margin-top:var(--space-3)}
+.wt-observatory .help-panel dt:first-child{margin-top:0}
+.wt-observatory .help-panel dd{margin:2px 0 0;color:var(--ink-tertiary)}
+.wt-observatory .help-panel .reconcile{
+  margin-top:var(--space-3);padding-top:var(--space-3);
+border-top:1px solid var(--glass-hairline-soft);
+  font-size:.75rem;
+}
+
+.wt-observatory .demo-label{
+  display:flex;align-items:center;gap:8px;font-size:.75rem;color:var(--ink-tertiary);
+  margin-bottom:var(--space-2);
+}
+.wt-observatory .demo-label .tag{
+  font-weight:700;padding:2px 8px;border-radius:var(--radius-pill);
+background:var(--glass-fill-strong);
+  border:1px solid var(--glass-hairline);color:var(--ink-secondary);letter-spacing:.04em;
+  text-transform:uppercase;font-size:.625rem;
+}
+
+.wt-observatory .legend{
+  display:flex;flex-wrap:wrap;gap:var(--space-4);margin-top:var(--space-3);font-size:.75rem;
+  color:var(--ink-tertiary);
+}
+.wt-observatory .legend .li{display:flex;align-items:center;gap:6px}
+.wt-observatory .legend .dot{width:8px;height:8px;border-radius:999px}
+
+/* Priority is NEUTRAL -- never a stand-in for status/alarm colour; severity
+   is ramped with weight/opacity only, matching design-system.html's own
+   priority-chip pattern. */
+.wt-observatory .priority-chip{
+  width:26px;height:20px;border-radius:6px;display:inline-flex;align-items:center;
+justify-content:center;
+  font-size:.625rem;font-weight:700;font-family:var(--font-mono);background:var(--glass-fill);
+  color:var(--ink-tertiary);border:1px solid var(--glass-hairline-soft);letter-spacing:.02em;
+flex-shrink:0;
+}
+.wt-observatory .priority-chip.p0{
+  color:var(--ink-primary);background:var(--glass-fill-strong);border-color:var(--glass-hairline);
+  font-weight:800;
+}
+.wt-observatory .priority-chip.p1{color:var(--ink-secondary)}
+.wt-observatory .priority-chip.p2{color:var(--ink-tertiary)}
+
+/* Deferred vs Intake: same hue, opacity-only difference reads identically
+   under reduced contrast sensitivity and fails colourblind-safe review.
+   Deferred gets a genuinely distinct ~2px diagonal hatch (texture, not
+   opacity); Intake stays flat solid --ink-tertiary. */
+.wt-observatory .pat-hatch{
+  background-image:repeating-linear-gradient(45deg, var(--ink-tertiary) 0 2px, transparent 2px 4px);
+}
+
+.wt-observatory .eyebrow{
+  font-size:var(--text-section-label-size);letter-spacing:var(--text-section-label-spacing);
+  text-transform:uppercase;font-weight:600;color:var(--brand-cyan-ink);
+}
+
+.wt-observatory .breadcrumb{
+  display:flex;align-items:center;gap:6px;font-size:.8125rem;color:var(--ink-tertiary);
+  margin-bottom:var(--space-3);flex-wrap:wrap;
+}
+.wt-observatory .breadcrumb a{color:var(--ink-tertiary);text-decoration:none}
+.wt-observatory .breadcrumb a:hover{color:var(--ink-primary)}
+.wt-observatory .breadcrumb .sep{opacity:.5;width:.75em;height:.75em}
+.wt-observatory .breadcrumb .current{color:var(--ink-primary);font-weight:600}
+.wt-observatory .crumb-search{display:none;margin-left:auto;width:30px;height:30px}
+
+/* -- hero verdict -- */
+.wt-observatory .hero{
+  padding:var(--space-6) var(--space-8);display:flex;flex-direction:column;gap:var(--space-2);
+  margin-bottom:var(--space-5);
+}
+.wt-observatory .hero .eyebrow2{
+  font-size:var(--text-section-label-size);letter-spacing:var(--text-section-label-spacing);
+  text-transform:uppercase;font-weight:600;color:var(--ink-tertiary);
+}
+.wt-observatory .hero .verdict{
+  font-size:var(--text-display-size);font-weight:var(--text-display-weight);
+  line-height:var(--text-display-line);display:flex;align-items:center;gap:var(--space-3);
+  color:var(--ink-primary);
+}
+.wt-observatory .hero.is-alarm .verdict .icon{color:var(--alarm)}
+.wt-observatory .hero.is-calm .verdict .icon{color:var(--calm-ink)}
+.wt-observatory .hero.is-idle .verdict .icon{color:var(--ink-quiet)}
+.wt-observatory .hero .detail{color:var(--ink-secondary);font-size:var(--text-body-size)}
+.wt-observatory .hero .detail a{color:inherit;text-decoration:underline;text-underline-offset:2px}
+.wt-observatory .hero .detail b{color:var(--ink-primary);font-weight:600}
+.wt-observatory .hero .meta-row{display:flex;gap:var(--space-6);margin-top:var(--space-2);
+flex-wrap:wrap}
+.wt-observatory .hero .meta-row .m .k{
+  font-size:.6875rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
+color:var(--ink-tertiary);
+}
+.wt-observatory .hero .meta-row .m .v{
+  font-family:var(--font-mono);font-size:1.25rem;font-weight:600;color:var(--ink-primary);
+}
+
+/* -- KPI strip -- */
+.wt-observatory .kpi-strip{
+  display:grid;grid-template-columns:repeat(5,1fr);gap:var(--space-4);
+margin-bottom:var(--space-5);
+}
+.wt-observatory .kpi-card{
+  display:flex;flex-direction:column;gap:4px;padding:var(--space-5);text-decoration:none;
+  transition:background var(--duration-fast) var(--ease-standard);
+}
+.wt-observatory .kpi-card:hover{background:var(--glass-fill-row-hover)}
+.wt-observatory .kpi-card .k{
+  font-size:.6875rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;
+color:var(--ink-tertiary);
+  display:flex;align-items:center;gap:6px;justify-content:space-between;
+}
+.wt-observatory .kpi-card .v{
+  font-family:var(--font-mono);font-size:1.75rem;font-weight:650;color:var(--ink-primary);
+  font-variant-numeric:tabular-nums;
+}
+.wt-observatory .kpi-card.is-blocked .v{color:var(--blocked-ink-on-surface)}
+/* .is-zero: once the Blocked count is genuinely 0, the card must go quiet,
+   not stay alarm-red for a status that no longer applies. */
+.wt-observatory .kpi-card.is-blocked.is-zero .v{color:var(--ink-tertiary)}
+.wt-observatory .kpi-card.is-blocked.is-zero .k .icon{color:var(--ink-quiet)}
+.wt-observatory .kpi-card .chev{color:var(--ink-quiet);opacity:0;
+transition:opacity var(--duration-fast)}
+.wt-observatory .kpi-card:hover .chev{opacity:1}
+
+/* -- section wrapper / layout -- */
+.wt-observatory .section{margin-bottom:var(--space-5)}
+.wt-observatory .section-title{
+  display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-3);
+  gap:var(--space-3);flex-wrap:wrap;
+}
+.wt-observatory .section-title h2{
+  font-size:.8125rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--brand-cyan-ink);margin:0;display:flex;align-items:center;gap:8px;
+}
+.wt-observatory .section-title .note{font-size:.75rem;color:var(--ink-tertiary)}
+.wt-observatory .two-up{display:grid;grid-template-columns:1.5fr 1fr;gap:var(--space-5);
+align-items:start}
+.wt-observatory .three-up{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-5);
+align-items:start}
+/* Grid items default to `min-width:auto` -- their intrinsic content width is
+   a LOWER BOUND the track can never shrink below, no matter how narrow the
+   viewport. `chartsvg.velocity_chart`'s `viewBox="0 0 620 200"` (see
+   `.svg-chart{width:100%}` below) has no intrinsic size problem on its own,
+   but sitting inside an un-shrinkable `.two-up` column forced the whole
+   `.chart-card` -- and the `width:100%` SVG scaling to match it -- to render
+   at the COLUMN's oversized intrinsic width (DOM-measured: 887px at a 415px
+   viewport, whole-page scrollWidth 969 vs clientWidth 415). `min-width:0`
+   is the standard escape hatch: it lets the track shrink to the viewport,
+   and every child that itself uses %-based sizing (the chart SVG, `.chart-
+   head`'s flex row) then correctly follows the shrunken column.*/
+.wt-observatory .two-up>*,.wt-observatory .three-up>*{min-width:0}
+
+/* -- chart card + inline SVG charts (see chartsvg.py) -- */
+.wt-observatory .chart-card{padding:var(--space-6);min-width:0}
+.wt-observatory .chart-head{
+  display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);
+  margin-bottom:var(--space-4);flex-wrap:wrap;
+}
+.wt-observatory .chart-head h3{font-size:.875rem;font-weight:650;color:var(--ink-primary);
+margin:0}
+.wt-observatory .window-tabs{
+  display:flex;gap:2px;padding:2px;border-radius:var(--radius-pill);background:var(--glass-fill);
+  border:1px solid var(--glass-hairline-soft);
+}
+.wt-observatory .window-tab{
+  padding:var(--space-1) var(--space-3);border-radius:var(--radius-pill);font-size:.75rem;
+font-weight:600;
+  color:var(--ink-tertiary);text-decoration:none;
+}
+.wt-observatory .window-tab.is-active{
+  background:var(--glass-fill-strong);color:var(--ink-primary);
+box-shadow:inset 0 0 0 1px var(--glass-hairline);
+}
+.wt-observatory .svg-chart{width:100%;height:auto;display:block}
+.wt-observatory .svg-chart .bar{fill:var(--ink-secondary)}
+.wt-observatory .svg-chart .line{fill:none;stroke:var(--ink-tertiary);stroke-width:2;
+stroke-dasharray:4 3}
+.wt-observatory .svg-chart .dot{fill:var(--color-ground);stroke:var(--ink-tertiary);
+stroke-width:2}
+.wt-observatory .svg-chart .axis-label{font-family:var(--font-mono);font-size:9px;
+fill:var(--ink-tertiary)}
+.wt-observatory .svg-chart .baseline{stroke:var(--glass-hairline);stroke-width:1}
+.wt-observatory .chart-legend{
+  display:flex;gap:var(--space-5);margin-top:var(--space-3);font-size:.75rem;
+color:var(--ink-tertiary);
+  flex-wrap:wrap;
+}
+.wt-observatory .chart-legend .li{display:flex;align-items:center;gap:6px}
+.wt-observatory .chart-legend .swatch{width:14px;height:3px;border-radius:2px;
+background:var(--ink-secondary)}
+.wt-observatory .chart-legend .swatch.line{background:none;
+border-top:2px dashed var(--ink-tertiary);height:0}
+.wt-observatory .chart-foot-stats{display:flex;gap:var(--space-6);margin-top:var(--space-4);
+flex-wrap:wrap}
+.wt-observatory .chart-foot-stats .m .k{
+  font-size:.6875rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-tertiary);
+}
+.wt-observatory .chart-foot-stats .m .v{
+  font-family:var(--font-mono);font-size:1rem;font-weight:600;color:var(--ink-primary);
+}
+
+/* -- attention queue (L0) -- */
+.wt-observatory .attn-list{display:flex;flex-direction:column;gap:var(--space-2)}
+.wt-observatory .attn-row{
+  display:grid;grid-template-columns:4px 24px 32px 1fr auto auto 16px;align-items:center;
+  gap:var(--space-3);padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);text-decoration:none;
+  transition:background var(--duration-fast) var(--ease-standard);
+}
+.wt-observatory .attn-row:hover{background:var(--glass-fill-row-hover)}
+.wt-observatory .attn-row .bar{align-self:stretch;border-radius:999px;background:var(--ink-quiet)}
+.wt-observatory .attn-row.is-alarm .bar{background:var(--alarm)}
+.wt-observatory .attn-row.is-blocked .bar{background:var(--blocked)}
+.wt-observatory .attn-row.is-watch .bar{background:var(--watch)}
+.wt-observatory .attn-row .si{color:var(--calm-ink)}
+.wt-observatory .attn-row.is-alarm .si{color:var(--alarm)}
+.wt-observatory .attn-row.is-blocked .si{color:var(--blocked)}
+.wt-observatory .attn-row.is-watch .si{color:var(--watch)}
+.wt-observatory .attn-row .main{min-width:0}
+.wt-observatory .attn-row .title{
+  display:block;color:var(--ink-primary);font-weight:600;font-size:.875rem;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+}
+.wt-observatory .attn-row .title .proj{
+  font-family:var(--font-mono);color:var(--ink-tertiary);font-weight:500;margin-right:6px;
+font-size:.75rem;
+}
+.wt-observatory .attn-row .reason{
+  display:block;color:var(--ink-tertiary);font-size:.75rem;margin-top:1px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;
+}
+.wt-observatory .attn-row .reason .who{color:var(--ink-secondary)}
+.wt-observatory .attn-row .age{
+  font-family:var(--font-mono);font-size:.75rem;color:var(--ink-tertiary);white-space:nowrap;
+text-align:right;
+}
+.wt-observatory .attn-row .rank{font-family:var(--font-mono);font-size:.6875rem;
+color:var(--ink-quiet);white-space:nowrap}
+.wt-observatory .attn-row .chev{color:var(--ink-quiet)}
+
+/* -- fleet table (L0) -- */
+.wt-observatory .fleet-list{display:flex;flex-direction:column;gap:var(--space-2)}
+.wt-observatory .fleet-col-head{
+  display:grid;grid-template-columns:1.5fr 1.5fr 110px 74px 96px 16px;gap:var(--space-3);
+  padding:0 var(--space-4) var(--space-2);font-size:.6875rem;font-weight:600;
+text-transform:uppercase;
+  letter-spacing:.06em;color:var(--ink-tertiary);
+}
+.wt-observatory .fleet-row{
+  display:grid;grid-template-columns:1.5fr 1.5fr 110px 74px 96px 16px;align-items:center;
+  gap:var(--space-3);padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);text-decoration:none;
+  transition:background var(--duration-fast) var(--ease-standard);
+}
+.wt-observatory .fleet-row:hover{background:var(--glass-fill-row-hover)}
+.wt-observatory .fleet-row .pname{
+  color:var(--ink-primary);font-weight:600;font-size:.875rem;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;
+}
+.wt-observatory .fleet-row .pname .n{
+  display:block;color:var(--ink-tertiary);font-weight:450;font-size:.75rem;margin-top:1px;
+}
+.wt-observatory .status-mix{
+  display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--glass-fill-strong);
+}
+.wt-observatory .status-mix span{display:block;height:100%}
+.wt-observatory .mix-legend{
+  display:flex;gap:7px;margin-top:4px;font-size:.625rem;color:var(--ink-tertiary);flex-wrap:wrap;
+}
+.wt-observatory .fleet-row .agents{
+  display:flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:.8125rem;
+  color:var(--ink-secondary);font-variant-numeric:tabular-nums;
+}
+.wt-observatory .fleet-row .agents .icon{color:var(--brand-cyan-ink)}
+.wt-observatory .fleet-row .agents.is-zero{color:var(--ink-quiet)}
+.wt-observatory .fleet-row .agents.is-zero .icon{color:var(--ink-quiet)}
+.wt-observatory .fleet-row .last{font-family:var(--font-mono);font-size:.75rem;
+color:var(--ink-tertiary);white-space:nowrap}
+.wt-observatory .fleet-row .chev{color:var(--ink-quiet)}
+.wt-observatory .fleet-row .spark{display:block}
+
+/* -- Agents now (L0, fleet-wide roster) -- */
+.wt-observatory .agents-now-col-head{
+  display:grid;grid-template-columns:24px 1fr 110px 1.6fr 130px;gap:var(--space-3);
+  padding:0 var(--space-4) var(--space-2);font-size:.6875rem;font-weight:600;
+text-transform:uppercase;
+  letter-spacing:.06em;color:var(--ink-tertiary);
+}
+.wt-observatory .agents-now-list{display:flex;flex-direction:column;gap:var(--space-2)}
+.wt-observatory .agents-now-row{
+  display:grid;grid-template-columns:24px 1fr 110px 1.6fr 130px;align-items:center;
+gap:var(--space-3);
+  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
+background:var(--glass-fill);
+  border:1px solid var(--glass-hairline-soft);text-decoration:none;
+  transition:background var(--duration-fast) var(--ease-standard);
+}
+.wt-observatory .agents-now-row:hover{background:var(--glass-fill-row-hover)}
+.wt-observatory .agents-now-row .ai{color:var(--brand-cyan-ink)}
+.wt-observatory .agents-now-row .aid{
+  font-family:var(--font-mono);font-size:.8125rem;color:var(--ink-primary);font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.wt-observatory .agents-now-row .aproj{font-family:var(--font-mono);font-size:.75rem;
+color:var(--ink-tertiary)}
+.wt-observatory .agents-now-row .aitem{
+  font-size:.8125rem;color:var(--ink-secondary);white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis;
+}
+.wt-observatory .agents-now-row .aitem .id{
+  font-family:var(--font-mono);color:var(--ink-tertiary);margin-right:6px;font-size:.75rem;
+}
+.wt-observatory .agents-now-row .afresh{
+  font-family:var(--font-mono);font-size:.75rem;font-weight:600;white-space:nowrap;
+padding:3px 8px;
+  border-radius:var(--radius-pill);background:var(--glass-fill-strong);color:var(--ink-secondary);
+  text-align:center;
+}
+.wt-observatory .agents-now-row.has-stale .afresh{
+  color:var(--alarm-ink-on-surface);background:var(--alarm-surface);border:1px solid var(--alarm);
+}
+
+/* -- dormant projects disclosure (shared by activity-feed's collapse too) -- */
+.wt-observatory .dormant-details{margin-top:var(--space-4)}
+.wt-observatory .dormant-details summary{
+  cursor:pointer;list-style:none;display:flex;align-items:center;gap:var(--space-2);
+  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
+background:var(--glass-fill);
+  border:1px dashed var(--glass-hairline);color:var(--ink-tertiary);font-size:.8125rem;
+font-weight:600;
+}
+.wt-observatory .dormant-details summary::-webkit-details-marker{display:none}
+.wt-observatory .dormant-details summary .chev{
+  transition:transform var(--duration-fast) var(--ease-standard);margin-left:auto;
+}
+.wt-observatory .dormant-details[open] summary .chev{transform:rotate(90deg)}
+.wt-observatory .dormant-table{width:100%;border-collapse:collapse;margin-top:var(--space-3);
+font-size:.8125rem}
+.wt-observatory .dormant-table th{
+  text-align:left;font-size:.6875rem;font-weight:600;text-transform:uppercase;
+letter-spacing:.06em;
+  color:var(--ink-tertiary);padding:0 var(--space-3) var(--space-2);
+}
+.wt-observatory .dormant-table td{
+  padding:var(--space-2) var(--space-3);border-top:1px solid var(--glass-hairline-soft);
+  color:var(--ink-secondary);
+}
+.wt-observatory .dormant-table td.n{font-family:var(--font-mono);color:var(--ink-tertiary)}
+.wt-observatory .dormant-table tr td:first-child{color:var(--ink-primary);font-weight:500}
+
+/* -- activity feed (L0) -- */
+.wt-observatory .feed-list{display:flex;flex-direction:column}
+.wt-observatory .feed-item{
+  display:grid;grid-template-columns:18px 1fr auto;gap:var(--space-3);padding:var(--space-2) 0;
+  border-bottom:1px solid var(--glass-hairline-soft);align-items:baseline;text-decoration:none;
+}
+.wt-observatory .feed-item:last-child{border-bottom:none}
+.wt-observatory .feed-item .dot{
+  width:16px;height:16px;border-radius:999px;display:flex;align-items:center;
+justify-content:center;
+  background:var(--glass-fill-strong);border:1px solid var(--glass-hairline);align-self:center;
+}
+.wt-observatory .feed-item.k-claim .dot{color:var(--brand-cyan-ink);
+border-color:var(--brand-cyan-ink)}
+.wt-observatory .feed-item.k-resolve .dot{color:var(--calm-ink)}
+.wt-observatory .feed-item.k-block .dot{color:var(--blocked);border-color:var(--blocked)}
+.wt-observatory .feed-item.k-file .dot{color:var(--ink-secondary)}
+.wt-observatory .feed-item .txt{font-size:.8125rem;color:var(--ink-secondary);min-width:0}
+.wt-observatory .feed-item .txt b{color:var(--ink-primary);font-weight:600}
+.wt-observatory .feed-item .txt .proj{font-family:var(--font-mono);color:var(--ink-tertiary);
+font-size:.75rem}
+.wt-observatory .feed-item .time{font-family:var(--font-mono);font-size:.75rem;
+color:var(--ink-tertiary);white-space:nowrap}
+.wt-observatory .truncation-note{margin-top:var(--space-3);font-size:.75rem;
+color:var(--ink-quiet);font-style:italic}
+
+/* -- status-mix donut (L1) -- */
+.wt-observatory .status-breakdown-wrap{display:grid;grid-template-columns:auto 1fr;
+gap:var(--space-6);align-items:center}
+.wt-observatory .donut-wrap{position:relative;flex-shrink:0}
+/* `.donut-track`/`.donut-hatch-gap` -- chartsvg.status_donut's background
+   ring + hatch-pattern gap-line reach these tokens via a CSS class (not an
+   inline var(--glass-...) attribute) purely so the widget's own rendered
+   fragment never contains that token's literal text -- see chartsvg.py's
+   comment for why (the design firewall's blanket `--glass-*` deny-list). */
+.wt-observatory .donut-track{stroke:var(--glass-fill-strong)}
+.wt-observatory .donut-hatch-gap{stroke:var(--glass-fill-strong)}
+.wt-observatory .donut-center{position:absolute;inset:0;display:flex;flex-direction:column;
+align-items:center;justify-content:center}
+.wt-observatory .donut-center .n{font-family:var(--font-mono);font-size:1.5rem;font-weight:700;
+color:var(--ink-primary)}
+.wt-observatory .donut-center .l{font-size:.625rem;color:var(--ink-tertiary);
+text-transform:uppercase;letter-spacing:.06em}
+.wt-observatory .mix-legend-full{display:flex;flex-direction:column;gap:var(--space-2)}
+.wt-observatory .mix-legend-full .li{display:flex;align-items:center;gap:8px;font-size:.8125rem;
+color:var(--ink-secondary)}
+.wt-observatory .mix-legend-full .li .sw{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+.wt-observatory .mix-legend-full .li .name{flex:1 1 auto}
+.wt-observatory .mix-legend-full .li .cnt{font-family:var(--font-mono);color:var(--ink-primary);
+font-weight:600}
+.wt-observatory .mix-legend-full .li .pct{
+  font-family:var(--font-mono);color:var(--ink-tertiary);font-size:.75rem;min-width:40px;
+text-align:right;
+}
+
+/* -- agents panel (L1) -- */
+.wt-observatory .agents-list{display:flex;flex-direction:column;gap:var(--space-2)}
+.wt-observatory .agent-row{
+  display:grid;grid-template-columns:24px 1fr auto auto;align-items:center;gap:var(--space-3);
+  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
+background:var(--glass-fill);
+  border:1px solid var(--glass-hairline-soft);text-decoration:none;
+  transition:background var(--duration-fast) var(--ease-standard);
+}
+.wt-observatory .agent-row:hover{background:var(--glass-fill-row-hover)}
+.wt-observatory .agent-row .ai{color:var(--brand-cyan-ink)}
+.wt-observatory .agent-row .name{
+  font-family:var(--font-mono);font-size:.8125rem;color:var(--ink-primary);font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;
+}
+.wt-observatory .agent-row .name .held-n{color:var(--ink-tertiary);font-weight:450;
+margin-left:6px;font-family:var(--font-sans)}
+.wt-observatory .agent-row .most-recent{font-size:.75rem;color:var(--ink-tertiary);
+text-align:right}
+.wt-observatory .agent-row .most-recent .id{color:var(--ink-secondary);
+font-family:var(--font-mono)}
+.wt-observatory .agent-row .freshness{
+  font-family:var(--font-mono);font-size:.75rem;font-weight:600;white-space:nowrap;
+padding:3px 8px;
+  border-radius:var(--radius-pill);background:var(--glass-fill-strong);color:var(--ink-secondary);
+}
+.wt-observatory .agent-row.has-stale .freshness{
+  color:var(--alarm-ink-on-surface);background:var(--alarm-surface);border:1px solid var(--alarm);
+}
+
+/* -- items list (L1) -- */
+.wt-observatory .items-toolbar{
+  display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);
+  margin-bottom:var(--space-3);flex-wrap:wrap;
+}
+.wt-observatory .status-tabs{
+  display:flex;gap:2px;padding:2px;border-radius:var(--radius-pill);background:var(--glass-fill);
+  border:1px solid var(--glass-hairline-soft);flex-wrap:wrap;
+}
+.wt-observatory .status-tab{
+  display:flex;align-items:center;gap:6px;padding:var(--space-1) var(--space-3);
+  border-radius:var(--radius-pill);font-size:.75rem;font-weight:600;color:var(--ink-tertiary);
+  cursor:pointer;white-space:nowrap;text-decoration:none;
+}
+.wt-observatory .status-tab.is-active{
+  background:var(--glass-fill-strong);color:var(--ink-primary);
+box-shadow:inset 0 0 0 1px var(--glass-hairline);
+}
+.wt-observatory .status-tab .dot{width:6px;height:6px;border-radius:999px;background:currentColor}
+.wt-observatory .status-tab.tab-blocked .dot{background:var(--blocked)}
+.wt-observatory .items-col-head{
+  display:grid;grid-template-columns:96px 32px 1fr 150px 90px 16px;gap:var(--space-3);
+  padding:0 var(--space-4) var(--space-2);font-size:.6875rem;font-weight:600;
+text-transform:uppercase;
+  letter-spacing:.06em;color:var(--ink-tertiary);
+}
+.wt-observatory .item-row{
+  display:grid;grid-template-columns:96px 32px 1fr 150px 90px 16px;align-items:center;
+gap:var(--space-3);
+  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
+background:var(--glass-fill);
+  border:1px solid var(--glass-hairline-soft);text-decoration:none;margin-bottom:var(--space-2);
+}
+.wt-observatory .item-row:hover{background:var(--glass-fill-row-hover)}
+.wt-observatory .status-chip{
+  font-family:var(--font-mono);font-size:.6875rem;font-weight:700;padding:3px 8px;
+  border-radius:var(--radius-pill);background:var(--glass-fill-strong);color:var(--ink-tertiary);
+  width:fit-content;letter-spacing:.02em;white-space:nowrap;
+}
+.wt-observatory .status-chip.st-held{color:var(--brand-cyan-ink)}
+.wt-observatory .status-chip.st-blocked{
+  color:var(--blocked-ink-on-surface);background:var(--blocked-surface);
+border:1px solid var(--blocked);
+}
+.wt-observatory .status-chip.st-ready{color:var(--ink-secondary)}
+.wt-observatory .status-chip.st-resolved{color:var(--ink-quiet)}
+.wt-observatory .status-chip.st-deferred,
+.wt-observatory .status-chip.st-intake{color:var(--ink-tertiary)}
+.wt-observatory .item-row .name{
+  color:var(--ink-primary);font-weight:600;font-size:.875rem;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;
+}
+.wt-observatory .item-row .name .id{
+  font-family:var(--font-mono);color:var(--ink-tertiary);font-weight:500;margin-right:6px;
+font-size:.75rem;
+}
+.wt-observatory .item-row .holder{font-size:.75rem;color:var(--ink-tertiary);white-space:nowrap;
+overflow:hidden;text-overflow:ellipsis}
+.wt-observatory .item-row .holder .stale{color:var(--alarm-ink-on-surface);font-weight:600}
+.wt-observatory .item-row .age{font-family:var(--font-mono);font-size:.75rem;
+color:var(--ink-tertiary);text-align:right}
+.wt-observatory .item-row .chev{color:var(--ink-quiet)}
+
+/* -- item detail (L2) -- */
+.wt-observatory .detail-card{padding:var(--space-6) var(--space-10)}
+.wt-observatory .detail-head{
+  display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);
+  margin-bottom:var(--space-4);flex-wrap:wrap;
+}
+.wt-observatory .detail-title{
+  font-size:1.375rem;font-weight:700;color:var(--ink-primary);display:flex;align-items:center;
+  gap:var(--space-2);flex-wrap:wrap;
+}
+.wt-observatory .detail-title .id{font-family:var(--font-mono);font-size:.9375rem;
+color:var(--ink-tertiary);font-weight:500}
+.wt-observatory .detail-meta-row{display:flex;gap:var(--space-2);margin-top:var(--space-2);
+flex-wrap:wrap}
+.wt-observatory .tag-chip{
+  font-size:.6875rem;font-weight:600;padding:3px 9px;border-radius:var(--radius-pill);
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+color:var(--ink-tertiary);
+}
+
+.wt-observatory .field-grid{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-4);
+margin-bottom:var(--space-5);
+  padding-bottom:var(--space-5);border-bottom:1px solid var(--glass-hairline-soft);
+}
+.wt-observatory .field{display:flex;flex-direction:column;gap:2px}
+.wt-observatory .field .k{font-size:.6875rem;text-transform:uppercase;letter-spacing:.06em;
+color:var(--ink-quiet)}
+.wt-observatory .field .v{font-size:var(--text-body-size);color:var(--ink-primary);
+font-weight:500}
+.wt-observatory .field .v.mono{font-family:var(--font-mono);font-size:.875rem}
+.wt-observatory .field .v.fresh{color:var(--calm-ink)}
+
+.wt-observatory .prose{color:var(--ink-secondary);font-size:.9375rem;line-height:1.65;
+margin-bottom:var(--space-5)}
+.wt-observatory .prose h4{
+  color:var(--ink-primary);font-size:.75rem;font-weight:700;text-transform:uppercase;
+letter-spacing:.06em;
+  margin:0 0 var(--space-2);
+}
+.wt-observatory .prose p{margin:0 0 var(--space-3)}
+.wt-observatory .prose ol,.wt-observatory .prose ul{margin:0 0 var(--space-3);padding-left:1.2em}
+.wt-observatory .prose .given-when-then{
+  background:var(--color-ground-sunken);border:1px solid var(--glass-hairline-soft);
+border-radius:var(--radius-sm);
+  padding:var(--space-4);font-family:var(--font-mono);font-size:.8125rem;
+color:var(--ink-secondary);
+  white-space:pre-wrap;
+}
+.wt-observatory .prose .given-when-then b{color:var(--brand-cyan-ink);font-weight:700}
+
+.wt-observatory .blocker-banner{
+  display:flex;align-items:flex-start;gap:var(--space-3);padding:var(--space-4);
+border-radius:var(--radius-md);
+  margin-bottom:var(--space-3);
+}
+.wt-observatory .blocker-banner.unresolved{
+  background:var(--blocked-surface);border:1px solid var(--blocked);
+color:var(--blocked-ink-on-surface);
+}
+.wt-observatory .blocker-banner.resolved{
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+color:var(--ink-secondary);
+}
+.wt-observatory .blocker-banner .btitle{font-weight:600;font-size:.875rem}
+.wt-observatory .blocker-banner .blink{
+  font-family:var(--font-mono);font-size:.8125rem;text-decoration:underline;
+text-underline-offset:2px;
+}
+
+.wt-observatory .links-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4);
+margin-bottom:var(--space-5)}
+.wt-observatory .links-col h4{font-size:.6875rem;text-transform:uppercase;letter-spacing:.06em;
+color:var(--ink-tertiary);margin:0 0 var(--space-2)}
+.wt-observatory .link-chip{
+  display:flex;align-items:center;gap:8px;padding:var(--space-2) var(--space-3);
+border-radius:var(--radius-sm);
+  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+color:var(--ink-secondary);
+  text-decoration:none;font-size:.8125rem;margin-bottom:6px;
+}
+.wt-observatory .link-chip:hover{background:var(--glass-fill-row-hover)}
+.wt-observatory .link-chip .id{font-family:var(--font-mono);color:var(--ink-tertiary);flex:none}
+.wt-observatory .link-chip .t{
+  flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.wt-observatory .link-chip .none{color:var(--ink-quiet);font-style:italic}
+
+.wt-observatory .timeline{display:flex;flex-direction:column}
+.wt-observatory .tl-item{
+  display:grid;grid-template-columns:20px 1fr;gap:var(--space-3);padding-bottom:var(--space-5);
+  position:relative;
+}
+.wt-observatory .tl-item:last-child{padding-bottom:0}
+.wt-observatory .tl-item::before{
+  content:"";position:absolute;left:9px;top:20px;bottom:0;width:1px;
+background:var(--glass-hairline);
+}
+.wt-observatory .tl-item:last-child::before{display:none}
+.wt-observatory .tl-dot{
+  width:20px;height:20px;border-radius:999px;display:flex;align-items:center;
+justify-content:center;
+  background:var(--glass-fill-strong);border:1px solid var(--glass-hairline);z-index:1;
+}
+.wt-observatory .tl-dot .icon{width:.75em;height:.75em}
+.wt-observatory .tl-item.actor-neutral .tl-dot{color:var(--ink-secondary)}
+.wt-observatory .tl-item.actor-agent .tl-dot{color:var(--brand-cyan-ink);
+border-color:var(--brand-cyan-ink)}
+.wt-observatory .tl-item.actor-insight .tl-dot{color:var(--brand-purple-ink);
+border-color:var(--brand-purple-ink)}
+.wt-observatory .tl-body .tl-title{font-size:.875rem;font-weight:600;color:var(--ink-primary)}
+.wt-observatory .tl-body .tl-sub{font-size:.8125rem;color:var(--ink-tertiary);margin-top:2px}
+.wt-observatory .tl-body .tl-time{
+  font-family:var(--font-mono);font-size:.6875rem;font-weight:600;color:var(--ink-tertiary);
+margin-left:var(--space-2);
+}
+
+/* -- actions drawer (native <details>/<summary> -- zero JS needed) -- */
+.wt-observatory .actions-drawer{
+  border-radius:var(--radius-lg);background:var(--glass-fill);
+border:1px solid var(--glass-hairline-soft);
+  overflow:hidden;margin-bottom:var(--space-4);
+}
+.wt-observatory .actions-drawer summary{
+  list-style:none;cursor:pointer;display:flex;align-items:center;gap:var(--space-3);
+  padding:var(--space-4) var(--space-5);font-weight:600;color:var(--ink-secondary);
+font-size:.875rem;
+}
+.wt-observatory .actions-drawer summary::-webkit-details-marker{display:none}
+.wt-observatory .actions-drawer summary .chev{
+  margin-left:auto;color:var(--ink-quiet);
+transition:transform var(--duration-fast) var(--ease-standard);
+}
+.wt-observatory .actions-drawer[open] summary .chev{transform:rotate(90deg)}
+.wt-observatory .actions-drawer summary .count{font-size:.6875rem;color:var(--ink-quiet);
+font-weight:500}
+.wt-observatory .actions-drawer .drawer-body{
+  padding:var(--space-4) var(--space-5) var(--space-5);display:grid;
+grid-template-columns:repeat(3,1fr);
+  gap:var(--space-3);border-top:1px solid var(--glass-hairline-soft);
+}
+/* A `.drawer-section` (the Edit form, a status-gated lifecycle sub-action)
+   is a whole labelled sub-group, not one short `.action-btn` chip -- it
+   always spans every column of the 3-up (or, at narrower widths, 2-up/
+   1-up) action grid rather than being squeezed into a single 1/3-width
+   cell. NOTE: this comment avoids naming that lifecycle action literally
+   -- this whole stylesheet (comments included) is embedded verbatim in
+   every page's <style> tag, and an OPEN item's own detail-page test
+   asserts that action's own capitalized word is ABSENT from the page. */
+.wt-observatory .actions-drawer .drawer-section{grid-column:1/-1}
+.wt-observatory .actions-drawer .drawer-section h4{
+  font-size:.6875rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-tertiary);
+margin:0 0 var(--space-2);
+}
+.wt-observatory .actions-drawer .drawer-section+.drawer-section{
+  padding-top:var(--space-4);border-top:1px solid var(--glass-hairline-soft);
+}
+.wt-observatory .action-btn{
+  display:flex;align-items:center;gap:8px;padding:var(--space-3) var(--space-4);
+border-radius:var(--radius-md);
+  background:var(--glass-fill-strong);border:1px solid var(--glass-hairline);
+color:var(--ink-primary);
+  font-size:.8125rem;font-weight:600;cursor:pointer;text-decoration:none;
+}
+.wt-observatory .action-btn:hover{background:var(--glass-fill-row-hover)}
+.wt-observatory .action-btn.danger{
+  color:var(--blocked-ink-on-surface);background:var(--blocked-surface);
+border-color:var(--blocked);
+}
+.wt-observatory .action-btn .icon{color:var(--ink-tertiary)}
+.wt-observatory .action-btn.danger .icon{color:var(--blocked)}
+
+/* ---------------- responsive: tablet ---------------- */
+@media (max-width:900px){
+  .wt-observatory .two-up,.wt-observatory .three-up{grid-template-columns:1fr}
+  .wt-observatory .kpi-strip{grid-template-columns:repeat(3,1fr)}
+  .wt-observatory .status-breakdown-wrap{grid-template-columns:1fr;justify-items:center;
+text-align:center}
+  .wt-observatory .mix-legend-full{width:100%;max-width:320px}
+  .wt-observatory .field-grid{grid-template-columns:repeat(2,1fr)}
+  .wt-observatory .links-grid{grid-template-columns:1fr}
+  .wt-observatory .drawer-body{grid-template-columns:repeat(2,1fr)}
+}
+
+/* ---------------- 430px mobile ----------------
+   Rows already lay out as discrete DOM children per cell, so flipping
+   `display:grid -> flex column` stacks them without a per-row rewrite; the
+   whole row stays ONE <a>, so the drill-in tap target never shrinks, only
+   grows taller. Column headers are meaningless once stacked -- hidden.
+   Sparkline SVGs keep their viewBox and go full-bleed instead of a fixed
+   cell. Chart axis/value labels and the created-line dash pattern are
+   bumped at this width because both charts' viewBoxes render at ~0.56x the
+   container here -- a 9px SVG-unit label lands at ~5px on screen, and a
+   thin "4 3" dash pattern scaled down reads as nearly solid. */
+@media (max-width:430px){
+  .wt-observatory .container{padding:var(--space-4) var(--space-4) var(--space-12)}
+  .wt-observatory .kpi-strip{grid-template-columns:repeat(2,1fr)}
+  .wt-observatory .top-nav{gap:var(--space-2)}
+  .wt-observatory .search-input{display:none}
+  .wt-observatory .crumb-search{display:inline-flex}
+  .wt-observatory .fleet-col-head,.wt-observatory .items-col-head,
+  .wt-observatory .agents-now-col-head,.wt-observatory .attn-row .rank{display:none}
+  .wt-observatory .fleet-row,.wt-observatory .attn-row,.wt-observatory .feed-item,
+  .wt-observatory .item-row,.wt-observatory .agent-row,.wt-observatory .agents-now-row{
+    display:flex;flex-direction:column;align-items:stretch;gap:6px;
+  }
+  .wt-observatory .fleet-row .chev,.wt-observatory .attn-row .chev,
+  .wt-observatory .item-row .chev{display:none}
+  .wt-observatory .fleet-row::after,.wt-observatory .attn-row::after,
+  .wt-observatory .item-row::after{
+    content:"View →";align-self:flex-end;font-size:.6875rem;color:var(--ink-tertiary);
+  }
+  .wt-observatory .feed-item{flex-direction:row;flex-wrap:wrap}
+  .wt-observatory .fleet-row .spark{width:100%;height:32px;display:block;margin:4px 0}
+  .wt-observatory .donut-wrap svg{width:140px;height:140px}
+  /* the dormant projects table lays out at full desktop width even while its
+     <details> is collapsed, extending the page scroll range at 430px -- make
+     the table its own horizontal scroll container instead */
+  .wt-observatory .dormant-table{display:block;overflow-x:auto;max-width:100%}
+  .wt-observatory .svg-chart .axis-label,.wt-observatory .svg-chart .val-label{font-size:16px}
+  .wt-observatory .svg-chart .line{stroke-dasharray:9 6}
+  .wt-observatory .field-grid{grid-template-columns:1fr}
+  .wt-observatory .drawer-body{grid-template-columns:1fr}
+  .wt-observatory .detail-card{padding:var(--space-5) var(--space-4)}
+}
+"""
+
+CSS = CSS + "\n" + OBSERVATORY_CSS
+
+# ---------------------------------------------------------------------------
 # icons -- inline SVG, no external refs (hygiene: fonts inline, no network)
 #
 # The B12 set (goal wtv3/components): the exact shape-vocabulary ported
@@ -2086,14 +3074,26 @@ def _esc(value: object) -> str:
 # ---------------------------------------------------------------------------
 
 
-def page(title: str, body: str, *, js: str = "", measure_px: int = 620) -> str:
+def page(
+    title: str, body: str, *, js: str = "", measure_px: int = 620, body_class: str = ""
+) -> str:
+    """`body_class`, when given (wt-v4 Observatory only -- e.g. `"wt-observatory"`),
+    is applied as `<body class="...">`. Every Observatory CSS rule
+    (webtheme.py's `OBSERVATORY_CSS`, appended below `CSS`) is scoped under
+    this class -- including `body.wt-observatory::before` for the ambient
+    background glow, which is why it belongs on `<body>` itself rather than
+    a wrapper `<div>` nested inside it (a wrapper div can't be the `body`
+    element `::before` targets). Omitted (`""`, the default) renders `<body>`
+    with no class at all -- byte-for-byte the prior output for every
+    existing, non-Observatory page."""
+    body_attr = f' class="{_esc(body_class)}"' if body_class else ""
     return (
         "<!doctype html>\n"
         '<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"{_PWA_HEAD_HTML}"
         f"<title>{_esc(title)}</title><style>\n{CSS}\n"
-        f":root{{--measure:{measure_px}px}}\n</style></head><body>\n"
+        f":root{{--measure:{measure_px}px}}\n</style></head><body{body_attr}>\n"
         '<a class="skip" href="#main">Skip to content</a>\n'
         f"{body}\n" + (f"<script>{js}</script>\n" if js else "") + "</body></html>\n"
     )
@@ -2310,8 +3310,9 @@ def auto_refresh_js(interval_ms: int) -> str:
     screen nobody is touching, which is the entire reason this dashboard
     exists (see `webapp.py`'s `_AUTO_REFRESH_MS`).
 
-    Two independent guards, checked every tick; either one skips this
-    tick only -- it tries again next interval, it never stops polling:
+    Three independent guards, checked every tick; any one of them skips
+    this tick only -- it tries again next interval, it never stops
+    polling:
       - the tab is hidden (`document.hidden`): no point fetching for a
         backgrounded tab, and no risk of surprising whoever isn't looking.
       - the user is mid-input ANYWHERE on the page: `document.activeElement`
@@ -2322,6 +3323,12 @@ def auto_refresh_js(interval_ms: int) -> str:
         focus and whatever was typed -- see `webapp.py`'s `_page` for why
         the item-detail edit page instead never receives this script at
         all rather than leaning on this guard alone.
+      - wt-v4 Observatory ONLY: a page-local `window.__wtRefreshPaused`
+        flag, flipped by the nav's visible pause/play control
+        (`wtToggleRefresh()`, see webapp.py's `_observatory_nav_extras_html`).
+        Starts falsy on a page with no such control at all -- a pure
+        no-op there, so this guard changes nothing for any PRE-EXISTING
+        page that never renders the pause button.
 
     A single `window`-level flag makes the whole poller idempotent: the
     fetched body's own markup includes this exact script again (every
@@ -2336,6 +3343,19 @@ def auto_refresh_js(interval_ms: int) -> str:
     exact same URL forever would otherwise re-display the same flash on
     every tick instead of letting it be transient.
 
+    STATE SURVIVAL ACROSS THE SWAP (wt-v4 Observatory build-phase
+    requirement -- GAUNTLET-SYNTHESIS.md's "State survival across the
+    ~20s auto-refresh body-swap"): before replacing `document.body`, every
+    currently-OPEN `<details id="...">` element (the fleet's dormant-
+    projects disclosure, the activity feed, a help popover -- ANY
+    `<details>` this app gives a stable `id`) is recorded by id, and
+    `window.scrollY` is captured. After the swap, each recorded id's
+    `<details>` (if the fresh markup still has one with that id) is
+    re-opened, and the page is scrolled back to the captured position. A
+    page with no `<details id="...">` at all (every page before wt-v4)
+    records an empty list and restores nothing beyond the pre-existing
+    scroll behaviour -- a pure addition, nothing observable changes there.
+
     Every script tag in the freshly-swapped body is re-created (not left
     as inert markup -- `.innerHTML` never executes the `<script>` tags it
     inserts) so `search_js`'s own re-invocation-safe binding above
@@ -2349,6 +3369,7 @@ def auto_refresh_js(interval_ms: int) -> str:
   var inFlight=false;
   function isGuarded(){{
     if(document.hidden) return true;
+    if(window.__wtRefreshPaused) return true;
     var el=document.activeElement, tag=el && el.tagName;
     if(tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT') return true;
     var q=document.getElementById('q');
@@ -2369,9 +3390,24 @@ def auto_refresh_js(interval_ms: int) -> str:
       d.classList.add('refreshed');
     }});
   }}
+  function captureState(){{
+    var openIds=[];
+    document.querySelectorAll('details[id]').forEach(function(d){{
+      if(d.open) openIds.push(d.id);
+    }});
+    return {{openIds:openIds, scrollY:window.scrollY}};
+  }}
+  function restoreState(state){{
+    state.openIds.forEach(function(id){{
+      var d=document.getElementById(id);
+      if(d && d.tagName==='DETAILS') d.open=true;
+    }});
+    window.scrollTo(0, state.scrollY);
+  }}
   function tick(){{
     if(inFlight || isGuarded()) return;
     inFlight=true;
+    var state=captureState();
     fetch(refetchUrl(), {{credentials:'same-origin',
       headers:{{'X-Requested-With':'wt-auto-refresh'}}}})
       .then(function(r){{ return r.ok ? r.text() : null; }})
@@ -2386,6 +3422,7 @@ def auto_refresh_js(interval_ms: int) -> str:
           s.textContent = old.textContent;
           old.replaceWith(s);
         }});
+        restoreState(state);
         pulse();
       }})
       .catch(function(){{ /* silent -- next tick tries again */ }})
