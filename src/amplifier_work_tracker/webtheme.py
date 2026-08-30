@@ -2104,6 +2104,12 @@ OBSERVATORY_CSS = r"""
      silent `overflow:hidden` sometimes does elsewhere in this file. */
   overflow-x:clip;
 }
+/* The stray horizontal scroll range lives at the DOCUMENT level -- clipping
+   the body-level wrapper alone measurably did not remove it (html scrollWidth
+   1572 vs clientWidth 1425 with zero real DOM offenders; the source is a
+   decorative pseudo-element). Clip the html box itself, scoped via :has() so
+   only observatory pages are affected. */
+html:has(.wt-observatory){overflow-x:clip}
 .wt-observatory::before{
   content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
   background:radial-gradient(circle at 15% -10%, rgba(34,211,238,.10), transparent 40%),
@@ -2938,6 +2944,10 @@ text-align:center}
   .wt-observatory .feed-item{flex-direction:row;flex-wrap:wrap}
   .wt-observatory .fleet-row .spark{width:100%;height:32px;display:block;margin:4px 0}
   .wt-observatory .donut-wrap svg{width:140px;height:140px}
+  /* the dormant projects table lays out at full desktop width even while its
+     <details> is collapsed, extending the page scroll range at 430px -- make
+     the table its own horizontal scroll container instead */
+  .wt-observatory .dormant-table{display:block;overflow-x:auto;max-width:100%}
   .wt-observatory .svg-chart .axis-label,.wt-observatory .svg-chart .val-label{font-size:16px}
   .wt-observatory .svg-chart .line{stroke-dasharray:9 6}
   .wt-observatory .field-grid{grid-template-columns:1fr}
