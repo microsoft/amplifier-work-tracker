@@ -384,6 +384,62 @@ CSS = r"""
   --brand-purple-ink:#7e22ce;
 }
 
+/* `:root[data-theme="dark"]` -- the missing symmetric half of the manual-
+   toggle block above. DOM-measured live-dashboard defect: the verdict
+   hero (and every other token-driven surface) rendered with a LIGHT
+   ground and DARK ink while the page's own theme toggle showed "Dark" as
+   the pressed/active button -- e.g. the alarm verdict hero read as a
+   light-grey surface with near-black text instead of the mockup's dark,
+   amber-icon hero. Root cause: `page()` never set `data-theme` on
+   `<html>` at all before this fix, and `@media (prefers-color-scheme:
+   light){ :root{...} }` above matches the BARE `:root` selector --
+   nothing about that media block is conditioned on `data-theme`. Same
+   specificity as the base `:root{}` block (0-1-0) but later in the
+   cascade, so on any browser/OS whose OWN preference is light, it wins
+   and silently overrides the dark tokens -- REGARDLESS of what the
+   toggle claims to show, because there was no `data-theme="dark"`
+   attribute-selector rule (0-2-0, strictly higher specificity) to win
+   back over it, the same way `:root[data-theme="light"]` already wins
+   over the base `:root{}` on this exact mechanism. This block is that
+   missing half: identical token VALUES to the base `:root{}` above
+   (duplicated, not derived -- see that block's own light-mode-parallel
+   rationale), but as an attribute-selector rule so it outranks the OS
+   media query whenever `data-theme="dark"` is actually present.
+   `page()` now emits `<html data-theme="dark">` by default (dark is this
+   app's default theme, matching the toggle's own default `aria-pressed`
+   state in `_observatory_help_and_theme_html`) so this rule is ALWAYS
+   the one that applies until a user explicitly picks Light. */
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --color-ground:#05070f;
+  --color-ground-elevated:#0b0f1a;
+  --color-ground-sunken:#020308;
+  --glass-fill:rgba(255,255,255,.06);
+  --glass-fill-strong:rgba(255,255,255,.10);
+  --glass-fill-row-hover:rgba(255,255,255,.08);
+  --glass-fill-row-selected:rgba(34,211,238,.10);
+  --glass-hairline:rgba(255,255,255,.14);
+  --glass-hairline-soft:rgba(255,255,255,.08);
+  --glass-shadow:0 8px 32px rgba(2,6,15,.45),inset 0 1px 0 rgba(255,255,255,.06);
+  --glass-shadow-float:0 24px 64px rgba(2,6,15,.55),inset 0 1px 0 rgba(255,255,255,.08);
+  --ink-primary:#f8fafc;
+  --ink-secondary:#d6dee8;
+  --ink-tertiary:#aeb8c9;
+  --ink-quiet:#7c8798;
+  --ink-on-ground-inverse:#05070f;
+  --alarm:#f59e0b;
+  --alarm-surface:rgba(245,158,11,.14);
+  --alarm-ink-on-surface:#fcd34d;
+  --blocked:#ef4444;
+  --blocked-surface:rgba(239,68,68,.14);
+  --blocked-ink-on-surface:#fca5a5;
+  --watch:#9aa8cc;
+  --watch-surface:rgba(154,168,204,.14);
+  --watch-ink-on-surface:#d6def2;
+  --brand-cyan-ink:#22d3ee;
+  --brand-purple-ink:#c084fc;
+}
+
 /* -- AFFORDANCE GRAMMAR (one documented convention) ----------------------
    Three signals of "clickable" were in use (a trailing chevron, bold-amber
    text, and a lone underline). Consolidated to ONE rule, enforced by the
@@ -1050,7 +1106,6 @@ a.what:hover{color:var(--brand-cyan-ink)}
   cursor:pointer;text-decoration:none;flex:0 0 auto}
 .nav-actions .icon-btn svg{width:16px;height:16px}
 .nav-actions .icon-btn:hover{color:var(--ink);background:var(--glass-fill-row-hover)}
-.nav-actions a.btn-new{margin-top:0;padding:0 16px;height:32px;font-size:11.5px}
 @media (max-width:720px){.nav-actions .icon-btn{display:none}}
 /* DOM-measured mobile defect (L1, 430px): `.nav-actions` itself never wraps
    (`display:flex` with no `flex-wrap`), so its full row of chrome (refresh
@@ -2435,7 +2490,8 @@ flex-wrap:wrap}
 /* -- attention queue (L0) -- */
 .wt-observatory .attn-list{display:flex;flex-direction:column;gap:var(--space-2)}
 .wt-observatory .attn-row{
-  display:grid;grid-template-columns:4px 24px 32px 1fr auto auto 16px;align-items:center;
+  display:grid;grid-template-columns:4px 24px 32px minmax(180px,1fr) auto auto 16px;
+  align-items:center;
   gap:var(--space-3);padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
   background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);text-decoration:none;
   transition:background var(--duration-fast) var(--ease-standard);
@@ -2901,6 +2957,24 @@ border-color:var(--blocked);
 .wt-observatory .action-btn .icon{color:var(--ink-tertiary)}
 .wt-observatory .action-btn.danger .icon{color:var(--blocked)}
 
+/* ---------------- responsive: intermediate (laptop / scaled-display widths) ----------------
+   Between the 1440px desktop mock and the 900px tablet breakpoint below, the
+   `.two-up` row (velocity chart | attention queue) still lays out as TWO
+   columns -- at a real-world width in this band (commonly ~1000-1300px,
+   e.g. a 1366-1440px laptop panel under Windows display scaling) that
+   squeezes the attention-queue column until its title text -- a `1fr`
+   column before this fix -- renders only 2-3 characters wide ("co…",
+   "rea…", DOM-observed on the live dashboard). Stacking `.two-up`/
+   `.three-up` to a single column earlier gives each panel the FULL
+   container width again, matching what the 900px rule already did for
+   narrower viewports -- this just starts it sooner. `.attn-row`'s own
+   `minmax(180px,1fr)` title-column floor (below) is a second, independent
+   safety net for any width where the row itself still shares horizontal
+   space with something else. */
+@media (max-width:1280px){
+  .wt-observatory .two-up,.wt-observatory .three-up{grid-template-columns:1fr}
+}
+
 /* ---------------- responsive: tablet ---------------- */
 @media (max-width:900px){
   .wt-observatory .two-up,.wt-observatory .three-up{grid-template-columns:1fr}
@@ -3089,7 +3163,19 @@ def page(
     body_attr = f' class="{_esc(body_class)}"' if body_class else ""
     return (
         "<!doctype html>\n"
-        '<html lang="en"><head><meta charset="utf-8">'
+        # `data-theme="dark"` is this app's default theme -- matching the
+        # observatory theme-toggle's own default `aria-pressed="true"` on
+        # its "Dark" button (`_observatory_help_and_theme_html`). Without
+        # this attribute present from the FIRST render, a browser/OS whose
+        # own `prefers-color-scheme` is light silently wins the token
+        # cascade (see `:root[data-theme="dark"]`'s own docstring in the
+        # CSS above for the full specificity mechanics) -- the exact
+        # DOM-measured defect where the toggle showed "Dark" active while
+        # the verdict hero and every other surface actually rendered with
+        # light-mode tokens. `wtSetTheme` (this page's own inline JS)
+        # overwrites this attribute the moment a user picks Light/Dark
+        # explicitly; this default only governs the page's first paint.
+        '<html lang="en" data-theme="dark"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"{_PWA_HEAD_HTML}"
         f"<title>{_esc(title)}</title><style>\n{CSS}\n"
