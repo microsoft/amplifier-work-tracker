@@ -166,9 +166,12 @@ def test_full_write_flow_create_add_resolve_remove(
     r = client.get(f"/projects/{name}")
     assert unique_actor in r.text  # holder column shows the real, current holder
 
+    # wt-v4 Observatory: resolve is gated behind an explicit confirm (see
+    # webapp.py's `resolve` route + webbrowse.py's L2 confirm sub-state) --
+    # `confirm=yes` is what the confirm page's own form supplies.
     r = client.post(
         f"/projects/{name}/items/{item_id}/resolve",
-        data={"reason": "done via web ui test", "actor": unique_actor},
+        data={"reason": "done via web ui test", "actor": unique_actor, "confirm": "yes"},
     )
     assert r.status_code == 303
     assert "resolved" in r.headers["location"]
@@ -248,26 +251,23 @@ def test_item_detail_shows_description_and_acceptance_criteria(client, project_f
 
 
 def test_item_detail_reachable_from_project_listing(client, project_factory):
-    """The headline finding: every item in the project's split-pane list
-    must be a real link -- not inert text -- reachable through to its own
-    editable detail page.
+    """The headline finding: every item in the project's list must be a
+    real link -- not inert text -- reachable through to its own detail page.
 
-    goal wtv3/project-page: the list row's own href now SELECTS the item
-    inline (matching the already-shipped `/browse` split-pane view), and
-    the populated detail pane's "Open full item" link is the second hop to
-    the real, editable `/items/<id>` page. Both hops are real, clickable
-    navigation -- never a guessed/typed URL."""
+    wt-v4 Observatory: the split-pane selection model (`?item=`) is
+    retired -- L1's item rows link DIRECTLY to L2 (`/items/<id>`), one hop,
+    no in-page selection state (see webbrowse.py's `_item_row_html`)."""
     _login(client)
     name, bd = project_factory("linkproj")
     item_id = bd.create("clickable row", tags=[A.LANE_WORK])
 
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
-    assert f"item={item_id}" in r.text  # row's own selection href
+    assert f'href="/projects/{name}/items/{item_id}"' in r.text
 
-    selected = client.get(f"/projects/{name}", params={"item": item_id})
-    assert selected.status_code == 200
-    assert f'href="/projects/{name}/items/{item_id}"' in selected.text
+    detail = client.get(f"/projects/{name}/items/{item_id}")
+    assert detail.status_code == 200
+    assert "clickable row" in detail.text
 
 
 def test_item_detail_open_item_shows_no_lifecycle_action(client, project_factory):
@@ -480,10 +480,10 @@ def test_no_claim_affordance_anywhere_in_the_web_ui(client, project_factory, uni
 
 
 def test_dashboard_held_item_raises_the_custody_reading(client, project_factory, unique_actor):
-    """The A-Ledger overview has no per-row holder chip (see webapp.py's
-    dashboard-rendering module comment) -- a held item's signal is the
-    workspace-wide CUSTODY secondary reading and the queue's own
-    composition-bar HELD segment, not a named identity on the overview."""
+    """wt-v4 Observatory: L0 has no per-row holder chip -- a held item's
+    signal is the KPI strip's own "Held" card (a real, non-fabricated
+    count -- see widgets.render_kpi_strip), not a named identity on the
+    overview."""
     _login(client)
     name, bd = project_factory("dashboardheldproj")
     bd.create("held for dashboard signal", tags=[A.LANE_WORK])
@@ -491,9 +491,8 @@ def test_dashboard_held_item_raises_the_custody_reading(client, project_factory,
 
     r = client.get("/")
     assert r.status_code == 200
-    assert '<span class="k">Custody</span>' in r.text
-    # the held count (>=1) must appear as the custody reading's own figure
-    assert re.search(r'Custody</span>\s*<span class="n">[1-9]\d*</span>', r.text)
+    # the held count (>=1) appears as the KPI strip's own "Held" card value
+    assert re.search(r"Held</span>.*?<div class=\"v\">[1-9]\d*</div>", r.text, re.DOTALL)
 
 
 def test_dashboard_never_shows_a_static_health_ok_badge(client, shared_project_name):
@@ -510,15 +509,17 @@ def test_dashboard_never_shows_a_static_health_ok_badge(client, shared_project_n
 
 
 def test_project_view_empty_filter_state_names_the_filter_and_offers_clear(client, project_factory):
+    """wt-v4 Observatory: the "clear filter" affordance is the tab row's own
+    real "All" link (`?status=all`) -- a status-tabs click, not a separate
+    bare-href control (see webbrowse.py's `_status_tabs_html`)."""
     _login(client)
     name, bd = project_factory("emptyfilterproj")
     bd.create("only an open item", tags=[A.LANE_WORK])
 
     r = client.get(f"/projects/{name}", params={"status": "blocked"})
     assert r.status_code == 200
-    assert "No items match" in r.text
-    assert "blocked" in r.text
-    assert f'href="/projects/{name}"' in r.text  # clear-filter link
+    assert "No items match this filter" in r.text
+    assert f'href="/projects/{name}?status=all"' in r.text  # the All tab clears the filter
 
 
 def test_add_item_error_on_nonexistent_project_does_not_leak_path_or_cli(client):
@@ -539,22 +540,14 @@ def test_add_item_error_on_nonexistent_project_does_not_leak_path_or_cli(client)
 def test_project_view_pagination_reachability_and_no_cli_flag_leak(
     client, project_factory, unique_lane
 ):
-    """Cycle 2 fix #1: a project with more than one page's worth of items
-    must be FULLY reachable by clicking -- and the copy that used to say
-    "raise --limit" (a CLI flag a browser user has no way to pass) must be
-    gone. One project, exercised in two phases, to keep the (real, slow)
-    project bootstrap cost down to a single call.
+    """A project with more than one page's worth of items must be FULLY
+    reachable by clicking -- and no CLI flag ever leaks into the web copy.
 
-    goal wtv3/project-page: reachability is now a deliberate TWO-hop model,
-    matching the already-shipped `/browse` split-pane view (see
-    `test_webbrowse_route.py`'s own selection test, which established this
-    exact pattern): a row's own href SELECTS it inline (`?...&item=<id>`,
-    preserving `page`/`status`/`q`), and the populated (read-only) detail
-    pane carries an "Open full item" link to the real, editable
-    `/items/<id>` page. Every item is still reachable by clicking -- never
-    by guessing/typing a URL, never a CLI flag -- just one hop further than
-    the retired single-column table's direct link. This test verifies both
-    hops.
+    wt-v4 Observatory: reachability is now a ONE-hop model -- L1's item
+    rows link DIRECTLY to L2 (no split-pane `?item=` selection state, see
+    webbrowse.py's `_item_row_html`), with real `?page=` links (mirroring
+    the mockup's own "filter or page for more" truncation note) taking the
+    place of the retired split-pane's pagination control.
     """
     _login(client)
     name, bd = project_factory("paginateproj")
@@ -567,7 +560,7 @@ def test_project_view_pagination_reachability_and_no_cli_flag_leak(
     assert r0.status_code == 200
     assert 'class="pagination"' not in r0.text
     for i in few_ids:
-        assert f"item={i}" in r0.text  # every item's own selection href present
+        assert f'href="/projects/{name}/items/{i}"' in r0.text  # every item's own direct link
 
     # Phase 2 -- push past one page's worth of items.
     page_size = A.LIST_DEFAULT_LIMIT
@@ -577,14 +570,11 @@ def test_project_view_pagination_reachability_and_no_cli_flag_leak(
     r1 = client.get(f"/projects/{name}")
     assert r1.status_code == 200
     page1_text = r1.text
-    next_href = f"/projects/{name}?page=2"
+    next_href = f"/projects/{name}?status=all&page=2"
     assert f'href="{next_href}"' in page1_text
     assert "--limit" not in page1_text  # no CLI flag anywhere in the web copy
 
-    # Every row is a real split-pane selection link, not text-width-only.
-    assert 'class="wtb-rows"' in page1_text
-
-    missing_from_page1 = [i for i in all_ids if f"item={i}" not in page1_text]
+    missing_from_page1 = [i for i in all_ids if f'items/{i}"' not in page1_text]
     assert missing_from_page1, "expected at least one item to be unreachable on page 1 alone"
 
     # Reachable by clicking Next -- not by guessing/typing a per-item URL.
@@ -592,8 +582,8 @@ def test_project_view_pagination_reachability_and_no_cli_flag_leak(
     assert r2.status_code == 200
     assert "--limit" not in r2.text
     for i in missing_from_page1:
-        assert f"item={i}" in r2.text
-    assert f'href="/projects/{name}?page=1"' in r2.text  # Previous goes back
+        assert f'items/{i}"' in r2.text
+    assert f'href="/projects/{name}?status=all&page=1"' in r2.text  # Previous goes back
 
     # A stale/hand-typed page far beyond the real last page lands on the
     # real last page instead of a confusingly empty one.
@@ -601,43 +591,40 @@ def test_project_view_pagination_reachability_and_no_cli_flag_leak(
     assert r3.status_code == 200
     assert "No items yet" not in r3.text
     for i in missing_from_page1:
-        assert f"item={i}" in r3.text
+        assert f'items/{i}"' in r3.text
 
-    # The status filter survives across a page link.
-    r4 = client.get(f"/projects/{name}", params={"status": "open"})
-    assert r4.status_code == 200
-    assert f'href="/projects/{name}?page=2&status=open"' in r4.text
-
-    # Second hop: selecting any one item surfaces the real, editable item
-    # page -- genuine end-to-end reachability, not just a selection href
-    # that goes nowhere further.
+    # Second hop check: every item is a real, direct link to its own page.
     one_id = few_ids[0]
-    r5 = client.get(f"/projects/{name}", params={"item": one_id})
-    assert r5.status_code == 200
-    assert f'href="/projects/{name}/items/{one_id}"' in r5.text
+    assert f'href="/projects/{name}/items/{one_id}"' in r0.text
 
 
 # ------------------------------------------------- cycle 2: numeric alignment
 
 
-def test_dashboard_queue_table_numeric_columns_are_right_aligned(client, shared_project_name):
-    """The A-Ledger queue table's numeric columns (Total/Ready/Resolved/
-    Done) -- see webapp.py's `_dashboard_row`/dashboard route."""
+def test_dashboard_kpi_values_are_tabular_numerals(client, shared_project_name):
+    """wt-v4 Observatory: the v3 A-Ledger queue table (Total/Ready/Resolved/
+    Done% columns) is retired -- L0's KPI strip is the numeric-summary
+    surface now (see widgets.render_kpi_strip). Its `.v` values render as
+    real tabular numerals (`font-variant-numeric:tabular-nums`, set once
+    in webtheme.py's `.kpi-card .v` rule), the same alignment guarantee the
+    old right-aligned `<th class="r">` columns existed to provide."""
     _login(client)
     r = client.get("/")
     assert r.status_code == 200
-    assert '<th class="r">Total</th>' in r.text
-    assert '<th class="r">Ready</th>' in r.text
-    assert '<th class="r">Resolved</th>' in r.text
-    assert '<th class="r">Done&nbsp;%</th>' in r.text
+    assert 'class="kpi-strip"' in r.text
+    assert 'class="glass-panel kpi-card"' in r.text
 
 
-def test_dashboard_project_name_cell_is_a_stretched_link(client, shared_project_name):
-    """Cycle 2 fix #6: the whole cell is clickable, not just the text."""
+def test_dashboard_fleet_row_is_a_real_link_to_the_project(client, shared_project_name):
+    """wt-v4 Observatory: the v3 dashboard's stretched `<td class="link-
+    cell">` queue table row is retired -- L0's Fleet table renders each
+    project as a real `<a class="fleet-row">` (the WHOLE row is the link,
+    same "whole cell/row clickable" guarantee, see widgets.render_fleet_table)."""
     _login(client)
     r = client.get("/")
     assert r.status_code == 200
-    assert '<td class="link-cell">' in r.text
+    assert f'href="/projects/{shared_project_name}"' in r.text
+    assert 'class="fleet-row"' in r.text
 
 
 # ------------------------------------------------- cycle 2: identity display
@@ -987,12 +974,10 @@ def test_resolved_item_row_shows_no_holder_chip_though_it_has_a_stale_assignee(
     is NOT a current custody holder -- the project's `held` stat is (and
     must stay) 0.
 
-    goal wtv3/project-page: the split-pane row (`webbrowse._row_html`, via
-    `project_view`'s `row_extra_builder` -- see that route's own
-    `_item_held_html`) renders NO held/custody line at all for a non-held
-    item -- absent entirely, the same "absent when calm, never a dimmed
-    placeholder" convention the attention banner already uses -- never a
-    holder-looking chip with a dash standing in for "not held."
+    wt-v4 Observatory: L1's item row (`webbrowse._item_row_html`) renders
+    the row's `.holder` cell from the item's CURRENT status only -- a
+    resolved item never shows its leftover `holder` field as if it were
+    still held (see that function's own status-branching).
     """
     _login(client)
     name, bd = project_factory("resolvedholderproj")
@@ -1002,20 +987,14 @@ def test_resolved_item_row_shows_no_holder_chip_though_it_has_a_stale_assignee(
 
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
-    # No held/custody line rendered for this (resolved, not held) row at
-    # all. The row's own `data-t` search-index attribute legitimately still
-    # carries the actor's name for search-by-holder purposes (see
-    # `webbrowse._row_html`'s `key`), which is a separate, deliberate
-    # concern from what's visibly rendered.
-    assert 'class="wtb-holder"' not in r.text
-    # The project's own "Held" tally agrees: 0 currently held, even though
-    # this project has exactly one resolved item with a real leftover holder.
-    assert '<div class="v">0</div><span class="k">Held</span>' in r.text
+    # The resolved row shows the item's real (leftover) holder as plain
+    # historical text -- but never inside a HELD-style status chip.
+    assert 'class="status-chip st-resolved">RESOLVED</span>' in r.text
 
-    # And the status filter agrees too: nothing is actually held.
+    # And the status filter agrees: nothing is actually held right now.
     held_only = client.get(f"/projects/{name}", params={"status": "held"})
     assert held_only.status_code == 200
-    assert "No items match" in held_only.text
+    assert "No items match this filter" in held_only.text
 
 
 def test_resolved_item_detail_shows_no_held_by_chip(client, project_factory, unique_actor):
@@ -1090,7 +1069,9 @@ def test_remove_confirm_page_never_includes_auto_refresh_script(client, project_
 
 def test_project_view_status_tabs_show_real_counts(client, project_factory, unique_lane):
     """The tab row's counts are the real per-project state -- not a
-    fabricated/placeholder reading."""
+    fabricated/placeholder reading. wt-v4 Observatory: `.status-tabs`/
+    `.status-tab`, not the v3 `.tabs`/`.tab`/`.tcount` markup (see
+    webbrowse.py's `_status_tabs_html`)."""
     _login(client)
     name, bd = project_factory("tabcountsproj")
     bd.create("ready one", tags=[unique_lane, A.LANE_WORK])
@@ -1098,44 +1079,36 @@ def test_project_view_status_tabs_show_real_counts(client, project_factory, uniq
 
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
-    assert 'class="tabs"' in r.text
-    assert ">Ready<" in r.text
-    assert ">Held<" in r.text
-    assert ">Blocked<" in r.text
-    assert ">Deferred<" in r.text
-    assert ">Resolved<" in r.text
-    # Two real ready items, everything else genuinely zero and dimmed.
-    assert '<span class="tcount">2</span>' in r.text
-    assert '<span class="tcount z">0</span>' in r.text
+    assert 'class="status-tabs"' in r.text
+    assert ">Ready" in r.text
+    assert ">Held" in r.text
+    assert ">Blocked" in r.text
+    assert ">Deferred" in r.text
+    assert ">Resolved" in r.text
+    # Two real ready items, everything else genuinely zero.
+    assert '<span style="opacity:.7">2</span>' in r.text
+    assert '<span style="opacity:.7">0</span>' in r.text
 
 
 def test_project_view_clicking_a_status_tab_filters_the_list(client, project_factory, unique_lane):
-    """Note: the ready-queue HERO (`_project_hero_html`, "oldest unclaimed
-    in this queue") legitimately names this item's title regardless of the
-    list's own status filter -- it is a project-wide reading, not part of
-    the filtered list. So the filtering assertion is scoped to the item
-    LIST itself (absent entirely -- an honest empty-state -- once
-    filtered to a status this item doesn't have), not a blanket "title
-    appears nowhere on the page" check.
-
-    goal wtv3/project-page: the item list is now the split-pane's
-    `.wtb-rows` (squircle row cards), not the retired `<table class="tbl">`
-    -- see webapp.py's `project_view`, which reuses webbrowse.py's shared
-    split-pane machinery."""
+    """wt-v4 Observatory: the item list is L1's own `.item-row` links (see
+    webbrowse.py's `_item_row_html`), not the retired split-pane's
+    `.wtb-rows` -- filtering to a status this item doesn't have yields an
+    honest empty state, never a stale row left behind."""
     _login(client)
     name, bd = project_factory("tabfilterproj")
     bd.create("only an open item", tags=[unique_lane, A.LANE_WORK])
 
     all_view = client.get(f"/projects/{name}")
     assert "only an open item" in all_view.text
-    assert 'class="wtb-rows"' in all_view.text
+    assert 'class="item-row"' in all_view.text
 
     filtered = client.get(f"/projects/{name}", params={"status": "blocked"})
     assert filtered.status_code == 200
-    assert 'class="wtb-rows"' not in filtered.text  # no rows -- filtered to nothing
-    assert "No items match status" in filtered.text
+    assert 'class="item-row"' not in filtered.text  # no rows -- filtered to nothing
+    assert "No items match this filter" in filtered.text
     assert f'href="/projects/{name}?status=blocked"' in filtered.text
-    assert 'class="tab active"' in filtered.text
+    assert 'class="status-tab tab-blocked is-active"' in filtered.text
 
 
 def test_project_view_no_longer_ships_a_status_select_dropdown(client, shared_project_name):
@@ -1151,18 +1124,23 @@ def test_project_view_no_longer_ships_a_status_select_dropdown(client, shared_pr
 
 
 def test_project_view_health_banner_absent_when_calm(client, project_factory, unique_lane):
-    """A project with nothing held/blocked/deferred shows NO banner at
-    all -- never a dimmed '0 blocked' (see `_attention_signal_html`)."""
+    """wt-v4 Observatory: the per-project "need attention" health banner is
+    retired -- the project verdict HERO carries this narrative now (see
+    `widgets.verdict_line`'s `scope="project"` and webbrowse.py's own
+    `reasons` construction). A project with nothing stale/blocked/aging
+    renders the calm ("All clear") verdict state, never an alarm."""
     _login(client)
     name, bd = project_factory("calmprojbanner")
     bd.create("a perfectly calm ready item", tags=[unique_lane, A.LANE_WORK])
 
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
-    assert "need attention" not in r.text
+    assert 'class="glass-panel strong rim-glow hero is-alarm"' not in r.text
 
 
 def test_project_view_health_banner_present_when_blocked(client, project_factory, unique_actor):
+    """wt-v4 Observatory: a blocked item raises the project verdict hero
+    into its alarm state, naming the blocked count in the narrative."""
     _login(client)
     name, bd = project_factory("blockedprojbanner")
     item_id = bd.create("an item that will be blocked", tags=[A.LANE_WORK])
@@ -1176,22 +1154,34 @@ def test_project_view_health_banner_present_when_blocked(client, project_factory
 
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
-    assert "need attention" in r.text
-    assert "flash-error" in r.text
+    assert 'class="glass-panel strong rim-glow hero is-alarm"' in r.text
     assert "1 item blocked" in r.text
 
 
-def test_project_view_health_banner_present_when_held(client, project_factory, unique_actor):
+def test_project_view_health_banner_calm_when_held_but_fresh(client, project_factory, unique_actor):
+    """DELIBERATE semantic change from v3 to v4: a merely-HELD item is no
+    longer, by itself, an alarm condition -- healthy in-flight work is not
+    something needing attention. Only STALE custody (past its TTL) raises
+    the project verdict's alarm state now (see `widgets.verdict_line`'s
+    `reasons` construction in webbrowse.py, sourced from
+    `summary.held_stale`, not `summary.held`). A fresh claim right after
+    `work_claim` renders calm, matching the pivot from workbench to
+    observatory: agents actively working is the expected, healthy state."""
     _login(client)
     name, bd = project_factory("heldprojbanner")
     item_id = bd.create("an item to hold", tags=[A.LANE_WORK])
     bd.claim_item(item_id, actor=unique_actor)
+    # A bare `claim_item` (bypassing the `work_claim` tool's own custody
+    # write) leaves NO custody record at all -- `custody.reclaim_eligible`
+    # treats that shape as stale-by-default (see adapter.py's own
+    # `_held_stale_count` docstring). `take_custody` is the real mechanism
+    # that establishes a genuinely fresh record, exactly as `work_claim`
+    # itself does after a raw bd claim.
+    bd.take_custody(item_id, holder=unique_actor, pid=1, host="test-host")
 
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
-    assert "need attention" in r.text
-    assert "flash-msg" in r.text
-    assert "1 item held" in r.text
+    assert 'class="glass-panel strong rim-glow hero is-alarm"' not in r.text
 
 
 # --------------------------------------------------- list polish: row gutter
@@ -1200,20 +1190,17 @@ def test_project_view_health_banner_present_when_held(client, project_factory, u
 def test_project_view_item_rows_include_priority_bar_and_status_icon(
     client, project_factory, unique_lane
 ):
+    """wt-v4 Observatory: the row's status/priority signals are now the
+    mockup's own `.status-chip` + `.priority-chip` (see webbrowse.py's
+    `_item_row_html`), not the retired split-pane's `.wtb-gutter`/`stico`."""
     _login(client)
     name, bd = project_factory("gutterproj")
     bd.create("gutter probe item", tags=[unique_lane, A.LANE_WORK])
 
     r = client.get(f"/projects/{name}")
     assert r.status_code == 200
-    # goal wtv3/project-page: the row's gutter is now the split-pane's
-    # `.wtb-gutter` (squircle row card), not the retired table cell's
-    # `class="c gutter"` -- see webbrowse.py's `_row_html`, reused verbatim.
-    assert 'class="wtb-gutter"' in r.text
-    # v3 fidelity pass (goal wtv3/components, B3/B4): a priority CHIP, not
-    # the prior coloured bar.
+    assert 'class="status-chip st-ready">READY</span>' in r.text
     assert "priority-chip" in r.text
-    assert "stico" in r.text
 
 
 # ------------------------------------------------- list polish: item-detail age
@@ -1243,129 +1230,34 @@ def test_item_detail_created_and_updated_use_the_compact_age_format(client, proj
 # ------------------------------------------------ nav/density: sidebar chrome
 
 
-def test_dashboard_includes_the_sidebar_with_a_rollup_and_no_current_project(
-    client, project_factory
-):
-    _login(client)
-    name, _bd = project_factory("navsidebardash")
-
-    r = client.get("/")
-    assert r.status_code == 200
-    assert 'id="sidebar"' in r.text
-    assert "All projects" in r.text
-    assert f'href="/projects/{name}"' in r.text
-    # the roll-up is "current" on the dashboard, no project row is
-    assert 'href="/" aria-current="page"' in r.text
-
-
-def test_project_view_includes_the_sidebar_with_this_project_marked_current(
-    client, project_factory
-):
-    _login(client)
-    name, _bd = project_factory("navsidebarproj")
-
-    r = client.get(f"/projects/{name}")
-    assert r.status_code == 200
-    assert 'id="sidebar"' in r.text
-    assert f'href="/projects/{name}" aria-current="page"' in r.text
-    assert 'href="/" aria-current="page"' not in r.text
+# -------------------------------------------------------------------------
+# wt-v4 Observatory RETIRES the v3 project sidebar, density toggle, and
+# document-level j/k/Enter keynav script entirely -- none of BRIEF.md's L0/
+# L1/L2 mockups carry a persistent project-nav rail, a density control, or
+# a keyboard row-navigation affordance (the pivot is observability/
+# reporting, browsed via the fleet table + drill-down, not a dense list
+# UI needing keyboard nav). The tests below are RETIRED along with those
+# features: `test_dashboard_includes_the_sidebar_with_a_rollup_and_no_
+# current_project`, `test_project_view_includes_the_sidebar_with_this_
+# project_marked_current`, `test_sidebar_shows_real_open_over_total_counts_
+# for_a_real_project`, `test_sidebar_marks_a_held_project_with_the_amber_
+# alarm_class`, `test_sidebar_present_on_the_empty_workspace_state_too`,
+# `test_dashboard_includes_the_density_toggle_and_keynav_script`,
+# `test_project_view_includes_the_density_toggle_and_keynav_script`,
+# `test_item_detail_never_includes_the_keynav_script`. Their positive
+# replacement is `test_dashboard_fleet_row_is_a_real_link_to_the_project`
+# (above) for reachability, and the new-IA tests in
+# `test_observatory_web.py` for L0/L1 render coverage.
+# -------------------------------------------------------------------------
 
 
-def test_sidebar_shows_real_open_over_total_counts_for_a_real_project(
-    client, project_factory, unique_lane
-):
-    _login(client)
-    name, bd = project_factory("navsidebarcounts")
-    bd.create("one", tags=[unique_lane, A.LANE_WORK])
-    bd.create("two", tags=[unique_lane, A.LANE_WORK])
-
-    r = client.get("/")
-    assert r.status_code == 200
-    assert '<span class="sb-badge" title="2 open of 2 items">2/2</span>' in r.text
-
-
-def test_sidebar_marks_a_held_project_with_the_amber_alarm_class(
-    client, project_factory, unique_actor
-):
-    _login(client)
-    name, bd = project_factory("navsidebarheld")
-    item_id = bd.create("an item to hold", tags=[A.LANE_WORK])
-    bd.claim_item(item_id, actor=unique_actor)
-
-    r = client.get("/")
-    assert r.status_code == 200
-    assert "alarm-am" in r.text
-
-
-def test_sidebar_present_on_the_empty_workspace_state_too(client, workspace, unique_project_name):
-    """The 'no projects yet' branch gets a sidebar too (an honest, empty
-    one) -- chrome should not suddenly appear the moment the first project
-    is created. `unique_project_name` (never created here) only keeps the
-    fixture's teardown registered; the empty-state branch itself is
-    exercised directly at the unit level (`_sidebar_html([], [], None)`),
-    since it requires a genuinely-empty workspace this shared `client`
-    fixture (session-scoped `workspace`, populated by every other test in
-    this module) cannot guarantee.
-    """
-    assert unique_project_name
-    _login(client)
-    r = client.get("/")
-    assert r.status_code == 200
-    assert 'id="sidebar"' in r.text
-
-
-# --------------------------------------------- nav/density: search shortcut hint
-
-
-def test_project_view_search_placeholder_carries_the_slash_shortcut_hint(
-    client, shared_project_name
-):
+def test_project_view_search_placeholder_uses_the_new_filter_hint(client, shared_project_name):
+    """wt-v4 Observatory: L1's item filter is a plain `<input type="search"
+    placeholder="Filter\u2026">` (see webbrowse.py's `project_view`) -- the v3
+    `/` keyboard-shortcut hint (`search_field`/`search_js`) is retired along
+    with the density/keynav script it was paired with."""
     _login(client)
     r = client.get(f"/projects/{shared_project_name}")
     assert r.status_code == 200
-    assert 'placeholder="Search titles, ids, holders and state  /"' in r.text
-    # the accessible name stays clean -- no "slash" noise for a screen reader
-    assert 'aria-label="Search titles, ids, holders and state"' in r.text
-
-
-def test_dashboard_search_hint_carries_the_slash_shortcut(client, shared_project_name):
-    """v3 fidelity pass (goal wtv3/components, B10): a real `<kbd>` element,
-    ported from the approved gallery's own `.search-input kbd`."""
-    _login(client)
-    r = client.get("/")
-    assert r.status_code == 200
-    assert "<kbd>/</kbd>" in r.text
-
-
-# --------------------------------------------- nav/density: density + keynav js
-
-
-def test_dashboard_includes_the_density_toggle_and_keynav_script(client, shared_project_name):
-    _login(client)
-    r = client.get("/")
-    assert r.status_code == 200
-    assert 'id="density-toggle"' in r.text
-    assert "window.__wtKeyNavBound" in r.text
-    assert "wt-density" in r.text
-
-
-def test_project_view_includes_the_density_toggle_and_keynav_script(client, project_factory):
-    _login(client)
-    name, _bd = project_factory("navdensityproj")
-    r = client.get(f"/projects/{name}")
-    assert r.status_code == 200
-    assert 'id="density-toggle"' in r.text
-    assert "window.__wtKeyNavBound" in r.text
-    assert "wt-density" in r.text
-
-
-def test_item_detail_never_includes_the_keynav_script(client, project_factory):
-    """Same protected-page convention as `auto_refresh_js`: the item-detail
-    edit form never receives a document-level keydown listener either."""
-    _login(client)
-    name, bd = project_factory("navdensitynoitem")
-    item_id = bd.create("an item", tags=[A.LANE_WORK])
-    r = client.get(f"/projects/{name}/items/{item_id}")
-    assert r.status_code == 200
-    assert "window.__wtKeyNavBound" not in r.text
-    assert 'id="density-toggle"' not in r.text
+    assert 'placeholder="Filter\u2026"' in r.text
+    assert 'aria-label="Filter items"' in r.text

@@ -58,13 +58,13 @@ from __future__ import annotations
 
 import html
 import logging
-import math
 import os
 import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Request
@@ -73,6 +73,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from . import adapter as A
+from . import chartsvg as CH
 from . import custody as CU
 from . import webauth as WA
 from . import webpwa as PWA
@@ -619,6 +620,8 @@ def _page(
     auto_refresh_ms: int | None = None,
     sidebar_html: str = "",
     nav_project: str | None = None,
+    extra_nav_html: str = "",
+    body_class: str = "",
 ) -> HTMLResponse:
     """The one page shell every route renders through.
 
@@ -654,14 +657,21 @@ def _page(
     top = T.top_bar(
         crumb_html=crumb_html,
         right_html=_identity_right(request),
-        actions_html=_nav_actions_html(nav_project),
+        actions_html=_nav_actions_html(nav_project) + extra_nav_html,
     )
     main = f'<main class="wrap" id="main">{body}</main>'
     if sidebar_html:
         main = f'<div class="pagegrid">{sidebar_html}{main}</div>'
     full_body = f"{top}{main}{statusbar_html}"
     combined_js = js + (T.auto_refresh_js(auto_refresh_ms) if auto_refresh_ms else "")
-    return HTMLResponse(T.page(f"{title} \u00b7 amplifier-work-tracker", full_body, js=combined_js))
+    return HTMLResponse(
+        T.page(
+            f"{title} \u00b7 amplifier-work-tracker",
+            full_body,
+            js=combined_js,
+            body_class=body_class,
+        )
+    )
 
 
 def _flash(request: Request) -> str:
@@ -3292,6 +3302,593 @@ def _setup_body(request: Request) -> str:
 _SETUP_TLS_METHODS = frozenset({"tailscale", "ca", "selfsigned"})
 
 
+# ===========================================================================
+# wt-v4 "Observatory" (lane obs-pages) -- shared page-shell helpers for L0
+# Mission Control (this module), re-exported by import for L1/L2
+# (webbrowse.py). See `.amplifier/design-gauntlet/wt-v4-observatory/` for
+# the approved mockups these render functions match, and
+# `GAUNTLET-SYNTHESIS.md` for the build-phase requirements list.
+# ===========================================================================
+
+#: The union of every `<symbol id="i-...">` icon ANY wt-v4 Observatory page
+#: (L0/L1/L2) references via `<use href="#i-...">` -- `widgets.py`/
+#: `chartsvg.py`'s render functions all assume this sprite is present
+#: somewhere in the document (position is irrelevant to SVG `<use>`).
+#: Shapes/viewBoxes are lifted VERBATIM from the approved mockups, never
+#: redrawn independently, so an icon can never silently drift from the
+#: reviewed design.
+_OBSERVATORY_ICON_SPRITE = (
+    '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>'
+    '<symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/>'
+    '<path d="M8 12.5l2.5 2.5 5-5.5"/></symbol>'
+    '<symbol id="i-alert-triangle" viewBox="0 0 24 24"><path d="M12 3.5 21 19H3z"/>'
+    '<path d="M12 9.5v4.5"/>'
+    '<circle cx="12" cy="16.7" r="0.6" fill="currentColor" stroke="none"/></symbol>'
+    '<symbol id="i-octagon-x" viewBox="0 0 24 24"><path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/>'
+    '<path d="M9.5 9.5l5 5M14.5 9.5l-5 5"/></symbol>'
+    '<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/>'
+    '<path d="M12 7v5.5l4 2"/></symbol>'
+    '<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/>'
+    '<path d="M21 21l-4.3-4.3"/></symbol>'
+    '<symbol id="i-plus-file" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/>'
+    '<path d="M12 10v6M9 13h6"/></symbol>'
+    '<symbol id="i-bot" viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="10" rx="3"/>'
+    '<path d="M12 4v4"/><circle cx="9" cy="13" r="1" fill="currentColor" stroke="none"/>'
+    '<circle cx="15" cy="13" r="1" fill="currentColor" stroke="none"/></symbol>'
+    '<symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 6h16v10H9l-4 4V6z"/></symbol>'
+    '<symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>'
+    '<symbol id="i-slash" viewBox="0 0 24 24"><path d="M16 4L8 20"/></symbol>'
+    '<symbol id="i-link" viewBox="0 0 24 24"><path d="M9 15l6-6"/>'
+    '<path d="M14 5l1.5-1.5a3.5 3.5 0 0 1 5 5L19 10"/>'
+    '<path d="M10 19l-1.5 1.5a3.5 3.5 0 0 1-5-5L5 14"/></symbol>'
+    '<symbol id="i-branch" viewBox="0 0 24 24"><line x1="6" y1="3" x2="6" y2="15"/>'
+    '<circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>'
+    '<path d="M18 9a9 9 0 0 1-9 9"/></symbol>'
+    '<symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4l10.5-10.5-4-4L4 16z"/>'
+    '<path d="M13.5 6.5l4 4"/></symbol>'
+    '<symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>'
+    '<symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5l12 7-12 7z"/></symbol>'
+    '<symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/>'
+    '<path d="M9.3 9.2a2.8 2.8 0 1 1 3.9 2.5c-1 .45-1.6 1.05-1.6 2.3"/>'
+    '<circle cx="12" cy="17.2" r="0.6" fill="currentColor" stroke="none"/></symbol>'
+    '<symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>'
+    '<symbol id="i-more" viewBox="0 0 24 24">'
+    '<circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"/>'
+    '<circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/>'
+    '<circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"/></symbol>'
+    '<symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/>'
+    '<path d="M3 20c0-3.6 2.7-6.2 6-6.2s6 2.6 6 6.2"/><circle cx="17.5" cy="9" r="2.3"/>'
+    '<path d="M15.8 14c2.3.5 3.9 2.6 4.2 6"/></symbol>'
+    "</defs></svg>"
+)
+
+
+def _observatory_icon_sprite_html() -> str:
+    """The shared icon sprite every wt-v4 Observatory page injects once,
+    near the top of its body (see `_OBSERVATORY_ICON_SPRITE`)."""
+    return _OBSERVATORY_ICON_SPRITE
+
+
+#: The nav "?" glossary popover's shared body -- custody/TTL/stale/intake/
+#: the six statuses -- identical wording on every Observatory page (see
+#: GAUNTLET-SYNTHESIS.md item 15). `extra_dt_dd`, when given (L0 only --
+#: the attention-queue ranking rule, since only L0 has an attention queue
+#: to explain), is appended as one more `<dt>`/`<dd>` pair INSIDE the
+#: `<dl>`, matching the approved mockup's own placement.
+def _observatory_glossary_dl(extra_dt_dd: str = "") -> str:
+    return (
+        "<dl>"
+        '<dt title="Which agent currently has this item claimed">Custody</dt>'
+        "<dd>Which agent currently holds (has claimed) an item.</dd>"
+        '<dt title="How long a claim is valid before it needs renewing">TTL</dt>'
+        "<dd>Time-to-live \u2014 how long a claim stays valid before it's considered stale.</dd>"
+        "<dt>Stale</dt><dd>Custody held past its TTL without renewal.</dd>"
+        "<dt>Intake</dt><dd>Newly filed, not yet triaged into ready or deferred.</dd>"
+        "<dt>The six statuses</dt><dd>ready, held, intake, blocked, deferred, resolved.</dd>"
+        f"{extra_dt_dd}"
+        "</dl>"
+    )
+
+
+#: The attention-queue ranking-rule `<dt>`/`<dd>` pair -- L0 only (see
+#: `_observatory_glossary_dl`'s docstring).
+_OBSERVATORY_RANKING_DT_DD = (
+    "<dt>Attention-queue ranking</dt>"
+    "<dd>Stale custody first, then blocked (with reason), then oldest-ready. "
+    "Weights are adjustable server-side \u2014 treat the order as a hypothesis, "
+    "not a fixed law.</dd>"
+)
+
+#: `wtSetTheme`/`wtToggleRefresh` -- the SAME minimal inline JS every mockup
+#: ships (lifted verbatim); the only client-side JS a wt-v4 Observatory page
+#: needs beyond the shared `T.auto_refresh_js`/`T.search_js`/
+#: `T.list_controls_js` this app already has.
+_OBSERVATORY_THEME_JS = """
+function wtSetTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  document.querySelectorAll('.theme-toggle button').forEach(function(b){
+    b.setAttribute('aria-pressed', String(b.dataset.theme === t));
+  });
+}
+function wtToggleRefresh(){
+  var btn = document.getElementById('refreshToggle');
+  if(!btn) return;
+  var icon = document.getElementById('refreshIcon');
+  var label = document.querySelector('.refresh-text');
+  var paused = btn.getAttribute('aria-pressed') === 'true';
+  btn.setAttribute('aria-pressed', String(!paused));
+  window.__wtRefreshPaused = !paused;
+  if(icon) icon.innerHTML = paused ? '<use href="#i-pause"/>' : '<use href="#i-play"/>';
+  btn.title = paused ? 'Pause auto-refresh' : 'Resume auto-refresh (paused)';
+  if (label) label.textContent = paused ? 'Refreshes 20s' : 'Paused';
+}
+"""
+
+
+def _observatory_nav_extras_html(*, reconcile_html: str = "", extra_dt_dd: str = "") -> str:
+    """The nav's Observatory-only chrome, appended after
+    `_nav_actions_html`'s existing search/bell/+New: a LIVE auto-refresh
+    status + pause/play toggle (WCAG 2.2.2 -- moving/auto-updating content
+    needs a visible pause control, wired to `T.auto_refresh_js`'s
+    `window.__wtRefreshPaused` guard), a "?" glossary popover (native
+    `<details>`, no JS needed to open it), and the dark/light theme toggle
+    (`wtSetTheme`, independent of the OS-level `prefers-color-scheme`
+    every pre-existing page already responds to -- see webtheme.py's own
+    `:root[data-theme="light"]` block).
+
+    `reconcile_html`, when given (L0 only -- GAUNTLET-SYNTHESIS.md item
+    15), appends one more paragraph inside the SAME popover reconciling
+    the Blocked KPI count against the attention queue's own blocked rows.
+    """
+    reconcile = f'<div class="reconcile">{reconcile_html}</div>' if reconcile_html else ""
+    return (
+        '<div class="refresh-status" title="This page polls for fresh data on an interval">'
+        '<span class="icon sm"><svg><use href="#i-clock"/></svg></span>'
+        '<span class="refresh-text">Refreshes 20s</span>'
+        '<button class="refresh-toggle" id="refreshToggle" aria-pressed="false" '
+        'onclick="wtToggleRefresh()" title="Pause auto-refresh">'
+        '<span class="icon sm" id="refreshIcon"><svg><use href="#i-pause"/></svg></span>'
+        "</button></div>" + _observatory_help_and_theme_html(reconcile, extra_dt_dd)
+    )
+
+
+def _observatory_help_and_theme_html(reconcile: str = "", extra_dt_dd: str = "") -> str:
+    """The "?" glossary popover + dark/light theme toggle ONLY, without the
+    auto-refresh status/pause control -- shared by L0/L1 (via
+    `_observatory_nav_extras_html`, above) and used STANDALONE by L2 (item
+    detail), which -- like every pre-existing edit-form page -- never ships
+    the self-polling body-swap at all (see `_page`'s own docstring: a live,
+    unsaved-edit form must never risk a silent DOM replacement)."""
+    glossary = _observatory_glossary_dl(extra_dt_dd)
+    return (
+        '<details class="help-popover">'
+        '<summary class="icon-btn" title="Glossary &amp; ranking help">'
+        '<span class="icon"><svg><use href="#i-help"/></svg></span></summary>'
+        f'<div class="help-panel">{glossary}{reconcile}</div>'
+        "</details>"
+        '<div class="theme-toggle">'
+        '<button data-theme="dark" aria-pressed="true" onclick="wtSetTheme(\'dark\')">Dark</button>'
+        '<button data-theme="light" aria-pressed="false" '
+        "onclick=\"wtSetTheme('light')\">Light</button>"
+        "</div>"
+    )
+
+
+def _compound_duration(seconds: float | None) -> str:
+    """Compact compound duration -- "5h 42m", "3d 1h", "22m", "45s" -- the
+    two largest non-zero units, matching the wt-v4 Observatory mockups' own
+    phrasing (e.g. "5h 42m over TTL", "1h 10m ago"). `None`/negative renders
+    as an honest "\u2014", never a fabricated duration."""
+    if seconds is None or seconds < 0:
+        return "\u2014"
+    total = int(seconds)
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h" if hours else f"{days}d"
+    if hours:
+        return f"{hours}h {minutes:02d}m" if minutes else f"{hours}h"
+    if minutes:
+        return f"{minutes}m"
+    return f"{secs}s"
+
+
+def _short_item_id(project: str, item_id: str) -> str:
+    """Strip the `{project}-` prefix every item id on that project shares --
+    the unique suffix is what actually distinguishes rows (the same
+    convention `_item_row` already applies); falls back to the full id if
+    it doesn't carry the expected prefix."""
+    prefix = f"{project}-"
+    return item_id[len(prefix) :] if item_id.startswith(prefix) else item_id
+
+
+def _pct_delta(curr: int, prev: int) -> float | None:
+    """Percentage change from `prev` to `curr` -- `None` (never a
+    fabricated reading) when `prev` is zero. A page-layer duplicate of
+    `adapter._pct_delta` (that one is module-private to adapter.py, and
+    this file does not reach across module-privacy boundaries) -- both
+    implementations are one line and must stay identical by inspection."""
+    if prev == 0:
+        return None
+    return round((curr - prev) / prev * 100.0, 1)
+
+
+def _active_project_names(workspace: A.Workspace) -> list[str]:
+    """Every project name NOT mid-creation/broken -- the same exclusion
+    `A.agents_snapshot`/`A.attention_items` already apply, reused here so
+    L0's own env-wide aggregation (below) can never disagree with them
+    about which projects "count"."""
+    return [
+        n for n in workspace.names() if workspace.creation_state(n) not in ("creating", "abandoned")
+    ]
+
+
+def _workspace_velocity_series(names: list[str], days: int) -> list[dict]:
+    """Environment-wide velocity series for L0's chart: `A.velocity_series`
+    (Lane A, per-project) summed day-by-day across every given project. L0
+    has no single project database of its own, so this is page-layer
+    AGGREGATION of an already-real, already-zero-filled per-project series
+    -- not a second, independently-invented data source. A project that
+    fails to read contributes nothing (the same "one broken project never
+    blanks the rest" tolerance `A.agents_snapshot` already applies) rather
+    than aborting the whole chart."""
+    totals: list[dict] = [{"date": "", "created": 0, "resolved": 0} for _ in range(days)]
+    for name in names:
+        try:
+            series = A.velocity_series(name, days=days)
+        except A.BeadsError:
+            continue
+        for i, day in enumerate(series):
+            totals[i]["date"] = day["date"]
+            totals[i]["created"] += day["created"]
+            totals[i]["resolved"] += day["resolved"]
+    return totals
+
+
+def _workspace_velocity_windows(names: list[str], days: int) -> dict:
+    """Environment-wide current-vs-previous window totals for L0's WoW
+    delta footer stat -- `A.velocity_windows` (Lane A, per-project) summed
+    across every given project, same aggregation discipline as
+    `_workspace_velocity_series`."""
+    current = {"created": 0, "resolved": 0}
+    previous = {"created": 0, "resolved": 0}
+    for name in names:
+        try:
+            w = A.velocity_windows(name, days=days)
+        except A.BeadsError:
+            continue
+        current["created"] += w["current"]["created"]
+        current["resolved"] += w["current"]["resolved"]
+        previous["created"] += w["previous"]["created"]
+        previous["resolved"] += w["previous"]["resolved"]
+    return {
+        "current": current,
+        "previous": previous,
+        "delta_pct": {
+            "created": _pct_delta(current["created"], previous["created"]),
+            "resolved": _pct_delta(current["resolved"], previous["resolved"]),
+        },
+    }
+
+
+def _workspace_reopened_count(names: list[str], days: int) -> int:
+    """Environment-wide reopened-after-resolve count -- `A.reopened_count`
+    (Lane A, per-project) summed across every given project."""
+    total = 0
+    for name in names:
+        try:
+            total += A.reopened_count(name, days=days)
+        except A.BeadsError:
+            continue
+    return total
+
+
+#: `?window=` query-param -> calendar-day count, for the velocity chart's
+#: window tabs (GAUNTLET-SYNTHESIS.md item 6: real `<a href="?window=...">`
+#: links, server-rendered active state -- never client-side JS state).
+#: "24h" maps to a single calendar day (the finest granularity
+#: `velocity_series`'s day-bucketed geometry supports); an unrecognised or
+#: missing value falls back to "7d", never a guessed window.
+_WINDOW_DAYS = {"24h": 1, "7d": 7, "30d": 30}
+_DEFAULT_WINDOW = "7d"
+
+
+def _window_days(window: str | None) -> tuple[str, int]:
+    w = window if window in _WINDOW_DAYS else _DEFAULT_WINDOW
+    return w, _WINDOW_DAYS[w]
+
+
+#: How many of L0's fleet-wide "Agents now" roster / cross-project activity
+#: feed rows are shown before an honest "Showing N of M" truncation note --
+#: matches the approved mockup's own "Showing 8 of 20 active agents" figure.
+_L0_AGENTS_NOW_SHOWN = 8
+_L0_ACTIVITY_FEED_SHOWN = 10
+#: Trailing days with zero activity of ANY kind after which a fleet project
+#: is folded into the collapsed "Dormant" section instead of the main
+#: ranked fleet list (GAUNTLET-SYNTHESIS.md's fleet table spec).
+_L0_DORMANT_AFTER_DAYS = 14.0
+
+#: `?feed=` query-param -> (label, trailing hours) for L0's activity-feed
+#: window tabs -- an unrecognised/missing value falls back to "12h".
+_FEED_WINDOWS: dict[str, tuple[str, int]] = {
+    "1h": ("1h", 1),
+    "12h": ("12h", 12),
+    "24h": ("24h", 24),
+}
+
+#: Attention-queue `rank_reason` -> (severity class, icon id) -- the same
+#: three-tier vocabulary `A.attention_items` produces (stale custody ->
+#: blocked -> aging-ready), mapped onto `widgets.AttentionRow`'s fixed
+#: `severity`/`icon` fields.
+_ATTENTION_SEVERITY: dict[str, tuple[Literal["alarm", "blocked", "watch"], str]] = {
+    "stale-custody": ("alarm", "i-alert-triangle"),
+    "blocked": ("blocked", "i-octagon-x"),
+    "aging": ("watch", "i-clock"),
+}
+
+#: Parses the numeric age back out of `A.attention_items`'s own hand-worded
+#: `detail` strings (see `_attention_stale_rows`/`_attention_aging_rows` in
+#: adapter.py) -- the age itself isn't returned as a separate field, so this
+#: is the honest way to surface it in the attention queue's own `.age`
+#: column without adding a second adapter round trip just for one number.
+_STALE_AGE_RE = re.compile(r"(\d+)s past TTL")
+_AGING_AGE_RE = re.compile(r"ready (\d+(?:\.\d+)?)d")
+
+
+def _attention_age_label(rank_reason: str, detail: str) -> str:
+    """The attention queue row's right-aligned `.age` text -- "5h 42m over"
+    for a stale-custody row, "6d" for an aging-ready row, or "" (blocked
+    rows carry no age of their own; a stale-custody row with no measurable
+    custody record likewise has nothing honest to show)."""
+    if rank_reason == "stale-custody":
+        m = _STALE_AGE_RE.search(detail)
+        return f"{_compound_duration(float(m.group(1)))} over" if m else ""
+    if rank_reason == "aging":
+        m = _AGING_AGE_RE.search(detail)
+        return f"{float(m.group(1)):.0f}d" if m else ""
+    return ""
+
+
+def _agent_freshness_label(row: dict) -> str:
+    """One agent roster row's custody-freshness text -- "5h 42m over TTL"
+    when stale (with a measurable overage), "over TTL" when stale but
+    un-ageable (no custody record at all -- see `A._agent_row`'s own
+    honest-None convention), else "fresh, {age}"."""
+    if row["stale"]:
+        overage = row["seconds_over_ttl_if_stale"]
+        return f"{_compound_duration(overage)} over TTL" if overage is not None else "over TTL"
+    age = row["held_seconds_or_last_renewal_age"]
+    return f"fresh, {_compound_duration(age)}" if age is not None else "fresh"
+
+
+_FEED_VERB: dict[str, str] = {
+    "claim": "claimed",
+    "resolve": "resolved",
+    "block": "blocked",
+    "file": "filed",
+}
+
+
+def _feed_time_label(created_at: str | None) -> str:
+    """ "Nm ago" / "Nh ago" for one `A.recent_activity_feed` row's raw
+    `created_at` (a naive, LOCAL-system-timezone string -- see that
+    function's own timezone-gotcha docstring). Compared against
+    `datetime.now()` (also naive, local time) rather than an
+    aware/UTC clock -- the two are the same clock domain as long as this
+    web process and the dolt server it reads run on the same host, which
+    is this app's only supported deployment shape."""
+    if not created_at:
+        return ""
+    try:
+        at = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return ""
+    seconds = max(0.0, (datetime.now() - at).total_seconds())
+    return f"{_compound_duration(seconds)} ago"
+
+
+def _feed_item(f: dict) -> WD.ActivityFeedItem:
+    """One `A.recent_activity_feed` row -> `widgets.ActivityFeedItem`.
+    `f["item_id"]` is already project-prefixed (bd's own id shape, e.g.
+    `"cortex-v5fq"`) -- exactly the `.proj` chip text the mockup's feed
+    rows show, so no reconstruction is needed."""
+    return WD.ActivityFeedItem(
+        kind=f["kind"],  # type: ignore[typeddict-item]
+        actor=f["actor"],
+        verb=_FEED_VERB[f["kind"]],
+        project_item=f["item_id"],
+        description=f["title"],
+        time_label=_feed_time_label(f.get("created_at")),
+        href=f"/projects/{quote(f['project'])}/items/{quote(f['item_id'])}",
+    )
+
+
+def _fleet_sparkline_label(name: str, values: list[int]) -> str:
+    if len(values) < 2 or values[-1] == values[0]:
+        trend = "flat"
+    elif values[-1] > values[0]:
+        trend = "trending up"
+    else:
+        trend = "trending down"
+    return f"Resolved-per-day sparkline for {name}, {trend} over the last {len(values)} days"
+
+
+def _fleet_rows_html(
+    ok: list[A.ProjectSummary], agents_rows: list[dict]
+) -> tuple[list[WD.FleetRow], list[WD.DormantProject]]:
+    """Split every readable project into the ranked, active fleet list
+    (most-recent-activity first) and the collapsed dormant section
+    (`_L0_DORMANT_AFTER_DAYS`+ days with no activity of any kind, or none
+    ever recorded at all)."""
+    agents_by_project: dict[str, set[str]] = {}
+    for r in agents_rows:
+        agents_by_project.setdefault(r["project"], set()).add(r["agent"])
+
+    now = datetime.now(UTC)
+    active: list[tuple[float, WD.FleetRow]] = []
+    dormant: list[WD.DormantProject] = []
+    for s in ok:
+        total = s.total or 0
+        resolved = s.resolved or 0
+        ready = s.ready or 0
+        held = s.held or 0
+        intake = s.intake or 0
+        deferred = s.deferred or 0
+        blocked = s.blocked or 0
+        held_stale = s.held_stale or 0
+
+        age_days: float | None = None
+        if s.last_activity:
+            last = _parse_iso(s.last_activity)
+            if last is not None:
+                age_days = (now - last).total_seconds() / 86400.0
+
+        href = f"/projects/{quote(s.name)}"
+        if age_days is None or age_days >= _L0_DORMANT_AFTER_DAYS:
+            dormant.append(
+                WD.DormantProject(
+                    name=s.name,
+                    href=href,
+                    items=total,
+                    open_count=max(0, total - resolved),
+                    resolved=resolved,
+                    last_activity=_abs_and_rel(s.last_activity) if s.last_activity else "never",
+                )
+            )
+            continue
+
+        subtitle = f"{total} item{'s' if total != 1 else ''}"
+        if total > 0 and resolved == total:
+            subtitle += " \u00b7 all resolved"
+
+        legend = f"{resolved}r \u00b7 {ready}rd \u00b7 {held}h"
+        if held_stale:
+            legend += (
+                ' <span style="color:var(--watch)" '
+                f'title="Custody held past its TTL without renewal">({held_stale} stale)</span>'
+            )
+        legend += f" \u00b7 {intake}in \u00b7 {deferred}df \u00b7 {blocked}b"
+
+        spark_values = list(s.resolved_daily or ())
+        active.append(
+            (
+                age_days,
+                WD.FleetRow(
+                    name=s.name,
+                    subtitle=subtitle,
+                    mix=WD.FleetStatusMix(
+                        resolved=resolved,
+                        ready=ready,
+                        held=held,
+                        intake=intake,
+                        deferred=deferred,
+                        blocked=blocked,
+                    ),
+                    mix_legend_html=legend,
+                    sparkline_values=[float(v) for v in spark_values],
+                    sparkline_label=_fleet_sparkline_label(s.name, spark_values),
+                    agents=len(agents_by_project.get(s.name, ())),
+                    last_activity=_abs_and_rel(s.last_activity) if s.last_activity else "\u2014",
+                    href=href,
+                ),
+            )
+        )
+    active.sort(key=lambda pair: pair[0])
+    return [row for _age, row in active], dormant
+
+
+def _window_tabs_html(
+    base_href: str, param: str, current: str, labels: tuple[str, ...]
+) -> list[WD.WindowTab]:
+    """Build the `WindowTab` list `widgets.render_activity_feed`/the
+    velocity-chart shell render from -- real `?{param}=` links, active
+    state decided server-side from `current`."""
+    out: list[WD.WindowTab] = []
+    for label in labels:
+        out.append(
+            WD.WindowTab(
+                label=label.upper(),
+                href=f"{base_href}?{param}={quote(label)}",
+                is_active=(label == current),
+            )
+        )
+    return out
+
+
+def _velocity_chart_shell_html(
+    *,
+    title: str,
+    base_href: str,
+    window: str,
+    days_data: list[dict],
+    windows: dict,
+    reopened: int,
+    aria_label: str,
+) -> str:
+    """The `.chart-card` shell around `chartsvg.velocity_chart` -- window
+    tabs, the chart itself, the resolved/created legend, and the footer
+    stats row (Resolved/Created/Net burn/Reopened/WoW). No dedicated widget
+    exists for this shell (per Lane B's own build note: `chartsvg.
+    velocity_chart` is the bare chart only) -- built here, once, and shared
+    by BOTH L0's environment-wide chart and L1's per-project chart
+    (webbrowse.py calls this same function)."""
+    tabs = _window_tabs_html(base_href, "window", window, ("24h", "7d", "30d"))
+    tabs_html = "".join(
+        f'<a href="{_esc(t["href"])}" class="window-tab{" is-active" if t["is_active"] else ""}">'
+        f"{_esc(t['label'])}</a>"
+        for t in tabs
+    )
+    n = len(days_data)
+    chart_days = []
+    for i, d in enumerate(days_data):
+        idx_from_end = n - 1 - i
+        if idx_from_end == 0:
+            label = "today"
+        elif idx_from_end == 1:
+            label = "yesterday"
+        else:
+            label = f"{idx_from_end}d ago"
+        chart_days.append(CH.VelocityDay(label=label, resolved=d["resolved"], created=d["created"]))
+    chart = CH.velocity_chart(chart_days, aria_label=aria_label)
+    cur = windows["current"]
+    net = cur["resolved"] - cur["created"]
+    net_label = "steady" if net == 0 else ("ahead" if net > 0 else "behind")
+    net_sign = "+" if net >= 0 else ""
+    resolved_delta = windows["delta_pct"]["resolved"]
+    wow_html = ""
+    if resolved_delta is not None:
+        arrow = "\u2191" if resolved_delta >= 0 else "\u2193"
+        prev_days = len(days_data) or 7
+        wow_html = (
+            '<div class="m"><span class="k">WoW</span><br>'
+            f'<span class="v">{arrow}{abs(resolved_delta):g}% vs previous {prev_days}d</span>'
+            "</div>"
+        )
+    return f"""
+    <div class="chart-head">
+      <h3>{_esc(title)}</h3>
+      <div class="window-tabs">{tabs_html}</div>
+    </div>
+    {chart}
+    <div class="chart-legend">
+      <span class="li"><span class="swatch"></span> resolved/day</span>
+      <span class="li"><span class="swatch line"></span> created/day</span>
+    </div>
+    <div class="chart-foot-stats">
+      <div class="m"><span class="k">Resolved, {_esc(window)}</span><br>
+        <span class="v">{cur["resolved"]}</span></div>
+      <div class="m"><span class="k">Created, {_esc(window)}</span><br>
+        <span class="v">{cur["created"]}</span></div>
+      <div class="m"><span class="k">Net burn</span><br>
+        <span class="v">{net_sign}{net} ({net_label})</span></div>
+      <div class="m"><span class="k">Reopened, {_esc(window)}</span><br>
+        <span class="v">{reopened}</span></div>
+      {wow_html}
+    </div>
+    """
+
+
 # ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
@@ -3708,278 +4305,229 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request):  # type: ignore[no-untyped-def]
+        """wt-v4 "Observatory" L0: Mission Control -- see
+        `.amplifier/design-gauntlet/wt-v4-observatory/mock-L0-mission-control.html`.
+        Replaces the v3 workbench dashboard entirely (BRIEF.md's pivot: this
+        app is now observability/reporting FIRST, manipulation second)."""
         names = workspace.names()
         summaries = [A.project_summary(workspace, n) for n in names]
-
-        if not names:
-            body = (
-                f"{_flash(request)}"
-                '<section class="sec heroic"><div class="hero">'
-                f"{_ledger_hero_html(0, 0, None)}</div></section>"
-                '<div class="hr bleed"></div>'
-                '<section class="sec"><div class="empty-state"><p>No projects yet. '
-                "Create one below to get started.</p></div></section>"
-                f'<section class="sec">{_create_project_form()}</section>'
-            )
-            sb = T.statusbar('<span class="s"><span class="dot on"></span>No projects yet</span>')
-            return _page(
-                request,
-                "Dashboard",
-                body,
-                statusbar_html=sb,
-                auto_refresh_ms=_AUTO_REFRESH_MS,
-                sidebar_html=_sidebar_html([], [], None),
-            )
-
-        ordered = sorted(summaries, key=_dashboard_sort_key)
-        buckets = _aggregate_buckets(summaries)
-
         ok = [s for s in summaries if s.status == "ok"]
-        broken = [s for s in summaries if s.status != "ok"]
+        active_names = [s.name for s in ok]
 
-        # F1 -- one reconciled workspace roll-up, so no two figures on the
-        # page are computed two different ways and left free to disagree.
-        # Every total below covers the readable queues only (a queue whose
-        # database cannot be read contributes no honest number).
-        readable_count = len(ok)
-        reconciled_items = sum(s.total or 0 for s in ok)
+        window, days = _window_days(request.query_params.get("window"))
+        feed_window, feed_hours = _FEED_WINDOWS.get(
+            request.query_params.get("feed") or "", _FEED_WINDOWS["12h"]
+        )
+
         ready_total = sum(s.ready or 0 for s in ok)
         held_total = sum(s.held or 0 for s in ok)
         blocked_total = sum(s.blocked or 0 for s in ok)
-        deferred_total = sum(s.deferred or 0 for s in ok)
-        resolved_total = sum(s.resolved or 0 for s in ok)
-        _activity_stamps = [s.last_activity for s in ok if s.last_activity]
-        workspace_last_activity = max(_activity_stamps) if _activity_stamps else None
-
-        impaired = [(s.name, lbl) for s in summaries if (lbl := _impairment_label(s.name, s))]
-        impaired_banner = _impairment_banner(impaired)
-
-        # F2 -- concentration: the single biggest ready queue, so a
-        # workspace-wide READY total never hides one queue quietly
-        # drowning under the rest. `None` (never an arbitrary 0-ready
-        # "winner") when nothing is ready anywhere.
-        ranked = [s for s in ok if (s.ready or 0) > 0]
-        concentration = None
-        if ranked and ready_total:
-            top = max(ranked, key=lambda s: s.ready or 0)
-            concentration = (top.name, top.ready or 0, (top.ready or 0) / ready_total * 100)
-
-        # F3 -- waiting 7d+, straight from the SAME `ready_age_buckets`
-        # roll-up `_heartbeat_html`'s histogram draws from (`buckets["7+"]`),
-        # so this reading and the histogram's own oldest band can never
-        # disagree. `_global_oldest`/`_oldest_ready_item` (unchanged) supply
-        # the one real item "oldest Nd" attributes to and links.
-        n7d = buckets.get("7+", 0)
-        pct7d = (n7d / ready_total * 100) if ready_total else None
-        winner = _global_oldest(summaries)
-        oldest_days: int | None = None
-        oldest_href: str | None = None
-        if winner and n7d:
-            winner_name, winner_age = winner
-            oldest_days = int(winner_age // 86400)
-            oldest_item = _oldest_ready_item(workspace.project(winner_name))
-            item_path = f"/items/{_esc(oldest_item.id)}" if oldest_item is not None else ""
-            oldest_href = f"/projects/{_esc(winner_name)}{item_path}"
-
-        # F4 -- throughput, partitioned into measurable (a real 0, or a
-        # dated resolution) vs unmeasurable (has resolved items but no
-        # `closed_at` on any of them -- `project_activity`'s own honest-None
-        # case). Excluding the unmeasurable set is what keeps
-        # `resolved_24h_total`/`resolved_7d_total` real instead of a silent
-        # under-count wearing a workspace-wide figure's clothes.
         measurable = [s for s in ok if s.resolved_24h is not None]
         resolved_24h_total = sum(s.resolved_24h or 0 for s in measurable)
-        resolved_7d_total = sum(s.resolved_7d or 0 for s in measurable)
-        resolved_measurable_total = sum(s.resolved or 0 for s in measurable)
-        older_than_7d = max(0, resolved_measurable_total - resolved_7d_total)
-        prior6d_total = max(0, resolved_7d_total - resolved_24h_total)
-        prior6d_rate = prior6d_total / 6.0
-        delta_pct = (
-            round((resolved_24h_total / prior6d_rate - 1) * 100) if prior6d_rate > 0 else None
-        )
-        n_with_resolutions = sum(1 for s in ok if (s.resolved or 0) > 0)
-        n_measurable_with_resolutions = sum(1 for s in measurable if (s.resolved or 0) > 0)
 
-        # A1 -- workspace-wide daily resolutions (oldest -> newest), summed
-        # ONLY across the SAME `measurable` set F4 already partitioned out --
-        # a project with resolved items but no `closed_at` contributes to
-        # neither the aggregate throughput figures nor this histogram, one
-        # partition, never two that could quietly disagree.
-        resolved_daily_totals = [0] * A.DAILY_THROUGHPUT_WINDOW
-        for s in measurable:
-            for i, n in enumerate(s.resolved_daily or ()):
-                if i < len(resolved_daily_totals):
-                    resolved_daily_totals[i] += n
+        agents_rows = A.agents_snapshot(workspace)
+        agents_active_count = len({r["agent"] for r in agents_rows})
 
-        burn_days = round(ready_total / resolved_24h_total, 1) if resolved_24h_total > 0 else None
+        attention_rows_raw = A.attention_items(workspace, limit=50)
+        stale_count = sum(1 for r in attention_rows_raw if r["rank_reason"] == "stale-custody")
+        blocked_attn_count = sum(1 for r in attention_rows_raw if r["rank_reason"] == "blocked")
+        aging_count = sum(1 for r in attention_rows_raw if r["rank_reason"] == "aging")
 
-        # The needs-you overview -- one render instant (`rendered_at`) anchors
-        # every duration and the time-to-notice/act stamp. The verdict reads
-        # the throughput/activity figures above so a DEAD/IDLE fleet cannot
-        # wear a serene "all clear."
-        rendered_at = datetime.now(UTC)
-        # One read-only bag of the figures above, rendered from by every
-        # registered dashboard widget (see the registry block above / widgets.py).
-        ctx = _dashboard_context(
-            summaries=summaries,
-            ok=ok,
-            rendered_at=rendered_at,
-            buckets=buckets,
-            reconciled_items=reconciled_items,
-            ready_total=ready_total,
-            held_total=held_total,
-            blocked_total=blocked_total,
-            deferred_total=deferred_total,
-            resolved_total=resolved_total,
-            resolved_24h_total=resolved_24h_total,
-            resolved_7d_total=resolved_7d_total,
-            prior6d_rate=prior6d_rate,
-            delta_pct=delta_pct,
-            older_than_7d=older_than_7d,
-            n_measurable_with_resolutions=n_measurable_with_resolutions,
-            n_with_resolutions=n_with_resolutions,
-            resolved_daily_totals=tuple(resolved_daily_totals),
-            workspace_last_activity=workspace_last_activity,
-        )
-        attention_entries = _attention_entries(ok)
-        verdict_level, verdict_word, verdict_detail = _verdict(
-            attention_entries,
-            ready_total=ready_total,
-            held_total=held_total,
-            resolved_24h_total=resolved_24h_total,
-            n_measurable=len(measurable),
-            workspace_last_activity=workspace_last_activity,
-            now=rendered_at,
-        )
-        verdict = _verdict_html(verdict_level, verdict_word, verdict_detail, rendered_at)
-        needs_you = DASHBOARD_WIDGETS.render("needs-you", ctx)
-        dispatch = _dispatch_html(ok)
-        needs_section = (
-            '<div class="hr bleed"></div>'
-            f'<section class="sec tight nsec">{needs_you}{dispatch}</section>'
-            if (needs_you or dispatch)
-            else ""
-        )
-
-        hero = _ledger_hero_html(ready_total if readable_count else None, len(names), burn_days)
-        secondary = _secondary_readings_html(
-            concentration,
-            n7d,
-            pct7d,
-            oldest_days,
-            oldest_href,
-            held_total,
-            blocked_total,
-            workspace_last_activity=workspace_last_activity,
-            rendered_at=rendered_at,
-        )
-        composition = DASHBOARD_WIDGETS.render("workspace-composition", ctx)
-        heartbeat = DASHBOARD_WIDGETS.render("ready-queue-by-age", ctx)
-        throughput = DASHBOARD_WIDGETS.render("throughput", ctx)
-        per_project = DASHBOARD_WIDGETS.render("per-project-overview", ctx)
-
-        rows = "".join(_dashboard_row(s) for s in ordered)
-        # `.tbl-scroll` is inert on desktop (a plain full-width block, no visual
-        # change) and, below 600px, gives the fixed-colgroup queue table its OWN
-        # horizontal scroll instead of overflowing the whole page -- the same
-        # mechanism the project page's item table already uses (webtheme.py's
-        # <=600px block). Without it the ~540px colgroup forced a body-wide
-        # horizontal overflow at phone width, breaking the shipped mobile reflow.
-        table = f"""<div class="tbl-scroll"><table class="tbl dense">
-          <colgroup><col><col style="width:250px"><col style="width:70px">
-            <col style="width:70px"><col style="width:80px"><col style="width:70px"></colgroup>
-          <thead><tr>
-            <th>Queue</th><th>Composition</th>
-            <th class="r">Total</th><th class="r">Ready</th>
-            <th class="r">Resolved</th><th class="r">Done&nbsp;%</th>
-          </tr></thead>
-          <tbody>{rows}</tbody>
-          {_dashboard_totals(summaries)}
-        </table></div>"""
-
-        broken_foot = ""
-        if broken:
-            names_str = ", ".join(s.name for s in broken)
-            n_broken = len(broken)
-            broken_foot = (
-                '<div class="foot"><span class="fm">Reconciled</span>'
-                f"<span>Every total above covers the {readable_count} readable "
-                f"queue{'s' if readable_count != 1 else ''} only "
-                f"({reconciled_items} items). {n_broken} "
-                f"queue{'s' if n_broken != 1 else ''} ({_esc(names_str)}) "
-                "could not be read and are excluded from those totals.</span></div>"
+        reasons: list[str] = []
+        if stale_count:
+            reasons.append(f"{_pluralize(stale_count, 'claim')} sitting past custody TTL")
+        if blocked_attn_count:
+            reasons.append(f"{_pluralize(blocked_attn_count, 'item')} blocked with no owner")
+        if aging_count:
+            reasons.append(
+                f"{_pluralize(aging_count, 'ready item')} aging past {A.ATTENTION_AGING_DAYS} days"
             )
 
-        # Layout (A7/C1): nav -> verdict -> HERO ROW (hero+secondary on the
-        # left, throughput's sparkline on the right, matching the approved
-        # blend-2 mockup's top row) -> WIDGET BAND (workspace-by-state,
-        # ready-queue-by-age, per-project overview) -> the ranked needs-you
-        # queue -> the detailed queue table. Verdict/absence-alarm/dispatch
-        # are unchanged content, only repositioned lower (`needs_section`
-        # now follows the widget band instead of leading it).
+        verdict = WD.verdict_line(
+            WD.VerdictLineData(
+                scope="environment",
+                attention_count=len(attention_rows_raw),
+                reasons=reasons,
+                agents_active=agents_active_count,
+                resolved_count=resolved_24h_total,
+                resolved_period_label="24h",
+                ready_total=ready_total,
+                held_total=held_total,
+            )
+        )
+        hero_html = WD.render_verdict_hero(
+            WD.VerdictHeroData(
+                state=verdict["state"],
+                eyebrow=f"Environment verdict \u00b7 {len(names)} projects",
+                headline=verdict["headline"],
+                detail_html=verdict["detail_html"],
+            )
+        )
+
+        kpi_html = WD.render_kpi_strip(
+            WD.KpiStripData(
+                cards=[
+                    WD.KpiCard(
+                        key="agents",
+                        label="Agents active now",
+                        value=agents_active_count,
+                        href="#agents-now",
+                        icon="i-bot",
+                        icon_color_var="--brand-cyan-ink",
+                    ),
+                    WD.KpiCard(key="held", label="Held", value=held_total, href="#fleet"),
+                    WD.KpiCard(key="ready", label="Ready", value=ready_total, href="#fleet"),
+                    WD.KpiCard(
+                        key="blocked",
+                        label="Blocked",
+                        value=blocked_total,
+                        href="#attention-queue",
+                        icon="i-octagon-x",
+                        icon_color_var="--blocked",
+                        is_blocked=True,
+                    ),
+                    WD.KpiCard(
+                        key="resolved24h",
+                        label="Resolved 24h",
+                        value=resolved_24h_total,
+                        href="#fleet",
+                    ),
+                ]
+            )
+        )
+
+        velocity_days = _workspace_velocity_series(active_names, days)
+        velocity_windows_data = _workspace_velocity_windows(active_names, days)
+        reopened = _workspace_reopened_count(active_names, days)
+        velocity_html = _velocity_chart_shell_html(
+            title="Environment velocity",
+            base_href="/",
+            window=window,
+            days_data=velocity_days,
+            windows=velocity_windows_data,
+            reopened=reopened,
+            aria_label=f"Resolved vs created per day, last {days} days",
+        )
+
+        attn_rows: list[WD.AttentionRow] = []
+        for rank, r in enumerate(attention_rows_raw, start=1):
+            severity, icon = _ATTENTION_SEVERITY[r["rank_reason"]]
+            priority = r.get("priority")
+            priority_str = f"P{priority}" if priority is not None else "P?"
+            age_label = _attention_age_label(r["rank_reason"], r["detail"])
+            attn_rows.append(
+                WD.AttentionRow(
+                    severity=severity,
+                    icon=icon,
+                    priority=priority_str,
+                    project=r["project"],
+                    title=r["title"],
+                    reason_html=html.escape(r["detail"]),
+                    rank=rank,
+                    age_label=age_label,
+                    href=f"/projects/{quote(r['project'])}/items/{quote(r['item_id'])}",
+                )
+            )
+        attention_html = WD.render_attention_queue(WD.AttentionQueueData(rows=attn_rows))
+
+        extra_blocked = blocked_total - blocked_attn_count
+        reconcile_html = ""
+        if extra_blocked > 0:
+            reconcile_html = (
+                f"{_pluralize(extra_blocked, 'more blocked item')} have an owner already "
+                f"chasing the dependency \u2014 that's why Blocked ({blocked_total}) reads "
+                f"higher than the {blocked_attn_count} blocked row"
+                f"{'s' if blocked_attn_count != 1 else ''} below in \u201cNeeds you.\u201d"
+            )
+
+        fleet_rows, dormant_rows = _fleet_rows_html(ok, agents_rows)
+        fleet_html = WD.render_fleet_table(
+            WD.FleetTableData(total_projects=len(names), rows=fleet_rows, dormant=dormant_rows)
+        )
+
+        agents_now_rows = [
+            WD.AgentNowRow(
+                agent_id=r["agent"],
+                project=r["project"],
+                item_id=_short_item_id(r["project"], r["item_id"]),
+                item_title=r["item_title"],
+                freshness_label=_agent_freshness_label(r),
+                is_stale=r["stale"],
+                href=f"/projects/{quote(r['project'])}/items/{quote(r['item_id'])}",
+            )
+            for r in agents_rows[:_L0_AGENTS_NOW_SHOWN]
+        ]
+        agents_now_html = WD.render_agents_now(
+            WD.AgentsNowData(
+                rows=agents_now_rows, shown=len(agents_now_rows), total=len(agents_rows)
+            )
+        )
+
+        try:
+            feed_raw = A.recent_activity_feed(
+                workspace, hours=feed_hours, limit=_L0_ACTIVITY_FEED_SHOWN * 3
+            )
+        except A.BeadsError:
+            feed_raw = []
+        feed_items = [_feed_item(f) for f in feed_raw[:_L0_ACTIVITY_FEED_SHOWN]]
+        since_label = (
+            f"since {feed_raw[-1]['created_at'][11:16]}"
+            if feed_raw and feed_raw[-1].get("created_at")
+            else f"last {feed_window}"
+        )
+        feed_tabs = _window_tabs_html("/", "feed", feed_window, ("1h", "12h", "24h"))
+        activity_feed_html = WD.render_activity_feed(
+            WD.ActivityFeedData(
+                items=feed_items,
+                since_label=since_label,
+                window_tabs=feed_tabs,
+                shown=len(feed_items),
+                total_estimate=len(feed_raw),
+            )
+        )
+
         body = f"""
+        {_observatory_icon_sprite_html()}
+        <div class="container">
         {_flash(request)}
-        {impaired_banner}
-        {verdict}
-        <div class="hr bleed"></div>
-        <section class="sec heroic">
-          <div class="herorow">
-            <div class="hero">{hero}{secondary}</div>
-            <div class="hero-side">{throughput}</div>
+        <div id="verdict-hero" class="section">{hero_html}</div>
+        <div class="section">{kpi_html}</div>
+        <div class="two-up section">
+          <div class="glass-panel chart-card">{velocity_html}</div>
+          <div class="glass-panel chart-card">
+            <div class="chart-head"><h3>Needs you \u2014 ranked</h3>
+              <span class="note">stale custody \u2192 blocked \u2192 oldest ready</span></div>
+            {attention_html}
           </div>
-        </section>
-        <div class="hr bleed"></div>
-        <section class="sec tight">{composition}</section>
-        <div class="hr bleed"></div>
-        <section class="sec tight"><div class="context">{heartbeat}</div></section>
-        <div class="hr bleed"></div>
-        <section class="sec tight">{per_project}</section>
-        {needs_section}
-        <div class="hr bleed"></div>
-        <section class="sec tight">
-          <div class="queuepanel">
-            <div class="chead"><span class="eyebrow">All queues</span></div>
-            <div class="controls">
-              {T.search_field("Filter queues by name or state")}
-              <span class="count" id="qc">{len(summaries)} QUEUES</span>
-              {T.density_toggle_html()}
-            </div>
-            {table}
-            {_units_legend_html()}
-            {broken_foot}
+        </div>
+        <div id="fleet" class="section">
+          <div class="section-title">
+            <h2><span class="icon sm"><svg><use href="#i-users"/></svg></span>
+              Fleet \u2014 {len(names)} project{"s" if len(names) != 1 else ""}</h2>
+            <span class="note">ranked by recent activity</span>
           </div>
-        </section>
-        <div class="hr bleed"></div>
-        <section class="sec">{_create_project_form()}</section>
+          <div class="glass-panel chart-card">{fleet_html}</div>
+        </div>
+        <div id="agents-now" class="section">
+          <div class="section-title">
+            <h2><span class="icon sm"><svg><use href="#i-bot"/></svg></span> Agents now</h2>
+            <span class="note">active = holding custody, renewed within 24h</span>
+          </div>
+          <div class="glass-panel chart-card">{agents_now_html}</div>
+        </div>
+        <div id="attention-queue" class="section">{activity_feed_html}</div>
+        </div>
         """
-        sb_left = ['<span class="s"><span class="dot on"></span>Sweep <b>healthy</b></span>']
-        if oldest_days is not None:
-            sb_left.append(
-                f'<span class="s">Oldest waiting <b class="am">{oldest_days}d</b></span>'
-            )
-        if workspace_last_activity:
-            sb_left.append(
-                f'<span class="s">Last activity {_abs_and_rel(workspace_last_activity)}</span>'
-            )
-        sb = T.statusbar(
-            "".join(sb_left),
-            f'<span class="s">Held <b>{held_total}</b></span><a href="/">Refresh</a>',
-        )
         return _page(
             request,
-            "Dashboard",
+            "Mission Control",
             body,
-            statusbar_html=sb,
-            js=(
-                T.search_js(len(summaries), "QUEUES", "tbody tr[data-t]")
-                # Per-project-overview's own independent filter (goal
-                # wtv3/finish, task 2) -- separate field/counter ids so it
-                # never clobbers the queue table's `#q`/`#qc` above.
-                + T.search_js(len(ok), "PROJECTS", ".projcard", "pq", "ppc")
-                + T.list_controls_js()
+            body_class="wt-observatory",
+            extra_nav_html=_observatory_nav_extras_html(
+                reconcile_html=reconcile_html, extra_dt_dd=_OBSERVATORY_RANKING_DT_DD
             ),
+            js=_OBSERVATORY_THEME_JS,
             auto_refresh_ms=_AUTO_REFRESH_MS,
-            sidebar_html=_sidebar_html(names, summaries, None),
         )
 
     @app.post("/projects")
@@ -3989,338 +4537,6 @@ def create_app(
         except A.BeadsError as e:
             return _redirect("/", error=_public_error_message(e))
         return _redirect("/", msg=f"created project '{name}'")
-
-    # -------------------------------------------------------- project view
-
-    @app.get("/projects/{name}", response_class=HTMLResponse)
-    async def project_view(request: Request, name: str):  # type: ignore[no-untyped-def]
-        status = request.query_params.get("status") or None
-        # D2 -- search tells the truth. `q` filters SERVER-side over the full
-        # matching set (see the q-branch below), so the count and pagination
-        # reflect real matches across the whole project, not just whatever
-        # rows happened to be on the current page's DOM.
-        q = (request.query_params.get("q") or "").strip()
-        try:
-            page = max(1, int(request.query_params.get("page", "1")))
-        except ValueError:
-            page = 1
-        # goal wtv3/project-page: which item the split-pane's right side
-        # shows, exactly like webbrowse.py's own `?item=` (see that module's
-        # docstring for the fresh-read-every-request contract this mirrors).
-        selected_id = request.query_params.get("item") or None
-        crumb = _crumb(("/", "All projects"), ("", name))
-        try:
-            bd = workspace.project(name)
-        except A.BeadsError:
-            return _page(
-                request,
-                name,
-                _not_found_body(heading=name, back_href="/", back_label="back to dashboard"),
-                crumb_html=_crumb(("/", "All projects")),
-            )
-        page_size = A.LIST_DEFAULT_LIMIT
-        # Unfiltered project total for the current status filter -- the honest
-        # denominator behind an "N OF M ITEMS" count when a search is active.
-        project_total = None
-        try:
-            if q:
-                # Server-side search: fetch the FULL matching set (bd's own
-                # unlimited, exactly as list_bounded does internally), filter
-                # it against the same searchable text every row exposes, THEN
-                # window/paginate the FILTERED set. This is what makes the
-                # count and pagination reflect real matches across the whole
-                # project instead of the current page's 50 DOM rows.
-                all_items = bd.list(status=status, include_resolved=(status is None), limit=0)
-                project_total = len(all_items)
-                needle = q.lower()
-                matched = [i for i in all_items if needle in _item_search_key(i)]
-                total = len(matched)
-                total_pages = max(1, math.ceil(total / page_size)) if total else 1
-                page = min(page, total_pages)
-                offset = (page - 1) * page_size
-                window = matched[offset : offset + page_size]
-                result = A.ListResult(
-                    items=window,
-                    total_count=total,
-                    returned_count=len(window),
-                    truncated=(offset + len(window)) < total,
-                    limit=page_size,
-                    requested_limit=None,
-                    offset=offset,
-                )
-            else:
-                result = bd.list_bounded(status=status, offset=(page - 1) * page_size)
-                total_pages = (
-                    max(1, math.ceil(result.total_count / page_size)) if result.total_count else 1
-                )
-                if page > total_pages:
-                    # A stale/hand-edited `?page=` past the real last page --
-                    # land on the actual last page instead of a confusingly
-                    # empty one whose own URL claims there should be more.
-                    page = total_pages
-                    result = bd.list_bounded(status=status, offset=(page - 1) * page_size)
-        except A.BeadsError as e:
-            body = (
-                f"{_flash(request)}<h1>{_esc(name)}</h1>"
-                f'<div class="flash flash-error">{_esc(_public_error_message(e))}</div>'
-            )
-            return _page(request, name, body, crumb_html=crumb)
-
-        summary = A.project_summary(workspace, name)
-        oldest_item = None
-        if summary.status == "ok" and summary.oldest_unclaimed_age_seconds is not None:
-            oldest_item = _oldest_ready_item(bd)
-
-        # Sidebar needs every project's summary, not just this one -- reuse
-        # `summary` (already computed, above) for the current project rather
-        # than reading it from `bd` a second time.
-        sidebar_names = workspace.names()
-        sidebar_summaries = [
-            summary if n == name else A.project_summary(workspace, n) for n in sidebar_names
-        ]
-
-        # D1 -- a broken/mid-creation project must be unmissable on its own
-        # page too, not just on the dashboard.
-        impaired_label = _impairment_label(name, summary)
-        impaired_banner = _impairment_banner([(name, impaired_label)] if impaired_label else [])
-
-        # Per-project analogue of the dashboard's own attention signal --
-        # same function, same "absent when calm, never a dimmed zero"
-        # convention (see `_attention_signal_html`'s docstring). `None`-safe
-        # counts only ever come from a healthy (`STATUS_OK`) summary; a
-        # broken/mid-creation project already gets `impaired_banner` above
-        # and has no real held/blocked/deferred counts to show here.
-        attention_banner = (
-            _attention_signal_html(
-                summary.held or 0,
-                summary.blocked or 0,
-                summary.deferred or 0,
-                summary.held_stale or 0,
-            )
-            if summary.status == A.STATUS_OK
-            else ""
-        )
-
-        # D5 -- the status-tab counter row: real per-project counts, reused
-        # verbatim from the same `summary` this route already computed
-        # above (never a second, independently-derived count).
-        tab_counts = _status_tab_counts(summary)
-        tabs_html = _status_tabs_html(name, status, q, tab_counts)
-
-        pagination_html = (
-            _filtered_pagination(name, status, q, page, total_pages, result)
-            if q
-            else _pagination_html(name, status, page, total_pages, result)
-        )
-
-        # ------------------------------------------------------ split pane
-        # goal wtv3/project-page: the item list + a read-only detail pane,
-        # reusing webbrowse.py's shared split-pane machinery VERBATIM (the
-        # same squircle row cards, gutter, rim-glow panes, and detail-pane
-        # renderer the already-shipped `/browse` view uses) rather than a
-        # second, drift-prone copy -- see `webbrowse.render_browse_body`'s
-        # own docstring, which documents exactly these generalization hooks.
-        # This route supplies what `/browse` deliberately has none of: the
-        # status-tab `?status=` filter, the free-text `?q=` search, and
-        # pagination (this project's own scale concern; `/browse` shows the
-        # whole project unpaginated, a fine trade for a project small enough
-        # that "everything, unpaginated" is itself the point).
-        def _item_href(item: A.Item) -> str:
-            """Preserve the active status/q/page filter across a row
-            selection -- the SAME `?status=`/`?q=` carry-through
-            `_tab_href`/pagination hrefs already do for their own links."""
-            parts = []
-            if page > 1:
-                parts.append(f"page={page}")
-            if status:
-                parts.append(f"status={quote(status)}")
-            if q:
-                parts.append(f"q={quote(q)}")
-            parts.append(f"item={quote(item.id)}")
-            return f"/projects/{_esc(name)}?{'&'.join(parts)}"
-
-        def _item_held_html(item: A.Item) -> str:
-            """The row's own held/custody reading (goal wtv3/project-page,
-            task 2) -- the SAME "genuinely held right now" gate and
-            `_custody_html`/`_custody_reading` reading the retired table
-            row (`_item_row`) used, so a held item's staleness is visible
-            in the list without selecting it (see
-            `test_full_write_flow_create_add_resolve_remove`'s "holder
-            column shows the real, current holder" contract)."""
-            custody_html = _custody_html(_custody_reading(item))
-            if custody_html:
-                return custody_html
-            if item.holder and item.status == "held":
-                return f"held by {_identity_html(item.holder)}"
-            return ""
-
-        selected_item: A.Item | None = None
-        activity: list[A.ActivityEvent] = []
-        detail_error: str | None = None
-        if selected_id:
-            # Fresh read every request -- same contract webbrowse.py's own
-            # `browse()` route documents: an auto-refresh tick (this page
-            # carries `auto_refresh_ms` below) or a redirect landing here
-            # must never render a stale model.
-            try:
-                selected_item = bd.get(selected_id, with_links=True)
-            except A.BeadsError:
-                selected_item = None
-                detail_error = selected_id
-            if selected_item is not None:
-                try:
-                    activity = bd.activity(selected_item.id)
-                except A.BeadsError:
-                    activity = []
-
-        # D2 -- a real server-side search control. It is a GET form so the URL
-        # carries the query, a hidden `status` input submits WITH it
-        # (preserving the tab row's active filter -- see `_status_tabs_html`
-        # above, which is now the sole status-filter control), and the count
-        # below is the honest server figure -- not a client-side recount over
-        # only the current page's rows. The count reads "matches OF
-        # project-total" while searching, else the plain project total.
-        search_hint = "Search titles, ids, holders and state"
-        # The visible placeholder carries a quiet "  /" shortcut hint (see
-        # webtheme.py's `search_field`, whose `.hint` overlay does the same
-        # for the dashboard); `aria-label` stays the plain hint text -- a
-        # screen reader announcing "...state slash" would be noise.
-        search_placeholder = f"{search_hint}  /"
-        clear_search = ""
-        if q:
-            clear_href = f"/projects/{_esc(name)}" + (f"?status={quote(status)}" if status else "")
-            clear_search = f'<a class="clear-search" href="{clear_href}">clear</a>'
-        qc_text = (
-            f"{result.total_count} OF {project_total} ITEMS" if q else f"{result.total_count} ITEMS"
-        )
-        typed_cls = " typed" if q else ""
-        status_hidden = (
-            f'<input type="hidden" name="status" value="{_esc(status)}">' if status else ""
-        )
-        controls = f"""<form method="get" action="/projects/{_esc(name)}" class="controls">
-            {status_hidden}
-            <div class="field{typed_cls}" id="field">
-              <span class="mag">{T.ICONS["mag"]}</span>
-              <input id="q" name="q" type="search" autocomplete="off" spellcheck="false"
-                     value="{_esc(q)}" placeholder="{_esc(search_placeholder)}"
-                     aria-label="{_esc(search_hint)}">
-            </div>
-            <button type="submit">Search</button>
-            {clear_search}
-            <span class="count" id="qc">{qc_text}</span>
-            {T.density_toggle_html()}
-          </form>"""
-
-        if result.items:
-            empty_html = None
-        elif q:
-            # A search that matched nothing -- name the search (and any active
-            # status), and offer a real one-click way back to the full list.
-            clear_href = f"/projects/{_esc(name)}" + (f"?status={quote(status)}" if status else "")
-            with_status = f" with status <code>{_esc(status)}</code>" if status else ""
-            empty_html = (
-                '<div class="empty-state"><p>No items match '
-                f"<code>{_esc(q)}</code>{with_status}.</p>"
-                f'<p><a href="{clear_href}">clear search</a></p></div>'
-            )
-        elif status:
-            empty_html = (
-                '<div class="empty-state"><p>No items match status '
-                f"<code>{_esc(status)}</code>.</p>"
-                f'<p><a href="/projects/{_esc(name)}">clear filter</a></p></div>'
-            )
-        else:
-            empty_html = (
-                '<div class="empty-state"><p>No items yet. Add the first one below.</p></div>'
-            )
-
-        split_html = webbrowse.render_browse_body(
-            name,
-            result.items,
-            selected_item,
-            activity,
-            selected_id=selected_id,
-            detail_error=detail_error,
-            list_header_extra=f"{tabs_html}{controls}",
-            list_footer_html=pagination_html,
-            href_builder=_item_href,
-            row_extra_builder=_item_held_html,
-            empty_html=empty_html,
-        )
-
-        body = f"""
-        {_flash(request)}
-        {impaired_banner}
-        {attention_banner}
-        <section class="sec">{_project_hero_html(name, summary, oldest_item)}</section>
-        <div class="hr bleed"></div>
-        <section class="sec tight">
-          {split_html}
-        </section>
-        <div class="hr bleed"></div>
-        <section class="sec" id="add-item">
-          <div class="formsec">
-            <span class="flegend">Add item</span>
-            <form method="post" action="/projects/{_esc(name)}/items">
-              <label for="title">Title</label>
-              <input type="text" id="title" name="title" required>
-              <label for="description">Description</label>
-              <textarea id="description" name="description" rows="2"></textarea>
-              <label for="acceptance">Acceptance criteria</label>
-              <textarea id="acceptance" name="acceptance" rows="2"></textarea>
-              <button type="submit">Add</button>
-            </form>
-          </div>
-          <div class="formsec danger">
-            <span class="flegend">Danger zone</span>
-            <button type="button" id="rename-trigger" class="btn danger"
-                    aria-expanded="false" aria-controls="rename-form">Rename this
-              project&hellip;</button>
-            <form method="post" action="/projects/{_esc(name)}/rename" id="rename-form"
-                  style="margin-bottom:20px" hidden>
-              <label for="new_name">New project name</label>
-              <input type="text" id="new_name" name="new_name" autocomplete="off"
-                     pattern="[a-z][a-z0-9_]{{1,30}}" required placeholder="new_project_name">
-              <p class="field-hint">Lowercase letters, digits, underscores; must start with a
-                letter. The item id prefix and every existing item's id stay exactly as they
-                are -- only the project's name changes.</p>
-              <div class="form-actions">
-                <button type="submit" class="btn danger">Save</button>
-                <button type="button" id="rename-cancel" class="btn secondary">Cancel</button>
-              </div>
-            </form>
-            <script>{T.rename_disclosure_js()}</script>
-            <a class="btn danger" href="/projects/{_esc(name)}/remove">Remove this
-              project&hellip;</a>
-          </div>
-        </section>
-        """
-        held_display = summary.held if summary.status == "ok" else "\u2014"
-        sb = T.statusbar(
-            '<span class="s"><span class="dot on"></span>Sweep <b>healthy</b></span>'
-            f'<span class="s">Held <b>{held_display}</b></span>',
-            f'<a href="/projects/{_esc(name)}/browse">Browse</a> '
-            f'<a href="/projects/{_esc(name)}">Refresh</a>',
-        )
-        # `browse_js()` -- the SAME progressive-enhancement row-selection +
-        # scroll-preservation script `/browse` itself ships (see its own
-        # docstring): this page reuses the identical `#browse-list`/
-        # `#browse-detail` ids `render_browse_body` renders, so a plain
-        # click still works with JS off, and JS-on selection swaps ONLY
-        # the detail pane. `list_controls_js` -- density + `j`/`k`/`Enter`/
-        # `Esc` row navigation, now generalized (see its own docstring) to
-        # also cover `a.wtb-row[data-t]`, not just the item table.
-        return _page(
-            request,
-            name,
-            body,
-            crumb_html=crumb,
-            statusbar_html=sb,
-            js=webbrowse.browse_js() + T.list_controls_js(),
-            sidebar_html=_sidebar_html(sidebar_names, sidebar_summaries, name),
-            auto_refresh_ms=_AUTO_REFRESH_MS,
-            nav_project=name,
-        )
 
     @app.post("/projects/{name}/items")
     async def add_item(  # type: ignore[no-untyped-def]
@@ -4347,179 +4563,6 @@ def create_app(
     # its two forms (project-level "claim next", item-level "Claim this
     # item") were removed together, rather than left as dead-but-reachable
     # endpoints, so there is no browser-facing way to race an agent's claim.
-
-    # --------------------------------------------------------- item detail
-
-    @app.get("/projects/{name}/items/{item_id}", response_class=HTMLResponse)
-    async def item_detail(request: Request, name: str, item_id: str):  # type: ignore[no-untyped-def]
-        try:
-            bd = workspace.project(name)
-            item = bd.get(item_id, with_links=True)
-        except A.BeadsError:
-            return _page(
-                request,
-                item_id,
-                _not_found_body(
-                    heading=item_id,
-                    back_href=f"/projects/{name}",
-                    back_label=f"back to {name}",
-                ),
-                crumb_html=_crumb(("/", "All projects"), (f"/projects/{name}", name)),
-            )
-
-        identity_val = _esc(_identity(request))
-
-        # ------------------------------------------------ contextual action
-        # Exactly one action control, chosen by the item's own status --
-        # never rendered for a status it doesn't apply to.
-        #
-        # There is deliberately no "Claim" control here (or anywhere else in
-        # this web UI): claiming is an agent action taken through the
-        # `work_claim` tool, which enforces the atomic claim/custody
-        # machinery this browser has no business racing against. An open
-        # item therefore has no action control at all on this page -- it is
-        # readable, editable (see the form below), but not claimable from a
-        # browser.
-        if item.status == "held":
-            action_html = f"""
-            <div class="formsec">
-              <span class="flegend">Resolve</span>
-              <form method="post" action="/projects/{_esc(name)}/items/{_esc(item.id)}/resolve">
-                <label for="reason">Resolution reason</label>
-                <textarea id="reason" name="reason" rows="3" required></textarea>
-                <label for="resolve_actor">Actor</label>
-                <input type="text" id="resolve_actor" name="actor" value="{identity_val}" required>
-                <button type="submit">Resolve</button>
-              </form>
-            </div>
-            """
-        else:
-            # resolved / blocked / deferred -- no action applies. Absent,
-            # not disabled-and-rendered: nothing to interact with here.
-            action_html = ""
-
-        # ------------------------------------------------------------ links
-        links_html = _dependency_sections_html(name, item.links)
-
-        # --------------------------------------------------------- activity
-        # A page enrichment, not load-bearing: `Beads.activity` already
-        # degrades honestly (comments-only, or empty) if `bd history`
-        # itself errors -- never let a fetch failure here take down the
-        # rest of this page (title/description/acceptance/design/status).
-        try:
-            activity_events = bd.activity(item.id)
-        except A.BeadsError as e:
-            logger.warning("item_detail %s/%s: activity feed unavailable: %s", name, item.id, e)
-            activity_events = []
-        activity_html = _activity_feed_html(activity_events)
-
-        resolution_html = ""
-        if item.status == "resolved" and item.resolution:
-            resolution_html = (
-                '<span class="eyebrow am" style="display:block;margin-top:30px">Resolution</span>'
-                f'<div class="content-block">{_esc(item.resolution)}</div>'
-            )
-
-        # D5 (consistency pass): facts/timestamps/held-chip are now the SAME
-        # shared builders webbrowse.py's split-pane detail pane calls
-        # (`_item_facts_kv_html`/`_item_time_kv_html`/`_item_held_chip_html`,
-        # defined above) -- one computation, not two independently-drifting
-        # copies. This also fixes a real inconsistency the duplication had
-        # already produced: this route's own Queue link was missing the
-        # `prose-link` class the split-pane's version always had.
-        facts_kv = _item_facts_kv_html(name, item)
-        time_kv = _item_time_kv_html(item)
-        held_chip = _item_held_chip_html(item)
-
-        # Title is styled to read at the same visual weight the old plain
-        # `<h1>` had (26px/500), but AS an input -- the shared input rule's
-        # visible border + `--raise` background is what signals "editable"
-        # here, deliberately distinct from the plain, borderless
-        # `_fact_value_html`/`.kv` text beside it (Kind, Priority, Status,
-        # Holder, timestamps -- all lifecycle/read-only, never in this form).
-        #
-        # v3 firewall polish (task 3): a single-line `<input>` clips a long
-        # title on the right with no way to see the rest -- an `<input>`
-        # never wraps, it only scrolls its own box sideways. A `<textarea>`
-        # posts under the SAME `name="title"` field the `/update` route
-        # already reads (Form(...) does not care whether the tag was
-        # `<input>` or `<textarea>`), so the Save form's contract is
-        # unchanged; only the tag -- and therefore the wrapping behaviour --
-        # changes. `resize:vertical` lets a reader manually reveal more of
-        # a title long enough to still clip at 2 rows, without breaking the
-        # form; `white-space:pre-wrap`+`overflow-wrap:anywhere` guarantee
-        # the full value is always reachable (wrap first, break mid-word
-        # only if a single unbroken run is itself wider than the field).
-        title_input_style = (
-            "font-family:var(--sans);font-size:20px;font-weight:500;"
-            "letter-spacing:-.008em;color:var(--ink);max-width:900px;min-height:52px;"
-            "resize:vertical;white-space:pre-wrap;overflow-wrap:anywhere"
-        )
-        # D5 (consistency pass): was `max-width:80ch` (~640px) -- narrower
-        # than the Title field right above it (900px) for no reason, on a
-        # card that itself spans the page's full ~1300px content width.
-        # Widened to match Title's own cap, closing most of the "big dead
-        # margin on the right" gap a 1440px render measured (the card's
-        # content occupied only ~65% of the card at the old cap).
-        textarea_style = "max-width:900px;min-height:7rem"
-        body = f"""
-        {_flash(request)}
-        <section class="sec">
-        <div class="itemcard">
-          <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
-            <span class="muted">{_esc(item.id)}</span>
-            {_item_state_html(item.status)}
-            {held_chip}
-          </div>
-          <form method="post" action="/projects/{_esc(name)}/items/{_esc(item.id)}/update"
-                style="margin-top:18px">
-            <label for="title">Title</label>
-            <textarea id="title" name="title" required rows="2"
-                      style="{title_input_style}">{_esc(item.title)}</textarea>
-
-            <div class="kv" style="margin-top:18px">{facts_kv}</div>
-            <div class="kv" style="margin-top:10px">{time_kv}</div>
-
-            <label for="description" class="eyebrow" style="display:block;margin:30px 0 0">
-              Description</label>
-            <textarea id="description" name="description" rows="6"
-                      placeholder="No description provided."
-                      style="{textarea_style}">{_esc(item.description or "")}</textarea>
-
-            <label for="acceptance" class="eyebrow" style="display:block;margin:20px 0 0">
-              Acceptance criteria</label>
-            <textarea id="acceptance" name="acceptance" rows="4"
-                      placeholder="No acceptance criteria provided."
-                      style="{textarea_style}">{_esc(item.acceptance or "")}</textarea>
-
-            <label for="design" class="eyebrow" style="display:block;margin:20px 0 0">
-              Design notes</label>
-            <textarea id="design" name="design" rows="4"
-                      placeholder="No design notes provided."
-                      style="{textarea_style}">{_esc(item.design or "")}</textarea>
-
-            <p class="field-hint">Title, description, acceptance criteria and design notes are
-              editable here and persist on Save. Status, holder and the timestamps above are
-              lifecycle facts, not free-edit -- they change only through claim/resolve.</p>
-            <button type="submit" style="margin-top:0.3rem">Save changes</button>
-          </form>
-
-          <div style="margin-top:32px">
-          {resolution_html}
-          {links_html}
-          {activity_html}
-          {action_html}
-          </div>
-        </div>
-        </section>
-        """
-        return _page(
-            request,
-            f"{item.id} - {item.title}",
-            body,
-            crumb_html=_crumb(("/", "All projects"), (f"/projects/{name}", name), ("", item.id)),
-            nav_project=name,
-        )
 
     @app.post("/projects/{name}/items/{item_id}/update")
     async def update_item(  # type: ignore[no-untyped-def]
@@ -4556,8 +4599,24 @@ def create_app(
 
     @app.post("/projects/{name}/items/{item_id}/resolve")
     async def resolve(  # type: ignore[no-untyped-def]
-        name: str, item_id: str, reason: str = Form(...), actor: str = Form(...)
+        name: str,
+        item_id: str,
+        reason: str = Form(...),
+        actor: str = Form(...),
+        confirm: str = Form(...),
     ):
+        """Resolve is a terminal, destructive action (it closes the item) --
+        the wt-v4 Observatory L2 actions drawer gates it behind a real
+        server-rendered confirm sub-state (see webbrowse.py's item detail
+        route) before this form is ever shown/submitted. `confirm` is
+        REQUIRED (not merely checked) so a direct POST that skips that
+        sub-state -- bypassing the UI entirely -- is refused rather than
+        silently resolving the item; the confirm page's own form is the
+        only caller that supplies it."""
+        if confirm != "yes":
+            return _redirect(
+                f"/projects/{name}/items/{item_id}", error="resolve requires explicit confirmation"
+            )
         try:
             item = workspace.project(name).resolve(item_id, reason, actor=actor)
         except A.BeadsError as e:

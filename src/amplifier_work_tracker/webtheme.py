@@ -3009,14 +3009,26 @@ def _esc(value: object) -> str:
 # ---------------------------------------------------------------------------
 
 
-def page(title: str, body: str, *, js: str = "", measure_px: int = 620) -> str:
+def page(
+    title: str, body: str, *, js: str = "", measure_px: int = 620, body_class: str = ""
+) -> str:
+    """`body_class`, when given (wt-v4 Observatory only -- e.g. `"wt-observatory"`),
+    is applied as `<body class="...">`. Every Observatory CSS rule
+    (webtheme.py's `OBSERVATORY_CSS`, appended below `CSS`) is scoped under
+    this class -- including `body.wt-observatory::before` for the ambient
+    background glow, which is why it belongs on `<body>` itself rather than
+    a wrapper `<div>` nested inside it (a wrapper div can't be the `body`
+    element `::before` targets). Omitted (`""`, the default) renders `<body>`
+    with no class at all -- byte-for-byte the prior output for every
+    existing, non-Observatory page."""
+    body_attr = f' class="{_esc(body_class)}"' if body_class else ""
     return (
         "<!doctype html>\n"
         '<html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f"{_PWA_HEAD_HTML}"
         f"<title>{_esc(title)}</title><style>\n{CSS}\n"
-        f":root{{--measure:{measure_px}px}}\n</style></head><body>\n"
+        f":root{{--measure:{measure_px}px}}\n</style></head><body{body_attr}>\n"
         '<a class="skip" href="#main">Skip to content</a>\n'
         f"{body}\n" + (f"<script>{js}</script>\n" if js else "") + "</body></html>\n"
     )
@@ -3233,8 +3245,9 @@ def auto_refresh_js(interval_ms: int) -> str:
     screen nobody is touching, which is the entire reason this dashboard
     exists (see `webapp.py`'s `_AUTO_REFRESH_MS`).
 
-    Two independent guards, checked every tick; either one skips this
-    tick only -- it tries again next interval, it never stops polling:
+    Three independent guards, checked every tick; any one of them skips
+    this tick only -- it tries again next interval, it never stops
+    polling:
       - the tab is hidden (`document.hidden`): no point fetching for a
         backgrounded tab, and no risk of surprising whoever isn't looking.
       - the user is mid-input ANYWHERE on the page: `document.activeElement`
@@ -3245,6 +3258,12 @@ def auto_refresh_js(interval_ms: int) -> str:
         focus and whatever was typed -- see `webapp.py`'s `_page` for why
         the item-detail edit page instead never receives this script at
         all rather than leaning on this guard alone.
+      - wt-v4 Observatory ONLY: a page-local `window.__wtRefreshPaused`
+        flag, flipped by the nav's visible pause/play control
+        (`wtToggleRefresh()`, see webapp.py's `_observatory_nav_extras_html`).
+        Starts falsy on a page with no such control at all -- a pure
+        no-op there, so this guard changes nothing for any PRE-EXISTING
+        page that never renders the pause button.
 
     A single `window`-level flag makes the whole poller idempotent: the
     fetched body's own markup includes this exact script again (every
@@ -3259,6 +3278,19 @@ def auto_refresh_js(interval_ms: int) -> str:
     exact same URL forever would otherwise re-display the same flash on
     every tick instead of letting it be transient.
 
+    STATE SURVIVAL ACROSS THE SWAP (wt-v4 Observatory build-phase
+    requirement -- GAUNTLET-SYNTHESIS.md's "State survival across the
+    ~20s auto-refresh body-swap"): before replacing `document.body`, every
+    currently-OPEN `<details id="...">` element (the fleet's dormant-
+    projects disclosure, the activity feed, a help popover -- ANY
+    `<details>` this app gives a stable `id`) is recorded by id, and
+    `window.scrollY` is captured. After the swap, each recorded id's
+    `<details>` (if the fresh markup still has one with that id) is
+    re-opened, and the page is scrolled back to the captured position. A
+    page with no `<details id="...">` at all (every page before wt-v4)
+    records an empty list and restores nothing beyond the pre-existing
+    scroll behaviour -- a pure addition, nothing observable changes there.
+
     Every script tag in the freshly-swapped body is re-created (not left
     as inert markup -- `.innerHTML` never executes the `<script>` tags it
     inserts) so `search_js`'s own re-invocation-safe binding above
@@ -3272,6 +3304,7 @@ def auto_refresh_js(interval_ms: int) -> str:
   var inFlight=false;
   function isGuarded(){{
     if(document.hidden) return true;
+    if(window.__wtRefreshPaused) return true;
     var el=document.activeElement, tag=el && el.tagName;
     if(tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT') return true;
     var q=document.getElementById('q');
@@ -3292,9 +3325,24 @@ def auto_refresh_js(interval_ms: int) -> str:
       d.classList.add('refreshed');
     }});
   }}
+  function captureState(){{
+    var openIds=[];
+    document.querySelectorAll('details[id]').forEach(function(d){{
+      if(d.open) openIds.push(d.id);
+    }});
+    return {{openIds:openIds, scrollY:window.scrollY}};
+  }}
+  function restoreState(state){{
+    state.openIds.forEach(function(id){{
+      var d=document.getElementById(id);
+      if(d && d.tagName==='DETAILS') d.open=true;
+    }});
+    window.scrollTo(0, state.scrollY);
+  }}
   function tick(){{
     if(inFlight || isGuarded()) return;
     inFlight=true;
+    var state=captureState();
     fetch(refetchUrl(), {{credentials:'same-origin',
       headers:{{'X-Requested-With':'wt-auto-refresh'}}}})
       .then(function(r){{ return r.ok ? r.text() : null; }})
@@ -3309,6 +3357,7 @@ def auto_refresh_js(interval_ms: int) -> str:
           s.textContent = old.textContent;
           old.replaceWith(s);
         }});
+        restoreState(state);
         pulse();
       }})
       .catch(function(){{ /* silent -- next tick tries again */ }})

@@ -4934,6 +4934,131 @@ def attention_items(ws: Workspace, limit: int = 50) -> list[dict]:
     return merged[: int(limit)] if limit else merged
 
 
+# ---------------------------------------------------------------------------
+# lane:obs-pages -- the ONE new adapter function Lane C (obs-pages) is
+# permitted to add per its build spec, for L0 Mission Control's cross-project
+# "Activity feed" section (BRIEF.md / GAUNTLET-SYNTHESIS.md item 14).
+# ---------------------------------------------------------------------------
+
+# Real, EMPIRICALLY VERIFIED `events.event_type` values (probed live against
+# bd 1.1.2 + an isolated dolt server -- create/claim/resolve/block/defer/
+# release, then `SELECT * FROM events`): 'created', 'claimed', 'closed',
+# 'reopened' (documented by `reopened_count`), and a catch-all
+# 'status_changed' for every OTHER transition (block, defer, release/
+# reclaim, a plain `--status` edit) -- there is no dedicated 'blocked'
+# event_type. Only these four are fetched; a 'status_changed' row is kept
+# for the feed ONLY when its own `new_value` JSON shows the transition
+# landed on `blocked` (see `_feed_kind` below) -- defer/release/reclaim
+# transitions are real events but do not map onto this feed's fixed
+# claim/resolve/block/file vocabulary (`widgets.ActivityFeedItem.kind`), so
+# they are excluded rather than mis-labeled.
+_FEED_EVENT_TYPES = ("created", "claimed", "closed", "status_changed")
+
+
+def _feed_kind(event_type: str | None, new_value: str | None) -> str | None:
+    """Map one raw `events` row onto the feed's fixed `claim`/`resolve`/
+    `block`/`file` vocabulary, or `None` if this row doesn't correspond to
+    one of those four (see `_FEED_EVENT_TYPES`'s docstring)."""
+    if event_type == "created":
+        return "file"
+    if event_type == "claimed":
+        return "claim"
+    if event_type == "closed":
+        return "resolve"
+    if event_type == "status_changed":
+        try:
+            parsed = json.loads(new_value) if new_value else {}
+        except json.JSONDecodeError:
+            parsed = {}
+        if isinstance(parsed, dict) and parsed.get("status") == "blocked":
+            return "block"
+    return None
+
+
+def recent_activity_feed(ws: Workspace, *, hours: int = 12, limit: int = 50) -> list[dict]:
+    """Cross-project, reverse-chronological activity feed for L0 Mission
+    Control's "Activity feed" section -- every readable project's `events`
+    rows (claim/resolve/block/file only, see `_feed_kind`) within the
+    trailing `hours` hours, merged and capped to `limit`.
+
+    ONE SQL round trip regardless of project count: every readable
+    project's `events`-joined-`issues` query is combined into a single
+    `UNION ALL` (verified working against a real isolated dolt server --
+    dolt/MySQL execute a cross-database `UNION ALL` over fully-qualified
+    `` `db`.`table` `` references in one query, same as every other
+    fully-qualified reference already used throughout this module), with
+    the final `ORDER BY ... LIMIT` applied to the WHOLE union -- never
+    per-project, which could let one noisy project crowd out every other
+    project's rows before the merge even happened.
+
+    TIMEZONE GOTCHA (see this block's own module-level comment): compares
+    `events.created_at` against `NOW()`, not `UTC_TIMESTAMP()` -- that
+    column is written in the server's own local system timezone, not UTC.
+
+    A project mid-creation/broken contributes nothing (skipped up front,
+    same as every other aggregate in this block); an empty workspace
+    (`ws.names()` -> `[]`, or every project excluded) returns `[]` rather
+    than sending a syntactically invalid zero-armed `UNION ALL`.
+
+    Returns dicts shaped for `widgets.ActivityFeedItem` construction by the
+    caller: ``{"kind", "actor", "project", "item_id", "title",
+    "created_at"}`` -- `created_at` as the raw dolt string (local-tz, per
+    the gotcha above); the caller (webapp.py) is responsible for turning it
+    into a "Nm ago"-style label and for escaping/composing the final
+    `ActivityFeedItem`.
+    """
+    projects = [
+        name for name in ws.names() if ws.creation_state(name) not in ("creating", "abandoned")
+    ]
+    if not projects:
+        return []
+
+    types_sql = ", ".join(f"'{t}'" for t in _FEED_EVENT_TYPES)
+    selects = []
+    for db in projects:
+        db_lit = _sql_literal(db)
+        selects.append(
+            f"SELECT '{db_lit}' AS project, `e`.`event_type` AS event_type, "
+            "`e`.`actor` AS actor, `e`.`issue_id` AS issue_id, `i`.`title` AS title, "
+            "`e`.`new_value` AS new_value, `e`.`created_at` AS created_at "
+            f"FROM `{db}`.`events` `e` JOIN `{db}`.`issues` `i` ON `i`.`id` = `e`.`issue_id` "
+            f"WHERE `e`.`created_at` >= NOW() - INTERVAL {int(hours)} HOUR "
+            f"AND `e`.`event_type` IN ({types_sql})"
+        )
+    query = " UNION ALL ".join(selects) + f" ORDER BY `created_at` DESC LIMIT {int(limit) * 4}"
+    # `limit * 4` over-fetches past the caller's own cap because up to 3 of
+    # every 4 `status_changed` rows get filtered out by `_feed_kind` AFTER
+    # the SQL runs (defer/release/reclaim are real rows this query cannot
+    # exclude at the SQL layer without duplicating `_feed_kind`'s own JSON
+    # parse in SQL) -- a generous, cheap margin so a busy window doesn't
+    # under-fill the final, honestly-capped list.
+    p = _dolt_sql_json(query)
+    if p.returncode != 0:
+        detail = _clean_bd_error(p.stderr or p.stdout)
+        raise BeadsError(f"could not read the cross-project activity feed: {detail}")
+    rows = json.loads(p.stdout or "{}").get("rows", [])
+    out: list[dict] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        kind = _feed_kind(r.get("event_type"), r.get("new_value"))
+        if kind is None:
+            continue
+        out.append(
+            {
+                "kind": kind,
+                "actor": r.get("actor") or "unknown",
+                "project": r.get("project") or "",
+                "item_id": r.get("issue_id") or "",
+                "title": r.get("title") or "",
+                "created_at": r.get("created_at"),
+            }
+        )
+        if len(out) >= limit:
+            break
+    return out
+
+
 _CAPS: dict[str, bool] | None = None
 
 
