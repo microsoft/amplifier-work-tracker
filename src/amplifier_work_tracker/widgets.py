@@ -573,6 +573,16 @@ def _esc(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
+def _title_attr(raw: str) -> str:
+    """`' title="..."'` (leading space included) for a non-empty tooltip
+    value, or `""` when there's nothing to show one for. The one place a
+    widget adds an optional `title=` attribute to an element it otherwise
+    builds from plain-text fields -- see `FleetRow`'s docstring for why
+    this split (plain text field + separate `_title` field) replaced
+    accepting a pre-rendered `<span title=...>` HTML string from a route."""
+    return f' title="{_esc(raw)}"' if raw else ""
+
+
 # ---------------------------------------------------------------------------
 # 1. verdict-hero
 # ---------------------------------------------------------------------------
@@ -706,7 +716,16 @@ class AttentionRow(TypedDict):
 
 
 class AttentionQueueData(TypedDict):
+    """`rows` is the queue rows actually rendered -- already capped by the
+    caller (see `_L0_ATTENTION_QUEUE_SHOWN` in webapp.py); this widget never
+    re-slices. `total` is the FULL ranked-queue count before capping. When
+    `total` exceeds `len(rows)` the widget prints an honest "Showing N of
+    M" truncation-note footer, the same convention `render_agents_now`/
+    `render_activity_feed` already use -- the mockup's queue is a compact
+    ~8-row panel, never a full 50-row page-dominating list."""
+
     rows: list[AttentionRow]
+    total: int
 
 
 def render_attention_queue(data: AttentionQueueData) -> str:
@@ -726,7 +745,7 @@ def render_attention_queue(data: AttentionQueueData) -> str:
             f'<span class="priority-chip {_esc(r["priority"].lower())}" '
             f'title="Priority {_esc(r["priority"].lstrip("Pp"))}">{priority_label}</span>'
             '<span class="main">'
-            f'<span class="title"><span class="proj">{_esc(r["project"])}</span>'
+            f'<span class="title"><span class="proj">{_esc(r["project"])}</span> '
             f"{_esc(r['title'])}</span>"
             f'<span class="reason">{r["reason_html"]}</span>'
             "</span>"
@@ -735,7 +754,15 @@ def render_attention_queue(data: AttentionQueueData) -> str:
             '<span class="icon sm chev"><svg><use href="#i-chevron"/></svg></span>'
             "</a>"
         )
-    return f'<div class="attn-list">{"".join(rows_html)}</div>'
+    shown = len(data["rows"])
+    total = data["total"]
+    truncation = ""
+    if total > shown:
+        truncation = (
+            f'<div class="truncation-note">Showing {shown} of {total} '
+            "\u2014 drill into a project for the rest.</div>"
+        )
+    return f'<div class="attn-list">{"".join(rows_html)}</div>{truncation}'
 
 
 # ---------------------------------------------------------------------------
@@ -799,7 +826,17 @@ class FleetRow(TypedDict):
     unescaped since it may carry a `<span style="color:var(--watch)">(N
     stale)</span>` fragment for a stale-custody call-out (see the
     `vcos_spike` row in mock-L0). `sparkline_values` feeds
-    `chartsvg.sparkline` directly."""
+    `chartsvg.sparkline` directly.
+
+    `last_activity` is PLAIN TEXT (e.g. `"3h ago"`, `"never"`, `"\u2014"`)
+    -- unlike `mix_legend_html`, it is HTML-escaped by `render_fleet_table`
+    itself. `last_activity_title` is the raw ISO-8601 timestamp (empty
+    string when there is none to show) that the renderer places on a
+    `title=` tooltip attribute. This two-field split exists so the route
+    never has to hand a pre-rendered `<span title=...>` HTML string
+    through a field the widget then escapes (which previously rendered
+    the tag markup itself as visible text) -- the widget is the only
+    place that ever emits the wrapping span."""
 
     name: str
     subtitle: str
@@ -809,16 +846,21 @@ class FleetRow(TypedDict):
     sparkline_label: str
     agents: int
     last_activity: str
+    last_activity_title: str
     href: str
 
 
 class DormantProject(TypedDict):
+    """`last_activity`/`last_activity_title` follow the same plain-text +
+    tooltip-title split as `FleetRow` -- see that class's docstring."""
+
     name: str
     href: str
     items: int
     open_count: int
     resolved: int
     last_activity: str
+    last_activity_title: str
 
 
 class FleetTableData(TypedDict):
@@ -844,7 +886,8 @@ def render_fleet_table(data: FleetTableData) -> str:
             f"{spark}"
             f'<span class="{agents_class}">'
             f'<span class="icon sm"><svg><use href="#i-bot"/></svg></span>{row["agents"]}</span>'
-            f'<span class="last">{_esc(row["last_activity"])}</span>'
+            f'<span class="last"{_title_attr(row["last_activity_title"])}>'
+            f"{_esc(row['last_activity'])}</span>"
             '<span class="icon sm chev"><svg><use href="#i-chevron"/></svg></span>'
             "</a>"
         )
@@ -853,7 +896,8 @@ def render_fleet_table(data: FleetTableData) -> str:
         f'<tr><td><a href="{_esc(d["href"])}" style="color:inherit;text-decoration:none">'
         f"{_esc(d['name'])}</a></td>"
         f'<td class="n">{d["items"]}</td><td class="n">{d["open_count"]}</td>'
-        f'<td class="n">{d["resolved"]}</td><td class="n">{_esc(d["last_activity"])}</td></tr>'
+        f'<td class="n">{d["resolved"]}</td>'
+        f'<td class="n"{_title_attr(d["last_activity_title"])}>{_esc(d["last_activity"])}</td></tr>'
         for d in data["dormant"]
     )
     dormant_html = ""
@@ -986,7 +1030,14 @@ def render_activity_feed(data: ActivityFeedData) -> str:
             "</a>"
         )
     return (
-        '<details class="dormant-details feed-details">'
+        # `open` (unlike the dormant-projects `<details>`, which stays
+        # collapsed by default): a collapsed activity feed reads as
+        # empty/missing rather than as a real, populated panel -- DOM-
+        # measured on the live dashboard. A user can still collapse it;
+        # `T.auto_refresh_js`'s existing open-`<details>`-preservation
+        # already persists whatever state the user leaves it in across
+        # a refresh, so defaulting to open costs nothing on that front.
+        '<details class="dormant-details feed-details" open>'
         '<summary>Activity feed <span class="note" style="font-weight:400;margin-left:8px">'
         "cross-project · reverse-chronological</span> "
         '<span class="icon sm chev"><svg><use href="#i-chevron"/></svg></span></summary>'

@@ -93,6 +93,32 @@ def test_l0_unknown_window_param_falls_back_to_7d_not_a_500(client, shared_proje
     _login(client)
     r = client.get("/", params={"window": "bogus"})
     assert r.status_code == 200
+
+
+def test_l0_page_declares_dark_theme_by_default(client, shared_project_name):
+    """Regression: `<html>` must carry `data-theme="dark"` from first render
+    -- without it, a browser/OS whose own `prefers-color-scheme` is light
+    silently wins the CSS token cascade (see `:root[data-theme="dark"]`'s
+    docstring in webtheme.py), producing the live-dashboard defect where
+    the verdict hero read as a light surface with dark text even though
+    the page's own theme toggle showed "Dark" as active."""
+    _login(client)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert '<html lang="en" data-theme="dark">' in r.text
+    assert '<button data-theme="dark" aria-pressed="true"' in r.text
+
+
+def test_l0_new_project_nav_action_is_a_quiet_icon_button(client, shared_project_name):
+    """Regression: the nav's project-creation action must be a low-key,
+    icon-only `.icon-btn` (matching search/bell and the approved mockup's
+    own nav) -- never the previous prominent gradient-pill `.btn.btn-new`."""
+    _login(client)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert 'class="icon-btn" href="/#create-project" title="New project"' in r.text
+    assert 'aria-label="New project"' in r.text
+    assert "btn-new" not in r.text
     assert 'class="window-tab is-active">7D</a>' in r.text
 
 

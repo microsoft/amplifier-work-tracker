@@ -570,8 +570,8 @@ def _crumb(*parts: tuple[str, str]) -> str:
 def _nav_actions_html(project: str | None) -> str:
     """The nav's right-hand action cluster (goal wtv3/components, B1): a
     search icon-button, a notifications ("bell") icon-button, and a
-    "+ New" gradient-pill primary action -- see `T.top_bar`'s own
-    `actions_html` slot and webtheme.py's `.nav-actions`/`.icon-btn` CSS.
+    quiet, icon-only "new" action -- see `T.top_bar`'s own `actions_html`
+    slot and webtheme.py's `.nav-actions`/`.icon-btn` CSS.
 
     Search: a real, functional affordance, not decoration -- it focuses
     the on-page `#q` field (the SAME element `search_js`/`list_controls_js`
@@ -583,12 +583,22 @@ def _nav_actions_html(project: str | None) -> str:
     alarm-push channel) -- never a fabricated notification centre this
     app doesn't have.
 
-    "+ New": context-aware, never a button pointed at a form that isn't
-    on the page it's rendered on. `project` given -> "+ New item",
+    "New": context-aware, never a button pointed at a form that isn't
+    on the page it's rendered on. `project` given -> "New item",
     scrolling/linking to THAT project's own `#add-item` anchor
     (`project_view`'s real `POST /projects/{name}/items` form). `project
-    is None` (the dashboard, or any project-less page) -> "+ New
+    is None` (the dashboard, or any project-less page) -> "New
     project", linking to the dashboard's own `#create-project` anchor.
+
+    Rendered as a quiet `.icon-btn` (same ghost chrome as search/bell and
+    the approved mockup's own nav -- `mock-L0-mission-control.html`'s
+    `<a class="icon-btn" title="File a new item">`), never the previous
+    prominent gradient-pill `.btn.btn-new` -- the approved design demoted
+    project/item creation to a low-key affordance; the observatory's job
+    is observability first, manipulation second (see BRIEF.md's pivot).
+    The link/behavior is unchanged; only the visual weight and the
+    explicit `aria-label` (screen-reader text an icon-only button has no
+    other source for) are new.
     """
     search_btn = (
         '<button type="button" class="icon-btn" title="Search (press /)" '
@@ -605,7 +615,10 @@ def _nav_actions_html(project: str | None) -> str:
     else:
         new_href = "/#create-project"
         new_label = "New project"
-    new_btn = f'<a class="btn btn-new" href="{new_href}">+ {new_label}</a>'
+    new_btn = (
+        f'<a class="icon-btn" href="{new_href}" title="{_esc(new_label)}" '
+        f'aria-label="{_esc(new_label)}">' + T.ICONS["plus-file"] + "</a>"
+    )
     return search_btn + bell_btn + new_btn
 
 
@@ -3661,6 +3674,12 @@ def _window_days(window: str | None) -> tuple[str, int]:
 #: matches the approved mockup's own "Showing 8 of 20 active agents" figure.
 _L0_AGENTS_NOW_SHOWN = 8
 _L0_ACTIVITY_FEED_SHOWN = 10
+#: The ranked cross-project attention queue is capped to a compact panel --
+#: matches the approved mockup's ~8-row queue, never the full ranked list
+#: (`A.attention_items(limit=50)` stays the DATA cap; this is the separate,
+#: smaller RENDER cap -- see `WD.AttentionQueueData`'s own docstring for the
+#: "Showing N of M" truncation-note this produces once `total > shown`).
+_L0_ATTENTION_QUEUE_SHOWN = 10
 #: Trailing days with zero activity of ANY kind after which a fleet project
 #: is folded into the collapsed "Dormant" section instead of the main
 #: ranked fleet list (GAUNTLET-SYNTHESIS.md's fleet table spec).
@@ -3810,7 +3829,8 @@ def _fleet_rows_html(
                     items=total,
                     open_count=max(0, total - resolved),
                     resolved=resolved,
-                    last_activity=_abs_and_rel(s.last_activity) if s.last_activity else "never",
+                    last_activity=_relative_time(s.last_activity) if s.last_activity else "never",
+                    last_activity_title=s.last_activity or "",
                 )
             )
             continue
@@ -3846,7 +3866,10 @@ def _fleet_rows_html(
                     sparkline_values=[float(v) for v in spark_values],
                     sparkline_label=_fleet_sparkline_label(s.name, spark_values),
                     agents=len(agents_by_project.get(s.name, ())),
-                    last_activity=_abs_and_rel(s.last_activity) if s.last_activity else "\u2014",
+                    last_activity=(
+                        _relative_time(s.last_activity) if s.last_activity else "\u2014"
+                    ),
+                    last_activity_title=s.last_activity or "",
                     href=href,
                 ),
             )
@@ -4485,7 +4508,9 @@ def create_app(
                     href=f"/projects/{quote(r['project'])}/items/{quote(r['item_id'])}",
                 )
             )
-        attention_html = WD.render_attention_queue(WD.AttentionQueueData(rows=attn_rows))
+        attention_html = WD.render_attention_queue(
+            WD.AttentionQueueData(rows=attn_rows[:_L0_ATTENTION_QUEUE_SHOWN], total=len(attn_rows))
+        )
 
         extra_blocked = blocked_total - blocked_attn_count
         reconcile_html = ""

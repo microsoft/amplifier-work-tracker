@@ -382,7 +382,8 @@ def test_render_attention_queue_ranked_rows() -> None:
                 age_label="9d",
                 href="#",
             ),
-        ]
+        ],
+        total=2,
     )
     html = WD.render_attention_queue(data)
     _firewall_clean(html)
@@ -391,8 +392,60 @@ def test_render_attention_queue_ranked_rows() -> None:
     assert '<span class="priority-chip p0"' in html
     assert '<span class="priority-chip p2"' in html
     assert "#1" in html and "#6" in html
-    assert '<span class="title"><span class="proj">cortex</span>' in html
+    # Bonus fix: a real space/separator between the project prefix and the
+    # item title, not just a CSS margin -- so plain-text extraction (and
+    # screen readers) never read "cortexFix retention..." run together.
+    assert '<span class="title"><span class="proj">cortex</span> ' in html
     assert "Stale custody" in html
+    # total == len(rows) -- no truncation note when nothing was cut.
+    assert "truncation-note" not in html
+
+
+def test_render_attention_queue_truncation_note_when_capped() -> None:
+    """`total` > `len(rows)` -- the caller already capped the DISPLAYED rows
+    (webapp.py's `_L0_ATTENTION_QUEUE_SHOWN`) -- must print an honest
+    "Showing N of M" footer, matching `render_agents_now`/
+    `render_activity_feed`'s own truncation-note convention. The live
+    dashboard defect this guards: the attention queue rendering all 50
+    ranked rows and dominating the page instead of a compact panel."""
+    rows = [
+        WD.AttentionRow(
+            severity="watch",
+            icon="i-clock",
+            priority="P3",
+            project="proj",
+            title=f"item {i}",
+            reason_html="Ready, unclaimed",
+            rank=i + 1,
+            age_label="1d",
+            href="#",
+        )
+        for i in range(10)
+    ]
+    html = WD.render_attention_queue(WD.AttentionQueueData(rows=rows, total=50))
+    assert html.count('class="attn-row is-') == 10
+    assert '<div class="truncation-note">Showing 10 of 50' in html
+
+
+def test_render_attention_queue_no_truncation_note_when_not_capped() -> None:
+    data = WD.AttentionQueueData(
+        rows=[
+            WD.AttentionRow(
+                severity="blocked",
+                icon="i-octagon-x",
+                priority="P1",
+                project="proj",
+                title="blocked item",
+                reason_html="Blocked, no owner",
+                rank=1,
+                age_label="",
+                href="#",
+            )
+        ],
+        total=1,
+    )
+    html = WD.render_attention_queue(data)
+    assert "truncation-note" not in html
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +468,7 @@ def test_render_fleet_table_mix_bar_and_dormant_section() -> None:
                 sparkline_label="Resolved-per-day sparkline for cortex",
                 agents=6,
                 last_activity="2m ago",
+                last_activity_title="2026-08-30T18:36:40+00:00",
                 href="mock-L1-project.html",
             ),
             WD.FleetRow(
@@ -428,6 +482,7 @@ def test_render_fleet_table_mix_bar_and_dormant_section() -> None:
                 sparkline_label="Resolved-per-day sparkline for work_tracker, flat -- dormant",
                 agents=0,
                 last_activity="3h ago",
+                last_activity_title="",
                 href="#",
             ),
         ],
@@ -439,6 +494,7 @@ def test_render_fleet_table_mix_bar_and_dormant_section() -> None:
                 open_count=0,
                 resolved=15,
                 last_activity="21d ago",
+                last_activity_title="2026-08-09T12:00:00+00:00",
             ),
         ],
     )
@@ -451,6 +507,14 @@ def test_render_fleet_table_mix_bar_and_dormant_section() -> None:
     assert '<details class="dormant-details">' in html
     assert "beadsworks" in html
     assert "Dormant — 1 projects" in html
+    # Regression: `last_activity` must render as PLAIN TEXT with the raw
+    # timestamp on a `title=` attribute -- never a pre-rendered HTML string
+    # the widget then escapes (the live-dashboard defect where every fleet
+    # row literally displayed `<span title="...">3h ago</span>` as text).
+    assert "&lt;span" not in html
+    assert 'class="last" title="2026-08-30T18:36:40+00:00">2m ago</span>' in html
+    assert 'class="last">3h ago</span>' in html  # no title attr when none given
+    assert '<td class="n" title="2026-08-09T12:00:00+00:00">21d ago</td>' in html
 
 
 def test_render_fleet_table_no_dormant_omits_section() -> None:
@@ -466,6 +530,7 @@ def test_render_fleet_table_no_dormant_omits_section() -> None:
                 sparkline_label="solo spark",
                 agents=1,
                 last_activity="now",
+                last_activity_title="",
                 href="#",
             )
         ],
@@ -550,7 +615,11 @@ def test_render_activity_feed_links_and_window_tabs() -> None:
     )
     html = WD.render_activity_feed(data)
     _firewall_clean(html)
-    assert '<details class="dormant-details feed-details">' in html
+    # Regression: the feed must be OPEN by default -- a collapsed feed reads
+    # as empty/missing rather than a populated panel (live-dashboard defect;
+    # a user can still collapse it, and the refresh-preservation JS
+    # persists whatever state they leave it in).
+    assert '<details class="dormant-details feed-details" open>' in html
     assert 'class="window-tab is-active">12H</a>' in html
     assert html.count('class="feed-item k-') == 2
     assert "Showing 10 most recent of ~340 events today across all projects." in html
