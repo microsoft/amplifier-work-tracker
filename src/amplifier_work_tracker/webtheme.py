@@ -2497,7 +2497,15 @@ flex-wrap:wrap}
   transition:background var(--duration-fast) var(--ease-standard);
 }
 .wt-observatory .attn-row:hover{background:var(--glass-fill-row-hover)}
-.wt-observatory .attn-row .bar{align-self:stretch;border-radius:999px;background:var(--ink-quiet)}
+.wt-observatory .attn-row .bar{
+  /* The legacy, unscoped `.bar` rule (v2 progress bars, further up this file)
+     sets `position:absolute;height:6px`, which silently REMOVES this severity
+     bar from the row's grid flow -- the remaining 6 in-flow items then shift
+     one track left against the 7-track template, landing `.main` in the 32px
+     priority-chip track (title collapses to ~5 chars) while `.rank` balloons
+     onto the minmax(180px,1fr) track. Measured live; see PR. `position:static;
+     height:auto` puts the bar back in flow so children map to tracks 1:1. */
+  position:static;height:auto;align-self:stretch;border-radius:999px;background:var(--ink-quiet)}
 .wt-observatory .attn-row.is-alarm .bar{background:var(--alarm)}
 .wt-observatory .attn-row.is-blocked .bar{background:var(--blocked)}
 .wt-observatory .attn-row.is-watch .bar{background:var(--watch)}
@@ -3011,6 +3019,10 @@ text-align:center}
   }
   .wt-observatory .fleet-row .chev,.wt-observatory .attn-row .chev,
   .wt-observatory .item-row .chev{display:none}
+  /* the severity bar is a grid-flow item on desktop (see its base rule); in
+     this flex-column layout it would render as a stray 4px sliver -- hide it,
+     severity is already conveyed by the icon color */
+  .wt-observatory .attn-row .bar{display:none}
   .wt-observatory .fleet-row::after,.wt-observatory .attn-row::after,
   .wt-observatory .item-row::after{
     content:"View →";align-self:flex-end;font-size:.6875rem;color:var(--ink-tertiary);
