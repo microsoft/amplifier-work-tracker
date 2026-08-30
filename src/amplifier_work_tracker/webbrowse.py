@@ -427,7 +427,12 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
             _ready_age_histogram_data(summary, reopened, window)
         )
         velocity_html = _velocity_chart_shell_html(
-            title=f"Velocity &amp; burn \u2014 {_esc(name)}",
+            # Raw text, NOT pre-escaped: `_velocity_chart_shell_html` HTML-escapes
+            # `title` itself (once) when it renders the `<h3>` -- pre-encoding the
+            # "&" here as `&amp;` made that single escaping pass double-encode it
+            # to `&amp;amp;` (DOM-measured defect: heading rendered literally as
+            # "Velocity &amp; burn -- cortex"). One escaping layer, at the sink.
+            title=f"Velocity & burn \u2014 {name}",
             base_href=f"/projects/{quote(name)}",
             window=window,
             days_data=velocity_days,
@@ -618,6 +623,34 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
             )
 
         links_html = _dependency_sections_html(name, item.links)
+        # DOM-measured defect: the dependency-graph section only ever
+        # appeared when `item.links` had something to say -- an item with
+        # no open blockers (the common case) showed NOTHING here at all,
+        # never the mockup's own neutral "No open blockers" reassurance
+        # (`mock-L2-item.html`'s `.blocker-banner.resolved`). Computed
+        # directly from `item.links` (the SAME `blocking` flag
+        # `_blocked_by_list_html`/`claim_item` use) rather than string-
+        # sniffing `links_html`'s own output, so this can never disagree
+        # with what `_dependency_sections_html` decided to render: when
+        # there IS an unsatisfied blocker, `links_html` already carries its
+        # own crimson "Blocked by" banner and this stays "" (never a
+        # second, contradictory banner).
+        has_unsatisfied_blocker = any(
+            ln.get("direction") == "from" and ln.get("type") == "blocks" and ln.get("blocking")
+            for ln in (item.links or [])
+        )
+        blocker_status_html = (
+            ""
+            if has_unsatisfied_blocker
+            else (
+                '<div class="blocker-banner resolved">'
+                '<span class="icon"><svg><use href="#i-check-circle"/></svg></span>'
+                '<div><div class="btitle">No open blockers</div>'
+                '<div class="blink" style="text-decoration:none;opacity:.85">'
+                "This item has no unresolved blocking dependencies.</div></div>"
+                "</div>"
+            )
+        )
         facts_kv = _item_facts_kv_html(name, item)
         time_kv = _item_time_kv_html(item)
         held_chip = _item_held_chip_html(item)
@@ -640,57 +673,121 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
                 f'<span class="v mono">{held_chip or _EM_DASH}</span></div>'
             )
 
-        confirm_resolve = request.query_params.get("confirm_resolve") == "1"
-        actions_html = ""
+        confirm_resolve = request.query_params.get("confirm_resolve") == "1" and (
+            item.status == "held"
+        )
+
+        # Edit -- ALWAYS available (title/description/acceptance/design are
+        # editable regardless of status; only Resolve is status-gated,
+        # below). Same fields, same POST route (`/update`) as before this
+        # fix -- only WHERE it renders moved: it used to sit as a bare,
+        # always-expanded form floating in the page body; the approved
+        # mockup (`mock-L2-item.html`'s collapsed `.actions-drawer`) puts
+        # every mutating action -- including Edit -- behind one collapsed
+        # drawer, read-first by default.
+        edit_section_html = f"""
+        <div class="drawer-section">
+          <h4>Edit</h4>
+          <form method="post" action="/projects/{quote(name)}/items/{quote(item.id)}/update"
+                class="prose" style="margin-top:var(--space-2)">
+            <label for="title" class="eyebrow">Title</label>
+            <textarea id="title" name="title" required rows="2"
+                      style="width:100%;max-width:900px;font-family:var(--font-sans);
+                      font-size:1rem;color:var(--ink-primary);background:var(--glass-fill);
+                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
+                      padding:.5rem .75rem">{_esc(item.title)}</textarea>
+            <h4>Description</h4>
+            <textarea name="description" rows="6" placeholder="No description provided."
+                      style="width:100%;max-width:900px;font-family:var(--font-sans);
+                      font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
+                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
+                      padding:.75rem 1rem">{_esc(item.description or "")}</textarea>
+            <h4>Acceptance criteria</h4>
+            <textarea name="acceptance" rows="4" placeholder="No acceptance criteria provided."
+                      style="width:100%;max-width:900px;font-family:var(--font-sans);
+                      font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
+                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
+                      padding:.75rem 1rem">{_esc(item.acceptance or "")}</textarea>
+            <h4>Design notes</h4>
+            <textarea name="design" rows="4" placeholder="No design notes provided."
+                      style="width:100%;max-width:900px;font-family:var(--font-sans);
+                      font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
+                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
+                      padding:.75rem 1rem">{_esc(item.design or "")}</textarea>
+            <p class="field-hint" style="color:var(--ink-tertiary);font-size:.8125rem">
+              Title/description/acceptance/design are editable here and persist on Save.
+              Status, holder and timestamps are lifecycle facts -- they change only
+              through claim/resolve.</p>
+            <button type="submit" class="action-btn" style="margin-top:.3rem">Save changes</button>
+          </form>
+        </div>
+        """
+
+        action_labels = ["edit"]
+        resolve_section_html = ""
         if item.status == "held":
-            if confirm_resolve:
-                actions_html = f"""
-                <div class="actions-drawer" open>
-                  <div style="padding:var(--space-4) var(--space-5);display:flex;
-                       align-items:center;gap:var(--space-3);font-weight:600;
-                       color:var(--ink-primary);font-size:.875rem">
-                    <span class="icon" style="color:var(--ink-tertiary)">
-                      <svg><use href="#i-check-circle"/></svg></span> Resolve {_esc(item.id)}?
-                  </div>
-                  <div style="padding:0 var(--space-5) var(--space-4);color:var(--ink-tertiary);
-                       font-size:.8125rem">This closes the item. This cannot be undone.</div>
-                  <form method="post"
-                        action="/projects/{quote(name)}/items/{quote(item.id)}/resolve"
-                        style="padding:0 var(--space-5) var(--space-5);display:flex;
-                        flex-direction:column;gap:var(--space-3);
-                        border-top:1px solid var(--glass-hairline-soft);padding-top:var(--space-4)">
-                    <input type="hidden" name="confirm" value="yes">
-                    <label for="reason">Resolution reason</label>
-                    <textarea id="reason" name="reason" rows="2" required></textarea>
-                    <label for="resolve_actor">Actor</label>
-                    <input type="text" id="resolve_actor" name="actor"
-                           value="{identity_val}" required>
-                    <div style="display:flex;gap:var(--space-3)">
-                      <button type="submit" class="action-btn" style="background:
-                          var(--brand-gradient-solid);color:var(--ink-on-solid);border-color:transparent">
-                        <span class="icon"><svg><use href="#i-check-circle"/></svg></span> Confirm
-                      </button>
-                      <a href="/projects/{quote(name)}/items/{quote(item.id)}" class="action-btn">
-                        <span class="icon"><svg><use href="#i-octagon-x"/></svg></span> Cancel</a>
-                    </div>
-                  </form>
+            action_labels.append("resolve")
+            resolve_section_html = (
+                '<div class="drawer-section"><h4>Resolve</h4>'
+                '<a href="?confirm_resolve=1" class="action-btn">'
+                '<span class="icon"><svg><use href="#i-check-circle"/></svg></span> Resolve</a>'
+                "</div>"
+            )
+        actions_count = " \u00b7 ".join(action_labels)
+
+        if confirm_resolve:
+            # Resolve is a terminal action (it closes the item) -- its
+            # confirm sub-state takes over the WHOLE drawer (matching the
+            # mockup's own state-demo: a flat, always-open confirm card,
+            # not a second nested collapsible), rather than showing Edit
+            # and the confirm dialog side by side.
+            actions_html = f"""
+            <div class="actions-drawer" open>
+              <div style="padding:var(--space-4) var(--space-5);display:flex;
+                   align-items:center;gap:var(--space-3);font-weight:600;
+                   color:var(--ink-primary);font-size:.875rem">
+                <span class="icon" style="color:var(--ink-tertiary)">
+                  <svg><use href="#i-check-circle"/></svg></span> Resolve {_esc(item.id)}?
+              </div>
+              <div style="padding:0 var(--space-5) var(--space-4);color:var(--ink-tertiary);
+                   font-size:.8125rem">This closes the item. This cannot be undone.</div>
+              <form method="post"
+                    action="/projects/{quote(name)}/items/{quote(item.id)}/resolve"
+                    style="padding:0 var(--space-5) var(--space-5);display:flex;
+                    flex-direction:column;gap:var(--space-3);
+                    border-top:1px solid var(--glass-hairline-soft);padding-top:var(--space-4)">
+                <input type="hidden" name="confirm" value="yes">
+                <label for="reason">Resolution reason</label>
+                <textarea id="reason" name="reason" rows="2" required></textarea>
+                <label for="resolve_actor">Actor</label>
+                <input type="text" id="resolve_actor" name="actor"
+                       value="{identity_val}" required>
+                <div style="display:flex;gap:var(--space-3)">
+                  <button type="submit" class="action-btn" style="background:
+                      var(--brand-gradient-solid);color:var(--ink-on-solid);border-color:transparent">
+                    <span class="icon"><svg><use href="#i-check-circle"/></svg></span> Confirm
+                  </button>
+                  <a href="/projects/{quote(name)}/items/{quote(item.id)}" class="action-btn">
+                    <span class="icon"><svg><use href="#i-octagon-x"/></svg></span> Cancel</a>
                 </div>
-                """
-            else:
-                actions_html = """
-                <details class="actions-drawer">
-                  <summary>
-                    <span class="icon"><svg><use href="#i-edit"/></svg></span>
-                    Actions
-                    <span class="count">resolve</span>
-                    <span class="icon sm chev"><svg><use href="#i-chevron"/></svg></span>
-                  </summary>
-                  <div class="drawer-body">
-                    <a href="?confirm_resolve=1" class="action-btn">
-                      <span class="icon"><svg><use href="#i-check-circle"/></svg></span> Resolve</a>
-                  </div>
-                </details>
-                """
+              </form>
+            </div>
+            """
+        else:
+            actions_html = f"""
+            <details class="actions-drawer">
+              <summary>
+                <span class="icon"><svg><use href="#i-edit"/></svg></span>
+                Actions
+                <span class="count">{actions_count}</span>
+                <span class="icon sm chev"><svg><use href="#i-chevron"/></svg></span>
+              </summary>
+              <div class="drawer-body">
+                {edit_section_html}
+                {resolve_section_html}
+              </div>
+            </details>
+            """
 
         body = f"""
         {_observatory_icon_sprite_html()}
@@ -724,39 +821,8 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
           </div>
           <div class="kv" style="margin-top:10px">{facts_kv}</div>
           <div class="kv" style="margin-top:10px">{time_kv}</div>
-          <form method="post" action="/projects/{quote(name)}/items/{quote(item.id)}/update"
-                class="prose" style="margin-top:var(--space-5)">
-            <label for="title" class="eyebrow">Title</label>
-            <textarea id="title" name="title" required rows="2"
-                      style="width:100%;max-width:900px;font-family:var(--font-sans);
-                      font-size:1rem;color:var(--ink-primary);background:var(--glass-fill);
-                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
-                      padding:.5rem .75rem">{_esc(item.title)}</textarea>
-            <h4>Description</h4>
-            <textarea name="description" rows="6" placeholder="No description provided."
-                      style="width:100%;max-width:900px;font-family:var(--font-sans);
-                      font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
-                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
-                      padding:.75rem 1rem">{_esc(item.description or "")}</textarea>
-            <h4>Acceptance criteria</h4>
-            <textarea name="acceptance" rows="4" placeholder="No acceptance criteria provided."
-                      style="width:100%;max-width:900px;font-family:var(--font-sans);
-                      font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
-                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
-                      padding:.75rem 1rem">{_esc(item.acceptance or "")}</textarea>
-            <h4>Design notes</h4>
-            <textarea name="design" rows="4" placeholder="No design notes provided."
-                      style="width:100%;max-width:900px;font-family:var(--font-sans);
-                      font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
-                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
-                      padding:.75rem 1rem">{_esc(item.design or "")}</textarea>
-            <p class="field-hint" style="color:var(--ink-tertiary);font-size:.8125rem">
-              Title/description/acceptance/design are editable here and persist on Save.
-              Status, holder and timestamps are lifecycle facts -- they change only
-              through claim/resolve.</p>
-            <button type="submit" class="action-btn" style="margin-top:.3rem">Save changes</button>
-          </form>
           {resolution_html}
+          {blocker_status_html}
           {links_html}
           {actions_html}
           <div class="section" style="margin-top:var(--space-6)">

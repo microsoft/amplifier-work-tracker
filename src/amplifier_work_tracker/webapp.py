@@ -2728,14 +2728,54 @@ def _discovered_note_html(name: str, links: list[dict], *, label: str) -> str:
     return f'<p class="muted" style="margin-top:10px">{_esc(label)} {", ".join(refs)}</p>'
 
 
+def _link_chip_html(name: str, link: dict) -> str:
+    """One `.link-chip` (id + title, single-line ellipsis on the title via
+    `.link-chip .t`'s CSS) for the compact `Blocks`/`Related` grid -- the
+    wt-v4 Observatory mockups' own presentation for those two columns (see
+    `mock-L2-item.html`'s `.links-grid`), as opposed to `_cheap_ref_list_html`'s
+    plain bulleted list (kept for the `Other links` catch-all bucket, below).
+    "" if the entry carries no id at all (defensive, mirrors `_link_ref_html`)."""
+    ln_id = link.get("id")
+    if not ln_id:
+        return ""
+    href = f"/projects/{_esc(name)}/items/{_esc(ln_id)}"
+    title = link.get("title") or ""
+    return (
+        f'<a href="{href}" class="link-chip">'
+        f'<span class="id">{_esc(ln_id)}</span>'
+        f'<span class="t">{_esc(title)}</span></a>'
+    )
+
+
+def _link_chip_list_html(name: str, heading: str, links: list[dict]) -> str:
+    """One `.links-col` (an uppercase eyebrow heading + a stack of
+    `.link-chip`s) for one column of the L2 `.links-grid` -- "" if `links`
+    is empty, so `_dependency_sections_html` never wraps an all-empty grid
+    (see its own `links-grid` assembly, below)."""
+    chips = "".join(_link_chip_html(name, ln) for ln in links)
+    if not chips:
+        return ""
+    return f'<div class="links-col"><h4>{_esc(heading)}</h4>{chips}</div>'
+
+
 def _dependency_sections_html(name: str, links: list[dict]) -> str:
     """All of the item-detail page's dependency-graph sections, in order:
     Blocked by (escalation), Discovered from (provenance, this item's own
-    origin), Blocks (cheap inverse), Discovered (cheap inverse -- items
-    found while working this one), then a Other links fallback for any
-    dependency type this page has no special treatment for (`related`,
-    `parent-child`, `tracks`, ...) so nothing bd reports is silently
-    dropped."""
+    origin), a `Blocks`/`Related` chip grid (cheap inverse + the public
+    `related` relation kind -- see `Beads.create`'s `related` parameter),
+    Discovered (cheap inverse -- items found while working this one), then
+    an Other links fallback for any dependency type this page has no
+    special treatment for (`parent-child`, `tracks`, ...) so nothing bd
+    reports is silently dropped.
+
+    Returns "" when `links` is empty -- this pure function's own contract
+    is unchanged (see `tests/unit/test_webapp_item_render.py`'s
+    `test_dependency_sections_empty_links_renders_nothing`); the page-level
+    "always show SOMETHING here" behaviour (a neutral "No open blockers"
+    banner when there is genuinely nothing to report) is the CALLER's job
+    (webbrowse.py's `item_detail` route), not this renderer's -- it decides
+    from the same raw `links` list directly, so it never has to string-sniff
+    this function's own output for a "Blocked by" heading."""
     if not links:
         return ""
     from_links = [ln for ln in links if ln.get("direction") == "from"]
@@ -2753,12 +2793,20 @@ def _dependency_sections_html(name: str, links: list[dict]) -> str:
 
     out = _blocked_by_list_html(name, blocked_by)
     out += _discovered_note_html(name, discovered_from, label="Discovered while working")
-    out += _cheap_ref_list_html(name, "Blocks", blocks)
+
+    other = other_from + other_to
+    related = [ln for ln in other if ln.get("type") == "related"]
+    other_remaining = [ln for ln in other if ln.get("type") != "related"]
+
+    blocks_col = _link_chip_list_html(name, "Blocks", blocks)
+    related_col = _link_chip_list_html(name, "Related", related)
+    if blocks_col or related_col:
+        out += f'<div class="links-grid">{blocks_col}{related_col}</div>'
+
     out += _discovered_note_html(
         name, discovered_here, label="Discovered while this item was being worked:"
     )
-    other = other_from + other_to
-    out += _cheap_ref_list_html(name, "Other links", other)
+    out += _cheap_ref_list_html(name, "Other links", other_remaining)
     return out
 
 
@@ -2854,13 +2902,16 @@ def _activity_feed_html(events: list) -> str:
     # no boundary of its own. Reusing `.content-block` here (rather than a
     # new class) is itself the fix for "make it consistent" -- one shared
     # rule, used identically everywhere, cannot drift from the others.
-    # Shared by BOTH the standalone item page and webbrowse.py's split-pane
-    # detail (this function is imported there), so both views gain the fix
-    # at once.
-    return (
-        '<h2 class="eyebrow" style="display:block;margin-top:30px">Activity</h2>'
-        f'<div class="content-block"><div class="timeline">{rows}</div></div>'
-    )
+    #
+    # NOTE: does NOT render its own "Activity" heading (it did originally --
+    # a bare `<h2 class="eyebrow">`). webbrowse.py's L2 item-detail route
+    # already wraps this function's output in its own
+    # `<div class="section-title"><h2>Activity</h2></div>`, so the old
+    # heading here was a second, DUPLICATE "Activity" <h2> on the same page
+    # (DOM-measured defect: two `<h2>Activity</h2>` elements). Only the
+    # caller's heading now exists; this function renders the timeline body
+    # only, and the caller (webbrowse.py) owns the section heading.
+    return f'<div class="content-block"><div class="timeline">{rows}</div></div>'
 
 
 # ---------------------------------------------------------------------------
@@ -3462,7 +3513,13 @@ def _observatory_help_and_theme_html(reconcile: str = "", extra_dt_dd: str = "")
     glossary = _observatory_glossary_dl(extra_dt_dd)
     return (
         '<details class="help-popover">'
-        '<summary class="icon-btn" title="Glossary &amp; ranking help">'
+        # `title` alone gives a mouse-hover tooltip but NO accessible name --
+        # this summary's only content is an icon SVG (`aria-hidden` on the
+        # `<svg>`s themselves, see `_svg24`), so a screen reader announced it
+        # as blank (DOM-measured a11y defect). `aria-label` is the real fix;
+        # `title` is kept too as the redundant sighted-hover affordance.
+        '<summary class="icon-btn" title="Glossary &amp; ranking help" '
+        'aria-label="Glossary &amp; help">'
         '<span class="icon"><svg><use href="#i-help"/></svg></span></summary>'
         f'<div class="help-panel">{glossary}{reconcile}</div>'
         "</details>"

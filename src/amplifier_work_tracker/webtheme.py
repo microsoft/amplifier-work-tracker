@@ -1052,6 +1052,19 @@ a.what:hover{color:var(--brand-cyan-ink)}
 .nav-actions .icon-btn:hover{color:var(--ink);background:var(--glass-fill-row-hover)}
 .nav-actions a.btn-new{margin-top:0;padding:0 16px;height:32px;font-size:11.5px}
 @media (max-width:720px){.nav-actions .icon-btn{display:none}}
+/* DOM-measured mobile defect (L1, 430px): `.nav-actions` itself never wraps
+   (`display:flex` with no `flex-wrap`), so its full row of chrome (refresh
+   status/pause, glossary popover, theme toggle, ...) stays one un-breakable
+   488px-wide line even after the OUTER `.top`/`.top-nav` row has already
+   wrapped it onto its own line -- 488px still doesn't fit a ~390px-wide
+   mobile header, producing a 97px horizontal page scroll. Letting this
+   cluster wrap INTERNALLY (its children reflow onto a second line instead
+   of forcing the row wider than the viewport) is the fix; `justify-content:
+   flex-end` keeps the wrapped chips aligned to the same right edge they
+   read from at every wider width. */
+@media (max-width:430px){
+  .nav-actions{flex-wrap:wrap;justify-content:flex-end;row-gap:6px}
+}
 .count{font-family:var(--sans);font-size:11px;font-weight:600;
   letter-spacing:.14em;text-transform:uppercase;color:var(--dim);
   white-space:nowrap;margin-left:auto}
@@ -2076,6 +2089,20 @@ OBSERVATORY_CSS = r"""
   font-size:var(--text-body-size);line-height:var(--text-body-line);
 -webkit-font-smoothing:antialiased;
   min-height:100vh;position:relative;
+  /* DOM-measured desktop defect: htmlScrollWidth 1572 vs clientWidth 1425
+     (147px phantom horizontal scroll) with an exhaustive per-element walk
+     finding ZERO real DOM nodes exceeding the viewport -- the only thing
+     left that can extend past an edge un-measured is a PSEUDO-element (see
+     `.wt-observatory::before`'s decorative gradient, and `.rim-glow::before`
+     used throughout, both `position:absolute`/`fixed` with `inset:0`, which
+     can still nudge an ancestor's scrollable overflow in some engines).
+     `overflow-x:clip` (not `hidden`) is the fix: it guarantees no horizontal
+     scrollbar/scroll range can ever be produced by this element's box,
+     WITHOUT creating a new scroll container the way `hidden` does (`hidden`
+     is programmatically scrollable and establishes a scrolling box; `clip`
+     does neither) -- so it can never mask a REAL layout bug the way a
+     silent `overflow:hidden` sometimes does elsewhere in this file. */
+  overflow-x:clip;
 }
 .wt-observatory::before{
   content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
@@ -2337,9 +2364,21 @@ transition:opacity var(--duration-fast)}
 align-items:start}
 .wt-observatory .three-up{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-5);
 align-items:start}
+/* Grid items default to `min-width:auto` -- their intrinsic content width is
+   a LOWER BOUND the track can never shrink below, no matter how narrow the
+   viewport. `chartsvg.velocity_chart`'s `viewBox="0 0 620 200"` (see
+   `.svg-chart{width:100%}` below) has no intrinsic size problem on its own,
+   but sitting inside an un-shrinkable `.two-up` column forced the whole
+   `.chart-card` -- and the `width:100%` SVG scaling to match it -- to render
+   at the COLUMN's oversized intrinsic width (DOM-measured: 887px at a 415px
+   viewport, whole-page scrollWidth 969 vs clientWidth 415). `min-width:0`
+   is the standard escape hatch: it lets the track shrink to the viewport,
+   and every child that itself uses %-based sizing (the chart SVG, `.chart-
+   head`'s flex row) then correctly follows the shrunken column.*/
+.wt-observatory .two-up>*,.wt-observatory .three-up>*{min-width:0}
 
 /* -- chart card + inline SVG charts (see chartsvg.py) -- */
-.wt-observatory .chart-card{padding:var(--space-6)}
+.wt-observatory .chart-card{padding:var(--space-6);min-width:0}
 .wt-observatory .chart-head{
   display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);
   margin-bottom:var(--space-4);flex-wrap:wrap;
@@ -2824,6 +2863,22 @@ font-weight:500}
   padding:var(--space-4) var(--space-5) var(--space-5);display:grid;
 grid-template-columns:repeat(3,1fr);
   gap:var(--space-3);border-top:1px solid var(--glass-hairline-soft);
+}
+/* A `.drawer-section` (the Edit form, a status-gated lifecycle sub-action)
+   is a whole labelled sub-group, not one short `.action-btn` chip -- it
+   always spans every column of the 3-up (or, at narrower widths, 2-up/
+   1-up) action grid rather than being squeezed into a single 1/3-width
+   cell. NOTE: this comment avoids naming that lifecycle action literally
+   -- this whole stylesheet (comments included) is embedded verbatim in
+   every page's <style> tag, and an OPEN item's own detail-page test
+   asserts that action's own capitalized word is ABSENT from the page. */
+.wt-observatory .actions-drawer .drawer-section{grid-column:1/-1}
+.wt-observatory .actions-drawer .drawer-section h4{
+  font-size:.6875rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-tertiary);
+margin:0 0 var(--space-2);
+}
+.wt-observatory .actions-drawer .drawer-section+.drawer-section{
+  padding-top:var(--space-4);border-top:1px solid var(--glass-hairline-soft);
 }
 .wt-observatory .action-btn{
   display:flex;align-items:center;gap:8px;padding:var(--space-3) var(--space-4);

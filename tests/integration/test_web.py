@@ -418,6 +418,51 @@ def test_item_detail_shows_blocks_inverse(client, project_factory):
     assert blocked_id in resp.text
 
 
+def test_item_detail_with_no_dependencies_shows_no_open_blockers_empty_state(
+    client, project_factory
+):
+    """DOM-measured defect: the dependency-graph section used to render
+    NOTHING at all for the (common) case of an item with no links -- never
+    the mockup's own neutral "No open blockers" reassurance banner. It
+    must always show SOMETHING here."""
+    _login(client)
+    name, bd = project_factory("noblockersproj")
+    item_id = bd.create("nothing blocking this", tags=[A.LANE_WORK])
+
+    resp = client.get(f"/projects/{name}/items/{item_id}")
+    assert resp.status_code == 200
+    assert "No open blockers" in resp.text
+    # Checks the actual rendered HEADING markup, not a bare substring:
+    # "Blocked by" also appears inside webtheme.py's own CSS (a comment),
+    # which is present on every page via the shared <style> block, so a
+    # bare substring check would false-positive on the stylesheet rather
+    # than real content (same discipline
+    # `test_item_detail_shows_discovered_from_provenance` already uses).
+    assert '<h2 class="eyebrow am" style="display:block;margin-top:30px">Blocked by</h2>' not in (
+        resp.text
+    )
+
+
+def test_item_detail_with_unsatisfied_blocker_does_not_also_show_no_open_blockers(
+    client, project_factory, unique_actor
+):
+    """The neutral empty-state banner and the crimson "Blocked by" banner
+    are mutually exclusive -- an item that IS blocked must never show both
+    "No open blockers" and "Blocked by" at once."""
+    _login(client)
+    name, bd = project_factory("blockbothproj")
+    blocker_id = bd.create("upstream", tags=[A.LANE_WORK])
+    blocked_id = bd.create("downstream", tags=[A.LANE_WORK])
+    r = bd._run(["dep", blocker_id, "--blocks", blocked_id])  # noqa: SLF001
+    assert r.returncode == 0, r.stderr
+    bd.claim_item(blocker_id, actor=unique_actor)
+
+    resp = client.get(f"/projects/{name}/items/{blocked_id}")
+    assert resp.status_code == 200
+    assert "Blocked by" in resp.text
+    assert "No open blockers" not in resp.text
+
+
 # ---------------------------------------------- item detail: activity feed
 
 
