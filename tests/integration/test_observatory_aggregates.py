@@ -12,6 +12,7 @@ dolt server, not a mock.
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -350,6 +351,49 @@ def test_agents_snapshot_spans_every_project(workspace, project_factory):
     assert (name_b, "agent-b") in by_project
 
 
+def test_agents_snapshot_from_rows_matches_agents_snapshot(workspace, project_factory):
+    """The perf fix (webapp.py's `_workspace_agents_and_attention`) fetches
+    each project's `project_agents` rows itself -- in parallel -- then
+    hands them to this pure merge function instead of calling
+    `agents_snapshot` (which would re-fetch sequentially). Byte-for-byte
+    equivalence with `agents_snapshot`'s own output, fed the SAME
+    per-project rows, is what makes that substitution safe."""
+    name_a, bd_a = project_factory("dedupea")
+    name_b, bd_b = project_factory("dedupeb")
+
+    item_a = bd_a.create(title="a item", kind="task")
+    bd_a.claim_item(item_a, actor="agent-a")
+    bd_a.take_custody(item_a, holder="agent-a", pid=1, host="h")
+
+    item_b = bd_b.create(title="b item", kind="task")
+    bd_b.claim_item(item_b, actor="agent-b")
+    bd_b.take_custody(item_b, holder="agent-b", pid=1, host="h")
+
+    by_project = {name_a: A.project_agents(name_a), name_b: A.project_agents(name_b)}
+    from_rows = A.agents_snapshot_from_rows(by_project)
+
+    # Compare against agents_snapshot's own output, restricted to just
+    # these two projects (the shared `workspace` fixture may carry rows
+    # from other tests' projects too). `held_seconds_or_last_renewal_age`
+    # is a live "now - last_seen" computation (see `_agent_row`) -- it is
+    # EXPECTED to differ by a few milliseconds between this call and
+    # `agents_snapshot`'s own separate, later real-time fetch below, so
+    # that one field is compared with tolerance while every other field
+    # (including sort order, which is what this test actually guards) is
+    # compared exactly.
+    full = A.agents_snapshot(workspace)
+    full_restricted = [r for r in full if r["project"] in (name_a, name_b)]
+    assert len(from_rows) == len(full_restricted)
+    for got, want in zip(from_rows, full_restricted, strict=True):
+        got_age = got.pop("held_seconds_or_last_renewal_age")
+        want_age = want.pop("held_seconds_or_last_renewal_age")
+        assert got == want
+        if got_age is None or want_age is None:
+            assert got_age == want_age
+        else:
+            assert got_age == pytest.approx(want_age, abs=2.0)
+
+
 # ---------------------------------------------------------------------------
 # agent_stats
 # ---------------------------------------------------------------------------
@@ -513,3 +557,141 @@ def test_attention_items_ordering_across_reasons_and_limit(workspace, project_fa
 def test_attention_items_aging_threshold_is_a_module_constant():
     assert isinstance(A.ATTENTION_AGING_DAYS, int)
     assert A.ATTENTION_AGING_DAYS > 0
+
+
+# ---------------------------------------------------------------------------
+# Perf-fix dedupe helpers (webapp.py's `_workspace_agents_and_attention`/
+# `_workspace_velocity_data` fan-out) -- pure merge functions that must
+# produce output IDENTICAL to the sequential functions they let a caller
+# skip re-fetching for. See adapter.py's own docstrings on
+# `agents_snapshot_from_rows`/`stale_attention_rows`/`attention_items_from_rows`/
+# `velocity_series_and_windows`.
+# ---------------------------------------------------------------------------
+
+
+def test_stale_attention_rows_matches_attention_items_stale_tier(workspace, project_factory):
+    """`stale_attention_rows` is the pure transform half of
+    `_attention_stale_rows` -- fed the SAME `project_agents` rows the
+    fetch half would have fetched itself, it must produce identical rows
+    (modulo the internal `_sort` key `attention_items` strips before
+    returning)."""
+    name, bd = project_factory("dedupestale")
+    stale_id = bd.create(title="stale item", kind="task")
+    bd.claim_item(stale_id, actor="agent-s")
+    stale_seen = (datetime.now(UTC) - timedelta(seconds=C.CUSTODY_TTL_SECONDS + 500)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    _set_custody(bd, stale_id, holder="agent-s", last_seen=stale_seen)
+
+    agent_rows = A.project_agents(name)
+    from_rows = A.stale_attention_rows(name, agent_rows)
+    for row in from_rows:
+        del row["_sort"]
+
+    full = A.attention_items(workspace, limit=0)
+    expected = [
+        {k: v for k, v in r.items() if k != "_sort"}
+        for r in full
+        if r["project"] == name and r["rank_reason"] == "stale-custody"
+    ]
+    # `detail` embeds a live "Ns past TTL" reading (see `stale_attention_rows`'
+    # own `age_detail` computation) that legitimately advances a couple of
+    # seconds between this call and `attention_items`'s own separate,
+    # later real-time fetch below -- compare it with tolerance, every
+    # other field (including tier/order) exactly.
+    assert len(from_rows) == len(expected)
+    for got, want in zip(from_rows, expected, strict=True):
+        got_detail = got.pop("detail")
+        want_detail = want.pop("detail")
+        assert got == want
+        got_match = re.search(r"(\d+)s past TTL", got_detail)
+        want_match = re.search(r"(\d+)s past TTL", want_detail)
+        assert got_match and want_match, (got_detail, want_detail)
+        assert int(got_match.group(1)) == pytest.approx(int(want_match.group(1)), abs=5)
+
+
+def test_attention_items_from_rows_matches_attention_items(workspace, project_factory):
+    """The perf fix (webapp.py's `_workspace_agents_and_attention`) gathers
+    each project's stale/blocked/aging rows itself -- in parallel -- then
+    hands them to this pure merge/sort/cap function instead of calling
+    `attention_items` (which would re-fetch sequentially, including a
+    SECOND `project_agents` read for the stale tier -- see
+    `stale_attention_rows`'s own docstring). Byte-for-byte equivalence
+    with `attention_items`'s own output, fed the SAME per-project rows,
+    is what makes that substitution safe."""
+    name_a, bd_a = project_factory("dedupeattna")
+    name_b, bd_b = project_factory("dedupeattnb")
+    now = datetime.now(UTC)
+
+    stale_id = bd_a.create(title="stale", kind="task")
+    bd_a.claim_item(stale_id, actor="agent-x")
+    stale_seen = (now - timedelta(seconds=C.CUSTODY_TTL_SECONDS + 500)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    _set_custody(bd_a, stale_id, holder="agent-x", last_seen=stale_seen)
+
+    aging_id = bd_b.create(title="aging", kind="task", tags=[A.LANE_WORK])
+    _backdate_issue(name_b, aging_id, created_at=now - timedelta(days=10))
+
+    def gather(project: str, ws: A.Workspace) -> tuple[list[dict], list[dict], list[dict]]:
+        agent_rows = A.project_agents(project)
+        stale = A.stale_attention_rows(project, agent_rows)
+        blocked = A.attention_blocked_rows(project)
+        aging = A.attention_aging_rows(project)
+        return stale, blocked, aging
+
+    stale_a, blocked_a, aging_a = gather(name_a, workspace)
+    stale_b, blocked_b, aging_b = gather(name_b, workspace)
+
+    from_rows = A.attention_items_from_rows(
+        {name_a: stale_a, name_b: stale_b},
+        {name_a: blocked_a, name_b: blocked_b},
+        {name_a: aging_a, name_b: aging_b},
+        limit=0,
+    )
+
+    full = A.attention_items(workspace, limit=0)
+    full_restricted = [r for r in full if r["project"] in (name_a, name_b)]
+    # The stale-custody tier's `detail` embeds a live "Ns past TTL" reading
+    # (same real-time-computation caveat as
+    # `test_stale_attention_rows_matches_attention_items_stale_tier` above)
+    # -- compare it with tolerance, every other field (including tier
+    # order across all three tiers, which is what this test actually
+    # guards) exactly.
+    assert len(from_rows) == len(full_restricted)
+    for got, want in zip(from_rows, full_restricted, strict=True):
+        if got["rank_reason"] != "stale-custody":
+            assert got == want
+            continue
+        got_detail = got.pop("detail")
+        want_detail = want.pop("detail")
+        assert got == want
+        got_match = re.search(r"(\d+)s past TTL", got_detail)
+        want_match = re.search(r"(\d+)s past TTL", want_detail)
+        assert got_match and want_match, (got_detail, want_detail)
+        assert int(got_match.group(1)) == pytest.approx(int(want_match.group(1)), abs=5)
+
+
+def test_velocity_series_and_windows_matches_separate_calls(workspace, project_factory):
+    """The perf fix (webapp.py's `_workspace_velocity_data`) calls this
+    combined function ONCE per project instead of `velocity_series` +
+    `velocity_windows` separately (which independently re-fetch
+    overlapping `_velocity_raw_daily` data -- see this function's own
+    docstring). Must produce output IDENTICAL to both separate calls."""
+    name, bd = project_factory("veldedupe")
+    now = datetime.now(UTC)
+
+    bd.create(title="today 1", kind="task")
+    bd.create(title="today 2", kind="task")
+    old_id = bd.create(title="old", kind="task")
+    _backdate_issue(name, old_id, created_at=now - timedelta(days=10))
+
+    series, windows = A.velocity_series_and_windows(name, days=7)
+    expected_series = A.velocity_series(name, days=7)
+    expected_windows = A.velocity_windows(name, days=7)
+
+    assert series == expected_series
+    assert windows == expected_windows
+    # Sanity: the combined call actually observed the data (not vacuously
+    # equal empty structures).
+    assert sum(day["created"] for day in series) >= 2
