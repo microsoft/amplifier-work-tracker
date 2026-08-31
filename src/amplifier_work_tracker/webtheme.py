@@ -2383,7 +2383,11 @@ color:var(--ink-tertiary);
    boxes. Purely decorative (`aria-hidden` via `content` on a
    non-interactive pseudo-element) -- never affects tab order or a11y tree. */
 .wt-observatory .nav-actions>.group-start{
-  position:relative;padding-left:12px;margin-left:0;
+  /* 6px (not 12px) so an inter-group gap reads 18px total (12px flex gap +
+     6px divider inset) against the 12px intra-group rhythm -- 12px here made
+     group boundaries 24px, which the owner's in-browser review read as the
+     cluster falling apart into isolated pieces rather than grouped ones. */
+  position:relative;padding-left:6px;margin-left:0;
 }
 .wt-observatory .nav-actions>.group-start::before{
   content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);
@@ -2397,6 +2401,13 @@ color:var(--ink-tertiary);
 .wt-observatory .refresh-status{
   display:flex;align-items:center;gap:6px;font-size:.75rem;color:var(--ink-tertiary);
 white-space:nowrap;line-height:1;
+  /* optical nudge: headless DOM measurement puts this cluster's box center
+     exactly on the header midline, yet on real Windows/Edge (Segoe/Cascadia
+     metrics) the owner's browser showed it reading a hair HIGH in two
+     independent reviews -- glyphs sit high within their em box at
+     line-height:1. Half-pixel translate corrects the optical center without
+     touching the measured layout. */
+  transform:translateY(.5px);
 }
 .wt-observatory .refresh-status .refresh-text{font-family:var(--font-mono);line-height:1}
 /* padding:0/font:inherit/line-height:1 (visual-polish punchlist item 5c):
