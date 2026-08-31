@@ -61,10 +61,12 @@ import logging
 import os
 import re
 import time
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Request
@@ -3427,6 +3429,16 @@ _OBSERVATORY_ICON_SPRITE = (
     '<symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/>'
     '<path d="M3 20c0-3.6 2.7-6.2 6-6.2s6 2.6 6 6.2"/><circle cx="17.5" cy="9" r="2.3"/>'
     '<path d="M15.8 14c2.3.5 3.9 2.6 4.2 6"/></symbol>'
+    # Header polish (owner's in-browser review, item 5): a compact icon
+    # theme toggle replaces the "DARK"/"LIGHT" text pill -- these two
+    # symbols are the toggle's own glyphs, drawn fresh (no reference
+    # mockup shipped a theme-toggle icon to lift verbatim from, unlike
+    # every other symbol in this sprite).
+    '<symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/>'
+    '<path d="M12 2.5v3M12 18.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1'
+    'M2.5 12h3M18.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></symbol>'
+    '<symbol id="i-moon" viewBox="0 0 24 24">'
+    '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>'
     "</defs></svg>"
 )
 
@@ -3510,7 +3522,12 @@ def _observatory_nav_extras_html(*, reconcile_html: str = "", extra_dt_dd: str =
     """
     reconcile = f'<div class="reconcile">{reconcile_html}</div>' if reconcile_html else ""
     return (
-        '<div class="refresh-status" title="This page polls for fresh data on an interval">'
+        # `group-start` (header polish item 4): marks this as the first
+        # element of the "refresh + help" sub-group within `.nav-actions`,
+        # drawing the quiet divider that separates it from the preceding
+        # icons group -- see webtheme.py's `.nav-actions>.group-start`.
+        '<div class="refresh-status group-start" '
+        'title="This page polls for fresh data on an interval">'
         '<span class="icon sm"><svg><use href="#i-clock"/></svg></span>'
         '<span class="refresh-text">Refreshes 20s</span>'
         '<button class="refresh-toggle" id="refreshToggle" aria-pressed="false" '
@@ -3540,10 +3557,22 @@ def _observatory_help_and_theme_html(reconcile: str = "", extra_dt_dd: str = "")
         '<span class="icon"><svg><use href="#i-help"/></svg></span></summary>'
         f'<div class="help-panel">{glossary}{reconcile}</div>'
         "</details>"
-        '<div class="theme-toggle">'
-        '<button data-theme="dark" aria-pressed="true" onclick="wtSetTheme(\'dark\')">Dark</button>'
-        '<button data-theme="light" aria-pressed="false" '
-        "onclick=\"wtSetTheme('light')\">Light</button>"
+        # Header polish item 5: a compact ICON toggle (sun/moon), not the
+        # previous "DARK"/"LIGHT" text pill -- same two buttons, same
+        # `wtSetTheme`/`aria-pressed` semantics (webtheme.py's own JS is
+        # unchanged), each now carrying an `aria-label` since an icon-only
+        # button has no other accessible name (same pattern the glossary
+        # `<summary>` above already established). `group-start` (header
+        # polish item 4) draws the divider separating this group from the
+        # refresh/help group before it -- see webtheme.py's
+        # `.nav-actions>.group-start`.
+        '<div class="theme-toggle group-start">'
+        '<button data-theme="dark" aria-pressed="true" title="Dark theme" '
+        'aria-label="Dark theme" onclick="wtSetTheme(\'dark\')">'
+        '<svg><use href="#i-moon"/></svg></button>'
+        '<button data-theme="light" aria-pressed="false" title="Light theme" '
+        'aria-label="Light theme" onclick="wtSetTheme(\'light\')">'
+        '<svg><use href="#i-sun"/></svg></button>'
         "</div>"
     )
 
@@ -3598,64 +3627,180 @@ def _active_project_names(workspace: A.Workspace) -> list[str]:
     ]
 
 
-def _workspace_velocity_series(names: list[str], days: int) -> list[dict]:
-    """Environment-wide velocity series for L0's chart: `A.velocity_series`
-    (Lane A, per-project) summed day-by-day across every given project. L0
-    has no single project database of its own, so this is page-layer
-    AGGREGATION of an already-real, already-zero-filled per-project series
-    -- not a second, independently-invented data source. A project that
-    fails to read contributes nothing (the same "one broken project never
-    blanks the rest" tolerance `A.agents_snapshot` already applies) rather
-    than aborting the whole chart."""
-    totals: list[dict] = [{"date": "", "created": 0, "resolved": 0} for _ in range(days)]
-    for name in names:
+#: Bounded worker count for L0's per-project fan-out (see `_parallel_map`).
+#: Every read this pool runs is a contention-free `_dolt_sql`/`_dolt_sql_json`
+#: subprocess call (adapter.py's own established invariant: this path has NO
+#: write set, so concurrent execution across projects cannot race or
+#: corrupt anything -- see `adapter.reopened_count`'s and
+#: `adapter._summary_items_via_sql`'s docstrings for the same invariant
+#: stated at the read layer). 10 is a small, fixed number -- generous
+#: enough that a real fleet (tens of projects) gets meaningful concurrency,
+#: small enough it can never come close to exhausting file descriptors or
+#: overwhelming the single shared dolt server with a burst of connections
+#: (each worker holds at most one in-flight `dolt sql` subprocess at a
+#: time). Module-level, not per-request, so the pool is a fixed resource
+#: budget regardless of how many concurrent page renders are in flight.
+_L0_FANOUT_WORKERS = 10
+
+_T = TypeVar("_T")
+_R = TypeVar("_R")
+
+
+def _parallel_map(fn: Callable[[_T], _R], items: Iterable[_T]) -> list[_R]:
+    """Run `fn(item)` for every item in `items` on a small bounded thread
+    pool (`_L0_FANOUT_WORKERS`), returning results in the SAME order as
+    `items` (`ThreadPoolExecutor.map` preserves input order regardless of
+    completion order) -- never completion order, so every caller's
+    downstream aggregation stays deterministic run to run.
+
+    Threads (not processes) are the right tool here: every per-project
+    read this powers shells out to `dolt sql` and blocks on subprocess I/O,
+    during which the GIL is released -- exactly the workload threads
+    parallelize well, with none of a process pool's serialization/startup
+    cost for what's ultimately a list of dicts.
+
+    `fn` is responsible for catching any per-item failure it wants to
+    tolerate (mirroring each caller's own existing "skip a broken project"
+    behavior -- see each call site's own try/except) -- this helper does
+    not swallow exceptions itself, so a real bug in `fn` still propagates
+    rather than being silently absorbed into an empty result.
+
+    An empty `items` returns `[]` without spinning up a pool at all.
+    """
+    items = list(items)
+    if not items:
+        return []
+    with ThreadPoolExecutor(max_workers=min(_L0_FANOUT_WORKERS, len(items))) as pool:
+        return list(pool.map(fn, items))
+
+
+def _workspace_velocity_data(names: list[str], days: int) -> dict:
+    """Environment-wide velocity series + WoW window totals + reopened
+    count for L0's velocity chart -- all three of the aggregates
+    `_workspace_velocity_series`/`_workspace_velocity_windows`/
+    `_workspace_reopened_count` used to compute in three separate
+    sequential per-project loops, now gathered with ONE bounded parallel
+    fan-out (`_parallel_map`) across every project.
+
+    Per project, this also HALVES the SQL round trips those three
+    functions used to cost together: `A.velocity_series_and_windows`
+    shares one raw-daily-counts fetch for both the series and the window
+    totals (see that function's own docstring), instead of
+    `A.velocity_series` and `A.velocity_windows` each fetching it
+    independently. `A.reopened_count` reads a different table
+    (`events`, not `issues`) and cannot share that fetch, so it stays a
+    separate call -- but runs concurrently with every other project's
+    fetch, not after it.
+
+    Same "a broken project contributes nothing" tolerance as the three
+    functions this replaces: a project whose `velocity_series_and_windows`
+    read fails contributes zero to every chart bucket and every window
+    total (never partially -- series and windows come from the same
+    fetch, so they fail together); a project whose `reopened_count` read
+    fails independently contributes zero reopens, without affecting its
+    velocity contribution at all (matching the two functions' previous
+    total independence).
+    """
+
+    def fetch(name: str) -> tuple[list[dict] | None, dict | None, int]:
         try:
-            series = A.velocity_series(name, days=days)
+            series, windows = A.velocity_series_and_windows(name, days=days)
         except A.BeadsError:
-            continue
-        for i, day in enumerate(series):
-            totals[i]["date"] = day["date"]
-            totals[i]["created"] += day["created"]
-            totals[i]["resolved"] += day["resolved"]
-    return totals
+            series, windows = None, None
+        try:
+            reopened = A.reopened_count(name, days=days)
+        except A.BeadsError:
+            reopened = 0
+        return series, windows, reopened
 
+    results = _parallel_map(fetch, names)
 
-def _workspace_velocity_windows(names: list[str], days: int) -> dict:
-    """Environment-wide current-vs-previous window totals for L0's WoW
-    delta footer stat -- `A.velocity_windows` (Lane A, per-project) summed
-    across every given project, same aggregation discipline as
-    `_workspace_velocity_series`."""
+    totals: list[dict] = [{"date": "", "created": 0, "resolved": 0} for _ in range(days)]
     current = {"created": 0, "resolved": 0}
     previous = {"created": 0, "resolved": 0}
-    for name in names:
-        try:
-            w = A.velocity_windows(name, days=days)
-        except A.BeadsError:
-            continue
-        current["created"] += w["current"]["created"]
-        current["resolved"] += w["current"]["resolved"]
-        previous["created"] += w["previous"]["created"]
-        previous["resolved"] += w["previous"]["resolved"]
+    reopened_total = 0
+    for series, windows, reopened in results:
+        if series is not None:
+            for i, day in enumerate(series):
+                totals[i]["date"] = day["date"]
+                totals[i]["created"] += day["created"]
+                totals[i]["resolved"] += day["resolved"]
+        if windows is not None:
+            current["created"] += windows["current"]["created"]
+            current["resolved"] += windows["current"]["resolved"]
+            previous["created"] += windows["previous"]["created"]
+            previous["resolved"] += windows["previous"]["resolved"]
+        reopened_total += reopened
+
     return {
-        "current": current,
-        "previous": previous,
-        "delta_pct": {
-            "created": _pct_delta(current["created"], previous["created"]),
-            "resolved": _pct_delta(current["resolved"], previous["resolved"]),
+        "series": totals,
+        "windows": {
+            "current": current,
+            "previous": previous,
+            "delta_pct": {
+                "created": _pct_delta(current["created"], previous["created"]),
+                "resolved": _pct_delta(current["resolved"], previous["resolved"]),
+            },
         },
+        "reopened": reopened_total,
     }
 
 
-def _workspace_reopened_count(names: list[str], days: int) -> int:
-    """Environment-wide reopened-after-resolve count -- `A.reopened_count`
-    (Lane A, per-project) summed across every given project."""
-    total = 0
-    for name in names:
+def _workspace_agents_and_attention(
+    names: list[str], limit: int = 50
+) -> tuple[list[dict], list[dict]]:
+    """Fleet-wide "Agents now" roster + ranked cross-project attention
+    queue, computed together with ONE bounded parallel fan-out
+    (`_parallel_map`) shared between both -- replacing what used to be two
+    separate sequential calls (`A.agents_snapshot(workspace)` then
+    `A.attention_items(workspace, limit=50)`), each internally looping
+    over every project on its own.
+
+    The dedupe this enables: `A.project_agents(name)` is read exactly ONCE
+    per project here, not once for the roster and again for the attention
+    queue's stale-custody tier (which `A.attention_items` used to
+    re-fetch independently via its own `_attention_stale_rows` -- the
+    identical query run twice per project for two different call sites).
+    `A.stale_attention_rows` (a pure, no-I/O transform) derives the
+    stale-custody tier from the SAME fetched rows the roster uses.
+
+    Preserves EXACT per-tier failure tolerance from the two functions this
+    replaces: a project whose `project_agents` read fails contributes
+    nothing to the roster AND nothing to the stale-custody tier (both
+    failures share the one cause today, same as when they were two
+    independent fetches of the same failing query). The blocked/aging
+    tiers already self-tolerate a per-project failure inside their own
+    adapter functions (`A.attention_blocked_rows`/`A.attention_aging_rows`
+    each catch `BeadsError` and return `[]`), unchanged here.
+    """
+
+    def fetch(name: str) -> tuple[str, list[dict], list[dict], list[dict], list[dict]]:
         try:
-            total += A.reopened_count(name, days=days)
+            agent_rows = A.project_agents(name)
         except A.BeadsError:
-            continue
-    return total
+            agent_rows = []
+        stale = A.stale_attention_rows(name, agent_rows)
+        blocked = A.attention_blocked_rows(name)
+        aging = A.attention_aging_rows(name)
+        return name, agent_rows, stale, blocked, aging
+
+    agent_rows_by_project: dict[str, list[dict]] = {}
+    stale_by_project: dict[str, list[dict]] = {}
+    blocked_by_project: dict[str, list[dict]] = {}
+    aging_by_project: dict[str, list[dict]] = {}
+    for name, agent_rows, stale, blocked, aging in _parallel_map(fetch, names):
+        if agent_rows:
+            agent_rows_by_project[name] = agent_rows
+        if stale:
+            stale_by_project[name] = stale
+        blocked_by_project[name] = blocked
+        aging_by_project[name] = aging
+
+    agents_rows = A.agents_snapshot_from_rows(agent_rows_by_project)
+    attention_rows = A.attention_items_from_rows(
+        stale_by_project, blocked_by_project, aging_by_project, limit=limit
+    )
+    return agents_rows, attention_rows
 
 
 #: `?window=` query-param -> calendar-day count, for the velocity chart's
@@ -4394,7 +4539,7 @@ def create_app(
         Replaces the v3 workbench dashboard entirely (BRIEF.md's pivot: this
         app is now observability/reporting FIRST, manipulation second)."""
         names = workspace.names()
-        summaries = [A.project_summary(workspace, n) for n in names]
+        summaries = _parallel_map(lambda n: A.project_summary(workspace, n), names)
         ok = [s for s in summaries if s.status == "ok"]
         active_names = [s.name for s in ok]
 
@@ -4409,10 +4554,9 @@ def create_app(
         measurable = [s for s in ok if s.resolved_24h is not None]
         resolved_24h_total = sum(s.resolved_24h or 0 for s in measurable)
 
-        agents_rows = A.agents_snapshot(workspace)
+        agents_rows, attention_rows_raw = _workspace_agents_and_attention(names, limit=50)
         agents_active_count = len({r["agent"] for r in agents_rows})
 
-        attention_rows_raw = A.attention_items(workspace, limit=50)
         stale_count = sum(1 for r in attention_rows_raw if r["rank_reason"] == "stale-custody")
         blocked_attn_count = sum(1 for r in attention_rows_raw if r["rank_reason"] == "blocked")
         aging_count = sum(1 for r in attention_rows_raw if r["rank_reason"] == "aging")
@@ -4480,9 +4624,10 @@ def create_app(
             )
         )
 
-        velocity_days = _workspace_velocity_series(active_names, days)
-        velocity_windows_data = _workspace_velocity_windows(active_names, days)
-        reopened = _workspace_reopened_count(active_names, days)
+        velocity_data = _workspace_velocity_data(active_names, days)
+        velocity_days = velocity_data["series"]
+        velocity_windows_data = velocity_data["windows"]
+        reopened = velocity_data["reopened"]
         velocity_html = _velocity_chart_shell_html(
             title="Environment velocity",
             base_href="/",

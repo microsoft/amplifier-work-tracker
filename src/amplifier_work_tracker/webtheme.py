@@ -519,8 +519,14 @@ a{color:inherit}
    backdrop-filter blur reads as "flat, slightly lighter" on a static
    screenshot with nothing colourful directly behind it to blur; the rim is
    what actually sells "glass chrome" without depending on scroll content. */
+/* Header polish (owner's in-browser review, item 7): height tightened one
+   step, 74px -> 62px, matching the approved mock-L0's own nav proportions
+   (`.top-nav{padding:var(--space-3) var(--space-5)}` -- a content-driven
+   ~12px vertical pad around a 34px icon-btn, not a large fixed box) now
+   that item 1's alignment fix makes every row of content share one true
+   vertical center regardless of the container's own height. */
 .top{
-  height:74px;display:flex;align-items:center;
+  height:62px;display:flex;align-items:center;
   padding:0 var(--pad);gap:20px;
   position:sticky;top:0;z-index:30;flex-wrap:wrap;
   background:var(--glass-fill-strong);backdrop-filter:blur(var(--glass-blur-strong));
@@ -529,24 +535,51 @@ a{color:inherit}
 }
 .top::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;
   background:var(--brand-gradient-rim)}
+/* Header polish item 1 (vertical alignment): `.top` already centers each
+   DIRECT flex child's own BOX on one line (`align-items:center` above) --
+   the residual defect was every child's TEXT sitting off that box's own
+   optical center, because each one inherited a different browser/font-
+   computed default `line-height` (crumb/identity/brand each a different
+   font-size, each free to round its own default line-height differently
+   across engines -- exactly the class of bug `.refresh-status`/
+   `.refresh-toggle` below already had to guard against explicitly for the
+   same reason, see their own docstrings). Pinning `line-height:1` on
+   every text-bearing header child -- brand, crumb, identity, same as the
+   nav-actions cluster already does -- removes that per-element variance
+   so the row reads as ONE shared baseline discipline, not five
+   independently-rounded ones. */
 .top .brand{font-family:var(--sans);font-size:19px;font-weight:700;
-  letter-spacing:-.01em;color:var(--ink);text-decoration:none;
+  letter-spacing:-.01em;color:var(--ink);text-decoration:none;line-height:1;
   display:flex;align-items:center;gap:9px}
 /* the brand mark -- a small squircle carrying the rim gradient, the ONE
    place besides the wordmark this gradient is allowed near identity chrome. */
 .top .brand .bm{width:9px;height:9px;border-radius:3px;
   background:var(--brand-gradient-rim);flex:0 0 auto}
+/* Header polish item 2 (wordmark balance): "amplifier-" is now the quiet
+   PREFIX -- lighter weight, dimmer ink -- so "work-tracker" (the gradient
+   logotype below, `.top .brand .accent`) reads as the visually PRIMARY
+   token instead of the two segments fighting at equal weight. */
+.top .brand .brand-prefix{font-weight:500;color:var(--dim)}
 .top h1{font-family:var(--sans);font-size:21px;font-weight:500;
   letter-spacing:-.012em;color:var(--ink);line-height:1.1}
+/* Header polish item 3 (breadcrumb): dropped the ALL-CAPS transform (read
+   as shouty competing with the brand) and pulled tracking way in from
+   `.14em` -- uppercase text needs generous tracking to stay legible, but
+   normal-case text at the same tracking just looks loosely spaced, not
+   quiet. `--dim` (already the quietest ink tier) is unchanged; the ask was
+   "smaller/lowercase OR keep small-caps but drop size+ink one step" and
+   dropping the caps transform is the lower-risk lever of the two (no
+   further size/ink reduction needed once it's no longer shouting). */
 .top .crumb{font-family:var(--sans);font-size:11px;font-weight:500;
-  letter-spacing:.14em;text-transform:uppercase;color:var(--dim);
-  display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  letter-spacing:.02em;color:var(--dim);line-height:1;
+  display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .top .crumb a{text-decoration:none;color:var(--mid);display:inline-flex;
-  align-items:center;min-height:var(--u)}
+  align-items:center;line-height:1;min-height:var(--u)}
 .top .crumb a:hover{color:var(--brand-cyan-ink)}
 .top .sp{flex:1}
 .top .identity{font-family:var(--sans);font-size:11.5px;color:var(--dim);
-  letter-spacing:.02em;display:flex;align-items:center;gap:9px;white-space:nowrap}
+  letter-spacing:.02em;display:flex;align-items:center;gap:9px;white-space:nowrap;
+  line-height:1}
 .top .identity a{color:var(--mid);text-decoration:none}
 .top .identity a:hover{color:var(--brand-cyan-ink)}
 .dot{width:6px;height:6px;border-radius:50%;flex:0 0 6px;display:inline-block}
@@ -1103,7 +1136,12 @@ a.what:hover{color:var(--brand-cyan-ink)}
    system.html #nav): a compact square glass button for search/notifications,
    and the primary gradient pill for the create-new action, sitting in the
    top bar's right-hand chrome alongside identity/live. */
-.nav-actions{display:flex;align-items:center;gap:8px;margin-left:8px}
+/* Header polish item 4 (right-cluster grouping): gap bumped 8px -> 12px
+   (task: "consistent, slightly larger gaps") -- see
+   `.wt-observatory .nav-actions>.group-start` below for the divider that
+   makes the cluster read as intentional groups (icons | refresh+help |
+   theme toggle) rather than one undifferentiated row. */
+.nav-actions{display:flex;align-items:center;gap:12px;margin-left:8px}
 /* `.icon-btn` is applied to a real `<button>` (search) AND an `<a>` (bell) --
    the bare `button{...}` rule further down this file (min-height:var(--u)
    ~44px, padding:0 20px, margin-top:.7rem, border-radius:pill,
@@ -2306,24 +2344,50 @@ color:var(--ink-tertiary);
    though both share the same 24x24 viewBox/stroke-width. Pinning an
    explicit size here removes that ambiguity for every icon-btn glyph. */
 .wt-observatory .icon-btn svg{width:16px;height:16px;flex-shrink:0}
-/* gap 2px -> 4px (visual-polish punchlist item 10: "cramped separator
-   spacing") -- a hair more breathing room between the Dark/Light pill
-   buttons themselves. */
+/* Header polish item 5: the "DARK"/"LIGHT" text pill was too prominent for
+   a utility control (it read as a THIRD primary action next to the icon
+   buttons, not a quiet toggle). Replaced with a compact icon-only toggle
+   -- same two `<button>` elements, same `wtSetTheme`/`aria-pressed`
+   semantics (webapp.py's `_observatory_help_and_theme_html` is the only
+   markup change; this file's JS hook is untouched), now sized and
+   chromed identically to every other nav icon-btn (`.icon-btn`'s own
+   34x34/glass-fill/hairline-border box) instead of a separate pill
+   widget -- one consistent "quiet utility control" visual language
+   across the whole nav, not two competing ones. */
 .wt-observatory .theme-toggle{
-  display:flex;gap:4px;padding:2px;border-radius:var(--radius-pill);background:var(--glass-fill);
-  border:1px solid var(--glass-hairline-soft);
+  display:flex;gap:4px;
 }
-/* --ink-tertiary -> --ink-secondary (visual-polish punchlist item 10: the
-   INACTIVE label -- e.g. "Light" while Dark is pressed -- read too dim
-   even at tertiary; one ramp step up, matching the same "one step up"
-   fix ISSUE_HANDLING's own item-10 guidance calls for specifically here). */
+/* `min-height:0;margin-top:0` -- same generic `button{min-height:var(--u);
+   margin-top:.7rem}` leak `.refresh-toggle` documents above; these two
+   buttons are real `<button>` elements too and need the identical reset. */
 .wt-observatory .theme-toggle button{
-  font-family:var(--font-sans);font-size:.7rem;font-weight:600;padding:5px 10px;
-  border-radius:var(--radius-pill);background:transparent;border:none;color:var(--ink-secondary);
-cursor:pointer;
+  width:34px;height:34px;min-height:0;margin-top:0;border-radius:var(--radius-sm);
+  display:inline-flex;align-items:center;
+  justify-content:center;background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  color:var(--ink-tertiary);cursor:pointer;flex-shrink:0;padding:0;font:inherit;line-height:1;
+}
+.wt-observatory .theme-toggle button svg{width:16px;height:16px;flex-shrink:0}
+.wt-observatory .theme-toggle button:hover{
+  color:var(--ink-primary);background:var(--glass-fill-row-hover);
 }
 .wt-observatory .theme-toggle button[aria-pressed="true"]{
-  background:var(--glass-fill-strong);color:var(--ink-primary);
+  background:var(--glass-fill-strong);color:var(--ink-primary);border-color:var(--glass-hairline);
+}
+
+/* Header polish item 4 (right-cluster grouping): a quiet 1px divider
+   before the first element of each logical sub-group within
+   `.nav-actions` (icons | refresh+help | theme toggle) -- markup-side,
+   `.group-start` is applied to `.refresh-status` and `.theme-toggle`
+   (webapp.py's `_observatory_nav_extras_html`) so the cluster reads as
+   intentional groups instead of one undifferentiated row of icon-sized
+   boxes. Purely decorative (`aria-hidden` via `content` on a
+   non-interactive pseudo-element) -- never affects tab order or a11y tree. */
+.wt-observatory .nav-actions>.group-start{
+  position:relative;padding-left:12px;margin-left:0;
+}
+.wt-observatory .nav-actions>.group-start::before{
+  content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:1px;height:20px;background:var(--glass-hairline);
 }
 
 /* -- auto-refresh pause control (WCAG 2.2.2) -- BUILD-PHASE REQUIREMENT: the
@@ -2342,8 +2406,22 @@ white-space:nowrap;line-height:1;
    both already sit in the SAME `align-items:center` flex row -- the
    flex-row centring only ever centres the box itself, not any residual
    default padding/line-height baked into the button's own content box. */
+/* `min-height:0;margin-top:0` (header polish item 1, discovered while
+   DOM-measuring the alignment fix above): the base stylesheet's generic
+   `button{min-height:var(--u);margin-top:.7rem}` rule (its own comment,
+   see `.nav-actions .icon-btn`'s docstring, already names this exact
+   leak for a DIFFERENT button class) targets every `<button>` on the
+   page and wins for any property a more specific rule doesn't itself
+   redeclare -- `.refresh-toggle` redeclared `height` but never
+   `min-height`, so this 26px round button was silently rendering at the
+   generic rule's 44px WCAG-target minimum (min-height beats height when
+   larger), stretching `.refresh-status`'s whole flex row taller than its
+   text content and turning the "circle" into a tall pill. Explicit
+   zeroes here are the same reset `.nav-actions .icon-btn` already
+   applies for the identical reason. */
 .wt-observatory .refresh-toggle{
-  width:26px;height:26px;border-radius:var(--radius-pill);display:inline-flex;align-items:center;
+  width:26px;height:26px;min-height:0;margin-top:0;border-radius:var(--radius-pill);
+  display:inline-flex;align-items:center;
   justify-content:center;background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
   color:var(--ink-tertiary);cursor:pointer;flex-shrink:0;padding:0;font:inherit;line-height:1;
 }
@@ -3413,13 +3491,20 @@ def top_bar(*, crumb_html: str = "", right_html: str = "", actions_html: str = "
     right = f'<span class="identity">{right_html}</span>' if right_html else ""
     return (
         '<header class="top">'
-        # "amplifier-" stays flat ink; "work-tracker" is the gradient LOGOTYPE
-        # (background-clip:text) -- WCAG SC 1.4.3 exempts logotypes/brand
-        # names from the text-contrast requirement (recognized by shape, not
-        # read letter-by-letter), the one place a raw brand gradient is
-        # allowed on reading copy. See webtheme.py's CSS `.top .brand .accent`.
+        # Header polish (owner's in-browser review, item 2): "work-tracker"
+        # -- the actual product name -- is the visually PRIMARY token (the
+        # gradient LOGOTYPE, background-clip:text; WCAG SC 1.4.3 exempts
+        # logotypes/brand names from the text-contrast requirement,
+        # recognized by shape, not read letter-by-letter -- the one place a
+        # raw brand gradient is allowed on reading copy). "amplifier-" is
+        # now the deliberately QUIET prefix (`.brand-prefix`, lighter weight
+        # + dimmer ink) -- previously both segments shared one bold weight,
+        # which read as "amplifier-" fighting the product name for emphasis
+        # instead of introducing it. See webtheme.py's CSS
+        # `.top .brand .brand-prefix`/`.top .brand .accent`.
         '<a class="brand" href="/"><span class="bm"></span>'
-        'amplifier-<span class="accent">work-tracker</span></a>'
+        '<span class="brand-prefix">amplifier-</span>'
+        '<span class="accent">work-tracker</span></a>'
         f'{crumb}<span class="sp"></span>{actions}{right}'
         "</header>"
     )

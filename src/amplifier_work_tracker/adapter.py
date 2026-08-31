@@ -4512,6 +4512,60 @@ def velocity_windows(db: str, days: int = 7) -> dict:
     }
 
 
+def velocity_series_and_windows(db: str, days: int = 7) -> tuple[list[dict], dict]:
+    """`velocity_series(db, days)` and `velocity_windows(db, days)`,
+    together, sharing ONE `_velocity_raw_daily` fetch instead of two
+    independent ones.
+
+    `velocity_windows` already fetches `days * 2` calendar days of raw
+    daily counts (current window + previous window); that range is a
+    strict superset of the `days`-day range `velocity_series` alone would
+    fetch, and both derive from the exact same `{date: {created,
+    resolved}}` dict. Calling them separately (as L0's per-project fan-out
+    used to) does the identical `_velocity_raw_daily(db, days)` +
+    `_velocity_raw_daily(db, days * 2)` work TWICE over an overlapping
+    date range -- 4 SQL round trips per project for data 2 round trips
+    already fully cover. This function fetches once, at the `days * 2`
+    width, and derives both outputs from it -- HALF the round trips, byte-
+    for-byte the same two return values `velocity_series`/`velocity_windows`
+    would have produced from their own independent fetches (same zero-fill
+    discipline, same bucket boundaries, same `_pct_delta` math -- this is a
+    fetch-sharing optimization, not a behavior change).
+
+    Returns ``(series, windows)`` -- see `velocity_series`/`velocity_windows`
+    for each element's own shape. Raises `BeadsError` if `db` cannot be
+    read at all, same as both functions this replaces for a caller that
+    needs both.
+    """
+    raw = _velocity_raw_daily(db, days * 2)
+    today = datetime.now(UTC).date()
+
+    series: list[dict] = []
+    for i in range(days - 1, -1, -1):
+        d = today - timedelta(days=i)
+        ds = d.isoformat()
+        counts = raw.get(ds, {"created": 0, "resolved": 0})
+        series.append({"date": ds, "created": counts["created"], "resolved": counts["resolved"]})
+
+    current = {"created": 0, "resolved": 0}
+    previous = {"created": 0, "resolved": 0}
+    for i in range(days * 2 - 1, -1, -1):
+        d = today - timedelta(days=i)
+        counts = raw.get(d.isoformat(), {"created": 0, "resolved": 0})
+        bucket = current if i < days else previous
+        bucket["created"] += counts["created"]
+        bucket["resolved"] += counts["resolved"]
+    windows = {
+        "current": current,
+        "previous": previous,
+        "delta_pct": {
+            "created": _pct_delta(current["created"], previous["created"]),
+            "resolved": _pct_delta(current["resolved"], previous["resolved"]),
+        },
+    }
+    return series, windows
+
+
 def reopened_count(db: str, days: int = 7) -> int:
     """How many `events` rows in `db` record an item being reopened after
     a prior close, within the trailing `days` days -- the real, exact
@@ -4646,15 +4700,41 @@ def agents_snapshot(ws: Workspace) -> list[dict]:
     project's agents. This is the one place in this block that swallows a
     read failure -- see `project_agents`'s own docstring for why it, taken
     alone, does not.
+
+    The actual fetch-and-merge is split into this sequential per-project
+    loop plus `agents_snapshot_from_rows` (the pure merge/sort, no I/O) so
+    a caller that gathers each project's `project_agents` rows itself --
+    e.g. in parallel, or reusing rows already fetched for another purpose
+    such as the attention queue's stale-custody tier, see
+    `stale_attention_rows` -- can skip this function's sequential fetch
+    entirely and call `agents_snapshot_from_rows` directly.
     """
-    rows: list[dict] = []
+    by_project: dict[str, list[dict]] = {}
     for project in ws.names():
         if ws.creation_state(project) in ("creating", "abandoned"):
             continue
         try:
-            rows.extend(project_agents(project))
+            by_project[project] = project_agents(project)
         except BeadsError:
             continue
+    return agents_snapshot_from_rows(by_project)
+
+
+def agents_snapshot_from_rows(agent_rows_by_project: dict[str, list[dict]]) -> list[dict]:
+    """The merge/sort half of `agents_snapshot`, factored out so a caller
+    that gathers each project's `project_agents` rows itself (e.g. in
+    parallel, or reusing rows already fetched for another purpose) can
+    reuse the exact same fleet-wide stale-first-then-by-freshness ordering
+    without re-fetching anything. Pure -- no I/O, never raises.
+
+    `agent_rows_by_project` need only contain entries for projects that
+    contributed rows (or were successfully read) -- a project omitted
+    entirely is equivalent to one `agents_snapshot` itself would have
+    skipped.
+    """
+    rows: list[dict] = []
+    for project_rows in agent_rows_by_project.values():
+        rows.extend(project_rows)
     rows.sort(key=_agent_row_sort_key)
     return rows
 
@@ -4761,17 +4841,21 @@ def agent_stats(db_or_ws: str | Workspace, agent: str, days: int = 7) -> dict:
     }
 
 
-def _attention_stale_rows(ws: Workspace, project: str) -> list[dict]:
-    """This project's stale-custody attention rows -- reuses `project_agents`
-    (already the exact `reclaim_eligible`-backed freshness computation, and
-    already carrying `priority` off the same one SQL read) so "stale" -- and
-    priority -- can never disagree between the Agents panel and the
+def stale_attention_rows(project: str, agent_rows: list[dict]) -> list[dict]:
+    """The pure transform half of the stale-custody attention tier: turns
+    an already-fetched `project_agents(project)` result into this
+    project's stale-custody attention rows. No I/O, never raises -- a
+    caller that has (or gathers, e.g. in parallel) `agent_rows` itself,
+    such as L0's own fan-out which reuses these exact rows for the
+    fleet-wide "Agents now" roster too (see `agents_snapshot_from_rows`),
+    can call this directly instead of going through `_attention_stale_rows`
+    and paying for a second `project_agents` fetch of the same project.
+
+    Reuses `project_agents`'s own `stale`/`priority` fields (already the
+    exact `reclaim_eligible`-backed freshness computation) so "stale" --
+    and priority -- can never disagree between the Agents panel and the
     attention queue.
     """
-    try:
-        agent_rows = project_agents(project)
-    except BeadsError:
-        return []
     out = []
     for row in agent_rows[:_ATTENTION_PER_PROJECT_CAP]:
         if not row["stale"]:
@@ -4792,7 +4876,20 @@ def _attention_stale_rows(ws: Workspace, project: str) -> list[dict]:
     return out
 
 
-def _attention_blocked_rows(project: str) -> list[dict]:
+def _attention_stale_rows(ws: Workspace, project: str) -> list[dict]:
+    """This project's stale-custody attention rows -- fetches
+    `project_agents(project)` itself, then delegates the transform to
+    `stale_attention_rows` (see that function's docstring for why the
+    fetch and the transform are split).
+    """
+    try:
+        agent_rows = project_agents(project)
+    except BeadsError:
+        return []
+    return stale_attention_rows(project, agent_rows)
+
+
+def attention_blocked_rows(project: str) -> list[dict]:
     """This project's blocked-with-a-still-active-blocker attention rows.
     Deliberately the OPPOSITE selection from `_blocked_stale_count`: that
     field counts blocked items with NO active blocker left (needs only an
@@ -4841,7 +4938,7 @@ def _attention_blocked_rows(project: str) -> list[dict]:
     return out
 
 
-def _attention_aging_rows(project: str) -> list[dict]:
+def attention_aging_rows(project: str) -> list[dict]:
     """This project's ready items aged past `ATTENTION_AGING_DAYS`, oldest
     first -- the third and lowest-urgency attention tier (see `BRIEF.md`'s
     "ranked attention: stale custody > blocked > oldest ready").
@@ -4891,9 +4988,9 @@ def attention_items(ws: Workspace, limit: int = 50) -> list[dict]:
       1. ``"stale-custody"`` -- held items whose custody has lapsed (or
          never existed), from `_attention_stale_rows`.
       2. ``"blocked"`` -- items genuinely still waiting on an active
-         blocker, from `_attention_blocked_rows`.
+         blocker, from `attention_blocked_rows`.
       3. ``"aging"`` -- ready items older than `ATTENTION_AGING_DAYS`, from
-         `_attention_aging_rows`.
+         `attention_aging_rows`.
 
     Each entry: ``{"rank_reason", "project", "item_id", "title",
     "priority", "detail"}``. `priority` is `None` for a stale-custody row
@@ -4911,18 +5008,50 @@ def attention_items(ws: Workspace, limit: int = 50) -> list[dict]:
     `limit` caps the FINAL merged, tier-ordered list -- never applied
     per-project or per-tier first (which could starve a tier's later
     entries in favor of an unrelated project's).
+
+    The actual fetch-and-merge is split into this sequential per-project
+    loop plus `attention_items_from_rows` (the pure merge/sort/cap, no
+    I/O) so a caller that gathers each project's per-tier rows itself
+    (e.g. in parallel, or reusing rows already fetched for another
+    purpose -- see `stale_attention_rows`) can skip this function's
+    sequential fetch entirely.
     """
     projects = [
         name for name in ws.names() if ws.creation_state(name) not in ("creating", "abandoned")
     ]
 
-    stale: list[dict] = []
-    blocked: list[dict] = []
-    aging: list[dict] = []
+    stale_by_project: dict[str, list[dict]] = {}
+    blocked_by_project: dict[str, list[dict]] = {}
+    aging_by_project: dict[str, list[dict]] = {}
     for project in projects:
-        stale.extend(_attention_stale_rows(ws, project))
-        blocked.extend(_attention_blocked_rows(project))
-        aging.extend(_attention_aging_rows(project))
+        stale_by_project[project] = _attention_stale_rows(ws, project)
+        blocked_by_project[project] = attention_blocked_rows(project)
+        aging_by_project[project] = attention_aging_rows(project)
+
+    return attention_items_from_rows(
+        stale_by_project, blocked_by_project, aging_by_project, limit=limit
+    )
+
+
+def attention_items_from_rows(
+    stale_by_project: dict[str, list[dict]],
+    blocked_by_project: dict[str, list[dict]],
+    aging_by_project: dict[str, list[dict]],
+    limit: int = 50,
+) -> list[dict]:
+    """The merge/sort/cap half of `attention_items`, factored out so a
+    caller that gathers each project's per-tier rows itself (e.g. in
+    parallel) can reuse the exact same tier-ordering and limit logic
+    without re-fetching anything. Pure -- no I/O, never raises.
+
+    Each `*_by_project` dict need only contain entries for projects that
+    were successfully read -- a project omitted entirely from one (or
+    all) of them is equivalent to one `attention_items` itself would have
+    contributed nothing from for that tier.
+    """
+    stale = [r for rows in stale_by_project.values() for r in rows]
+    blocked = [r for rows in blocked_by_project.values() for r in rows]
+    aging = [r for rows in aging_by_project.values() for r in rows]
 
     stale.sort(key=lambda r: r["_sort"])
     blocked.sort(key=lambda r: r["_sort"])
