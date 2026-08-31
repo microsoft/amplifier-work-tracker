@@ -937,7 +937,11 @@ def _ledger_hero_html(ready_total: int | None, n_projects: int, burn_days: float
         under = "No projects yet."
     else:
         rate_clause = (
-            f" &middot; <b>{burn_days:g}</b> days of work at today's measured rate"
+            # number+unit bolded TOGETHER (visual-polish punchlist item 7:
+            # "<b>6 days</b>", not "<b>6</b> days") -- this function is
+            # currently unreferenced by any live route (dead code), fixed
+            # defensively since it's the exact pattern the punchlist named.
+            f" &middot; <b>{burn_days:g} days</b> of work at today's measured rate"
             if burn_days is not None
             else " &middot; no measured throughput today"
         )

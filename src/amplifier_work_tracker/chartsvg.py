@@ -205,6 +205,16 @@ def velocity_chart(
     axis label render in `var(--brand-cyan-ink)` instead of the neutral
     tokens every other day uses -- shape/position is identical, only the
     colour changes, matching the mockups' "today" convention.
+
+    ALL-ZERO data (visual-polish punchlist item 2) -- every day's resolved
+    AND created count is 0 -- previously rendered as a row of isolated "0"
+    value labels floating along the baseline with no other visible
+    geometry (every bar/line-point height collapses to 0). Instead: the
+    per-day "0" value labels and the created-per-day overlay line/dots are
+    suppressed entirely (a flat dashed line sitting exactly on the baseline
+    reads as clutter, not data), and a single centred, quiet caption --
+    "No activity in this window" -- takes their place inside the plot
+    area. The baseline and the day AXIS labels are unaffected either way.
     """
     label = _esc(aria_label)
     n = len(days_data)
@@ -216,6 +226,7 @@ def velocity_chart(
     max_bar_height = baseline_y - height * top_margin_ratio
     all_values = [d["resolved"] for d in days_data] + [d["created"] for d in days_data]
     peak = max(all_values) if all_values else 0
+    is_all_zero = peak <= 0
     max_value = peak if peak > 0 else 1.0
 
     plot_width = width - left_margin - right_margin
@@ -247,11 +258,15 @@ def velocity_chart(
             f"{bar_style}/>"
         )
 
-        val_color = "var(--brand-cyan-ink)" if is_today else "var(--ink-quiet)"
-        val_labels.append(
-            f'<text class="val-label" x="{cx}" y="{round(by - 6, 2)}" text-anchor="middle" '
-            f'style="fill:{val_color}">{int(day["resolved"])}</text>'
-        )
+        if not is_all_zero:
+            # --ink-quiet -> --ink-tertiary (visual-polish punchlist item
+            # 1): an in-chart value label is functional data-ink, not
+            # decoration.
+            val_color = "var(--brand-cyan-ink)" if is_today else "var(--ink-tertiary)"
+            val_labels.append(
+                f'<text class="val-label" x="{cx}" y="{round(by - 6, 2)}" text-anchor="middle" '
+                f'style="fill:{val_color}">{int(day["resolved"])}</text>'
+            )
 
         axis_style = ' style="fill:var(--brand-cyan-ink);font-weight:600"' if is_today else ""
         axis_labels.append(
@@ -259,23 +274,35 @@ def velocity_chart(
             f'text-anchor="middle"{axis_style}>{_esc(day["label"])}</text>'
         )
 
-        ly = round(baseline_y - _bar_height(day["created"]), 2)
-        line_points.append(f"{cx},{ly}")
-        dots.append(f'<circle class="dot" cx="{cx}" cy="{ly}"/>')
+        if not is_all_zero:
+            ly = round(baseline_y - _bar_height(day["created"]), 2)
+            line_points.append(f"{cx},{ly}")
+            dots.append(f'<circle class="dot" cx="{cx}" cy="{ly}"/>')
 
     baseline_x2 = round(width - right_margin, 2)
     baseline_svg = (
         f'<line class="baseline" x1="{left_margin}" y1="{baseline_y}" '
         f'x2="{baseline_x2}" y2="{baseline_y}"/>'
     )
+    line_svg = f'<polyline class="line" points="{" ".join(line_points)}"/>' if line_points else ""
+    caption_svg = ""
+    if is_all_zero:
+        caption_cx = round((left_margin + (width - right_margin)) / 2, 2)
+        caption_cy = round(baseline_y - max_bar_height / 2, 2)
+        caption_svg = (
+            f'<text class="chart-caption" x="{caption_cx}" y="{caption_cy}" '
+            'text-anchor="middle" style="fill:var(--ink-quiet)">'
+            "No activity in this window</text>"
+        )
     return (
         f'<svg class="svg-chart" viewBox="0 0 {width} {height}" role="img" aria-label="{label}">'
         f"{baseline_svg}"
         f"{''.join(bars)}"
-        f'<polyline class="line" points="{" ".join(line_points)}"/>'
+        f"{line_svg}"
         f"{''.join(dots)}"
         f"{''.join(val_labels)}"
         f"{''.join(axis_labels)}"
+        f"{caption_svg}"
         "</svg>"
     )
 
@@ -387,6 +414,15 @@ def age_histogram(
     axis label in `var(--watch)` instead of the neutral/`--ink-primary`
     tokens every other bucket uses -- the sub-alarm "aging, not alarm" tier;
     shape and position are identical, only the colour and font-weight change.
+
+    A ZERO-count bucket (visual-polish punchlist item 2) draws a deliberate,
+    fixed-height `zero_stub_height` (2px) stub sitting flush on the
+    baseline, in a quiet tone (`--watch` if `is_watch`, else `--ink-quiet`)
+    -- never a literal zero-height `<rect>`, which rendered as a faint
+    stray outline with a floating "0" label hovering above nothing. Its
+    value label is omitted entirely (the stub itself, plus the axis label
+    below it, already say "zero" -- a "0" floating in the plot area reads
+    as an artifact, not a deliberate reading).
     """
     label = _esc(aria_label)
     n = len(buckets)
@@ -404,6 +440,7 @@ def age_histogram(
 
     max_bar_height = baseline_y - top_margin
     max_count = max((b["count"] for b in buckets), default=0) or 1
+    zero_stub_height = 2.0
 
     plot_width = width - left_margin - right_margin
     slot = plot_width / n
@@ -415,29 +452,42 @@ def age_histogram(
 
     for i, bucket in enumerate(buckets):
         cx = round(left_margin + slot * (i + 0.5), 2)
-        bh = round((bucket["count"] / max_count) * max_bar_height, 2)
-        by = round(baseline_y - bh, 2)
         bx = round(cx - bar_width / 2, 2)
         is_watch = bucket["is_watch"]
+        count = bucket["count"]
 
-        if is_watch:
+        if count <= 0:
+            by = round(baseline_y - zero_stub_height, 2)
+            stub_style = "fill:var(--watch)" if is_watch else "fill:var(--ink-quiet)"
             bars.append(
-                f'<rect x="{bx}" y="{by}" width="{bar_width}" height="{bh}" rx="3" '
-                'style="fill:var(--watch)"/>'
+                f'<rect x="{bx}" y="{by}" width="{bar_width}" height="{zero_stub_height}" '
+                f'rx="1" style="{stub_style}"/>'
             )
-            value_style = "fill:var(--watch);font-weight:600"
-            label_style = ' style="fill:var(--watch)"'
+            label_style = ' style="fill:var(--watch)"' if is_watch else ""
         else:
-            bars.append(
-                f'<rect class="bar" x="{bx}" y="{by}" width="{bar_width}" height="{bh}" rx="3"/>'
-            )
-            value_style = "fill:var(--ink-primary);font-weight:600"
-            label_style = ""
+            bh = round((count / max_count) * max_bar_height, 2)
+            by = round(baseline_y - bh, 2)
 
-        value_labels.append(
-            f'<text class="axis-label" x="{cx}" y="{round(by - 4, 2)}" text-anchor="middle" '
-            f'style="{value_style}">{int(bucket["count"])}</text>'
-        )
+            if is_watch:
+                bars.append(
+                    f'<rect x="{bx}" y="{by}" width="{bar_width}" height="{bh}" rx="3" '
+                    'style="fill:var(--watch)"/>'
+                )
+                value_style = "fill:var(--watch);font-weight:600"
+                label_style = ' style="fill:var(--watch)"'
+            else:
+                bars.append(
+                    f'<rect class="bar" x="{bx}" y="{by}" width="{bar_width}" height="{bh}" '
+                    'rx="3"/>'
+                )
+                value_style = "fill:var(--ink-primary);font-weight:600"
+                label_style = ""
+
+            value_labels.append(
+                f'<text class="axis-label" x="{cx}" y="{round(by - 4, 2)}" text-anchor="middle" '
+                f'style="{value_style}">{int(count)}</text>'
+            )
+
         axis_labels.append(
             f'<text class="axis-label" x="{cx}" y="{round(baseline_y + 16, 2)}" '
             f'text-anchor="middle"{label_style}>{_esc(bucket["label"])}</text>'

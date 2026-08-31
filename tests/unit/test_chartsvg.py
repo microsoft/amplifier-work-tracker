@@ -209,6 +209,44 @@ def test_velocity_chart_all_zero_values_do_not_divide_by_zero() -> None:
     assert float(bar.get("height", "")) == 0.0
 
 
+def test_velocity_chart_all_zero_renders_caption_not_isolated_zero_labels() -> None:
+    """Visual-polish punchlist item 2b: all-zero data previously rendered
+    a row of isolated "0" value labels along the baseline with no other
+    visible geometry. Now: no per-day value labels, no created-line/dots,
+    a single quiet caption, and the axis (day) labels are unaffected."""
+    days = [
+        C.VelocityDay(label="2d ago", resolved=0.0, created=0.0),
+        C.VelocityDay(label="yesterday", resolved=0.0, created=0.0),
+        C.VelocityDay(label="today", resolved=0.0, created=0.0),
+    ]
+    svg = C.velocity_chart(days, aria_label="all zero")
+    root = _assert_valid_svg(svg)
+    _assert_accessible(root, "all zero")
+    _assert_no_raw_color(svg)
+
+    assert root.findall("text[@class='val-label']") == []
+    assert root.find("polyline") is None
+    assert root.find("circle[@class='dot']") is None
+    axis_labels = root.findall("text[@class='axis-label']")
+    assert [t.text for t in axis_labels] == ["2d ago", "yesterday", "today"]
+
+    caption = root.find("text[@class='chart-caption']")
+    assert caption is not None
+    assert caption.text == "No activity in this window"
+    assert "fill:var(--ink-quiet)" in (caption.get("style") or "")
+
+    # the baseline itself is still drawn
+    assert root.find("line[@class='baseline']") is not None
+
+
+def test_velocity_chart_nonzero_data_has_no_caption() -> None:
+    days = [C.VelocityDay(label="today", resolved=3.0, created=1.0)]
+    svg = C.velocity_chart(days, aria_label="has data")
+    root = _assert_valid_svg(svg)
+    assert root.find("text[@class='chart-caption']") is None
+    assert root.findall("text[@class='val-label']") != []
+
+
 # ---------------------------------------------------------------------------
 # status_donut
 # ---------------------------------------------------------------------------
@@ -263,6 +301,32 @@ def test_status_donut_skips_zero_count_statuses() -> None:
     group = root.find("g")
     assert group is not None
     assert len(group.findall("circle")) == 1 + 2  # track + resolved + blocked
+
+
+def test_status_donut_single_full_segment_renders_cleanly() -> None:
+    """Visual-polish punchlist item 2 (asks to check the donut's 100%-one-
+    segment case too): every item in one status draws a full circle
+    (seg_len == circumference, gap_len == 0) -- the segment must still be
+    valid, non-empty, and distinct from the background track."""
+    counts = C.StatusCounts(resolved=0, ready=29, held=0, intake=0, deferred=0, blocked=0)
+    size, stroke_width = 150, 16.0
+    svg = C.status_donut(counts, aria_label="all ready", size=size, stroke_width=stroke_width)
+    root = _assert_valid_svg(svg)
+    _assert_no_raw_color(svg)
+
+    r = round(size * 0.40, 2)
+    circumference = round(2 * math.pi * r, 2)
+
+    group = root.find("g")
+    assert group is not None
+    circles = group.findall("circle")
+    assert len(circles) == 2  # track + the one full-circumference segment
+
+    segment = circles[1]
+    seg_len, gap_len = (float(v) for v in segment.get("stroke-dasharray", "").split(" "))
+    assert seg_len == circumference
+    assert gap_len == 0.0
+    assert segment.get("stroke") == "var(--ink-secondary)"  # ready's token, not the track's
 
 
 def test_status_donut_unique_pattern_id_is_respected() -> None:
@@ -334,9 +398,60 @@ def test_age_histogram_empty_is_valid_and_accessible() -> None:
 
 
 def test_age_histogram_all_zero_counts_do_not_divide_by_zero() -> None:
+    """Was: a zero-height <rect> (no crash, but the faint stray-outline
+    artifact visual-polish punchlist item 2 flags). Now: the deliberate
+    2px zero-stub -- see test_age_histogram_zero_bucket_draws_a_deliberate_
+    stub_no_value_label below for the full zero-state contract; this test
+    keeps its original name/intent (no ZeroDivisionError with an all-zero
+    bucket set)."""
     buckets = [C.AgeBucket(label="0-1d", count=0, is_watch=False)]
     svg = C.age_histogram(buckets, aria_label="zero counts")
     root = _assert_valid_svg(svg)
     bar = root.find("rect")
     assert bar is not None
-    assert float(bar.get("height", "")) == 0.0
+    assert float(bar.get("height", "")) == 2.0
+
+
+def test_age_histogram_zero_bucket_draws_a_deliberate_stub_no_value_label() -> None:
+    """Visual-polish punchlist item 2a: a zero-count bucket previously drew
+    a literal zero-height <rect> (a faint stray outline) plus a floating
+    "0" value label. Now: a fixed 2px stub flush on the baseline, no value
+    label -- the stub (and the axis label below it) say "zero" on their
+    own. Non-zero buckets in the same chart are unaffected."""
+    buckets = [
+        C.AgeBucket(label="0-1d", count=0, is_watch=False),
+        C.AgeBucket(label="2-3d", count=5, is_watch=False),
+        C.AgeBucket(label="7+d", count=0, is_watch=True),
+    ]
+    height, bottom_margin = 150, 40.0
+    svg = C.age_histogram(
+        buckets, aria_label="mixed zero", height=height, bottom_margin=bottom_margin
+    )
+    root = _assert_valid_svg(svg)
+    _assert_no_raw_color(svg)
+
+    baseline_y = round(height - bottom_margin, 2)
+    bars = root.findall("rect")
+    assert len(bars) == 3
+
+    zero_normal, nonzero, zero_watch = bars
+    assert float(zero_normal.get("height", "")) == 2.0
+    assert float(zero_normal.get("y", "")) == round(baseline_y - 2.0, 2)
+    assert "fill:var(--ink-quiet)" in (zero_normal.get("style") or "")
+
+    assert float(nonzero.get("height", "")) > 2.0
+    assert nonzero.get("class") == "bar"
+
+    assert float(zero_watch.get("height", "")) == 2.0
+    assert "fill:var(--watch)" in (zero_watch.get("style") or "")
+
+    value_labels = root.findall("text[@class='axis-label']")
+    value_texts = [t.text for t in value_labels if t.text and t.text.isdigit()]
+    # Only the non-zero bucket gets a value label ("5") -- neither zero
+    # bucket contributes a floating "0".
+    assert value_texts == ["5"]
+
+    axis_label_texts = [t.text for t in value_labels]
+    assert "0-1d" in axis_label_texts
+    assert "2-3d" in axis_label_texts
+    assert "7+d" in axis_label_texts

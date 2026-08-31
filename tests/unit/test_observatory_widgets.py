@@ -301,6 +301,45 @@ def test_render_verdict_hero_calm_with_meta_row() -> None:
     assert "465" in html
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("465", ("465", "")),
+        ("0", ("0", "")),
+        ("\u2014", ("\u2014", "")),  # em dash ("no data") -- no leading number at all
+        ("6d", ("6", "d")),
+        ("3h ago", ("3", "h ago")),
+        ("-2d", ("-2", "d")),
+    ],
+)
+def test_split_meta_value(raw: str, expected: tuple[str, str]) -> None:
+    """Visual-polish punchlist item 6: a `.meta-row` value's leading number
+    and trailing unit suffix split apart so they can render at different
+    sizes/weights while sharing one baseline."""
+    assert WD._split_meta_value(raw) == expected  # noqa: SLF001 -- exercising the helper directly
+
+
+def test_render_verdict_hero_meta_row_splits_suffix_into_its_own_span() -> None:
+    data = WD.VerdictHeroData(
+        state="calm",
+        eyebrow="Project verdict \u00b7 cortex",
+        headline="All clear",
+        detail_html="Nothing stuck.",
+        meta_row=[
+            WD.MetaCell(k="Total items", v="465"),
+            WD.MetaCell(k="Oldest ready", v="6d"),
+            WD.MetaCell(k="Last activity", v="3h ago"),
+        ],
+    )
+    html = WD.render_verdict_hero(data)
+    _firewall_clean(html)
+    # A plain count never gets a suffix span.
+    assert '<span class="v">465</span>' in html
+    # A number+unit value splits: bare number, then a separate suffix span.
+    assert '<span class="v">6<span class="v-suffix">d</span></span>' in html
+    assert '<span class="v">3<span class="v-suffix">h ago</span></span>' in html
+
+
 def test_render_verdict_hero_idle() -> None:
     data = WD.VerdictHeroData(
         state="idle", eyebrow="e", headline="Idle", detail_html="Nothing in flight."
