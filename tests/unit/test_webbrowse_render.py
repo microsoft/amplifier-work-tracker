@@ -161,8 +161,12 @@ def test_ready_age_histogram_data_flags_the_7_plus_bucket():
     assert len(watch) == 1
     assert watch[0]["count"] == 2
     flagged_note = data.get("flagged_note", "")
-    assert "aging past the point" in flagged_note
-    assert "Reopened after resolve, 7d: 1" in flagged_note
+    # Copy trimmed to one short middle-dot-joined line (visual-polish
+    # punchlist item 11) -- was "7+ day bucket flagged -- N items aging
+    # past the point they'd surface in the global attention queue.
+    # Reopened after resolve, {window}: N."
+    assert "aging 7+d" in flagged_note
+    assert "1 reopened after resolve (7d)" in flagged_note
 
 
 def test_ready_age_histogram_omits_flag_note_when_nothing_aging():
@@ -171,5 +175,5 @@ def test_ready_age_histogram_omits_flag_note_when_nothing_aging():
     )
     data = B._ready_age_histogram_data(summary, reopened=0, window="7d")
     flagged_note = data.get("flagged_note", "")
-    assert "aging past the point" not in flagged_note
-    assert "Reopened after resolve, 7d: 0" in flagged_note
+    assert "aging 7+d" not in flagged_note
+    assert "0 reopened after resolve (7d)" in flagged_note

@@ -158,10 +158,13 @@ def test_ledger_hero_zero_projects_says_so_plainly():
 
 
 def test_ledger_hero_normal_case_shows_count_and_burn_rate():
+    """The burn-rate emphasis bolds the number TOGETHER with its unit
+    ("<b>2.4 days</b>", not "<b>2.4</b> days") -- visual-polish pass decision:
+    a bolded bare number next to an unbolded unit reads as imbalanced emphasis."""
     html = W._ledger_hero_html(107, 11, 2.4)  # noqa: SLF001
     assert ">107<" in html
     assert "<b>11</b>" in html
-    assert "<b>2.4</b>" in html
+    assert "<b>2.4 days</b>" in html
     assert "measured rate" in html
 
 

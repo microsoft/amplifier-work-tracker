@@ -596,6 +596,23 @@ class MetaCell(TypedDict):
     v: str
 
 
+_META_VALUE_SUFFIX_RE = re.compile(r"^(-?\d+)(\D.*)$")
+
+
+def _split_meta_value(v: str) -> tuple[str, str]:
+    """Split a `.meta-row` value into (leading number, trailing unit
+    suffix) -- e.g. `"6d"` -> `("6", "d")`, `"3h ago"` -> `("3", "h ago")`.
+    A value with no leading number (a plain count like `"465"`, or the em
+    dash `"\u2014"` for "no data") returns `(v, "")` -- unchanged, no
+    suffix span (visual-polish punchlist item 6: mixed-unit meta-row
+    values -- a plain count next to a duration like "6d" or "3h ago" --
+    didn't share a visual baseline, and the unit suffix was set at the
+    SAME size/weight as the number, reading as one run-on string rather
+    than "a number, then its unit"."""
+    m = _META_VALUE_SUFFIX_RE.match(v)
+    return (m.group(1), m.group(2)) if m else (v, "")
+
+
 class VerdictHeroData(TypedDict):
     """Wraps a composed :class:`Verdict` (see `verdict_line`) plus the hero
     chrome around it. `eyebrow` is the small label above the headline
@@ -626,12 +643,15 @@ def render_verdict_hero(data: VerdictHeroData) -> str:
     meta_html = ""
     rows = data.get("meta_row")
     if rows:
-        cells = "".join(
-            f'<div class="m"><span class="k">{_esc(m["k"])}</span><br>'
-            f'<span class="v">{_esc(m["v"])}</span></div>'
-            for m in rows
-        )
-        meta_html = f'<div class="meta-row">{cells}</div>'
+        cell_htmls = []
+        for m in rows:
+            main, suffix = _split_meta_value(m["v"])
+            suffix_html = f'<span class="v-suffix">{_esc(suffix)}</span>' if suffix else ""
+            cell_htmls.append(
+                f'<div class="m"><span class="k">{_esc(m["k"])}</span><br>'
+                f'<span class="v">{_esc(main)}{suffix_html}</span></div>'
+            )
+        meta_html = f'<div class="meta-row">{"".join(cell_htmls)}</div>'
     return (
         f'<div class="glass-panel strong rim-glow hero is-{state}">'
         f'<div class="eyebrow2">{_esc(data["eyebrow"])}</div>'
@@ -1122,8 +1142,14 @@ def render_ready_age_histogram(data: ReadyAgeHistogramData) -> str:
     note_html = ""
     flagged_note = data.get("flagged_note")
     if flagged_note:
+        # line-height 1.6 (visual-polish punchlist item 11): this note can
+        # wrap to 2 lines on a narrow card even after the copy trim below
+        # -- the shared `.truncation-note` class (used elsewhere for
+        # always-single-line text) doesn't itself set a line-height, so a
+        # wrapped instance here read cramped at the browser default.
         note_html = (
-            f'<div class="truncation-note" style="text-align:left">{_esc(flagged_note)}</div>'
+            '<div class="truncation-note" style="text-align:left;line-height:1.6">'
+            f"{_esc(flagged_note)}</div>"
         )
     return (
         f'<span class="note" style="font-size:.75rem;color:var(--ink-tertiary)">'

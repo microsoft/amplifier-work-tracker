@@ -233,18 +233,23 @@ def _ready_age_histogram_data(
     ]
     ready_total = summary.ready or 0
     aging = buckets_raw.get("7+", 0)
+    # Copy trimmed to ONE short line (visual-polish punchlist item 11): the
+    # prior two full sentences ("7+ day bucket flagged -- N items aging
+    # past the point they'd surface in the global attention queue.
+    # Reopened after resolve, {window}: N.") read as a dense paragraph
+    # under the chart. A middle-dot-joined clause pair keeps both real
+    # signals (aging count, reopened-after-resolve count) without the
+    # verbose framing -- the "aging" concept is already explained by the
+    # watch-tier legend line directly above this note.
     parts = []
     if aging:
-        parts.append(
-            f"7+ day bucket flagged \u2014 {_pluralize(aging, 'item')} aging past the point "
-            "they'd surface in the global attention queue."
-        )
-    parts.append(f"Reopened after resolve, {window}: {reopened}.")
+        parts.append(f"{_pluralize(aging, 'item')} aging 7+d")
+    parts.append(f"{reopened} reopened after resolve ({window})")
     return WD.ReadyAgeHistogramData(
         buckets=buckets,
         ready_total=ready_total,
         aria_label=f"Ready item age histogram, {len(buckets)} buckets",
-        flagged_note=" ".join(parts),
+        flagged_note=" \u00b7 ".join(parts) + ".",
     )
 
 

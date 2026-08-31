@@ -138,7 +138,18 @@ CSS = r"""
   /* ---------- INK (data + copy; flat, never glass, never gradient) ---------- */
   --ink-primary:#f8fafc;
   --ink-secondary:#d6dee8;
-  --ink-tertiary:#aeb8c9;
+  /* --ink-tertiary bumped from #aeb8c9 (visual-polish punchlist item 1, the
+     "low-contrast epidemic": KPI/axis/legend/counter labels across L0/L1
+     read washed-out live even though flat-token math against a bare ground
+     already cleared 4.5:1 -- the app's real glass panels sit on TOP of
+     `.wt-observatory::before`'s ambient radial-gradient glow via
+     backdrop-filter blur, which lifts perceived background luminance above
+     what a flat swatch-pair contrast check alone models. Bumped one step
+     brighter toward --ink-secondary for real headroom (dark: 8.1:1 ->
+     10.5:1 on --glass-fill-strong; see the light-mode block below for the
+     symmetric darker bump). Keep this value in sync with the two other
+     dark-mode blocks below (base :root here and :root[data-theme="dark"]). */
+  --ink-tertiary:#c8d0de;
   --ink-quiet:#7c8798;
   --ink-on-solid:#f8fafc;
   --ink-on-ground-inverse:#05070f;
@@ -298,7 +309,13 @@ CSS = r"""
     --glass-shadow-float:0 24px 64px rgba(15,23,42,.16),inset 0 1px 0 rgba(255,255,255,.7);
     --ink-primary:#0b1220;
     --ink-secondary:#33415a;
-    --ink-tertiary:#526078;
+    /* --ink-tertiary bumped from #526078 (visual-polish punchlist item 1) --
+       darkened one step toward --ink-secondary for more headroom against
+       this light ground (5.7:1 -> 7.8:1). See the dark-mode block's own
+       comment above for the full rationale; keep all THREE light blocks
+       (this media query, `:root[data-theme="light"]`, and their dark
+       counterparts) in sync. */
+    --ink-tertiary:#3d4b63;
     --ink-quiet:#7c8ba0;
     --ink-on-ground-inverse:#f8fafc;
     /* reserved status hues re-tuned darker so text/icons still clear 4.5:1 on a light ground */
@@ -368,7 +385,7 @@ CSS = r"""
   --glass-shadow-float:0 24px 64px rgba(15,23,42,.16),inset 0 1px 0 rgba(255,255,255,.7);
   --ink-primary:#0b1220;
   --ink-secondary:#33415a;
-  --ink-tertiary:#526078;
+  --ink-tertiary:#3d4b63;  /* keep in sync with the light-mode media block above */
   --ink-quiet:#7c8ba0;
   --ink-on-ground-inverse:#f8fafc;
   --alarm:#92400e;
@@ -424,7 +441,7 @@ CSS = r"""
   --glass-shadow-float:0 24px 64px rgba(2,6,15,.55),inset 0 1px 0 rgba(255,255,255,.08);
   --ink-primary:#f8fafc;
   --ink-secondary:#d6dee8;
-  --ink-tertiary:#aeb8c9;
+  --ink-tertiary:#c8d0de;  /* keep in sync with the base :root block above */
   --ink-quiet:#7c8798;
   --ink-on-ground-inverse:#05070f;
   --alarm:#f59e0b;
@@ -2165,6 +2182,34 @@ OBSERVATORY_CSS = r"""
    decorative pseudo-element). Clip the html box itself, scoped via :has() so
    only observatory pages are affected. */
 html:has(.wt-observatory){overflow-x:clip}
+
+/* -- scrollbar styling (visual-polish punchlist item 4) -- the mockups
+   never covered this (a static single-viewport demo never scrolls); the
+   default grey UA scrollbar clashes hard with this dark, glass-panel
+   theme. Thin, dark-theme-aware, token-driven -- both the PAGE scrollbar
+   (`html:has(.wt-observatory)`, the same :has() scope the overflow-x fix
+   above already uses) and any scrollable panel inside it (e.g. the
+   430px-mobile `.dormant-table`'s own horizontal scroll). Firefox via the
+   standard `scrollbar-width`/`scrollbar-color` properties; Chrome/Edge/
+   Safari via the `::-webkit-scrollbar*` pseudo-elements -- both are
+   additive, never conflicting, so declaring both is the correct universal
+   coverage, not redundant duplication. */
+.wt-observatory,html:has(.wt-observatory){
+  scrollbar-width:thin;scrollbar-color:var(--glass-hairline) transparent;
+}
+.wt-observatory ::-webkit-scrollbar,html:has(.wt-observatory)::-webkit-scrollbar{
+  width:10px;height:10px;
+}
+.wt-observatory ::-webkit-scrollbar-track,
+html:has(.wt-observatory)::-webkit-scrollbar-track{background:transparent}
+.wt-observatory ::-webkit-scrollbar-thumb,
+html:has(.wt-observatory)::-webkit-scrollbar-thumb{
+  background-color:var(--glass-hairline);border-radius:var(--radius-pill);
+  border:2px solid var(--color-ground);
+}
+.wt-observatory ::-webkit-scrollbar-thumb:hover,
+html:has(.wt-observatory)::-webkit-scrollbar-thumb:hover{background-color:var(--ink-quiet)}
+
 .wt-observatory::before{
   content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
   background:radial-gradient(circle at 15% -10%, rgba(34,211,238,.10), transparent 40%),
@@ -2242,15 +2287,39 @@ color:var(--ink-tertiary);
   width:34px;height:34px;border-radius:var(--radius-sm);display:inline-flex;align-items:center;
   justify-content:center;background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
   color:var(--ink-tertiary);cursor:pointer;flex-shrink:0;text-decoration:none;
+  /* `padding:0` + `font:inherit` (visual-polish punchlist item 5): the nav's
+     search action is a real `<button>` (bell/+new are `<a>`) -- a bare
+     UA-default button carries its own font-size/line-height and (pre-reset)
+     padding, which a fixed 34x34 box alone doesn't neutralise for whatever
+     the CHILD content sizes itself against. Explicit resets make every
+     icon-btn -- button or anchor alike -- an identical box. */
+  padding:0;font:inherit;
 }
 .wt-observatory .icon-btn:hover{color:var(--ink-primary);background:var(--glass-fill-row-hover)}
+/* Every icon-btn's icon SVG at one explicit, uniform size (visual-polish
+   punchlist item 5a): these buttons place a raw `<svg>` (from
+   `webtheme.ICONS`) directly as their content, with no intervening
+   `.icon` wrapper span to size it -- without this rule its rendered size
+   falls back to whatever the browser's replaced-element default (or the
+   `<button>`'s own inherited font metrics) happens to be, which can read
+   subtly heavier/larger than a sibling `<a class="icon-btn">` icon even
+   though both share the same 24x24 viewBox/stroke-width. Pinning an
+   explicit size here removes that ambiguity for every icon-btn glyph. */
+.wt-observatory .icon-btn svg{width:16px;height:16px;flex-shrink:0}
+/* gap 2px -> 4px (visual-polish punchlist item 10: "cramped separator
+   spacing") -- a hair more breathing room between the Dark/Light pill
+   buttons themselves. */
 .wt-observatory .theme-toggle{
-  display:flex;gap:2px;padding:2px;border-radius:var(--radius-pill);background:var(--glass-fill);
+  display:flex;gap:4px;padding:2px;border-radius:var(--radius-pill);background:var(--glass-fill);
   border:1px solid var(--glass-hairline-soft);
 }
+/* --ink-tertiary -> --ink-secondary (visual-polish punchlist item 10: the
+   INACTIVE label -- e.g. "Light" while Dark is pressed -- read too dim
+   even at tertiary; one ramp step up, matching the same "one step up"
+   fix ISSUE_HANDLING's own item-10 guidance calls for specifically here). */
 .wt-observatory .theme-toggle button{
   font-family:var(--font-sans);font-size:.7rem;font-weight:600;padding:5px 10px;
-  border-radius:var(--radius-pill);background:transparent;border:none;color:var(--ink-tertiary);
+  border-radius:var(--radius-pill);background:transparent;border:none;color:var(--ink-secondary);
 cursor:pointer;
 }
 .wt-observatory .theme-toggle button[aria-pressed="true"]{
@@ -2263,13 +2332,20 @@ cursor:pointer;
    this CSS/markup only supplies the affordance. */
 .wt-observatory .refresh-status{
   display:flex;align-items:center;gap:6px;font-size:.75rem;color:var(--ink-tertiary);
-white-space:nowrap;
+white-space:nowrap;line-height:1;
 }
-.wt-observatory .refresh-status .refresh-text{font-family:var(--font-mono)}
+.wt-observatory .refresh-status .refresh-text{font-family:var(--font-mono);line-height:1}
+/* padding:0/font:inherit/line-height:1 (visual-polish punchlist item 5c):
+   a bare `<button>`'s own UA-default font metrics/line-height/padding can
+   nudge its box (and the icon centred inside it) a px or two off the
+   vertical middle of its plain-text `.refresh-text` sibling, even though
+   both already sit in the SAME `align-items:center` flex row -- the
+   flex-row centring only ever centres the box itself, not any residual
+   default padding/line-height baked into the button's own content box. */
 .wt-observatory .refresh-toggle{
   width:26px;height:26px;border-radius:var(--radius-pill);display:inline-flex;align-items:center;
   justify-content:center;background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
-  color:var(--ink-tertiary);cursor:pointer;flex-shrink:0;
+  color:var(--ink-tertiary);cursor:pointer;flex-shrink:0;padding:0;font:inherit;line-height:1;
 }
 .wt-observatory .refresh-toggle:hover{color:var(--ink-primary);
 background:var(--glass-fill-row-hover)}
@@ -2363,9 +2439,23 @@ flex-shrink:0;
 }
 .wt-observatory .hero .verdict{
   font-size:var(--text-display-size);font-weight:var(--text-display-weight);
-  line-height:var(--text-display-line);display:flex;align-items:center;gap:var(--space-3);
+  line-height:var(--text-display-line);display:flex;align-items:center;gap:var(--space-2);
   color:var(--ink-primary);
 }
+/* Alarm hero presence (visual-polish punchlist item 7): the mockups (and
+   this port, verbatim) only ever recoloured the ICON for `.hero.is-alarm`
+   -- the hero's own glass surface/border stayed the same neutral
+   `.glass-panel.strong` fill/hairline every state uses, so an alarm hero
+   read as flat, no louder than "all clear". The pre-existing v2/v3
+   dashboard's OWN alarm verdict panel already earns this exact
+   background/border treatment (see `.verdict.v-alarm` above); porting the
+   same, alarm-reserved-hue-only treatment here (never applied to
+   `is-calm`/`is-idle` -- a calm/idle screen must show neither status hue,
+   per the design firewall) gives the hero real alert weight. Longhand
+   `border-color` (not the `border` shorthand) deliberately overrides only
+   the colour of `.glass-panel`'s own `border:1px solid var(--glass-
+   hairline)` -- width/style are untouched. */
+.wt-observatory .hero.is-alarm{background:var(--alarm-surface);border-color:var(--alarm)}
 .wt-observatory .hero.is-alarm .verdict .icon{color:var(--alarm)}
 .wt-observatory .hero.is-calm .verdict .icon{color:var(--calm-ink)}
 .wt-observatory .hero.is-idle .verdict .icon{color:var(--ink-quiet)}
@@ -2380,6 +2470,20 @@ color:var(--ink-tertiary);
 }
 .wt-observatory .hero .meta-row .m .v{
   font-family:var(--font-mono);font-size:1.25rem;font-weight:600;color:var(--ink-primary);
+}
+/* KPI/meta-row baseline alignment (visual-polish punchlist item 6): the
+   NUMBER always renders at the shared `.v` size/weight above (so a plain
+   count like "465" and a duration's leading digit like the "6" in "6d"
+   share one baseline); a trailing unit suffix (a bare day/hour letter, or
+   a longer "past-tense" phrase) --
+   split out by `widgets._split_meta_value` -- renders smaller, in the
+   sans voice (not mono, so it never reads as more tabular data) and at
+   --ink-tertiary (a deliberate, legible "quieter than the number" step,
+   never --ink-quiet -- see punchlist item 1's "reserve quiet for true
+   decoration only"). */
+.wt-observatory .hero .meta-row .m .v .v-suffix{
+  font-family:var(--font-sans);font-size:.8125rem;font-weight:500;color:var(--ink-tertiary);
+  margin-left:2px;
 }
 
 /* -- KPI strip -- */
@@ -2439,7 +2543,15 @@ align-items:start}
 .wt-observatory .two-up>*,.wt-observatory .three-up>*{min-width:0}
 
 /* -- chart card + inline SVG charts (see chartsvg.py) -- */
-.wt-observatory .chart-card{padding:var(--space-6);min-width:0}
+/* Top padding bumped +8px over the mockup's flat var(--space-6) on every
+   side (visual-polish punchlist item 3): card titles ("Status breakdown",
+   "Ready-age", "Velocity & burn", "Agents on ...") read too close to the
+   card's top edge -- the mockup's own static demo data never surfaced
+   this (its titles/window-tabs never wrapped), but real project names and
+   longer titles do. Side/bottom padding are unchanged (space-6, matching
+   the mockup) -- only the top gets extra breathing room. */
+.wt-observatory .chart-card{padding:calc(var(--space-6) + 8px) var(--space-6) var(--space-6);
+min-width:0}
 .wt-observatory .chart-head{
   display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);
   margin-bottom:var(--space-4);flex-wrap:wrap;
@@ -2450,14 +2562,22 @@ margin:0}
   display:flex;gap:2px;padding:2px;border-radius:var(--radius-pill);background:var(--glass-fill);
   border:1px solid var(--glass-hairline-soft);
 }
+/* Geometry normalised (visual-polish punchlist item 9): the active chip
+   previously differed from inactive by background/color PLUS an inset
+   `box-shadow` ring -- the ring doesn't change layout size, but the
+   combination of a filled background butting straight against the pill's
+   edge (inactive: transparent, no visible edge) vs. a background inset
+   1px by its own ring (active) read as two different paddings. Both
+   states now carry the SAME explicit 1px border (transparent when
+   inactive), so only colour/background differ -- never the box model. */
 .wt-observatory .window-tab{
   padding:var(--space-1) var(--space-3);border-radius:var(--radius-pill);font-size:.75rem;
 font-weight:600;
-  color:var(--ink-tertiary);text-decoration:none;
+  color:var(--ink-tertiary);text-decoration:none;border:1px solid transparent;
 }
 .wt-observatory .window-tab.is-active{
   background:var(--glass-fill-strong);color:var(--ink-primary);
-box-shadow:inset 0 0 0 1px var(--glass-hairline);
+border-color:var(--glass-hairline);
 }
 .wt-observatory .svg-chart{width:100%;height:auto;display:block}
 .wt-observatory .svg-chart .bar{fill:var(--ink-secondary)}
@@ -2531,8 +2651,11 @@ font-size:.75rem;
   font-family:var(--font-mono);font-size:.75rem;color:var(--ink-tertiary);white-space:nowrap;
 text-align:right;
 }
+/* --ink-quiet -> --ink-tertiary (visual-polish punchlist item 1): the rank
+   number is functional (it's WHY this row outranks the next one), not
+   decoration. */
 .wt-observatory .attn-row .rank{font-family:var(--font-mono);font-size:.6875rem;
-color:var(--ink-quiet);white-space:nowrap}
+color:var(--ink-tertiary);white-space:nowrap}
 .wt-observatory .attn-row .chev{color:var(--ink-quiet)}
 
 /* -- fleet table (L0) -- */
@@ -2668,8 +2791,10 @@ border-color:var(--brand-cyan-ink)}
 font-size:.75rem}
 .wt-observatory .feed-item .time{font-family:var(--font-mono);font-size:.75rem;
 color:var(--ink-tertiary);white-space:nowrap}
+/* --ink-quiet -> --ink-tertiary (visual-polish punchlist item 1): "Showing
+   N of M" is an informational counter, not decoration. */
 .wt-observatory .truncation-note{margin-top:var(--space-3);font-size:.75rem;
-color:var(--ink-quiet);font-style:italic}
+color:var(--ink-tertiary);font-style:italic}
 
 /* -- status-mix donut (L1) -- */
 .wt-observatory .status-breakdown-wrap{display:grid;grid-template-columns:auto 1fr;
@@ -2688,7 +2813,18 @@ align-items:center;justify-content:center}
 color:var(--ink-primary)}
 .wt-observatory .donut-center .l{font-size:.625rem;color:var(--ink-tertiary);
 text-transform:uppercase;letter-spacing:.06em}
-.wt-observatory .mix-legend-full{display:flex;flex-direction:column;gap:var(--space-2)}
+/* max-width added (visual-polish punchlist item 8): `.mix-legend-full`
+   occupies the SECOND ("1fr") track of `.status-breakdown-wrap`'s
+   `auto 1fr` grid, alongside the donut -- with no cap, that track (and
+   therefore each `.li`'s `.name{flex:1 1 auto}` label) stretches to the
+   full remaining card width, so a short label ("Ready") and its
+   right-aligned count/pct end up separated by a wide band of empty
+   space, reading as visually disconnected. Capping the LIST's own width
+   keeps every row compact instead. (The 900px-mobile override below,
+   which centres the legend under a stacked donut, is unaffected -- it
+   already sets its own max-width for that narrower layout.) */
+.wt-observatory .mix-legend-full{display:flex;flex-direction:column;gap:var(--space-2);
+max-width:280px}
 .wt-observatory .mix-legend-full .li{display:flex;align-items:center;gap:8px;font-size:.8125rem;
 color:var(--ink-secondary)}
 .wt-observatory .mix-legend-full .li .sw{width:10px;height:10px;border-radius:3px;flex-shrink:0}
@@ -2739,14 +2875,17 @@ padding:3px 8px;
   display:flex;gap:2px;padding:2px;border-radius:var(--radius-pill);background:var(--glass-fill);
   border:1px solid var(--glass-hairline-soft);flex-wrap:wrap;
 }
+/* Same geometry-normalisation fix as `.window-tab` above (visual-polish
+   punchlist item 9): an explicit border on both states instead of an
+   inset ring on only one, so active/inactive never differ in box size. */
 .wt-observatory .status-tab{
   display:flex;align-items:center;gap:6px;padding:var(--space-1) var(--space-3);
   border-radius:var(--radius-pill);font-size:.75rem;font-weight:600;color:var(--ink-tertiary);
-  cursor:pointer;white-space:nowrap;text-decoration:none;
+  cursor:pointer;white-space:nowrap;text-decoration:none;border:1px solid transparent;
 }
 .wt-observatory .status-tab.is-active{
   background:var(--glass-fill-strong);color:var(--ink-primary);
-box-shadow:inset 0 0 0 1px var(--glass-hairline);
+border-color:var(--glass-hairline);
 }
 .wt-observatory .status-tab .dot{width:6px;height:6px;border-radius:999px;background:currentColor}
 .wt-observatory .status-tab.tab-blocked .dot{background:var(--blocked)}
@@ -2819,8 +2958,12 @@ margin-bottom:var(--space-5);
   padding-bottom:var(--space-5);border-bottom:1px solid var(--glass-hairline-soft);
 }
 .wt-observatory .field{display:flex;flex-direction:column;gap:2px}
+/* --ink-quiet -> --ink-tertiary (visual-polish punchlist item 1): a field
+   KEY ("PROJECT", "STATUS", ...) is functional label text, not decoration
+   -- --ink-quiet is reserved for true decoration only (chevrons, dividers,
+   zero-state de-emphasis). */
 .wt-observatory .field .k{font-size:.6875rem;text-transform:uppercase;letter-spacing:.06em;
-color:var(--ink-quiet)}
+color:var(--ink-tertiary)}
 .wt-observatory .field .v{font-size:var(--text-body-size);color:var(--ink-primary);
 font-weight:500}
 .wt-observatory .field .v.mono{font-family:var(--font-mono);font-size:.875rem}

@@ -11,6 +11,8 @@ TestClient` against `webapp.create_app`.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 pytest.importorskip("fastapi", reason="the 'web' extra is not installed")
@@ -22,6 +24,22 @@ from amplifier_work_tracker import webapp  # noqa: E402
 from amplifier_work_tracker import webauth as WA  # noqa: E402
 
 pytestmark = pytest.mark.integration
+
+# Visual-polish punchlist item 5b -- extracts every `<use href="#i-...">`
+# sprite reference a rendered page's markup asks for, and every
+# `<symbol id="i-...">` the SAME page's own icon sprite actually defines.
+_USE_REF_RE = re.compile(r'<use href="#(i-[\w-]+)"')
+_SYMBOL_ID_RE = re.compile(r'<symbol id="(i-[\w-]+)"')
+
+
+def _assert_every_icon_ref_has_a_symbol(html: str, *, page: str) -> None:
+    refs = set(_USE_REF_RE.findall(html))
+    symbols = set(_SYMBOL_ID_RE.findall(html))
+    missing = refs - symbols
+    assert not missing, (
+        f'{page}: <use href="#..."> references a sprite symbol this page\'s own '
+        f"markup never defines -- {sorted(missing)} (defined: {sorted(symbols)})"
+    )
 
 
 @pytest.fixture
@@ -216,3 +234,48 @@ def test_l2_confirm_resolve_query_param_reveals_the_confirm_form(
     assert confirming.status_code == 200
     assert 'name="confirm" value="yes"' in confirming.text
     assert f'action="/projects/{name}/items/{item.id}/resolve"' in confirming.text
+
+
+# --------------------------------------------------------- icon sprite coverage
+
+
+def test_l0_every_icon_ref_has_a_matching_sprite_symbol(client, project_factory, unique_actor):
+    """Visual-polish punchlist item 5b: hunt for a `<use href="#i-...">`
+    referencing a sprite symbol this page never defines (would render as a
+    blank/mystery glyph in the nav or anywhere else on the page)."""
+    _login(client)
+    name, bd = project_factory("obsspritezero")
+    held_id = bd.create("held for sprite check", tags=[A.LANE_WORK])
+    bd.claim_item(held_id, actor=unique_actor)
+
+    r = client.get("/")
+    assert r.status_code == 200
+    _assert_every_icon_ref_has_a_symbol(r.text, page="L0 Mission Control")
+
+
+def test_l1_every_icon_ref_has_a_matching_sprite_symbol(client, project_factory, unique_actor):
+    _login(client)
+    name, bd = project_factory("obsspriteone")
+    held_id = bd.create("held for sprite check", tags=[A.LANE_WORK])
+    bd.claim_item(held_id, actor=unique_actor)
+
+    r = client.get(f"/projects/{name}")
+    assert r.status_code == 200
+    _assert_every_icon_ref_has_a_symbol(r.text, page="L1 Project Observatory")
+
+
+def test_l2_every_icon_ref_has_a_matching_sprite_symbol(client, project_factory, unique_actor):
+    _login(client)
+    name, bd = project_factory("obsspritetwo")
+    item_id = bd.create("held for sprite check", tags=[A.LANE_WORK])
+    item = bd.claim_next(lane=A.LANE_WORK, actor=unique_actor) or bd.get(item_id)
+
+    r = client.get(f"/projects/{name}/items/{item.id}")
+    assert r.status_code == 200
+    _assert_every_icon_ref_has_a_symbol(r.text, page="L2 Item Detail")
+
+
+def test_login_page_every_icon_ref_has_a_matching_sprite_symbol(client):
+    r = client.get("/login")
+    assert r.status_code == 200
+    _assert_every_icon_ref_has_a_symbol(r.text, page="Login")
