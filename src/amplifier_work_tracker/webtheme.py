@@ -2459,7 +2459,8 @@ flex-shrink:0;
 .wt-observatory .hero.is-alarm .verdict .icon{color:var(--alarm)}
 .wt-observatory .hero.is-calm .verdict .icon{color:var(--calm-ink)}
 .wt-observatory .hero.is-idle .verdict .icon{color:var(--ink-quiet)}
-.wt-observatory .hero .detail{color:var(--ink-secondary);font-size:var(--text-body-size)}
+.wt-observatory .hero .detail{
+  color:var(--ink-secondary);font-size:var(--text-body-size);line-height:1.6}
 .wt-observatory .hero .detail a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 .wt-observatory .hero .detail b{color:var(--ink-primary);font-weight:600}
 .wt-observatory .hero .meta-row{display:flex;gap:var(--space-6);margin-top:var(--space-2);
