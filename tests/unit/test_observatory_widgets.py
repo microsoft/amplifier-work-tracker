@@ -710,7 +710,10 @@ def test_render_ready_age_histogram_with_flagged_note() -> None:
     )
     html = WD.render_ready_age_histogram(data)
     _firewall_clean(html)
-    assert "34 ready items" in html
+    # The widget must NOT render its own "N ready items" counter -- the L1
+    # card head already does, and both together produced a visibly duplicated
+    # subtitle on the Ready-age card (owner-reported, micro-nits pass).
+    assert "34 ready items" not in html
     assert "watch (aging, not an alarm)" in html
     assert "7+ day bucket flagged" in html
 

@@ -1151,9 +1151,12 @@ def render_ready_age_histogram(data: ReadyAgeHistogramData) -> str:
             '<div class="truncation-note" style="text-align:left;line-height:1.6">'
             f"{_esc(flagged_note)}</div>"
         )
+    # NOTE: no "N ready items" counter here -- the L1 card HEAD already renders
+    # it (webbrowse's chart-card shell), and emitting it here too produced a
+    # visibly duplicated subtitle on the Ready-age card (owner-reported).
+    # `ready_total` stays in the data contract: it feeds the aria_label and any
+    # future headless embedding of this widget.
     return (
-        f'<span class="note" style="font-size:.75rem;color:var(--ink-tertiary)">'
-        f"{data['ready_total']} ready items</span>"
         f"{chart}"
         '<div class="legend" style="margin-top:0">'
         '<span class="li"><span class="dot" style="background:var(--ink-secondary)"></span> '
