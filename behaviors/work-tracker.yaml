@@ -8,10 +8,12 @@ bundle:
     hazards. Does NOT compose `work-tracker:feedback-triage` -- see
     `bundle.md`'s "What's available in this session" for why.
 
-    Host precondition: work-executor performs arbitrary engineering work.
-    The composing bundle MUST supply the tools that work requires
-    (typically tool-filesystem + tool-bash). This behavior supplies only
-    the coordination surface; it cannot know what fixing an item needs.
+    Engineering floor: work-executor performs arbitrary engineering work,
+    so this behavior mounts tool-filesystem + tool-bash as a FLOOR -- a
+    bare composition can always progress an item, never claim-then-stall
+    silently until reap. A floor is not a ceiling: the composing bundle
+    should still supply whatever else its items need (LSP, test runners,
+    domain tools, ...).
 
 tools:
   # Relative sources resolve against THIS FILE's directory (behaviors/), not the
@@ -24,6 +26,16 @@ tools:
     config:
       skills:
         - "@work-tracker:skills"
+  # Engineering floor (fail-loud composition guarantee): without at least
+  # filesystem + bash, a host composing this behavior would let work-executor
+  # claim an item, take custody, and then silently stall until reap -- the
+  # exact failure class this repo's fail-loud posture exists to prevent.
+  # Sources match how amplifier-foundation's own bundle.md declares these
+  # modules. A floor is not a ceiling; hosts add whatever else items need.
+  - module: tool-filesystem
+    source: git+https://github.com/microsoft/amplifier-module-tool-filesystem@main
+  - module: tool-bash
+    source: git+https://github.com/microsoft/amplifier-module-tool-bash@main
 
 hooks:
   # Compact, cadence-gated status reminder for whatever projects this session
