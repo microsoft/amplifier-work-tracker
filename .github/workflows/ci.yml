@@ -89,6 +89,14 @@ jobs:
       - name: Tier 3 -- CLI surface tests
         run: .venv/bin/python -m pytest -m cli tests/cli -v
 
+      # Tier 4 -- the conformance ledger for contracts/custody-coordination.v1.md.
+      # In-process only (no bd, no dolt, no network), so it needs none of the
+      # setup above and runs in well under a second. It is a separate step
+      # rather than folded into a tier so a ledger failure is legible at a
+      # glance as a CONTRACT-DRIFT failure, not a product-test failure.
+      - name: Tier 4 -- conformance ledger
+        run: .venv/bin/python -m pytest ledger/checks -v
+
       - name: Dolt server log (always, for debugging)
         if: always()
         run: cat /tmp/dolt-server.log || true

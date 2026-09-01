@@ -27,6 +27,10 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.6",
     "pyright>=1.1",
+    # ledger/checks only -- the conformance ledger (ledger/rows.yaml) is YAML
+    # by format, so its own tripwires need a parser. Deliberately NOT a
+    # runtime dependency: nothing in src/ imports yaml.
+    "pyyaml>=6.0",
 ]
 # `amplifier-work-tracker web` -- the dashboard/interaction UI (see
 # webapp.py, webauth.py). Optional so the core CLI install (`uv tool
