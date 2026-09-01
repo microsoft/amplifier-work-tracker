@@ -2303,6 +2303,20 @@ def _daily_resolved_counts(
     return counts
 
 
+@dataclass
+class ReleaseOutcome:
+    """Result of `Beads.release` -- distinguishes a genuine release (item
+    handed back to the queue, status now `open`) from the sanctioned
+    wedge-recovery no-op branch (item was ALREADY resolved/closed; nothing
+    was written -- see `release`'s own docstring, work_tracker item
+    pipeline-yym). Every existing caller ignores `release`'s return value,
+    so this is an additive, non-breaking change to its signature.
+    """
+
+    item_id: str
+    already_closed: bool
+
+
 class Beads:
     """A handle on one Beads project. Construct via Workspace.project()."""
 
@@ -2357,7 +2371,26 @@ class Beads:
                 time.sleep(backoff * (0.5 + os.urandom(1)[0] / 255))
                 connection_attempt += 1
                 continue
-            if _retryable(blob):
+            # `p.returncode != 0` gate here mirrors the connection-retryable
+            # check immediately above -- ADDED for work_tracker item
+            # pipeline-yym. `_retryable` is a pure TEXT predicate (see its
+            # own tests) with no opinion on exit status; without this gate,
+            # a SUCCESSFUL invocation (returncode 0) whose own combined
+            # stdout/stderr merely *mentions* one of the retryable
+            # substrings -- e.g. bd logging that it recovered internally
+            # from a transient serialization conflict before reporting
+            # success -- was retried anyway. If a later attempt in the same
+            # loop echoes equivalent text (an idempotent `bd close` against
+            # an item that a PRIOR attempt already closed does exactly
+            # this), the loop can exhaust `_MAX_RETRIES` and raise
+            # `BeadsError` while quoting its own most recent SUCCESS
+            # confirmation -- the measured incident (2026-09-01,
+            # cortex-cro0): the wrapper reported "still conflicting after 8
+            # retries" with a "Last:" detail that was itself a successful
+            # close confirmation for the same item. See `resolve`'s
+            # verify-by-read-back fix for the safety net that catches this
+            # class of failure even when it is not this exact mechanism.
+            if p.returncode != 0 and _retryable(blob):
                 if serialization_attempt >= _MAX_RETRIES - 1:
                     break
                 time.sleep(0.15 * (2**serialization_attempt) * (0.5 + os.urandom(1)[0] / 255))
@@ -3104,7 +3137,25 @@ class Beads:
                         f"refusing to close {item_id}: it is held by {current.holder!r}, "
                         f"not {who!r}. Your claim was reclaimed while you were away."
                     )
-        p = self._run(["close", item_id, "--reason", reason], actor=actor)
+        try:
+            p = self._run(["close", item_id, "--reason", reason], actor=actor)
+        except BeadsError:
+            # `_run` raises ONLY when its own serialization-retry budget is
+            # exhausted -- i.e. the WRAPPER gave up, not necessarily that
+            # the close never landed. Measured incident (work_tracker item
+            # pipeline-yym, 2026-09-01, cortex-cro0): the close had landed
+            # on an earlier attempt inside that same retry loop, yet the
+            # wrapper still raised, and the exception's own "Last:" detail
+            # quoted the close's own success confirmation. Verify via a
+            # fresh, contention-free read-back (never itself susceptible to
+            # this hazard -- see `get`'s docstring) before trusting the
+            # wrapper's failure: if the item is genuinely resolved, report
+            # success rather than propagate a false failure that would
+            # otherwise wedge the caller's custody state forever.
+            back = self._read_back_or_none(item_id)
+            if back is not None and back.status == "resolved":
+                return back
+            raise
         if p.returncode != 0:
             raise BeadsError(f"close {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
         back = self.get(item_id)
@@ -3115,12 +3166,56 @@ class Beads:
             )
         return back
 
-    def release(self, item_id: str) -> None:
-        """Hand a held item back to the queue."""
-        p = self._run(["update", item_id, "--status", "open", "--assignee", ""])
+    def _read_back_or_none(self, item_id: str) -> Item | None:
+        """Contention-free read-back (see `get`'s docstring -- never `bd
+        show`), used ONLY to verify a write that a wrapper transaction
+        reported as failed. Never raises: a lookup failure here must not
+        mask the ORIGINAL error -- the caller re-raises that when this
+        returns `None`.
+        """
+        try:
+            return self.get(item_id)
+        except BeadsError:
+            return None
+
+    def release(self, item_id: str) -> ReleaseOutcome:
+        """Hand a held item back to the queue -- or, if it turns out to
+        already be resolved/closed, report that instead of writing
+        anything.
+
+        Sanctioned wedge-recovery branch (work_tracker item pipeline-yym):
+        checked BEFORE any write, via a contention-free read-back. A caller
+        (typically `work_release`) may be asked to release an item that a
+        PRIOR resolve/close already landed, despite that resolve reporting
+        a spurious wrapper failure (see `resolve`'s own verify-by-read-back
+        fix for the identical root cause) -- leaving a session wedged,
+        believing it still holds an item bd already considers closed. This
+        method must never be the thing that reopens an already-closed item,
+        so the status check happens first and, when the item is already
+        `resolved`, this returns `already_closed=True` having performed NO
+        write to the item at all -- asserting on status before any
+        status-mutating write is what makes reopening a closed item
+        structurally impossible from this path, not merely unlikely.
+
+        Also applies the same verify-on-conflict discipline `resolve` does:
+        if the write itself raises (wrapper retry budget exhausted), a
+        fresh read-back decides the real outcome rather than trusting the
+        wrapper's failure at face value.
+        """
+        current = self.get(item_id)
+        if current.status == "resolved":
+            return ReleaseOutcome(item_id=item_id, already_closed=True)
+        try:
+            p = self._run(["update", item_id, "--status", "open", "--assignee", ""])
+        except BeadsError:
+            back = self._read_back_or_none(item_id)
+            if back is not None and back.status != "held":
+                return ReleaseOutcome(item_id=item_id, already_closed=(back.status == "resolved"))
+            raise
         if p.returncode != 0:
             detail = _clean_bd_error(p.stderr or p.stdout, limit=200)
             raise BeadsError(f"release {item_id}: {detail}")
+        return ReleaseOutcome(item_id=item_id, already_closed=False)
 
     # -------------------------------------------------------- defer / block
     #
@@ -4276,6 +4371,28 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
     -- counts, `project_activity`'s aging/throughput figures, and the
     ready-age histogram -- from that single in-memory list. No field here
     costs a second `bd` call.
+
+    Exception: `held_stale`/`held_stale_oldest_age_seconds`. Real custody
+    freshness lives in each item's `metadata` column, which
+    `_summary_items_via_sql`'s narrow scalar projection deliberately never
+    selects (see that function's own docstring on why -- free-text
+    `longtext` columns would need CSV-escaping and cost more than a summary
+    should). Before this fix, that meant every item from THIS path carried
+    an empty `meta`, so `_held_stale_count`/`_held_stale_oldest_age_seconds`
+    silently derived their answer from an absent custody record for EVERY
+    held item regardless of its real state -- a `project_summary` "silently
+    always-wrong" ledger row (work_tracker item pipeline-jbf). The fix:
+    these two fields alone are derived from a SECOND, targeted read scoped
+    to held items only (typically far fewer than the project's full item
+    count) -- `_held_items_via_sql`, the exact same custody source
+    `project_agents` already reads correctly -- rather than adding the
+    free-text `metadata` column to this function's own CSV-parsed read
+    (which would reintroduce the CSV-escaping hazard `_summary_items_via_sql`
+    exists to avoid). Skipped entirely when nothing is held (no extra round
+    trip for the common case); degrades to `None` (unknown -- never a
+    fabricated number) if that second read itself fails, the same "honest
+    unknown" discipline `reminder_snapshot`'s `custody_stale` already
+    applies.
     """
     state = ws.creation_state(name)
     if state == "creating":
@@ -4289,7 +4406,20 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
     held_items = [i for i in items if i.status == "held"]
     blocked_items = [i for i in items if i.status == "blocked"]
     activity = project_activity(items)
-    held_stale = _held_stale_count(held_items)
+    held_stale: int | None
+    held_stale_oldest_age_seconds: float | None
+    if held_items:
+        try:
+            full_held_items = _held_items_via_sql(name)
+        except BeadsError:
+            held_stale = None
+            held_stale_oldest_age_seconds = None
+        else:
+            held_stale = _held_stale_count(full_held_items)
+            held_stale_oldest_age_seconds = _held_stale_oldest_age_seconds(full_held_items)
+    else:
+        held_stale = 0
+        held_stale_oldest_age_seconds = None
     return ProjectSummary(
         name=name,
         status=STATUS_OK,
@@ -4309,7 +4439,7 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
         resolved_daily=activity["resolved_daily"],
         ready_age_buckets=_ready_age_buckets(items),
         blocked_stale=_blocked_stale_count(blocked_items),
-        held_stale_oldest_age_seconds=_held_stale_oldest_age_seconds(held_items),
+        held_stale_oldest_age_seconds=held_stale_oldest_age_seconds,
     )
 
 
@@ -4656,6 +4786,24 @@ def _agent_row_sort_key(row: dict) -> tuple[int, float]:
     return (1, age if age is not None else float("inf"))
 
 
+def _held_items_via_sql(db: str) -> list[Item]:
+    """Currently-held items, WITH real custody metadata -- unlike
+    `_summary_items_via_sql`'s narrow scalar projection (which deliberately
+    excludes `metadata`, see that function's own docstring), this reads
+    every field `Item.from_beads` maps, including `metadata`, but scoped to
+    held items ONLY (`_list_rows_via_sql`'s own `where_sql`) so the cost
+    stays bounded to however many items are actually held, not the whole
+    project. The shared custody-correct source `project_agents` and
+    `project_summary`'s `held_stale`/`held_stale_oldest_age_seconds` fields
+    both need (work_tracker item pipeline-jbf) -- one definition, so the
+    two can never independently drift on what "held, with real custody"
+    means.
+    """
+    return _list_rows_via_sql(
+        db, where_sql=f"`issues`.`status` = '{_STATUS_MAP_REVERSE['held']}'", limit=0
+    )
+
+
 def project_agents(db: str) -> list[dict]:
     """The "who holds what" roster for ONE project -- every currently-held
     item's holder, with custody freshness -- the data behind L1's per-
@@ -4678,9 +4826,7 @@ def project_agents(db: str) -> list[dict]:
     roster); this function itself never silently substitutes an empty list
     for a real read failure.
     """
-    items = _list_rows_via_sql(
-        db, where_sql=f"`issues`.`status` = '{_STATUS_MAP_REVERSE['held']}'", limit=0
-    )
+    items = _held_items_via_sql(db)
     rows = [_agent_row(db, item) for item in items if item.holder]
     rows.sort(key=_agent_row_sort_key)
     return rows

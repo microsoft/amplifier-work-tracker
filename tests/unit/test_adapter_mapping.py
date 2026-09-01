@@ -11,6 +11,8 @@ break every later command).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from amplifier_work_tracker import adapter as A
 
 # -------------------------------------------------------------- field names
@@ -171,6 +173,92 @@ def test_connection_retryable_false_for_domain_and_serialization_errors():
     assert A._connection_retryable("no ready work in lane") is False
     assert A._connection_retryable("Error 1213: serialization failure") is False
     assert A._connection_retryable("") is False
+
+
+# ------------------------------------- Beads._run -- returncode-gated retry
+#
+# work_tracker item pipeline-yym (part 3, the self-contention investigation):
+# `_retryable` (above) is a pure TEXT predicate with no opinion on exit
+# status. Before this fix, `_run`'s retry loop called it unconditionally --
+# unlike the sibling `_connection_retryable` check, which was already gated
+# on `p.returncode != 0`. A SUCCESSFUL invocation (returncode 0) whose own
+# combined stdout/stderr merely mentions one of the retryable substrings
+# (e.g. bd logging that it recovered internally from a transient conflict
+# before reporting success) was retried anyway -- and if a later attempt in
+# the same loop echoes equivalent text, `_run` can exhaust its retry budget
+# and raise `BeadsError` while quoting its own most recent SUCCESS
+# confirmation. This is the measured shape of the phantom-close-failure
+# incident (2026-09-01, cortex-cro0): "still conflicting after 8 retries"
+# whose own "Last:" detail was a successful close.
+
+
+def _fake_run_bounded_always(returncode: int, stdout: str, calls: list):
+    def _fake(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
+
+    return _fake
+
+
+def test_run_returns_a_successful_response_even_if_its_text_matches_retryable(
+    tmp_path, monkeypatch
+):
+    """A returncode-0 response is returned immediately, REGARDLESS of what
+    its own text says -- the returncode-gating fix. Without it, this loops
+    until `_MAX_RETRIES` is exhausted and raises `BeadsError`."""
+    calls: list = []
+    monkeypatch.setattr(
+        A,
+        "_run_bounded",
+        _fake_run_bounded_always(
+            0, "serialization failure recovered internally -- Closed x", calls
+        ),
+    )
+    bd = A.Beads(tmp_path / ".beads")
+    p = bd._run(["close", "x"])  # noqa: SLF001
+    assert p.returncode == 0
+    assert len(calls) == 1  # returned on the very first attempt -- never retried
+
+
+def test_run_still_retries_and_raises_for_a_genuine_persistent_conflict(tmp_path, monkeypatch):
+    """Contrast case: a REAL conflict (returncode != 0, retryable text) on
+    every attempt must still exhaust the retry budget and raise -- the
+    returncode gate narrows what counts as retryable, it does not disable
+    retrying altogether."""
+    calls: list = []
+    monkeypatch.setattr(
+        A,
+        "_run_bounded",
+        _fake_run_bounded_always(1, "Error 1213: serialization failure", calls),
+    )
+    bd = A.Beads(tmp_path / ".beads")
+    try:
+        bd._run(["close", "x"])  # noqa: SLF001
+        raise AssertionError("expected BeadsError")
+    except A.BeadsError:
+        pass
+    assert len(calls) == A._MAX_RETRIES  # noqa: SLF001 -- the full retry budget was spent
+
+
+def test_run_retries_a_real_conflict_then_returns_the_eventual_success(tmp_path, monkeypatch):
+    """A genuine conflict (returncode != 0) on the first attempts, followed
+    by a real success (returncode 0) -- must retry the failures and then
+    return the success, unchanged behavior from before this fix."""
+    calls: list = []
+
+    def fake(args, **kwargs):
+        calls.append(args)
+        if len(calls) < 3:
+            return SimpleNamespace(
+                returncode=1, stdout="", stderr="Error 1213: serialization failure"
+            )
+        return SimpleNamespace(returncode=0, stdout="Closed x", stderr="")
+
+    monkeypatch.setattr(A, "_run_bounded", fake)
+    bd = A.Beads(tmp_path / ".beads")
+    p = bd._run(["close", "x"])  # noqa: SLF001
+    assert p.returncode == 0
+    assert len(calls) == 3
 
 
 # ------------------------------------------------------- directed claim

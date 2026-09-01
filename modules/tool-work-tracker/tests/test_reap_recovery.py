@@ -145,7 +145,10 @@ async def test_background_renew_loop_detects_reap_and_clears_held_state(project)
 
     class _RunOnceThenStop:
         """Fakes `threading.Event`'s `.wait()` shape: False the first call
-        (so the loop body runs once), True thereafter (so it exits)."""
+        (so the loop body runs once), True thereafter (so it exits).
+        `.is_set()` mirrors the same never-externally-stopped state --
+        `_renew_loop`'s own "stopped while waiting for the lock" check
+        needs it (see work_tracker item pipeline-yym part 3)."""
 
         def __init__(self) -> None:
             self._calls = 0
@@ -156,6 +159,9 @@ async def test_background_renew_loop_detects_reap_and_clears_held_state(project)
 
         def set(self) -> None:  # noqa: A003 -- matches threading.Event's API
             pass
+
+        def is_set(self) -> bool:
+            return False
 
     held.stop = _RunOnceThenStop()  # type: ignore[assignment]  # noqa: SLF001
     session._renew_loop(held)  # noqa: SLF001
@@ -211,6 +217,9 @@ async def test_background_renew_loop_generic_failure_does_not_clear_held(project
 
         def set(self) -> None:
             pass
+
+        def is_set(self) -> bool:
+            return False
 
     held.stop = _RunOnceThenStop()  # type: ignore[assignment]  # noqa: SLF001
     session._renew_loop(held)  # noqa: SLF001

@@ -695,3 +695,80 @@ def test_velocity_series_and_windows_matches_separate_calls(workspace, project_f
     # Sanity: the combined call actually observed the data (not vacuously
     # equal empty structures).
     assert sum(day["created"] for day in series) >= 2
+
+
+# --------------------------------------------------------------------------
+# project_summary held_stale / held_stale_oldest_age_seconds -- work_tracker
+# item pipeline-jbf: `_summary_items_via_sql`'s narrow scalar projection
+# never selects `metadata`, so before this fix every held item on this path
+# carried an EMPTY custody record regardless of its real state -- silently
+# always-wrong in BOTH directions at once (`held_stale`'s count always
+# equalled `held` itself, since a missing custody record is itself
+# "reclaim-eligible" per `custody.reclaim_eligible`, while
+# `held_stale_oldest_age_seconds` always came back `None`, since an
+# un-ageable "no custody record" hold never enters the age list -- see
+# `_held_stale_oldest_age_seconds`'s own doc). The discriminating fixture:
+# ONE fresh hold and ONE genuinely stale hold in the SAME project -- the
+# bug reported both as stale (2), the fix must report exactly the real one
+# (1), with a real, non-`None` age for the stale hold alone.
+# --------------------------------------------------------------------------
+
+
+def test_project_summary_held_stale_reflects_real_custody_state(workspace, project_factory):
+    name, bd = project_factory("summstale")
+
+    fresh_id = bd.create(title="fresh hold", kind="task")
+    bd.claim_item(fresh_id, actor="agent-summary-fresh")
+    bd.take_custody(fresh_id, holder="agent-summary-fresh", pid=1, host="h")
+
+    stale_id = bd.create(title="stale hold", kind="task")
+    bd.claim_item(stale_id, actor="agent-summary-stale")
+    overage = 500
+    stale_seen = (datetime.now(UTC) - timedelta(seconds=C.CUSTODY_TTL_SECONDS + overage)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    _set_custody(bd, stale_id, holder="agent-summary-stale", last_seen=stale_seen)
+
+    summary = A.project_summary(workspace, name)
+
+    assert summary.status == A.STATUS_OK
+    assert summary.held == 2
+    # The measured bug: this used to always equal `held` (2), never the
+    # real count (1) -- a missing-metadata item is unconditionally
+    # reclaim-eligible per `custody.reclaim_eligible(None)`.
+    assert summary.held_stale == 1
+    # The measured bug: this used to always be `None` -- an un-ageable
+    # "no custody record" hold never enters the age list.
+    assert summary.held_stale_oldest_age_seconds is not None
+    assert summary.held_stale_oldest_age_seconds == pytest.approx(
+        C.CUSTODY_TTL_SECONDS + overage, abs=5.0
+    )
+
+
+def test_project_summary_held_stale_zero_and_none_when_nothing_held(workspace, project_factory):
+    """No held items at all -- honest zero/None, and no extra round trip
+    is even attempted (see `project_summary`'s own docstring)."""
+    name, bd = project_factory("summnoheld")
+    bd.create(title="just ready", kind="task")
+
+    summary = A.project_summary(workspace, name)
+
+    assert summary.status == A.STATUS_OK
+    assert summary.held == 0
+    assert summary.held_stale == 0
+    assert summary.held_stale_oldest_age_seconds is None
+
+
+def test_project_summary_held_stale_all_fresh_is_zero_not_fabricated(workspace, project_factory):
+    """Every held item fresh -- `held_stale` must be a real 0, not a
+    coincidental match with a broken always-stale count."""
+    name, bd = project_factory("summallfresh")
+    item_id = bd.create(title="fresh only", kind="task")
+    bd.claim_item(item_id, actor="agent-summary-allfresh")
+    bd.take_custody(item_id, holder="agent-summary-allfresh", pid=1, host="h")
+
+    summary = A.project_summary(workspace, name)
+
+    assert summary.held == 1
+    assert summary.held_stale == 0
+    assert summary.held_stale_oldest_age_seconds is None
