@@ -3,61 +3,27 @@ meta:
   name: feedback-triage
   description: |
     Turns raw, sloppy user reports (`lane:intake`) into properly-specified
-    engineering issues (`lane:eng`) with real acceptance criteria. Use
-    PROACTIVELY when there are unprocessed user reports sitting in a
-    project's intake lane, or when someone asks what a batch of user
-    feedback actually means for engineering work.
+    engineering issues (`lane:eng`) with real Given/When/Then acceptance
+    criteria.
 
-    **Authoritative on:** the report-to-issue transform, acceptance criteria,
-    "what does this feedback mean", triage, `lane:intake`, deduplication of
-    reports, six-outcome triage (duplicate / new issue / needs info / not
-    actionable / already fixed / out of scope), the only agent that creates
-    NEW `lane:eng` issues from a `lane:intake` source (as opposed to
-    executor-filed discovered work, which links `discovered-from` an
-    existing engineering item, not an intake report).
+    REQUIRES an intake-lane-capable tool to be composed. The default
+    `behaviors/work-tracker.yaml` composition cannot read `lane:intake` --
+    confirm intake access exists before routing here.
 
-    **MUST be used for:**
-    - Processing unprocessed reports in a project's intake lane
-    - Deciding whether a report is a duplicate, a new issue, needs more info,
-      not actionable, already fixed, or out of scope
-    - Writing acceptance criteria that a coding agent will be held to
+    Deciding factor: input is an unprocessed raw USER report, not an
+    engineer-discovered problem --
+    - Unprocessed reports sit in a project's intake lane.
+    - A batch of user feedback needs engineering-impact judgment.
+    - Similar-sounding reports need dedup judgment before becoming an issue.
+    - A report needs one of six outcomes: duplicate / new issue / needs info /
+      not actionable / already fixed / out of scope.
 
-    <example>
-    user: 'There's a pile of user reports in acme that nobody has looked at.'
-    assistant: 'I'll delegate to work-tracker:feedback-triage to work through
-    the intake lane for acme.'
-    <commentary>
-    Unprocessed lane:intake reports are exactly this agent's queue -- it is
-    the only thing allowed to turn them into lane:eng issues.
-    </commentary>
-    </example>
+    Authoritative on: the intake-to-engineering transform, acceptance criteria
+    as the downstream coding agent's spec, report deduplication. The ONLY
+    agent allowed to create a new `lane:eng` issue from a `lane:intake` report.
 
-    <example>
-    user: 'Five people reported "the app forgets my name" this week -- is
-    that all the same bug?'
-    assistant: 'I'll have work-tracker:feedback-triage review those reports
-    for the intake lane and determine whether they're duplicates of one
-    issue or distinct problems.'
-    <commentary>
-    Dedup judgment across raw reports before anything becomes a considered
-    issue is this agent's job, not the executor's.
-    </commentary>
-    </example>
-
-    <example>
-    user: 'The auth-retry bug the coding agent found while fixing the
-    session-timeout issue -- is that triage's job?'
-    assistant: 'No -- that's discovered work filed by work-tracker:work-executor
-    directly via work_file, linked discovered-from the item it was already
-    holding. Triage only processes lane:intake reports from users, never
-    engineer-discovered problems.'
-    <commentary>
-    Resolves the report-vs-discovered-work distinction explicitly: triage
-    owns the intake -> engineering transform; executors may file DISCOVERED
-    work distinguishable by its discovered-from edge to an existing
-    engineering item rather than to an intake report.
-    </commentary>
-    </example>
+    Not this agent: a problem found mid-fix -- filed by work-executor via
+    `work_file`, linked `discovered-from` an existing engineering item.
   model_role: [reasoning, general]
 ---
 
