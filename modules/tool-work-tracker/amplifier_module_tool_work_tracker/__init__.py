@@ -217,42 +217,75 @@ class WorkTrackerSession:
         return self._ws.project(name, actor=self._actor)
 
     def _renew_loop(self, held: _Held) -> None:
+        """Runs on its own daemon thread for the life of one held item,
+        renewing custody every `interval` seconds until `held.stop` fires.
+
+        The bd call itself is made WHILE HOLDING `self._lock` -- ADDED for
+        work_tracker item pipeline-yym (part 3, the self-contention
+        investigation). Before this fix, `bd.renew_custody(...)` ran
+        entirely outside the lock, so this background thread's own
+        `bd update --metadata` write could race a foreground `resolve`/
+        `release`/`declare`/`claim` call's own bd write on the SAME item
+        row -- a REAL (not fabricated) dolt serialization conflict between
+        this session's own two writers, structurally possible on every
+        renewal tick, not merely theoretical. `resolve`/`release`/`declare`/
+        `claim` already hold `self._lock` for their entire bd call (see
+        each method below), so serializing the renewal call against the
+        SAME lock closes the race at the Python level: the two can now
+        never be in flight at once, for this session.
+        Deliberately NOT "stop renewal before attempting close" (the other
+        option this investigation considered): that would leave a long
+        string of genuinely-failed resolve retries with NO renewal at all
+        in between attempts, risking a legitimate hold going custody-stale
+        and being reaped out from under a session that is still actively
+        retrying -- exactly the multi-hour retry shape the real incident
+        exhibited. Serializing preserves continuous custody protection even
+        while resolve/release keep failing; it only ever costs a renewal
+        tick a bounded wait for whichever foreground call currently holds
+        the lock, never a loss of renewal altogether.
+        """
         interval = _renew_interval_seconds(self._config)
         bd = self._project(held.project)
         while not held.stop.wait(interval):
-            try:
-                rec = bd.renew_custody(
-                    held.item_id,
-                    holder=held.actor,
-                    generation=held.generation,
-                    pid=os.getpid(),
-                )
-            except A.BeadsError as e:
-                # Any renew failure ends this loop for good -- no retry on
-                # the next interval, by design: a single failed renew already
-                # means the signal wasn't refreshed, and the custody TTL will
-                # do the rest regardless.
-                #
-                # A.FencedError specifically means bd no longer considers us
-                # the holder (reaped while idle, or taken over) -- in that
-                # case this session's OWN belief that it holds the item must
-                # be dropped too. Leaving self._held set here was the
-                # self-poisoning bug: work_claim/work_declare/work_resolve
-                # for ANY item refused forever, for the rest of this
-                # process's life, with no tool call able to clear it -- the
-                # ordinary "held an item long enough to be reaped, did
-                # nothing else" path this bundle exists to survive. A plain
-                # (non-fenced) BeadsError -- e.g. a transient bd/dolt command
-                # failure -- does NOT clear self._held: bd still considers us
-                # the holder, so work_resolve can still succeed via its own
-                # live fence check even though background renewal stopped.
-                with self._lock:
+            with self._lock:
+                if held.stop.is_set():
+                    # Resolved/released/reaped while we were waiting for the
+                    # lock -- nothing left to renew, and re-acquiring the
+                    # lock must never race the call that just stopped us.
+                    return
+                try:
+                    rec = bd.renew_custody(
+                        held.item_id,
+                        holder=held.actor,
+                        generation=held.generation,
+                        pid=os.getpid(),
+                    )
+                except A.BeadsError as e:
+                    # Any renew failure ends this loop for good -- no retry
+                    # on the next interval, by design: a single failed renew
+                    # already means the signal wasn't refreshed, and the
+                    # custody TTL will do the rest regardless.
+                    #
+                    # A.FencedError specifically means bd no longer
+                    # considers us the holder (reaped while idle, or taken
+                    # over) -- in that case this session's OWN belief that
+                    # it holds the item must be dropped too. Leaving
+                    # self._held set here was the self-poisoning bug:
+                    # work_claim/work_declare/work_resolve for ANY item
+                    # refused forever, for the rest of this process's life,
+                    # with no tool call able to clear it -- the ordinary
+                    # "held an item long enough to be reaped, did nothing
+                    # else" path this bundle exists to survive. A plain
+                    # (non-fenced) BeadsError -- e.g. a transient bd/dolt
+                    # command failure -- does NOT clear self._held: bd still
+                    # considers us the holder, so work_resolve can still
+                    # succeed via its own live fence check even though
+                    # background renewal stopped.
                     held.lost_reason = str(e)
                     held.stop.set()
                     if isinstance(e, A.FencedError) and self._held is held:
                         self._held = None
-                return
-            with self._lock:
+                    return
                 held.generation = rec["generation"]
 
     # ------------------------------------------------------------ tools
@@ -597,6 +630,21 @@ class WorkTrackerSession:
         failure the hold is left intact (custody keeps renewing), mirroring
         `resolve`'s non-fenced-error path; only a confirmed release stops
         custody and clears local state.
+
+        Sanctioned wedge recovery (work_tracker item pipeline-yym): this is
+        also the recovery path for a session wedged believing it still
+        holds an item that bd already considers resolved/closed -- e.g. a
+        PRIOR `work_resolve` landed the close but reported a spurious
+        wrapper failure (the phantom-conflict hazard `resolve` itself now
+        also verifies by read-back; this is the operator-facing escape
+        hatch for the same class of divergence, however it arose). All of
+        that recovery logic lives in `adapter.Beads.release` -- it checks
+        status BEFORE any write and performs NO write at all when the item
+        is already resolved, so this method can never be the thing that
+        reopens a closed item. This method only reads the outcome back and
+        reports the right message: local custody state is cleared either
+        way (there is nothing left to hold), but the message distinguishes
+        a real release from "there was nothing to release."
         """
         with self._lock:
             held = self._held
@@ -610,11 +658,19 @@ class WorkTrackerSession:
                 )
             try:
                 bd = self._project(held.project)
-                bd.release(item_id)
+                outcome = bd.release(item_id)
             except A.BeadsError as e:
                 return ToolResult(success=False, output=str(e))
             held.stop.set()
             self._held = None
+            if outcome.already_closed:
+                return ToolResult(
+                    success=True,
+                    output={
+                        "released": item_id,
+                        "custody": "item already closed; custody cleared",
+                    },
+                )
             return ToolResult(
                 success=True,
                 output={
