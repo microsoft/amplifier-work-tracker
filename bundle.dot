@@ -1,81 +1,86 @@
-// work-tracker is a shared to-do queue for a team of AI agents: it hands out work items one at a time, tracks who is holding what, and files new problems as they are discovered.
+// work-tracker: a shared, multi-agent to-do queue for software work.
+// Agents claim an item, hold it while they work, and hand back a
+// user-readable resolution. This repository packages that capability —
+// the queue tools, the two agents that use them, and the reminder that
+// keeps a session aware of what it is holding.
+
 digraph work_tracker {
     rankdir=LR
     fontname="Helvetica"
     fontsize=12
-    label="Work Tracker v0.1.0\nA shared work queue that lets AI agents claim, track, and resolve tasks without stepping on each other"
+    label="Work Tracker v0.1.0 — a shared work queue agents can claim from\nBundle repository: queue tools, worker agents, and custody rules"
     labelloc=t
     labeljust=c
     nodesep=0.6
     ranksep=0.7
     bgcolor="white"
-    source_hash="f40791297f64b91a720eacd2ec6d9722ba6af34c3fca9c0a9460eaeafc6807aa"
+    source_hash="262c58306bdf1cd77504318ec05b0690f79bd45c7d4f2fdf398bfb8ae5d4b5c1"
 
     node [fontname="Helvetica", fontsize=11, style="filled,rounded"]
     edge [fontname="Helvetica", fontsize=9]
 
-    root_work_tracker [label="Work Tracker v0.1.0\nThe complete package\n0 tools · 0 agents\n~1891 tok aggregate", shape=box, fillcolor="#80cbc4", style="filled,rounded,bold", penwidth=2]
+    root_work_tracker [label="Work Tracker (this repository)\nShared task queue for AI agents\nwork-tracker v0.1.0\n0 tools · 0 agents\n~1891 tok aggregate", shape=box, fillcolor="#80cbc4", style="filled,rounded,bold", penwidth=2]
 
     subgraph cluster_behaviors {
-        label="What It Adds To A Session"
+        label="Capabilities this repository adds to a session"
         style="filled"
         fillcolor="#f9f9f9"
         color="#999999"
 
-        beh_work_tracker_behavior [label="Work Queue Skills\nTeaches a session to claim and finish work\n3 tools · 1 ctx\n~1948 tok", shape=box, fillcolor="#e0f2f1", style="filled,rounded"]
+        beh_work_tracker_behavior [label="Claim, Work, Resolve\nThe whole queue capability in one package\nwork-tracker-behavior\n5 tools · 1 ctx\n~1998 tok", shape=box, fillcolor="#e0f2f1", style="filled,rounded"]
     }
 
     subgraph cluster_agents {
-        label="Specialists It Can Call On"
+        label="Specialist workers you can hand a job to"
         style="filled"
         fillcolor="#f9f9f9"
         color="#999999"
 
-        agt_feedback_triage [label="Feedback Sorter\nTurns raw user reports into clear work items\n~626 tok desc", shape=box, fillcolor="#c8e6c9", style="filled,rounded"]
-        agt_work_executor [label="Work Doer\nPicks up the next task and sees it through\n~493 tok desc", shape=box, fillcolor="#c8e6c9", style="filled,rounded"]
+        agt_feedback_triage [label="Feedback Triage\nTurns raw user reports into queued work\nfeedback-triage\n~277 tok desc", shape=box, fillcolor="#c8e6c9", style="filled,rounded"]
+        agt_work_executor [label="Work Executor\nPulls the next item and works it to done\nwork-executor\n~281 tok desc", shape=box, fillcolor="#c8e6c9", style="filled,rounded"]
     }
 
     subgraph cluster_modules {
-        label="Machinery Under The Hood"
+        label="Machinery — the code that does the work"
         style="filled"
         fillcolor="#f9f9f9"
         color="#999999"
 
-        mod_hooks_work_subscribe_reminder [label="Status Nudges\nQuietly reminds you what the queue is doing", shape=box, fillcolor="#bbdefb", style="filled,rounded"]
-        mod_tool_work_tracker [label="Queue Controls\nClaim, hold, file, and resolve work items\n15 tool · ~1468 tok", shape=box, fillcolor="#bbdefb", style="filled,rounded"]
+        mod_hooks_work_subscribe_reminder [label="Queue Status Reminder\nQuietly reminds a session what it is holding\nhooks-work-subscribe-reminder", shape=box, fillcolor="#bbdefb", style="filled,rounded"]
+        mod_tool_work_tracker [label="Queue Toolkit\nClaim, resolve, file, list, and report on items\ntool-work-tracker\n15 tool · ~1468 tok", shape=box, fillcolor="#bbdefb", style="filled,rounded"]
     }
 
     subgraph cluster_context {
-        label="Background Knowledge It Reads"
+        label="Written guidance loaded into the agent"
         style="filled"
         fillcolor="#f9f9f9"
         color="#999999"
 
-        ctx_awareness_md [label="Queue Etiquette (awareness.md)\nHow to hold work without blocking others\n~1021 tok", shape=box, fillcolor="#e1bee7", style="filled,rounded"]
+        ctx_awareness_md [label="Rules of the Queue\nHow to claim safely and never lose custody\nawareness.md\n~1021 tok", shape=box, fillcolor="#e1bee7", style="filled,rounded"]
     }
 
     subgraph cluster_legend {
-        label="Legend — What The Colors Mean"
+        label="Legend — what each colour means"
         style="filled"
         fillcolor="white"
         color="#cccccc"
         fontsize=9
 
-        leg_root [label="the package itself", shape=box, fillcolor="#80cbc4", style="filled,rounded,bold", fontsize=9]
-        leg_behavior [label="added skill", shape=box, fillcolor="#e0f2f1", style="filled,rounded", fontsize=9]
-        leg_agent [label="specialist helper", shape=box, fillcolor="#c8e6c9", style="filled,rounded", fontsize=9]
-        leg_module [label="machinery", shape=box, fillcolor="#bbdefb", style="filled,rounded", fontsize=9]
-        leg_provider [label="AI service", shape=box, fillcolor="#e0e0e0", style="filled,rounded", fontsize=9]
-        leg_context [label="background reading", shape=box, fillcolor="#e1bee7", style="filled,rounded", fontsize=9]
-        leg_standalone [label="works on its own", shape=box, fillcolor="#80cbc4", style="filled,rounded", fontsize=9]
+        leg_root [label="this repository", shape=box, fillcolor="#80cbc4", style="filled,rounded,bold", fontsize=9]
+        leg_behavior [label="capability package", shape=box, fillcolor="#e0f2f1", style="filled,rounded", fontsize=9]
+        leg_agent [label="specialist agent", shape=box, fillcolor="#c8e6c9", style="filled,rounded", fontsize=9]
+        leg_module [label="code module", shape=box, fillcolor="#bbdefb", style="filled,rounded", fontsize=9]
+        leg_provider [label="AI model provider", shape=box, fillcolor="#e0e0e0", style="filled,rounded", fontsize=9]
+        leg_context [label="written guidance", shape=box, fillcolor="#e1bee7", style="filled,rounded", fontsize=9]
+        leg_standalone [label="usable on its own", shape=box, fillcolor="#80cbc4", style="filled,rounded", fontsize=9]
         leg_experiment [label="experimental", shape=box, fillcolor="#e1bee7", style="filled,rounded", fontsize=9]
-        leg_ext_cost [label="borrowed, adds cost", shape=box, fillcolor="#80cbc4", style="dashed", color="red", penwidth=2, fontsize=9]
-        leg_ext_muted [label="borrowed, free", shape=box, fillcolor="#f5f5f5", style="dashed", fontsize=9]
+        leg_ext_cost [label="borrowed elsewhere\nadds to context cost", shape=box, fillcolor="#80cbc4", style="dashed", color="red", penwidth=2, fontsize=9]
+        leg_ext_muted [label="borrowed elsewhere\nno context cost", shape=box, fillcolor="#f5f5f5", style="dashed", fontsize=9]
     }
 
-    disclaimer [label="Token estimates: ~4 chars/token\nSolid border = local (counted)\nDashed + red = external, hidden cost (not counted)\nDashed + muted = external, no cost\nExcludes: sub-session costs, runtime-dynamic", shape=note, fillcolor="#eceff1", style="filled", fontsize=9]
+    disclaimer [label="\"Tokens\" measure how much of the AI's reading budget each piece consumes (~4 characters per token).\nSolid border = lives in this repository (counted here)\nDashed + red = comes from another repository, still costs reading budget (not counted here)\nDashed + muted = comes from another repository, costs nothing\nNot included: work done by spawned sub-sessions, anything loaded on the fly", shape=note, fillcolor="#eceff1", style="filled", fontsize=9]
 
-    ext_githttps___github_com_microsoft_amplifier_foundation_main [label="Amplifier Foundation\nShared building blocks borrowed from elsewhere\n(external, cost)", shape=box, fillcolor="#80cbc4", style="dashed", color="red", penwidth=2]
+    ext_githttps___github_com_microsoft_amplifier_foundation_main [label="Amplifier Foundation\nShared base every bundle builds on\n(from another repository, adds cost)", shape=box, fillcolor="#80cbc4", style="dashed", color="red", penwidth=2]
 
     root_work_tracker -> ext_githttps___github_com_microsoft_amplifier_foundation_main [style=dashed]
     root_work_tracker -> beh_work_tracker_behavior [label="composes"]
