@@ -1,4 +1,4 @@
-.PHONY: venv test test-unit test-integration test-cli check lint types doctor clean
+.PHONY: venv test test-unit test-integration test-cli test-ledger check lint types doctor clean
 
 PYTHON  ?= python3.12
 VENV    := .venv
@@ -23,9 +23,16 @@ test-integration:
 test-cli:
 	$(PYTEST) -m cli tests/cli -v
 
-## All three tiers.
+## Tier 4 -- conformance ledger: one probe per row of ledger/rows.yaml, plus
+## the coverage tripwires. In-process only (no bd, no dolt, no network, no
+## subprocess) and sub-second on purpose: a ledger that is slow does not get
+## run, and a ledger that is not run is a remembered audit.
+test-ledger:
+	$(PYTEST) ledger/checks -v
+
+## All four tiers.
 test:
-	$(PYTEST) tests -v
+	$(PYTEST) tests ledger/checks -v
 
 ## Lint + type-check.
 check: lint types
