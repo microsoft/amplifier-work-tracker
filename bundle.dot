@@ -1,86 +1,86 @@
-// The work-tracker bundle: an Amplifier add-on that lets AI agents track, triage, and work through a shared queue of tasks.
-
+// work-tracker is a shared to-do queue for a team of AI agents: it hands out work items one at a time, tracks who is holding what, and files new problems as they are discovered.
 digraph work_tracker {
     rankdir=LR
     fontname="Helvetica"
     fontsize=12
-    label="Work Tracker v0.1.0\nA shared task queue that AI agents can read, triage, and work through"
+    label="Work Tracker v0.1.0\nA shared work queue that lets AI agents claim, track, and resolve tasks without stepping on each other"
     labelloc=t
     labeljust=c
     nodesep=0.6
     ranksep=0.7
     bgcolor="white"
-    source_hash="bd6ab569bc1cb032cdfe732af16c9d74e5d6cfa3a01b99a16537dcb4a732fc9c"
+    source_hash="f40791297f64b91a720eacd2ec6d9722ba6af34c3fca9c0a9460eaeafc6807aa"
 
     node [fontname="Helvetica", fontsize=11, style="filled,rounded"]
     edge [fontname="Helvetica", fontsize=9]
 
-    root_work_tracker [label="Work Tracker (main entry point) v0.1.0\n0 tools · 0 agents\n~1320 tok aggregate", shape=box, fillcolor="#80cbc4", style="filled,rounded,bold", penwidth=2]
+    root_work_tracker [label="Work Tracker v0.1.0\nThe complete package\n0 tools · 0 agents\n~1891 tok aggregate", shape=box, fillcolor="#80cbc4", style="filled,rounded,bold", penwidth=2]
 
     subgraph cluster_behaviors {
-        label="Capability Packages (what this repo adds)"
+        label="What It Adds To A Session"
         style="filled"
         fillcolor="#f9f9f9"
         color="#999999"
 
-        beh_work_tracker_behavior [label="Task Tracking Capability\n2 tools · 1 ctx\n~1855 tok", shape=box, fillcolor="#e0f2f1", style="filled,rounded"]
+        beh_work_tracker_behavior [label="Work Queue Skills\nTeaches a session to claim and finish work\n3 tools · 1 ctx\n~1948 tok", shape=box, fillcolor="#e0f2f1", style="filled,rounded"]
     }
 
     subgraph cluster_agents {
-        label="Specialist Assistants"
+        label="Specialists It Can Call On"
         style="filled"
         fillcolor="#f9f9f9"
         color="#999999"
 
-        agt_feedback_triage [label="Feedback Sorter\nturns raw feedback into tasks\n~626 tok desc", shape=box, fillcolor="#c8e6c9", style="filled,rounded"]
-        agt_work_executor [label="Task Doer\npicks up tasks and completes them\n~493 tok desc", shape=box, fillcolor="#c8e6c9", style="filled,rounded"]
+        agt_feedback_triage [label="Feedback Sorter\nTurns raw user reports into clear work items\n~626 tok desc", shape=box, fillcolor="#c8e6c9", style="filled,rounded"]
+        agt_work_executor [label="Work Doer\nPicks up the next task and sees it through\n~493 tok desc", shape=box, fillcolor="#c8e6c9", style="filled,rounded"]
     }
 
     subgraph cluster_modules {
-        label="Software Components (the actual code)"
+        label="Machinery Under The Hood"
         style="filled"
         fillcolor="#f9f9f9"
         color="#999999"
 
-        mod_tool_work_tracker [label="Task Queue Toolkit\ncreate, list, update, close tasks\n4 tool · ~241 tok", shape=box, fillcolor="#bbdefb", style="filled,rounded"]
+        mod_hooks_work_subscribe_reminder [label="Status Nudges\nQuietly reminds you what the queue is doing", shape=box, fillcolor="#bbdefb", style="filled,rounded"]
+        mod_tool_work_tracker [label="Queue Controls\nClaim, hold, file, and resolve work items\n15 tool · ~1468 tok", shape=box, fillcolor="#bbdefb", style="filled,rounded"]
     }
 
     subgraph cluster_context {
-        label="Background Notes (always-on guidance)"
+        label="Background Knowledge It Reads"
         style="filled"
         fillcolor="#f9f9f9"
         color="#999999"
 
-        ctx_awareness_md [label="How to use the task queue\n(awareness.md)\n~505 tok", shape=box, fillcolor="#e1bee7", style="filled,rounded"]
+        ctx_awareness_md [label="Queue Etiquette (awareness.md)\nHow to hold work without blocking others\n~1021 tok", shape=box, fillcolor="#e1bee7", style="filled,rounded"]
     }
 
     subgraph cluster_legend {
-        label="Legend — what each color means"
+        label="Legend — What The Colors Mean"
         style="filled"
         fillcolor="white"
         color="#cccccc"
         fontsize=9
 
-        leg_root [label="main entry point", shape=box, fillcolor="#80cbc4", style="filled,rounded,bold", fontsize=9]
-        leg_behavior [label="capability package", shape=box, fillcolor="#e0f2f1", style="filled,rounded", fontsize=9]
-        leg_agent [label="specialist assistant", shape=box, fillcolor="#c8e6c9", style="filled,rounded", fontsize=9]
-        leg_module [label="software component", shape=box, fillcolor="#bbdefb", style="filled,rounded", fontsize=9]
-        leg_provider [label="AI model source", shape=box, fillcolor="#e0e0e0", style="filled,rounded", fontsize=9]
-        leg_context [label="background notes", shape=box, fillcolor="#e1bee7", style="filled,rounded", fontsize=9]
-        leg_standalone [label="ready-to-run variant", shape=box, fillcolor="#80cbc4", style="filled,rounded", fontsize=9]
+        leg_root [label="the package itself", shape=box, fillcolor="#80cbc4", style="filled,rounded,bold", fontsize=9]
+        leg_behavior [label="added skill", shape=box, fillcolor="#e0f2f1", style="filled,rounded", fontsize=9]
+        leg_agent [label="specialist helper", shape=box, fillcolor="#c8e6c9", style="filled,rounded", fontsize=9]
+        leg_module [label="machinery", shape=box, fillcolor="#bbdefb", style="filled,rounded", fontsize=9]
+        leg_provider [label="AI service", shape=box, fillcolor="#e0e0e0", style="filled,rounded", fontsize=9]
+        leg_context [label="background reading", shape=box, fillcolor="#e1bee7", style="filled,rounded", fontsize=9]
+        leg_standalone [label="works on its own", shape=box, fillcolor="#80cbc4", style="filled,rounded", fontsize=9]
         leg_experiment [label="experimental", shape=box, fillcolor="#e1bee7", style="filled,rounded", fontsize=9]
         leg_ext_cost [label="borrowed, adds cost", shape=box, fillcolor="#80cbc4", style="dashed", color="red", penwidth=2, fontsize=9]
-        leg_ext_muted [label="borrowed, no cost", shape=box, fillcolor="#f5f5f5", style="dashed", fontsize=9]
+        leg_ext_muted [label="borrowed, free", shape=box, fillcolor="#f5f5f5", style="dashed", fontsize=9]
     }
 
-    disclaimer [label="Sizes are rough estimates of how much reading material\neach piece adds (~4 characters per token)\nSolid border = lives in this repo (counted)\nDashed + red = borrowed from elsewhere, adds cost (not counted)\nDashed + muted = borrowed, no added cost\nNot shown: costs from sub-tasks or anything decided at run time", shape=note, fillcolor="#eceff1", style="filled", fontsize=9]
+    disclaimer [label="Token estimates: ~4 chars/token\nSolid border = local (counted)\nDashed + red = external, hidden cost (not counted)\nDashed + muted = external, no cost\nExcludes: sub-session costs, runtime-dynamic", shape=note, fillcolor="#eceff1", style="filled", fontsize=9]
 
-    ext_githttps___github_com_microsoft_amplifier_foundation_main [label="Amplifier Foundation\nshared building blocks, borrowed from another repo\n(external, cost)", shape=box, fillcolor="#80cbc4", style="dashed", color="red", penwidth=2]
+    ext_githttps___github_com_microsoft_amplifier_foundation_main [label="Amplifier Foundation\nShared building blocks borrowed from elsewhere\n(external, cost)", shape=box, fillcolor="#80cbc4", style="dashed", color="red", penwidth=2]
 
     root_work_tracker -> ext_githttps___github_com_microsoft_amplifier_foundation_main [style=dashed]
     root_work_tracker -> beh_work_tracker_behavior [label="composes"]
     beh_work_tracker_behavior -> agt_work_executor [label="owns"]
-    beh_work_tracker_behavior -> agt_feedback_triage [label="owns"]
     beh_work_tracker_behavior -> mod_tool_work_tracker [label="uses", penwidth=0.8]
+    beh_work_tracker_behavior -> mod_hooks_work_subscribe_reminder [label="uses", penwidth=0.8]
     beh_work_tracker_behavior -> ctx_awareness_md [style=dotted, color=purple]
 }

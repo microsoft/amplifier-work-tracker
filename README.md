@@ -40,9 +40,9 @@ Three problems show up the moment more than one agent works a queue at once:
 Not on PyPI yet -- install straight from the repo:
 
 ```bash
-pip install git+https://github.com/microsoft/amplifier-work-tracker@main
-# or, from a checkout:
-pip install -e ".[dev]"
+uv tool install --with 'amplifier-work-tracker[web]' 'git+https://github.com/microsoft/amplifier-work-tracker@main'
+# or, from a checkout (for development):
+uv pip install -e ".[dev,web]"
 
 amplifier-work-tracker doctor                      # verify the installed bd/dolt behave as we assume
 amplifier-work-tracker new my-project              # create a project (once)
@@ -54,11 +54,15 @@ amplifier-work-tracker remove my-project --yes     # permanently remove a projec
 That's the operator side: install, stand up a project, start the background service that keeps
 custody and notifications alive, and confirm the queue is there.
 
-**Agents don't run these commands to do the work.** Compose the bundle
-(`git+https://github.com/microsoft/amplifier-work-tracker@main`) and load the
-`claiming-work-safely` skill (or delegate to `work-tracker:work-executor`) for the claim/custody/
-resolve loop and its hard rules -- see the bundle's tool table (`work_claim`, `work_resolve`,
-`work_status`, ...) rather than the raw CLI verbs below. Full design in
+**Agents don't run these commands to do the work.** Compose the behavior bundle into your app:
+
+```bash
+amplifier bundle add "git+https://github.com/microsoft/amplifier-work-tracker@main#subdirectory=behaviors/work-tracker.yaml" --app
+```
+
+and load the `claiming-work-safely` skill (or delegate to `work-tracker:work-executor`) for the
+claim/custody/resolve loop and its hard rules -- see the bundle's tool table (`work_claim`,
+`work_resolve`, `work_status`, ...) rather than the raw CLI verbs below. Full design in
 [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## How it works

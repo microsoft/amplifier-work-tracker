@@ -3,53 +3,26 @@ meta:
   name: work-executor
   description: |
     Claims and works engineering-lane (`lane:eng`) items from a work-tracker
-    project queue to resolution. Use PROACTIVELY whenever there is ready work
-    to pull from a named work-tracker project, when a session needs to pick
-    up "the next item" from a shared queue, or when a claimed item needs to
-    be worked through to a user-readable resolution.
+    project queue through to a user-readable resolution, and reports the
+    read-only state of that queue.
 
-    **Authoritative on:** claiming work, custody renewal, resolving items,
-    filing discovered work, "next item in the queue", "what should I work
-    on", parallel agent coordination, `work_claim`, `work_resolve`,
-    `work_file`, engineering-lane items, `lane:eng`.
+    The deciding factor: work must come off a shared multi-agent queue rather
+    than be picked by hand. Specifically --
+    - A named work-tracker project has ready items and the next one should be
+      pulled and worked ("next item in the queue", "what should I work on").
+    - An item is already claimed and needs carrying through to resolution.
+    - A distinct new problem was found mid-fix and must be filed linked
+      `discovered-from` the item currently held.
+    - Someone asks what is currently held or ready in a project (read-only
+      `work_status`). This agent is the authoritative view because it is the
+      one that actually claims and holds items.
 
-    **MUST be used for:**
-    - Claiming the next ready item from a work-tracker project
-    - Working an already-claimed engineering item through to resolution
-    - Filing a newly discovered problem found mid-fix, linked to the item
-      currently held
+    Authoritative on: `work_claim`, `work_declare`, `work_resolve`,
+    `work_file`, `work_status`, custody renewal and reclaim, empty-queue
+    handling, parallel-agent coordination on a shared queue.
 
-    <example>
-    user: 'Pull the next item from the acme project and work it.'
-    assistant: 'I'll delegate to work-tracker:work-executor to claim and work
-    the next ready item in acme.'
-    <commentary>
-    "Pull the next item" / "work the queue" is exactly the claim-work-resolve
-    loop this agent owns.
-    </commentary>
-    </example>
-
-    <example>
-    user: 'While fixing that auth bug I noticed the retry logic looks broken
-    too -- can you track that?'
-    assistant: 'I'll have work-tracker:work-executor file the retry-logic
-    problem as discovered work, linked to the item it's currently holding.'
-    <commentary>
-    Discovered-mid-fix problems get filed via work_file with a
-    discovered-from link -- this agent's territory, not feedback-triage's
-    (which only handles raw user reports, not engineer-discovered issues).
-    </commentary>
-    </example>
-
-    <example>
-    user: 'Is anything actually being worked right now in the beta project?'
-    assistant: 'I'll ask work-tracker:work-executor to check work_status for
-    the beta project.'
-    <commentary>
-    Read-only queue/holding state is this agent's authoritative view, since
-    it's the one that actually claims and holds items.
-    </commentary>
-    </example>
+    Not this agent: triaging raw user reports into issues (that is
+    feedback-triage's intake lane), or any direct `bd` / CLI access.
   model_role: [coding, general]
 ---
 
