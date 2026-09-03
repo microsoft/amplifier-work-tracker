@@ -69,10 +69,17 @@ jobs:
       # here or anywhere else. A server started here as a separate step
       # would just be an unused, orphaned process.
 
+      # ONE venv, ONE command -- kept byte-identical in intent to the
+      # Makefile's `venv` target. The second editable target is the
+      # amplifier tool module under modules/: a separate installable package
+      # whose absence made `import amplifier_module_tool_work_tracker` a
+      # ModuleNotFoundError here, which is why its suite ran in nothing
+      # (ledger row CCV1-022). Its `[dev]` extra carries that suite's
+      # test-only deps (amplifier-core, pytest-asyncio).
       - name: Set up amplifier-work-tracker
         run: |
           uv venv .venv --python 3.12
-          uv pip install --python .venv/bin/python -e ".[dev,web]"
+          uv pip install --python .venv/bin/python -e ".[dev,web]" -e "modules/tool-work-tracker[dev]"
 
       - name: Lint + format check (ruff)
         run: .venv/bin/ruff check . && .venv/bin/ruff format --check .
@@ -96,6 +103,18 @@ jobs:
       # glance as a CONTRACT-DRIFT failure, not a product-test failure.
       - name: Tier 4 -- conformance ledger
         run: .venv/bin/python -m pytest ledger/checks -v
+
+      # Tier 5 -- the amplifier tool module's own suite
+      # (modules/tool-work-tracker/tests). The only place the post-reclaim
+      # custody behaviour of the AGENT SEAM (work_claim / work_declare /
+      # work_resolve / work_release) is asserted mechanically; before this
+      # step existed the suite was importable by nothing and run by nothing
+      # (ledger row CCV1-022). A separate pytest invocation on purpose: it
+      # brings its own session-scoped isolated dolt server fixture, so
+      # folding it into a tier above would stand up two servers in one
+      # session. Uses the same pinned `bd` installed above.
+      - name: Tier 5 -- tool module tests
+        run: .venv/bin/python -m pytest modules/tool-work-tracker/tests -v
 
       - name: Dolt server log (always, for debugging)
         if: always()

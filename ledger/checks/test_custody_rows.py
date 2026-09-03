@@ -325,18 +325,52 @@ def test_row_ccv1_021() -> None:
 
 
 def test_row_ccv1_022() -> None:
-    """Freeze Bar VIOLATION pin (absence): nothing runs the tool module's own
-    test suite -- neither `make test` nor CI names it. The only mechanical
-    assertions of post-reclaim custody behavior live there.
+    """Freeze Bar CONFORMS: the tool module's own suite is importable and is
+    run -- by `make test` and by CI. Asserts all three halves of the wiring,
+    because any one of them going missing silently returns the suite to
+    "green claims nobody has ever run", which is the state this row closed.
+
+    Source-level on purpose (this ledger is in-process only, no bd/dolt/
+    subprocess). The suite's actual green-ness is measured by running it --
+    Makefile `test-module` / CI "Tier 5" -- and recorded in the row's notes.
     """
+    module_pkg = "modules/tool-work-tracker"
+
+    # 1. Installed into the same, single venv -- without the editable install
+    #    `import amplifier_module_tool_work_tracker` is a ModuleNotFoundError
+    #    and the suite cannot even be collected.
     for path, label in ((MAKEFILE, "Makefile"), (CI_WORKFLOW, ".github/workflows/ci.yml")):
-        assert "tool-work-tracker" not in read(path), (
-            f"CCV1-022 (Freeze Bar, VIOLATION) pin: {label} now references "
-            f"the tool-work-tracker module. If the suite genuinely RUNS (importable and "
-            f"green), this is the expected failure: flip the row to CONFORMS, upgrade the "
-            f"rows that depend on it (CCV1-004, CCV1-009, CCV1-010, CCV1-017) from "
-            f"source-pinned probes to behavioral cites, and resolve work_item_pipeline-a7n."
+        assert contains(path, f'-e "{module_pkg}[dev]"'), (
+            f"CCV1-022 (Freeze Bar, CONFORMS): {label} no longer installs the tool module "
+            f"editable into the venv. Without it `import amplifier_module_tool_work_tracker` "
+            f"raises ModuleNotFoundError and the suite runs in nothing again -- the exact "
+            f"VIOLATION this row closed (work_item_pipeline-a7n)."
         )
+
+    # 2. `make test` runs it, via its own target AND as part of the full run.
+    makefile = read(MAKEFILE)
+    assert "test-module:" in makefile, (
+        "CCV1-022: the `test-module` target is gone from the Makefile"
+    )
+    assert makefile.count(f"$(PYTEST) {module_pkg}/tests") >= 2, (
+        f"CCV1-022: `{module_pkg}/tests` must be run BOTH by the `test-module` target and "
+        f"by the all-tiers `test` target -- a target nothing aggregates is a target CI and "
+        f"contributors forget."
+    )
+
+    # 3. CI runs it as its own step.
+    assert contains(CI_WORKFLOW, f"pytest {module_pkg}/tests"), (
+        "CCV1-022: CI no longer runs the tool module tests (the `Tier 5 -- tool module "
+        "tests` step). The Freeze Bar clause is specifically about CI."
+    )
+
+    # 4. The suite it points at still exists and still holds the post-reclaim
+    #    custody assertions that made this row the Freeze blocker.
+    suite = REPO_ROOT / module_pkg / "tests"
+    assert (suite / "test_reap_recovery.py").exists(), (
+        "CCV1-022: modules/tool-work-tracker/tests/test_reap_recovery.py is gone -- the "
+        "wiring is worth nothing without the tests it wires in."
+    )
 
 
 # --------------------------------------------------------------- CCV1-023
