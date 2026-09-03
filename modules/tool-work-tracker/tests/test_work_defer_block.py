@@ -134,3 +134,44 @@ async def test_defer_reports_beads_errors_without_raising(project):
     session = WorkTrackerSession({"actor": _unique("actor")})
     result = await session.defer(project, "no-such-item-id-zzz", reason="x")
     assert result.success is False
+
+
+# --------------------------------------------------------------------------
+# model_performance-2nx -- the agent-facing half of the same door.
+#
+# `work_defer`/`work_block` are the surface an AGENT reaches for, and an
+# agent reads `success`, not an exit code. Before the guard, both returned
+# success=True on an already-resolved item, having blanked its published
+# resolution -- so the tool told the model the operation worked while the
+# official record was destroyed.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("verb", ["defer", "block"])
+@pytest.mark.asyncio
+async def test_defer_block_on_a_resolved_item_report_failure_and_keep_the_resolution(
+    project, verb: str
+):
+    original = "ORIGINAL TEXT -- the official record"
+    actor = _unique("actor")
+    session = WorkTrackerSession({"actor": actor})
+    added = await session.add(project, f"{verb} on resolved probe")
+    added_output: dict[str, Any] = added.output  # type: ignore[assignment]
+    item_id = added_output["added"]
+    await session.claim(project, item_id=item_id)
+    resolved = await session.resolve(item_id, original)
+    assert resolved.success is True, resolved.output
+
+    result = await getattr(session, verb)(project, item_id, reason="probe")
+
+    assert result.success is False, result.output
+    text = str(result.output)
+    assert "resolved" in text
+    assert "reopen" in text
+    assert "NOTHING WAS WRITTEN" in text
+
+    listed = await session.list_items(project, item_id=item_id)
+    row: dict[str, Any] = listed.output  # type: ignore[assignment]
+    item = row["items"][0]
+    assert item["status"] == "resolved"
+    assert item["resolution"] == original

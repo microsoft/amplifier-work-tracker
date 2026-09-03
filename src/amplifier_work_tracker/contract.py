@@ -1217,6 +1217,105 @@ def check_resolve_identical_text_idempotent(p: Probe) -> Result:
     )
 
 
+def _refuses_resolved(p: Probe, *, verb: str, call, lane: str) -> Result:
+    """Shared body for `defer.refuses_resolved` / `block.refuses_resolved`.
+
+    Asserts all four properties the refusal promises, in the order that
+    matters -- the LAST one is the one that actually protects a record:
+
+      1. the call raises (it does not report success),
+      2. the item is still `resolved`,
+      3. its stored resolution is UNCHANGED, byte for byte,
+      4. the refusal names the status and points at `reopen`.
+
+    Property 3 is not implied by property 1: the measured defect
+    (model_performance-2nx) is precisely a call that CHANGES the record.
+    A guard that raised after writing would pass 1, 2 and 4 and still have
+    destroyed the resolution.
+    """
+    assert p.bd
+    stored = f"probe: the published {verb} resolution"
+    i = p.bd.create(f"{verb}-on-resolved probe", tags=[lane])
+    p.bd.resolve(i, stored)
+    aid = f"{verb}.refuses_resolved"
+    try:
+        call(p.bd, i)
+    except A.BeadsError as e:
+        back = p.bd.get(i)
+        if back.status != "resolved":
+            return Result(
+                aid,
+                False,
+                f"refused, but the item is now {back.status!r} -- the transition it "
+                f"refused happened anyway",
+            )
+        if (back.resolution or "").strip() != stored:
+            return Result(
+                aid,
+                False,
+                f"refused, but the stored resolution changed anyway "
+                f"({back.resolution!r}) -- 'NOTHING WAS WRITTEN' is not true",
+            )
+        msg = str(e)
+        if "resolved" not in msg or "reopen" not in msg:
+            return Result(
+                aid,
+                False,
+                f"refused and wrote nothing, but the message names neither the "
+                f"item's status nor the `reopen` remedy: {msg[:200]!r}",
+            )
+        return Result(
+            aid,
+            True,
+            f"{verb} on a resolved item refuses, writes nothing, and names `reopen`",
+        )
+    back = p.bd.get(i)
+    return Result(
+        aid,
+        False,
+        f"A {verb.upper()} ON A RESOLVED ITEM SUCCEEDED -- the item is now "
+        f"{back.status!r} with resolution {back.resolution!r}; the official record "
+        f"was rewritten with no warning and no archive",
+    )
+
+
+def check_defer_refuses_resolved(p: Probe) -> Result:
+    """`defer` must not be an unaudited, destructive reopen.
+
+    MEASURED before the guard (bd 1.1.2, 2026-09-03): `defer` on a resolved
+    item exited 0, moved it to `deferred`, and left `resolution: None` --
+    the already-published text gone, with no archive of what it said. The
+    remaining loop (`--clear` -> claim -> resolve) then rewrote the record
+    end to end using nothing but sanctioned verbs.
+
+    This is the regression fence for that. See also
+    `reopen.close_reason_disposition`, which pins the bd-side behaviour
+    (a status change away from closed CLEARS `close_reason`) that makes
+    this destructive rather than merely surprising.
+    """
+    return _refuses_resolved(
+        p,
+        verb="defer",
+        call=lambda bd, i: bd.defer(i, "probe: should never land"),
+        lane="lane:probe_defer_resolved",
+    )
+
+
+def check_block_refuses_resolved(p: Probe) -> Result:
+    """The same fence on `block` -- asserted separately, on purpose.
+
+    The two verbs share one implementation today, and a check of only one
+    of them would pass forever if a future change gave `block` its own
+    path. Both doors, both asserted.
+    """
+    return _refuses_resolved(
+        p,
+        verb="block",
+        call=lambda bd, i: bd.block(i, "probe: should never land"),
+        lane="lane:probe_block_resolved",
+    )
+
+
 CHECKS = [
     ("capabilities", check_capabilities),
     ("resolve.fenced", check_resolve_fenced),
@@ -1226,6 +1325,8 @@ CHECKS = [
     ("reopen.clears_closed_at", check_reopen_clears_closed_at),
     ("reopen.close_reason_disposition", check_reopen_close_reason_disposition),
     ("reopen.emits_event", check_reopen_emits_event),
+    ("defer.refuses_resolved", check_defer_refuses_resolved),
+    ("block.refuses_resolved", check_block_refuses_resolved),
     ("release.reopens_unresolved", check_release_reopens_unresolved),
     ("claim.subcommand", check_claim_subcommand),
     ("claim.atomic", check_claim_atomic),
