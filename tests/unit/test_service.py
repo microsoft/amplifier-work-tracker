@@ -871,3 +871,341 @@ def test_service_install_proceeds_when_web_extra_importable(monkeypatch, tmp_pat
 
     assert called.get("ran") is True
     assert result == "sentinel"
+
+
+# ---------------------------------------------------------------------------
+# _systemd_user_env -- self-healing XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS
+# for a session spawned outside a login session (tmux, ssh, an agent spawn).
+# See this module's own docstring section for the measured incident: a
+# peer's `work_tracker_install` failed with `Failed to connect to bus: No
+# medium found` and misdiagnosed it as "systemd itself is not functioning."
+# ---------------------------------------------------------------------------
+
+
+def _fake_runtime_base(monkeypatch, tmp_path, *, uid: int = 424242) -> Path:
+    """Point `_RUN_USER_BASE_DIR`/`os.getuid` at a fully controlled, disposable
+    directory so these tests never depend on (or risk touching) the real
+    `/run/user/<uid>` on the machine actually running them."""
+    base = tmp_path / "run-user"
+    base.mkdir()
+    monkeypatch.setattr(S, "_RUN_USER_BASE_DIR", base)
+    monkeypatch.setattr(S.os, "getuid", lambda: uid)
+    return base
+
+
+def test_systemd_user_env_injects_xdg_runtime_dir_when_unset_and_candidate_exists(
+    monkeypatch, tmp_path
+):
+    base = _fake_runtime_base(monkeypatch, tmp_path)
+    candidate = base / "424242"
+    candidate.mkdir()
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+
+    env, note = S._systemd_user_env()
+
+    assert env["XDG_RUNTIME_DIR"] == str(candidate)
+    assert note is not None
+    assert "XDG_RUNTIME_DIR" in note
+
+
+def test_systemd_user_env_also_locates_dbus_session_bus_address_when_socket_present(
+    monkeypatch, tmp_path
+):
+    base = _fake_runtime_base(monkeypatch, tmp_path)
+    candidate = base / "424242"
+    candidate.mkdir()
+    bus_path = candidate / "bus"
+    bus_path.write_text("", encoding="utf-8")
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+
+    env, note = S._systemd_user_env()
+
+    assert env["DBUS_SESSION_BUS_ADDRESS"] == f"unix:path={bus_path}"
+    assert note is not None
+
+
+def test_systemd_user_env_does_not_inject_when_no_candidate_runtime_dir_exists(
+    monkeypatch, tmp_path
+):
+    base = _fake_runtime_base(monkeypatch, tmp_path)
+    # Deliberately never create base / "424242" -- no candidate exists.
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+
+    env, note = S._systemd_user_env()
+
+    assert "XDG_RUNTIME_DIR" not in env
+    assert note is None
+    assert base.exists()  # sanity: the base dir itself is real, just no <uid> child
+
+
+def test_systemd_user_env_never_overrides_a_preset_xdg_runtime_dir(monkeypatch, tmp_path):
+    base = _fake_runtime_base(monkeypatch, tmp_path)
+    (base / "424242").mkdir()  # a candidate DOES exist -- must still be ignored
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/already/set/by/operator")
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+
+    env, note = S._systemd_user_env()
+
+    assert env["XDG_RUNTIME_DIR"] == "/already/set/by/operator"
+    # No bus socket at that (nonexistent) path, so nothing else to inject.
+    assert note is None
+
+
+def test_systemd_user_env_never_overrides_a_preset_dbus_session_bus_address(monkeypatch, tmp_path):
+    base = _fake_runtime_base(monkeypatch, tmp_path)
+    candidate = base / "424242"
+    candidate.mkdir()
+    (candidate / "bus").write_text("", encoding="utf-8")
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/already/set/bus")
+
+    env, note = S._systemd_user_env()
+
+    # XDG_RUNTIME_DIR was genuinely unset, so injecting IT is still correct...
+    assert env["XDG_RUNTIME_DIR"] == str(candidate)
+    # ...but the already-set bus address must never be overridden.
+    assert env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/already/set/bus"
+
+
+def test_systemd_user_env_reports_no_note_when_both_already_set(monkeypatch, tmp_path):
+    _fake_runtime_base(monkeypatch, tmp_path)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/already/set")
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/already/set/bus")
+
+    _env, note = S._systemd_user_env()
+
+    assert note is None
+
+
+def test_systemd_call_passes_the_self_healing_env_to_subprocess_run(monkeypatch, tmp_path):
+    """Proves the env `_systemd_call` builds actually reaches the real
+    `subprocess.run` -- a fake systemctl-shaped runner ASSERTS the
+    environment it receives, rather than this test only checking
+    `_systemd_user_env()` in isolation."""
+    base = _fake_runtime_base(monkeypatch, tmp_path)
+    candidate = base / "424242"
+    candidate.mkdir()
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, *, capture_output, text, check, env=None):
+        captured["cmd"] = cmd
+        captured["env"] = env
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(S.subprocess, "run", fake_run)
+
+    result = S._systemd_call(["systemctl", "--user", "daemon-reload"], check=False)
+
+    assert captured["env"]["XDG_RUNTIME_DIR"] == str(candidate)  # type: ignore[index]
+    assert result.env_injection_note is not None  # type: ignore[attr-defined]
+
+
+def test_systemd_call_never_overrides_a_preset_env_var(monkeypatch, tmp_path):
+    base = _fake_runtime_base(monkeypatch, tmp_path)
+    (base / "424242").mkdir()
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/operator/set/this")
+
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, *, capture_output, text, check, env=None):
+        captured["env"] = env
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(S.subprocess, "run", fake_run)
+
+    S._systemd_call(["systemctl", "--user", "daemon-reload"], check=False)
+
+    assert captured["env"]["XDG_RUNTIME_DIR"] == "/operator/set/this"  # type: ignore[index]
+
+
+def test_systemd_call_attaches_env_injection_note_to_a_raised_called_process_error(
+    monkeypatch, tmp_path
+):
+    base = _fake_runtime_base(monkeypatch, tmp_path)
+    (base / "424242").mkdir()
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+
+    def fake_run(cmd, *, capture_output, text, check, env=None):
+        raise subprocess.CalledProcessError(1, cmd, output="", stderr="boom")
+
+    monkeypatch.setattr(S.subprocess, "run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        S._systemd_call(["systemctl", "--user", "enable", "--now", S.SERVICE_NAME], check=True)
+
+    assert excinfo.value.env_injection_note is not None  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# diagnose_systemd_failure -- the RIGHT root cause, never conflating "session
+# bus unreachable from THIS process" with "system does not use systemd."
+# ---------------------------------------------------------------------------
+
+
+def test_diagnose_systemd_failure_names_xdg_runtime_dir_for_the_measured_bus_error():
+    detail = S.diagnose_systemd_failure("Failed to connect to bus: No medium found\n")
+    assert "XDG_RUNTIME_DIR" in detail
+    assert "does not appear to use systemd" not in detail
+
+
+def test_diagnose_systemd_failure_recognizes_bus_connection_refused():
+    detail = S.diagnose_systemd_failure("Failed to connect to bus: Connection refused\n")
+    assert "XDG_RUNTIME_DIR" in detail
+    assert "does not appear to use systemd" not in detail
+
+
+def test_diagnose_systemd_failure_reserves_does_not_use_systemd_for_a_genuinely_non_systemd_host(
+    monkeypatch, tmp_path
+):
+    """Only when systemctl is on PATH but `/run/systemd/system` is absent --
+    a genuinely different failure mode than a session-bus gap -- may this
+    diagnosis say "does not appear to use systemd." An unrelated systemctl
+    error must never be silently relabeled as either."""
+    monkeypatch.setattr(S, "_SYSTEMD_INIT_MARKER", tmp_path / "does-not-exist")
+
+    detail = S.diagnose_systemd_failure("some unrelated systemctl error")
+
+    assert "does not appear to use systemd" in detail
+    assert "XDG_RUNTIME_DIR" not in detail
+
+
+def test_diagnose_systemd_failure_reports_the_observed_detail_when_genuinely_systemd(
+    monkeypatch, tmp_path
+):
+    """Neither known failure mode applies (systemd genuinely present, error
+    text matches neither pattern) -- report what was OBSERVED, never invent
+    a cause."""
+    init_marker = tmp_path / "run-systemd-system"
+    init_marker.mkdir()
+    monkeypatch.setattr(S, "_SYSTEMD_INIT_MARKER", init_marker)
+
+    detail = S.diagnose_systemd_failure("some genuinely unrelated systemctl error")
+
+    assert "some genuinely unrelated systemctl error" in detail
+    assert "does not appear to use systemd" not in detail
+    assert "XDG_RUNTIME_DIR" not in detail
+
+
+# ---------------------------------------------------------------------------
+# _systemd_describe -- a bus-unreachable is-active probe must report
+# `active=None` (genuinely unknown), never be read as "confirmed inactive."
+# This is the root cause of the measured `running_unmanaged` misdiagnosis.
+# ---------------------------------------------------------------------------
+
+
+def test_systemd_describe_reports_active_none_when_is_active_probe_is_bus_unreachable(
+    monkeypatch, tmp_path
+):
+    unit_path = tmp_path / f"{S.SERVICE_NAME}.service"
+    unit_path.write_text("[Unit]\n", encoding="utf-8")
+    monkeypatch.setattr(S, "_SYSTEMD_UNIT_PATH", unit_path)
+    monkeypatch.setattr(
+        S,
+        "_systemd_call",
+        lambda args, *, check: subprocess.CompletedProcess(
+            args, 1, stdout="", stderr="Failed to connect to bus: No medium found\n"
+        ),
+    )
+
+    info = S._systemd_describe()
+
+    assert info.installed is True
+    assert info.active is None
+    assert "XDG_RUNTIME_DIR" in info.detail
+    assert "NOT active" not in info.detail
+
+
+def test_systemd_describe_reports_active_false_for_a_genuinely_inactive_unit(monkeypatch, tmp_path):
+    unit_path = tmp_path / f"{S.SERVICE_NAME}.service"
+    unit_path.write_text("[Unit]\n", encoding="utf-8")
+    monkeypatch.setattr(S, "_SYSTEMD_UNIT_PATH", unit_path)
+    monkeypatch.setattr(
+        S,
+        "_systemd_call",
+        lambda args, *, check: subprocess.CompletedProcess(args, 3, stdout="inactive\n", stderr=""),
+    )
+
+    info = S._systemd_describe()
+
+    assert info.active is False
+    assert "NOT active" in info.detail
+
+
+def test_systemd_describe_reports_active_true_for_a_genuinely_active_unit(monkeypatch, tmp_path):
+    unit_path = tmp_path / f"{S.SERVICE_NAME}.service"
+    unit_path.write_text("[Unit]\n", encoding="utf-8")
+    monkeypatch.setattr(S, "_SYSTEMD_UNIT_PATH", unit_path)
+    monkeypatch.setattr(
+        S,
+        "_systemd_call",
+        lambda args, *, check: subprocess.CompletedProcess(args, 0, stdout="active\n", stderr=""),
+    )
+
+    info = S._systemd_describe()
+
+    assert info.active is True
+    assert "installed and active" in info.detail
+
+
+# ---------------------------------------------------------------------------
+# probe_systemd_user_bus -- the doctor gate's (systemd.user_bus_reachable)
+# underlying probe.
+# ---------------------------------------------------------------------------
+
+
+def test_probe_systemd_user_bus_skips_when_systemctl_absent(monkeypatch):
+    monkeypatch.setattr(S.sys, "platform", "linux")
+    monkeypatch.setattr(S, "_have_systemctl", lambda: False)
+
+    state, detail = S.probe_systemd_user_bus()
+
+    assert state == "skipped"
+    assert "does not appear to use systemd" in detail
+
+
+def test_probe_systemd_user_bus_skips_on_darwin(monkeypatch):
+    monkeypatch.setattr(S.sys, "platform", "darwin")
+
+    state, _detail = S.probe_systemd_user_bus()
+
+    assert state == "skipped"
+
+
+def test_probe_systemd_user_bus_reachable_when_show_environment_succeeds(monkeypatch):
+    monkeypatch.setattr(S.sys, "platform", "linux")
+    monkeypatch.setattr(S, "_have_systemctl", lambda: True)
+    monkeypatch.setattr(
+        S,
+        "_systemd_call",
+        lambda args, *, check: subprocess.CompletedProcess(args, 0, stdout="X=1\n", stderr=""),
+    )
+
+    state, detail = S.probe_systemd_user_bus()
+
+    assert state == "reachable"
+    assert detail
+
+
+def test_probe_systemd_user_bus_unreachable_names_xdg_fix_for_a_bus_error(monkeypatch):
+    monkeypatch.setattr(S.sys, "platform", "linux")
+    monkeypatch.setattr(S, "_have_systemctl", lambda: True)
+    monkeypatch.setattr(
+        S,
+        "_systemd_call",
+        lambda args, *, check: subprocess.CompletedProcess(
+            args, 1, stdout="", stderr="Failed to connect to bus: No medium found\n"
+        ),
+    )
+
+    state, detail = S.probe_systemd_user_bus()
+
+    assert state == "unreachable"
+    assert "XDG_RUNTIME_DIR" in detail
+    assert "does not appear to use systemd" not in detail

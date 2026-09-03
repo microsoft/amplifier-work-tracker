@@ -26,7 +26,7 @@ Nothing above the seam should ever need to change for a Beads upgrade.
 ## `doctor` is the gate, not a suggestion
 
 Run `amplifier-work-tracker doctor` after any `bd` upgrade and before
-trusting parallel agents against a queue. It must report **26/26
+trusting parallel agents against a queue. It must report **28/28
 assumptions hold**; anything less means Beads' behavior moved out from
 under an assumption we depend on (or, for `sweeps.alive`, that the
 reap/notify sweep loops have stopped completing sweeps, or, for
@@ -34,7 +34,16 @@ reap/notify sweep loops have stopped completing sweeps, or, for
 database that outlives its project directory, or, for
 `service.restart_policy`, that the installed unit's Restart= line has
 regressed away from `always` -- see the 2026-08-14 outage note in
-supervisor.py's `DoltSupervisionExhaustedError`).
+supervisor.py's `DoltSupervisionExhaustedError` -- or, for
+`systemd.user_bus_reachable`, that this process cannot reach the systemd
+--user session bus at all, commonly because `XDG_RUNTIME_DIR` was never
+inherited by a session spawned outside a login session (tmux, ssh, an
+agent spawn) -- see service.py's `_systemd_user_env`/
+`diagnose_systemd_failure` docstrings). (The count was previously
+misreported here as 26/26 while the CLI actually emitted 27 -- 23 from
+`contract.run_all` plus 4 service/dolt checks; `systemd.user_bus_reachable`
+is the 5th service-level check added alongside this reconciliation, for
+28 total.)
 
 ## Test scope
 
@@ -120,7 +129,7 @@ runs itself is how you lose data you meant to keep.
 
 ## What "done" looks like
 
-Full suite green, `doctor` 26/26, `ruff check` / `ruff format --check` /
+Full suite green, `doctor` 28/28, `ruff check` / `ruff format --check` /
 `pyright` clean. For any change to the bundle's zero-state install path
 (service bootstrap, `work_tracker_install`, prereqs), the acceptance gate is
 a fresh Digital Twin Universe run from a genuinely empty machine (no `bd`,
