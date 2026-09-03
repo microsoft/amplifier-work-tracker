@@ -296,6 +296,13 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
                 A.STATUS_CREATING: "This project is still being created.",
                 A.STATUS_BROKEN: "This project's creation never finished.",
             }.get(summary.status, summary.status)
+            if A.is_unavailable_status(summary.status):
+                # Say what is actually known: the read did not arrive. The
+                # bare status text alone reads like a verdict on the project.
+                heading = (
+                    "This project's database could not be reached just now "
+                    f"\u2014 its data is unknown, not broken. {summary.status}"
+                )
             body = (
                 f"{_observatory_icon_sprite_html()}"
                 '<div class="container">'

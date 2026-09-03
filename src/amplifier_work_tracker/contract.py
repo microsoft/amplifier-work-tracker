@@ -20,6 +20,7 @@ import concurrent.futures as cf
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -1316,8 +1317,166 @@ def check_block_refuses_resolved(p: Probe) -> Result:
     )
 
 
+_TRANSPORT_FAILURE_STDERR = (
+    "failed to load database names: lstat /tmp/probe_vanished.sig: no such file or directory"
+)
+
+
+def check_unavailable_not_absent(p: Probe) -> Result:
+    """An infrastructure read failure must NEVER surface as "not found".
+
+    THE regression fence for lane `model_performance-8zv`. Measured before
+    the fix (lane `model_performance-rpz`, harness
+    `probes/rpz-dolt-error-misreport/repro.sh`): with the `dolt` client
+    losing a race against its own churning working directory, `claim --id`
+    on an item that EXISTS reported "item not found" in 9 of 12 attempts,
+    and `list --id` on an item the calling session HELD reported a bare
+    "item 'X' not found in project 'Y'" -- cause discarded entirely -- in 2
+    of 8. An agent following this project's own contention contract
+    (`context/awareness.md` hazard #6: re-read the item first) was told its
+    held item did not exist.
+
+    Fenced in BOTH directions, because half a fix is a different lie:
+
+      1. UNDER a transport failure, on a REAL item: `get_readonly` and
+         `claim_item` must raise `A.BeadsUnavailableError` and must not
+         claim absence.
+      2. On a HEALTHY database, a genuinely absent item must still report
+         plain absence, in the same words as before -- no "maybe
+         transient" hedge anywhere near it.
+
+    The transport failure is INJECTED (`_dolt_sql`/`_dolt_sql_json`
+    temporarily replaced with one that returns dolt's real wording at
+    returncode 1) rather than provoked by churning a directory: this check
+    runs inside `doctor` on operators' machines, and a check that
+    manufactures a filesystem race to prove a point is a check that
+    occasionally breaks something else. Injecting at the helper also puts
+    the failure PAST `_run_dolt_sql_bounded`'s retry budget, which is the
+    condition the deliverable actually names. Everything above the helper
+    -- classification, the type, all three call sites -- is exercised for
+    real. Restored in a `finally`, so a failure here cannot leave the
+    process's SQL path patched.
+    """
+    assert p.bd
+    real_id = p.bd.create("unavailable-vs-absent probe", tags=["lane:probe_unavailable"])
+    absent_id = f"{p.name}-nosuchitem"
+
+    # --- 2. HEALTHY database first: capture today's real absence wording,
+    # so direction (2) is asserted against observed behaviour rather than a
+    # string this check hard-codes and could drift from.
+    try:
+        p.bd.get_readonly(absent_id)
+        return Result(
+            "read.unavailable_not_absent",
+            False,
+            f"a genuinely absent item {absent_id!r} was READ successfully -- the probe "
+            f"cannot distinguish anything if absence itself is not reported",
+        )
+    except A.BeadsUnavailableError as e:
+        return Result(
+            "read.unavailable_not_absent",
+            False,
+            f"a genuinely absent item on a HEALTHY database reported UNAVAILABLE ({e}) "
+            f"-- real absence has been blurred into 'maybe transient', which replaces "
+            f"one lie with another",
+        )
+    except A.BeadsError as e:
+        healthy_absence = str(e)
+    if "not found" not in healthy_absence.lower():
+        return Result(
+            "read.unavailable_not_absent",
+            False,
+            f"absence on a healthy database no longer reads as 'not found' "
+            f"({healthy_absence!r}) -- the two conditions can no longer be told apart",
+        )
+
+    # --- 1. Now the transport failure, against an item that EXISTS.
+    def _fail(*_a, **_k):
+        return subprocess.CompletedProcess(["dolt"], 1, "", _TRANSPORT_FAILURE_STDERR)
+
+    real_sql, real_sql_json = A._dolt_sql, A._dolt_sql_json
+    A._dolt_sql, A._dolt_sql_json = _fail, _fail
+    try:
+        try:
+            p.bd.get_readonly(real_id)
+            return Result(
+                "read.unavailable_not_absent",
+                False,
+                "an unreachable database returned an item anyway -- the injection did "
+                "not reach the read path, so this check proves nothing",
+            )
+        except A.BeadsUnavailableError as e:
+            if "not found" in str(e).lower():
+                return Result(
+                    "read.unavailable_not_absent",
+                    False,
+                    f"`get_readonly` raised the right TYPE but still says 'not found' "
+                    f"({e}) -- a caller reading the message is still lied to",
+                )
+            if "failed to load database names" not in str(e):
+                return Result(
+                    "read.unavailable_not_absent",
+                    False,
+                    f"`get_readonly` discarded the underlying cause ({e}) -- this is the "
+                    f"exact path the contention contract tells agents to trust",
+                )
+        except A.BeadsError as e:
+            return Result(
+                "read.unavailable_not_absent",
+                False,
+                f"AN INFRASTRUCTURE READ FAILURE SURFACED AS A PLAIN BeadsError ({e}) -- "
+                f"`list --id` on an existing item denies its existence again",
+            )
+
+        try:
+            p.bd.claim_item(real_id, actor="probe-unavailable")
+            return Result(
+                "read.unavailable_not_absent",
+                False,
+                "an unreachable database CLAIMED an item anyway -- the injection did not "
+                "reach the claim path",
+            )
+        except A.BeadsUnavailableError as e:
+            if "item not found" in str(e).lower():
+                return Result(
+                    "read.unavailable_not_absent",
+                    False,
+                    f"`claim_item` still reports 'item not found' under an infrastructure "
+                    f"failure ({e})",
+                )
+        except A.BeadsError as e:
+            return Result(
+                "read.unavailable_not_absent",
+                False,
+                f"`claim_item` flattened an infrastructure failure into a plain "
+                f"BeadsError ({e}) -- 9 of 12 measured attempts said 'item not found' "
+                f"about an item that existed",
+            )
+
+        summary = A.project_summary(p.ws, p.name)
+        if not A.is_unavailable_status(summary.status):
+            return Result(
+                "read.unavailable_not_absent",
+                False,
+                f"`project_summary` reported {summary.status!r} for an UNREACHABLE "
+                f"database -- `instances` asserts the project's data is unreadable when "
+                f"only the connection failed",
+            )
+    finally:
+        A._dolt_sql, A._dolt_sql_json = real_sql, real_sql_json
+
+    return Result(
+        "read.unavailable_not_absent",
+        True,
+        "an infrastructure read failure raises BeadsUnavailableError with its cause "
+        "intact on read/claim and reports UNAVAILABLE (not ERROR) per project, while "
+        "genuine absence on a healthy database still reports plain 'not found'",
+    )
+
+
 CHECKS = [
     ("capabilities", check_capabilities),
+    ("read.unavailable_not_absent", check_unavailable_not_absent),
     ("resolve.fenced", check_resolve_fenced),
     ("resolve.divergent_text_refused", check_resolve_divergent_text_refused),
     ("resolve.identical_text_idempotent", check_resolve_identical_text_idempotent),
