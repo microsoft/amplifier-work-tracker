@@ -1,0 +1,38 @@
+.venv/bin/python -m pytest ledger/checks -v
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- /home/bkrabach/dev/hw-model-performance/lanes/jyg-doctor-sweep-heartbeat/amplifier-work-tracker/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/bkrabach/dev/hw-model-performance/lanes/jyg-doctor-sweep-heartbeat/amplifier-work-tracker
+configfile: pyproject.toml
+plugins: anyio-4.15.0, asyncio-1.4.0, amplifier-core-1.6.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 26 items
+
+ledger/checks/test_custody_rows.py::test_row_ccv1_000 PASSED             [  3%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_003 PASSED             [  7%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_004 PASSED             [ 11%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_005 PASSED             [ 15%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_008 PASSED             [ 19%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_009 PASSED             [ 23%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_011 PASSED             [ 26%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_012 PASSED             [ 30%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_013 PASSED             [ 34%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_015 PASSED             [ 38%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_016 PASSED             [ 42%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_017 PASSED             [ 46%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_021 PASSED             [ 50%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_022 PASSED             [ 53%]
+ledger/checks/test_custody_rows.py::test_row_ccv1_023 PASSED             [ 57%]
+ledger/checks/test_ledger_integrity.py::test_rows_parse_as_a_top_level_list_with_the_sync_row_first PASSED [ 61%]
+ledger/checks/test_ledger_integrity.py::test_row_ids_are_well_formed_unique_and_ordered PASSED [ 65%]
+ledger/checks/test_ledger_integrity.py::test_every_row_has_a_legal_disposition_and_its_required_fields PASSED [ 69%]
+ledger/checks/test_ledger_integrity.py::test_every_row_quote_verifies_against_the_contract_bytes PASSED [ 73%]
+ledger/checks/test_ledger_integrity.py::test_every_clause_id_is_a_bare_identifier_the_contract_actually_names PASSED [ 76%]
+ledger/checks/test_ledger_integrity.py::test_every_core_clause_is_cited_by_at_least_one_row PASSED [ 80%]
+ledger/checks/test_ledger_integrity.py::test_every_assertion_ref_resolves PASSED [ 84%]
+ledger/checks/test_ledger_integrity.py::test_every_probe_belongs_to_a_row PASSED [ 88%]
+ledger/checks/test_ledger_integrity.py::test_every_probe_has_a_declared_mutation PASSED [ 92%]
+ledger/checks/test_ledger_integrity.py::test_the_mutation_harness_runs_and_every_mutation_flips_its_probe_red PASSED [ 96%]
+ledger/checks/test_ledger_integrity.py::test_indexed_cites_are_reserved_for_measured_rows PASSED [100%]
+
+============================== 26 passed in 0.60s ==============================
