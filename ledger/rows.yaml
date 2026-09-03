@@ -665,29 +665,68 @@
     single-row lane), left as named follow-up.
 
 - id: CCV1-023
-  title: Conformance Fixtures 2, 3 and 4 are not implemented-and-runnable
+  title: Conformance Fixtures 2, 3 and 4 exist as runnable discriminating pairs
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Freeze Bar
     quote: |
       All four Conformance fixtures implemented, passing, and executable via `make test`
-  disposition: GAP
-  work: work_item_pipeline-qmj
+  disposition: CONFORMS
   assertion:
-    kind: absence
+    kind: probe
     ref: test_row_ccv1_023
   notes: >
-    Fixture-by-fixture, against the contract's own named locations.
-    FIXTURE 1 (conflicted-but-landed close): the contract points at
-    tests/test_incident_b.py "(to be added)" -- STALE. The fixture exists
-    and passes at tests/integration/test_phantom_conflict_recovery.py
-    (measured 2026-09-01); only the pointer is wrong. FIXTURE 2
-    (post-reclaim close fence): points at tests/test_reap_recovery.py:67-72
-    -- no such path; the real file is in the modules suite, which runs in
-    nothing, and it asserts the TOOL-layer refusal (which passes via the
-    session latch) rather than the ADAPTER-layer gap CCV1-009 pins. FIXTURE
-    3 (in-process recovery): tests/test_recovery.py does not exist; the
-    adapter half is covered elsewhere (CCV1-010), the tool-seam half is in
-    the unrun suite. FIXTURE 4 (single-hold): does not exist in any suite;
-    `already holding` appears only at its own enforcement site. Blocked on
-    CCV1-022 for anything that must live in the modules suite.
+    Closed by work_item_pipeline-qmj. Was GAP: three of the four fixtures
+    were not implemented-and-runnable. Now, fixture by fixture. FIXTURE 1
+    (conflicted-but-landed close) already existed and still does, at
+    tests/integration/test_phantom_conflict_recovery.py -- untouched here,
+    only the contract's pointer at it was ever wrong. FIXTURES 2, 3 and 4
+    are new, in ONE file at the agent seam the contract writes them
+    against (work_resolve / work_status / work_claim, i.e.
+    `WorkTrackerSession`):
+    modules/tool-work-tracker/tests/test_conformance_fixtures.py -- 10
+    tests, each fixture carrying BOTH halves of its good/bad pair, no
+    xfail, no skip. Fixture 2: the stale holder's work_resolve after a real
+    `supervisor.reap_project(ttl_seconds=0)` sweep is refused AND the item
+    is still open afterwards (bad half), while a live holder's resolve and
+    PR #51's integrator close of the same reclaimed item both still succeed
+    (good halves). Fixture 3: a session wedged holding an item bd already
+    considers resolved clears its latch via work_release, gets the
+    sanctioned already_closed outcome, and claims again -- with the closed
+    item's ENTIRE record (dataclasses.asdict of a get_readonly, the
+    contention-free pure SELECT) asserted byte-identical across the
+    recovery call, which is what proves the Backlogged section's named
+    hazard ("work_release on a resolved item would reopen it") cannot
+    happen; plus work_status surfacing holding.custody_lost on the
+    retained-hold path and holding=None after a fenced reclaim the renew
+    loop already recovered from. Fixture 4: a second work_claim is refused
+    naming the held item in BOTH modes (directed and queue-mode), the
+    would-be second item is asserted untouched, and the constraint lifts
+    after either exit from a hold (resolve and release, pinned separately
+    -- they clear `self._held` at different sites). MEASURED 2026-09-02 on
+    this branch against real bd + the module suite's isolated dolt server:
+    10 passed in 70s. DISCRIMINATION MEASURED, not asserted -- each bad
+    half was run against a deliberately reverted implementation and FAILS
+    there while every good half stays green: reverting the post-reclaim
+    fence (adapter.resolve's `elif cust_holder == who and current.holder !=
+    who` branch) fails Fixture 2's bad half only; removing release()'s
+    pre-write `if current.status == "resolved"` guard fails Fixture 3's
+    byte-identical assertion; removing claim()'s `if self._held is not
+    None` gate fails both of Fixture 4's refusal tests. Runs in `make test`
+    and CI via the modules/tool-work-tracker/tests path CCV1-022 wired
+    (Makefile `test-module` + the all-tiers `test` target, ci.yml "Tier 5"),
+    so no new wiring was needed. CONTRACT DRIFT THIS ROW RECORDS AND DOES
+    NOT FIX: the contract's four "Test location" lines all name paths that
+    have never existed -- tests/test_incident_b.py, tests/test_reap_recovery.py:67-72,
+    tests/test_recovery.py, tests/test_single_hold.py. The real locations
+    are the two files named above. Correcting contracts/ is an amendment,
+    not a lane edit, so the probe pins the stale lines instead and this
+    note carries the correction. RESIDUAL, out of this row's scope: the
+    now-obsolete xfail(strict=True) on
+    modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim
+    was removed in the same commit -- it pinned CCV1-009's pre-fix gap, the
+    fence landed, and the strict marker was XPASSing and failing the suite
+    (exactly as CCV1-022's own notes predicted it would). CCV1-009's and
+    CCV1-022's notes still describe that xfail as present; neither row was
+    edited here.
+
