@@ -11,6 +11,35 @@ ENCODE gate 2026-09-01)
 
 ## 1. Rows by disposition
 
+**Re-reviewed 2026-09-03, after the DRAFT amendment** (owner-ratified,
+"ok, yes, proceed": struck all Current-state annotations, numbered
+Conformance 1-4 / Freeze 1-9, corrected the four Test-location lines --
+see the contract's own Changelog and CCV1-000's notes). This table is the
+CURRENT tally, computed from `rows.yaml` on this run; it supersedes §1a.
+
+| Disposition | Count | Rows |
+|---|---:|---|
+| CONFORMS | 22 | CCV1-000, -001, -002, -003, -004, -005, -006, -007, -008, -009, -010, -011, -012, -013, -014, -015, -016, -017, -020, -021, -022, -023 |
+| VIOLATION | 0 | — |
+| GAP | 0 | — |
+| NOT-ASSERTABLE | 2 | CCV1-018, -019 |
+| OPEN-PINNED | 0 | — |
+| EXCLUDED | 0 | — |
+
+Zero `VIOLATION` and zero `GAP` rows remain -- every red row the SEED filed
+(§1a) was fixed and flipped to `CONFORMS` across highway waves 1 and 2 (PR
+#68, PR #71), each with its probe retargeted at the fixed shape in the same
+change (`VIOLATION-MOVEMENT`, sec.11.1). This amendment's own full re-review
+(mandatory on the CCV1-000 hash change) re-verified every row's quote against
+the amended contract bytes, re-anchored none (none needed it -- see the
+amendment's own notes on CCV1-000), and retargeted the two rows that cited
+the contract's unnumbered `Freeze Bar` section to the bare numbered ids the
+amendment created (CCV1-022 -> `Freeze 5`, CCV1-023 -> `Freeze 3`). No row's
+disposition changed as a result of the amendment itself -- only the bytes
+each row reads moved, and the SYNC row's pinned hash moved with them.
+
+### 1a. SEED snapshot (2026-09-01) -- history, superseded by the table above
+
 | Disposition | Count | Rows |
 |---|---:|---|
 | CONFORMS | 12 | CCV1-000, -001, -002, -004, -006, -007, -010, -011, -014, -017, -020, -021 |
@@ -30,7 +59,26 @@ contract clause does not back.
 
 ## 2. SYNC status
 
-`CCV1-000` pins both governed files by content hash:
+**2026-09-03 rehash** (owner-ratified DRAFT amendment -- see the contract's own
+Changelog): `CCV1-000` now pins
+
+```
+contracts/custody-coordination.v1.md  ec4b736f8d6dca4ee3c29b6df8397a9d7b51d2eadd76965854e898924f529e1a
+docs/VISION.md                        b7547519a2b05432652c28c5c4201e669ea8a79ce8621d8615dacadb2f55da4c
+```
+
+`docs/VISION.md` was not touched -- its hash is unchanged. This mismatch
+triggered the **mandatory full-ledger re-review** every hash change requires
+(never a silent bump): every row's quote re-verified against the amended
+contract bytes (`pytest ledger/checks`, all green), zero rows needed
+re-anchoring (the amendment struck `**Current state:**` annotations and
+renumbered/renamed sections the quotes themselves never anchored into), and
+the two rows citing the contract's unnumbered `Freeze Bar` section were
+retargeted to the bare numbered ids the amendment created (CCV1-022 ->
+`Freeze 5`, CCV1-023 -> `Freeze 3`). See §1 for the re-reviewed disposition
+tally (unchanged: still 22 CONFORMS / 2 NOT-ASSERTABLE / 0 VIOLATION / 0 GAP).
+
+**SEED pin (2026-09-01), for history:**
 
 ```
 contracts/custody-coordination.v1.md  00e65ca7eada5c8699823ddd2a0fa12b1f9c6027376db53de2366d640b813672
@@ -373,6 +421,12 @@ discharged for the whole current pinning population (1 of 1).
 > snapshot (2026-09-01) and no longer matches `rows.yaml`. Rewriting it is a
 > reconcile run's job, not this lane's — flagged for the orchestrator.
 >
+> **DISCHARGED 2026-09-03** (mandatory full-ledger re-review triggered by the
+> owner-ratified DRAFT amendment, CCV1-000): §1 now carries the current tally
+> (22 CONFORMS / 2 NOT-ASSERTABLE / 0 VIOLATION / 0 GAP), re-reviewed and
+> re-computed from `rows.yaml`, with the SEED table kept below it as §1a
+> history rather than overwritten.
+>
 > **Residual 2 — a live `VIOLATION-MOVEMENT` event, unhandled:**
 > `modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim`
 > now fails `make test` with **`XPASS(strict)`**, its `xfail` reason still
@@ -385,6 +439,13 @@ discharged for the whole current pinning population (1 of 1).
 > and let the test assert the fence directly. Out of this lane's scope
 > (`modules/`), flagged for the orchestrator; it is the only `make test`
 > failure on this tree that is not on the known pre-existing list.
+>
+> **DISCHARGED** by highway wave 2 (PR #71, `ea233a7`, closing CCV1-023 /
+> `work_item_pipeline-qmj`): the marker was dropped and the test now asserts
+> the fence directly (see `test_reap_recovery.py`'s own docstring). This
+> amendment's re-review (2026-09-03) additionally corrected CCV1-009's and
+> CCV1-022's ledger notes, which still described that xfail as present after
+> PR #71 removed it — see those rows.
 
 ### 11.3 Mutation evidence (Ruling-1 condition 3)
 
@@ -418,10 +479,50 @@ counterfactual`, drops the count to `pinning mutations proven 0 / 1`, and
 exits 1. The harness can report a hole, so `proven 17 / 17` is a measurement
 rather than a self-report.
 
+**RE-MEASURED 2026-09-03** (mandatory full-ledger re-review, DRAFT amendment):
+
+```
+pinning mutations       proven 0 / 0
+pinning probes covered  proven 0 / 0
+conformance mutations   proven 15 / 15
+ALL mutations           proven 15 / 15
+UNPROVEN, named with reason: (none)
+```
+
+The denominator moved from 17 to 15, honestly: `CCV1-023`'s disposition had
+already flipped `GAP` -> `CONFORMS` by the time this amendment started (its
+three declared mutations, labelled `FIXED: ...`, were already being graded
+as **conformance** probes rather than pinning ones by `is_pinning()`, which
+keys off disposition -- the "1 pinning row remains" claim two paragraphs up
+was itself SEED-era and superseded before this amendment touched anything).
+The amendment's Part A corrected the contract's four stale Test-location
+lines for real, which made those three mutations un-appliable (`anchor
+occurs 0x`, `HarnessOutOfDate`) -- they modelled the drift getting fixed, and
+the drift is now actually fixed. Retired per Ruling-1's own logic (a CONFORMS
+probe is not a pinning probe) and replaced with ONE honest `REGRESSION`
+mutation on `CCV1-023` (a stale Test-location line returning), keeping
+`test_every_probe_has_a_declared_mutation` satisfied. Zero pinning rows/probes
+remain in the kit, consistent with §1's current tally.
+
 ---
 
 ## Changelog
 
+- **2026-09-03 — DRAFT amendment, mandatory full re-review.** Owner-ratified
+  ("ok, yes, proceed") three-part contract true-up: struck all
+  `**Current state:**` annotations (conformance status lives in the ledger
+  only), numbered Conformance 1-4 and Freeze 1-9 for bare-id citation, and
+  corrected the four stale Test-location lines. SYNC (CCV1-000) rehashed;
+  full re-review performed (never a silent bump): quotes re-verified (none
+  needed re-anchoring), CCV1-022/-023 retargeted from the unnumbered
+  `Freeze Bar` id to `Freeze 5`/`Freeze 3`, CCV1-023's probe flipped from a
+  drift-recording pin to a genuine conformance check (its stale-note
+  companions in CCV1-009/-022 corrected too), and the mutation harness's
+  three now-un-appliable `FIXED:` mutations retired for one honest
+  `REGRESSION` mutation (17/17 -> 15/15, denominator shrank honestly). §1
+  rewritten with the current tally (22 CONFORMS / 2 NOT-ASSERTABLE / 0
+  VIOLATION / 0 GAP), SEED table kept as §1a history. No row's disposition
+  changed. Discharges §11.2's Residual 1 and Residual 2.
 - **2026-09-02 — Ruling-1 conditions.** Pinning probes made auditable:
   `VIOLATION-MOVEMENT` flip direction defined locally (§11.1), pinning-row
   census recorded — zero `VIOLATION` rows remain, one `GAP` pin (§11.2) —
