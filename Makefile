@@ -1,4 +1,4 @@
-.PHONY: venv test test-unit test-integration test-cli test-ledger test-module check lint types doctor clean
+.PHONY: venv test test-unit test-integration test-cli test-ledger ledger-mutate test-module check lint types doctor clean
 
 PYTHON  ?= python3.12
 VENV    := .venv
@@ -39,6 +39,18 @@ test-cli:
 ## run, and a ledger that is not run is a remembered audit.
 test-ledger:
 	$(PYTEST) ledger/checks -v
+
+## The other half of the ledger's honesty. `test-ledger` proves the probes
+## PASS; it cannot prove any of them would notice if the world changed. This
+## runs every probe against a counterfactual repo -- for a pinning GAP/
+## VIOLATION row, the FIXED behaviour; for a green row, the known-wrong shape
+## it forbids -- and requires each to go RED. Injection only: nothing on disk
+## is edited, no product code runs, no subprocess. Prints `proven N / M` and
+## names every unproven mutation with its reason; exits non-zero if any hole
+## exists, because a harness that reports a hole and still exits 0 is a
+## harness nobody notices going hollow.
+ledger-mutate:
+	$(PY) -m ledger.checks.mutation_harness
 
 ## Tier 5 -- tool module: modules/tool-work-tracker's own suite, the only
 ## place the post-reclaim custody behaviour of the AGENT SEAM (work_claim /

@@ -45,6 +45,87 @@ DISPOSITIONS = {
 }
 ASSERTION_KINDS = {"probe", "indexed", "absence", "none"}
 
+#: Dispositions whose probe deliberately pins the CURRENT, KNOWN-WRONG shape
+#: (`LEDGER-FORMAT.md` sec.2 `assertion.kind: absence`, and this repo's reading
+#: of PROTOCOL.md sec.3.3 "drift is bidirectional"). A probe on one of these
+#: rows passing is NOT evidence of conformance -- see the row's disposition.
+PINNING_DISPOSITIONS = frozenset({"GAP", "VIOLATION"})
+
+# --------------------------------------------------------------- flip directions
+#
+# WHY a ledger check that used to pass now fails. `LEDGER-FORMAT.md` names
+# four directions; none of them covers the flip a *pinning* probe makes
+# possible, so this repo defines a fifth LOCALLY and reports it as a format
+# deviation (reconcile-report.md sec.11) -- data for `ledger-format.v1`, not a
+# silent local dialect.
+FLIP_REGRESSION = "REGRESSION"
+FLIP_UN_DIVERGENCE = "UN-DIVERGENCE"
+FLIP_UNDECIDED_MOVEMENT = "UNDECIDED-MOVEMENT"
+FLIP_LEDGER_INTEGRITY = "LEDGER-INTEGRITY"
+
+#: LOCAL EXTENSION -- not in `LEDGER-FORMAT.md`.
+FLIP_VIOLATION_MOVEMENT = "VIOLATION-MOVEMENT"
+
+FLIP_DIRECTIONS: dict[str, str] = {
+    FLIP_REGRESSION: (
+        "a CONFORMS row went red: the repo moved AWAY from the contract. "
+        "Action: fix the repo, or amend the contract."
+    ),
+    FLIP_UN_DIVERGENCE: (
+        "a DIVERGED row went red: an external contract's owner adopted our "
+        "position. Action: retire the divergence."
+    ),
+    FLIP_UNDECIDED_MOVEMENT: (
+        "an OPEN-PINNED row went red: the pinned undecided surface moved "
+        "before the decision was taken. Action: take the decision."
+    ),
+    FLIP_LEDGER_INTEGRITY: (
+        "the ledger stopped describing the contract it claims to describe "
+        "(SYNC hash mismatch, quote drift, dangling assertion ref). Action: "
+        "MANDATORY full-ledger re-review -- never a silent hash bump."
+    ),
+    FLIP_VIOLATION_MOVEMENT: (
+        "a pinning GAP/VIOLATION probe went red because the behaviour moved "
+        "TOWARD the contract -- a silent fix, which this ledger refuses to let "
+        "pass unrecorded. Action: update the row to CONFORMS and retarget the "
+        "probe at the fixed shape IN THE SAME CHANGE. A passing pin is not "
+        "conformance; only the retargeted probe is."
+    ),
+}
+
+#: Directions this repo added on top of `LEDGER-FORMAT.md`'s four.
+LOCAL_FLIP_DIRECTIONS = frozenset({FLIP_VIOLATION_MOVEMENT})
+
+
+def is_pinning(r: dict[str, Any]) -> bool:
+    """True when this row's assertion pins the currently-wrong shape.
+
+    The distinction the ruling turns on: a probe here passing means the drift
+    is still exactly where the ledger says it is -- never that the clause
+    conforms.
+    """
+    return r["disposition"] in PINNING_DISPOSITIONS and r["assertion"]["kind"] in {
+        "probe",
+        "absence",
+    }
+
+
+def expected_flip_direction(r: dict[str, Any]) -> str:
+    """The direction to read into THIS row's check going red.
+
+    One row, one direction -- so a red ledger names its own meaning instead
+    of leaving the reader to guess whether a fix or a regression landed.
+    """
+    if r["id"].endswith("-000"):
+        return FLIP_LEDGER_INTEGRITY
+    if is_pinning(r):
+        return FLIP_VIOLATION_MOVEMENT
+    if r["disposition"] == "DIVERGED":
+        return FLIP_UN_DIVERGENCE
+    if r["disposition"] == "OPEN-PINNED":
+        return FLIP_UNDECIDED_MOVEMENT
+    return FLIP_REGRESSION
+
 
 def collapse(text: str) -> str:
     """Collapse every whitespace run to a single space.
