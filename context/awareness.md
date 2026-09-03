@@ -73,21 +73,35 @@ Seven things here fail **silently** if you get them wrong — no error, no undo:
    path that cannot itself conflict) to see its real current state, then
    decide whether the original operation still needs doing.
 
-7. **A published resolution is corrected by `work_reopen`, never by
+7. **A published resolution is corrected one of TWO sanctioned ways — pick
+   by whether the RECORD is wrong or the WORK is wrong — never by
    re-resolving.** `work_resolve` against an item that is ALREADY resolved
    is a no-op success **only when the text you send is byte-for-byte what
    is already stored** (the legitimate retry case — the payload says
    `"idempotent": true`). Sending *different* text now **fails non-zero and
    writes nothing**, showing you the stored text and yours side by side.
    Before this, that call exited 0 and echoed the OLD text back as if your
-   correction had landed, and seven wrong resolutions shipped that way. To
-   actually correct the record: `work_reopen(project, item_id, reason)` →
-   `work_claim` → `work_resolve` with the corrected text. Reopening is
-   deliberately explicit, and deliberately NOT idempotent (reopening an
-   already-open item is an error): it clears `closed_at`, so the item
-   re-lands on the correction date and every throughput roll-up moves by
-   one item. That cost is shown to you (`closed_at_cleared`,
-   `previous_closed_at`) rather than hidden.
+   correction had landed, and seven wrong resolutions shipped that way.
+   - **The record is wrong, but the work stands** (a typo, a wrong claim,
+     something you noticed in the same run): `work_erratum(project,
+     item_id, actor, text)`. APPEND-ONLY — it never rewrites `resolution`,
+     never touches `status`/`closed_at`/the holder, and needs no claim at
+     all (any actor, any time). A byte-identical erratum already recorded
+     is an idempotent no-op (`already_recorded: true`). The corrected
+     item's `errata` list and `corrected: true` flag travel with it
+     everywhere the resolution is shown (`work_list`, the CLI, the web
+     dashboard).
+   - **The work itself must be redone**: `work_reopen(project, item_id,
+     reason)` → `work_claim` → `work_resolve` with the corrected text.
+     Reopening is deliberately explicit, and deliberately NOT idempotent
+     (reopening an already-open item is an error): it clears `closed_at`,
+     so the item re-lands on the correction date and every throughput
+     roll-up moves by one item. That cost is shown to you
+     (`closed_at_cleared`, `previous_closed_at`) rather than hidden.
+
+   Use `work_erratum` first if you are only fixing what the record SAYS;
+   reach for `work_reopen` only when the underlying work is genuinely
+   incomplete or wrong.
 
 ## Where to go next
 

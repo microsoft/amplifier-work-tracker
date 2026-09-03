@@ -8,6 +8,16 @@ as agent-callable tools, backed directly by `amplifier_work_tracker.adapter`
 This module contains no Beads knowledge of its own and shells out to nothing --
 all domain logic lives in the `amplifier_work_tracker` package it imports.
 
+`work_erratum` and `work_reopen` are the TWO sanctioned ways to correct a
+RESOLVED item's record, and they are not interchangeable: `work_erratum`
+is for "the RECORD is wrong, but the work stands" -- it APPENDS a
+correction (never rewrites `resolution`), touches no lifecycle field
+(status/closed_at/holder), and needs no claim at all. `work_reopen` is
+for "the WORK itself must be redone" -- it returns the item to the queue
+and clears `closed_at` (a real throughput cost, reported rather than
+hidden). Reach for `work_erratum` first; only use `work_reopen` when the
+underlying work is genuinely incomplete or wrong.
+
 `work_subscribe`/`work_unsubscribe`/`work_subscriptions` (amplifier-bxq) let a
 session opt a project's status IN to (or out of) a compact, cadence-gated
 reminder injected into its context by the separate `hooks-work-subscribe-
@@ -629,6 +639,35 @@ class WorkTrackerSession:
                 "the item is back in the ready queue -- claim it before correcting it, "
                 "or another agent may claim it first"
             )
+        return ToolResult(success=True, output=out)
+
+    async def erratum(self, project: str, item_id: str, text: str) -> ToolResult:
+        """Append an ERRATUM to a RESOLVED item's own record: the record is
+        wrong, but the work itself stands. The opposite case -- the WORK
+        must be redone -- is `reopen`, not this.
+
+        No held item required -- like `edit`/`move`/`defer`, this never
+        touches `self._held`/`self._lock` at all, and never claims
+        anything: any actor, at any time, may append one. See
+        `adapter.Beads.erratum` for the full precondition/idempotency
+        contract (it refuses loudly on a missing item, an item that is
+        not resolved -- naming `edit` as the remedy -- or empty text; a
+        byte-identical erratum already recorded is a no-op success).
+        """
+        bd = self._project(project)
+        try:
+            outcome = bd.erratum(item_id, actor=self._actor, text=text)
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        out: dict[str, Any] = {
+            "id": outcome.item.id,
+            "corrected": outcome.item.corrected,
+            "errata": [{"at": e.at, "by": e.by, "text": e.text} for e in outcome.item.errata],
+        }
+        if outcome.already_recorded:
+            # Only ever present on the idempotent path -- same convention
+            # `resolve`/`reopen`'s own outcome flags use.
+            out["already_recorded"] = True
         return ToolResult(success=True, output=out)
 
     async def status(self) -> ToolResult:
@@ -1358,6 +1397,53 @@ class WorkReopenTool:
         )
 
 
+class WorkErratumTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_erratum"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Append an APPEND-ONLY erratum to a RESOLVED item's own record -- for when the "
+            "RECORD is wrong (a typo, a wrong claim you noticed) but the WORK itself stands. "
+            "Never rewrites 'resolution', never touches status/closed_at/the holder, and "
+            "requires no claim at all -- any actor, any time. Use work_reopen instead when "
+            "the underlying WORK must be redone (that clears closed_at and re-lands the item "
+            "in the queue; this never does). Refuses loudly on a missing item, an item that "
+            "is not resolved (naming work_edit as the remedy for an OPEN item's wrong "
+            "content), or empty text. A byte-identical erratum already recorded by any actor "
+            "is an idempotent no-op ('already_recorded': true, nothing written). The "
+            "resulting 'errata' list and 'corrected' flag travel with the item everywhere its "
+            "resolution is shown (work_list, the CLI, the web dashboard)."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project the item lives in."},
+                "item_id": {
+                    "type": "string",
+                    "description": "Item id to append an erratum to. Must currently be resolved.",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "What's actually wrong about the stored resolution.",
+                },
+            },
+            "required": ["project", "item_id", "text"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.erratum(input["project"], input["item_id"], input["text"])
+
+
 class WorkReleaseTool:
     def __init__(self, session: WorkTrackerSession):
         self._session = session
@@ -2037,6 +2123,7 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
         WorkDeclareTool(session),
         WorkResolveTool(session),
         WorkReopenTool(session),
+        WorkErratumTool(session),
         WorkReleaseTool(session),
         WorkStatusTool(session),
         WorkStatsTool(session),

@@ -1043,7 +1043,174 @@ def _list_rows_via_sql(db: str, *, where_sql: str | None, limit: int) -> list[It
             if d.get(optional_text_field) == "":
                 del d[optional_text_field]
         items.append(Item.from_beads(d))
+    # `corrected` -- ONE aggregated GROUP BY for the whole call, same shape
+    # as the labels join two lines above (unscoped by `where_sql`/`limit`,
+    # joined in Python by id) -- never a per-row query and never the
+    # erratum TEXT itself (that stays off this path entirely; see
+    # `_corrected_counts_via_sql`'s own docstring). `errata` is left at its
+    # dataclass default (`[]`) here on purpose -- see `Item.errata`'s note
+    # on why a many-row listing carries the cheap flag but not the list.
+    if items:
+        corrected_counts = _corrected_counts_via_sql(db)
+        for it in items:
+            it.corrected = corrected_counts.get(it.id, 0) > 0
     return items
+
+
+# ---------------------------------------------------------------- errata
+#
+# An ERRATUM is an APPEND-ONLY correction to a RESOLVED item's own record --
+# "the stored resolution text is wrong, but the work itself stands" -- never
+# a rewrite of `resolution` (that would defeat the whole point: a reader
+# could no longer trust a resolution's text to be what was actually written
+# at close time). See `Beads.erratum` for the full write-side contract; the
+# helpers below are the shared wire format + read-only SQL path both
+# `Beads.erratum` (its own verify predicate) and every full item read
+# (`_get_item_via_sql`, `Beads.get(with_links=True)`) use to surface it.
+#
+# Storage: reuses bd's own append-only COMMENT channel (`bd comment <id>
+# "<text>"` -- the SAME mechanism `edit_item`'s audit trail already writes
+# through), not a Beads schema change or a second storage location. Read
+# back over the contention-free `_dolt_sql*` path against the `comments`
+# table directly (verified schema: `id` char(36), `issue_id`, `author`
+# varchar(255) NOT NULL, `text` longtext NOT NULL, `created_at` datetime) --
+# never `bd comments <id> --json`, which (like `bd show`/`bd list`) is a
+# read+WRITE transaction and can lose a serialization conflict.
+
+ERRATUM_TAG = "ERRATUM"
+_ERRATUM_PREFIX = f"{ERRATUM_TAG} "
+
+
+def _erratum_now_iso() -> str:
+    """This call's own UTC timestamp, in the one wire format every erratum
+    carries -- `custody.now_iso()`'s exact format (`%Y-%m-%dT%H:%M:%SZ`),
+    reused rather than re-invented so the codebase has ONE "UTC timestamp,
+    no microseconds, no ambiguity" shape, not two. Deliberately NOT the
+    comment's own `comments.created_at` column: that is dolt's server
+    clock -- a real value, but not one this call controls the same way --
+    and a caller-stamped `at` keeps the printed/parsed shape independent
+    of that detail.
+    """
+    return C.now_iso()
+
+
+def _format_erratum_comment(at: str, actor: str, text: str) -> str:
+    """The exact wire shape an erratum is written as: one bd COMMENT,
+    `ERRATUM <at> <actor>: <text>`. See `_parse_erratum_comment` for the
+    read side and why the actor/text boundary is resolved from the
+    comment's own `author` column, not from this string alone.
+    """
+    return f"{_ERRATUM_PREFIX}{at} {actor}: {text}"
+
+
+def _parse_erratum_comment(author: str, text: str) -> Erratum | None:
+    """Parse ONE bd comment row (`author`, `text`) as an `Erratum`, or
+    `None` if `text` is not an erratum written by `_format_erratum_comment`
+    -- a plain `comment()` call, `edit_item`'s "X edited: ..." audit note,
+    `reopen`'s archived-resolution note are all real bd comments, never
+    errata.
+
+    `author` is bd's own attribution column (populated at write time from
+    `--actor`/`BEADS_ACTOR`, the SAME identity `activity()`'s comment feed
+    already reads off it) -- used here as the AUTHORITATIVE actor value to
+    resolve the actor/text boundary in `text`, rather than a naive split
+    on the first ": " (which would mis-split an actor whose own identity
+    happens to contain a colon or a space -- a measured requirement, not a
+    hypothetical). The timestamp token (the first whitespace-delimited
+    word after the `ERRATUM ` tag) is assumed space-free -- true of
+    `_erratum_now_iso`'s own ISO-8601 format, so a hand-written comment
+    that merely starts with `ERRATUM <token> ...` for a DIFFERENT author
+    still correctly fails to parse: the `<author>: ` prefix check below
+    will not match.
+    """
+    if not text.startswith(_ERRATUM_PREFIX):
+        return None
+    rest = text[len(_ERRATUM_PREFIX) :]
+    at, sep, tail = rest.partition(" ")
+    if not sep or not at:
+        return None
+    lead = f"{author}: "
+    if not tail.startswith(lead):
+        return None
+    return Erratum(at=at, by=author, text=tail[len(lead) :])
+
+
+def _errata_via_sql(db: str, item_id: str) -> list[Erratum]:
+    """Every ERRATUM comment on `item_id`, oldest -> newest, read straight
+    off the shared dolt server over a READ-ONLY SQL SELECT against the
+    `comments` table -- the same contention-free discipline
+    `_get_item_via_sql` uses for the base item (see its docstring): `bd
+    comments <id> --json` (the path `activity()` uses) is a read+WRITE
+    transaction like `bd show`/`bd list`, so it CAN lose a serialization
+    conflict; a pure SELECT here cannot, at any contention level.
+
+    Ordered by the comment's own `created_at`/`id` (a uuid7, itself
+    time-ordered) -- real bd-assigned insertion order, never a re-sort by
+    each erratum's own embedded `at` (which is caller-supplied and, in a
+    pathological case such as a corrected clock, need not match insertion
+    order).
+
+    `text LIKE 'ERRATUM %'` narrows the SELECT to plausible erratum rows
+    before they ever reach `_parse_erratum_comment`; a row that still
+    fails to parse there is silently excluded -- it is simply not an
+    erratum, not a malformed one worth surfacing.
+
+    Free-text `text` (can contain commas/newlines) goes over
+    `_dolt_sql_json`, never CSV -- the same discipline `_list_rows_via_sql`
+    already applies to every other free-text column.
+    """
+    p = _dolt_sql_json(
+        "SELECT `author`, `text` FROM "
+        f"`{db}`.`comments` WHERE `issue_id` = '{_sql_literal(item_id)}' "
+        f"AND `text` LIKE '{_ERRATUM_PREFIX}%' "
+        "ORDER BY `created_at` ASC, `id` ASC"
+    )
+    if p.returncode != 0:
+        raise _sql_failure(
+            f"could not read errata of {item_id!r} over SQL: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}",
+            p,
+        )
+    try:
+        rows = json.loads(p.stdout or "{}").get("rows", [])
+    except json.JSONDecodeError as e:
+        raise BeadsError(f"could not parse errata of {item_id!r} over SQL: {e}") from e
+    out: list[Erratum] = []
+    for rec in rows:
+        parsed = _parse_erratum_comment(str(rec.get("author") or ""), str(rec.get("text") or ""))
+        if parsed is not None:
+            out.append(parsed)
+    return out
+
+
+def _corrected_counts_via_sql(db: str) -> dict[str, int]:
+    """Every item id in `db` carrying at least one ERRATUM comment, mapped
+    to its erratum COUNT -- one aggregated round trip for the WHOLE
+    project, read the same way `_list_rows_via_sql`'s own labels join
+    already is (`_dolt_sql`, CSV, unscoped by the caller's WHERE/LIMIT,
+    joined in Python by id afterward). This is what keeps a many-row
+    `list()`/`list_bounded()` listing's `corrected` flag cheap: one small
+    GROUP BY per call, never a per-row query and never the erratum TEXT
+    itself (ids and counts are short scalars, safe for the CSV path --
+    same reasoning `_summary_items_via_sql`'s own column projection note
+    gives for staying off free text).
+    """
+    p = _dolt_sql(
+        f"SELECT `issue_id`, COUNT(*) AS `n` FROM `{db}`.`comments` "
+        f"WHERE `text` LIKE '{_ERRATUM_PREFIX}%' GROUP BY `issue_id`"
+    )
+    if p.returncode != 0:
+        raise _sql_failure(
+            f"could not read erratum counts of database {db!r} over SQL: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}",
+            p,
+        )
+    counts: dict[str, int] = {}
+    for row in csv.reader((p.stdout or "").splitlines()[1:]):  # drop CSV header
+        if len(row) < 2:
+            continue
+        counts[row[0]] = int(row[1])
+    return counts
 
 
 def _get_item_via_sql(db: str, item_id: str) -> Item | None:
@@ -1089,7 +1256,17 @@ def _get_item_via_sql(db: str, item_id: str) -> Item | None:
     validation, so it is escaped rather than assumed safe.
     """
     rows = _list_rows_via_sql(db, where_sql=f"`issues`.`id` = '{_sql_literal(item_id)}'", limit=1)
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    it = rows[0]
+    # A single-item read can afford the full erratum TEXT, not merely a
+    # count -- see `_errata_via_sql`. `.corrected` is recomputed here
+    # directly from the full list (rather than trusting the cheap
+    # aggregate `_list_rows_via_sql` already set above), so the two can
+    # never disagree for this one item.
+    it.errata = _errata_via_sql(db, item_id)
+    it.corrected = bool(it.errata)
+    return it
 
 
 def _ids_via_sql(db: str, where_sql: str) -> set[str]:
@@ -1822,6 +1999,22 @@ def parse_bootstrap_metadata(description: str | None) -> dict:
     return {key: _parse_yaml_list_key(body, key) for key in _BOOTSTRAP_KEYS}
 
 
+@dataclass(frozen=True)
+class Erratum:
+    """One APPEND-ONLY correction recorded against a resolved item's own
+    record -- never a rewrite of `Item.resolution` itself. `at` is this
+    erratum's own UTC timestamp (`_erratum_now_iso`'s format,
+    `%Y-%m-%dT%H:%M:%SZ` -- the same shape `custody.now_iso()` uses), `by`
+    the actor who recorded it (bd's own comment `author` column, read back
+    as authoritative -- see `_parse_erratum_comment`), `text` the
+    correction body. See `Beads.erratum` for the full write-side contract.
+    """
+
+    at: str
+    by: str
+    text: str
+
+
 @dataclass
 class Item:
     """One unit of work or one user report, in OUR vocabulary."""
@@ -1845,6 +2038,17 @@ class Item:
     updated_at: datetime | None = None
     closed_at: datetime | None = None
     created_by: str | None = None
+    # Append-only corrections to `resolution` -- see `Erratum`/`Beads.erratum`.
+    # `errata` is populated FULLY only by a single-item read (`_get_item_via_sql`,
+    # `Beads.get(with_links=True)`); a many-row `list()`/`list_bounded()` listing
+    # leaves it `[]` (see `_list_rows_via_sql`'s docstring) and populates only
+    # the cheap, aggregate-derived `corrected` flag below. `corrected` is
+    # therefore NOT always exactly `bool(errata)` -- on a lean list row it is
+    # True/False from the aggregate count with `errata` left empty; on a full
+    # single-item read it is recomputed as `bool(errata)` directly, so the two
+    # can never disagree for that one item.
+    errata: list[Erratum] = field(default_factory=list)
+    corrected: bool = False
     raw: dict = field(default_factory=dict, repr=False)
 
     @classmethod
@@ -1907,6 +2111,10 @@ class Item:
             "status": self.status,
             "holder": self.holder,
             "resolution": self.resolution,
+            # Cheap on every row (a boolean, never the erratum TEXT) -- see
+            # `Item.errata`'s own note on why a lean listing carries this
+            # flag but not the errata list itself.
+            "corrected": self.corrected,
         }
         if full:
             row["acceptance"] = self.acceptance
@@ -1921,6 +2129,10 @@ class Item:
             row["updated_at"] = self.updated_at.isoformat() if self.updated_at else None
             row["closed_at"] = self.closed_at.isoformat() if self.closed_at else None
             row["created_by"] = self.created_by
+            # Full errata -- oldest -> newest, exactly `Beads.erratum`'s
+            # append order -- only on a directed single-item read (see
+            # `Item.errata`'s own note; a lean list row never carries this).
+            row["errata"] = [{"at": e.at, "by": e.by, "text": e.text} for e in self.errata]
         return row
 
 
@@ -2828,6 +3040,20 @@ class ReopenOutcome:
     actor: str
 
 
+@dataclass(frozen=True)
+class ErratumOutcome:
+    """Result of `Beads.erratum` -- the item as it stands after the append
+    (its `errata`/`corrected` reflect the write, or the prior state on the
+    idempotent path), plus whether this call actually WROTE a new erratum
+    or found a byte-identical one already recorded by any actor (mirrors
+    `ResolveOutcome.idempotent`'s own same-text rule, applied to errata
+    rather than the resolution field itself).
+    """
+
+    item: Item
+    already_recorded: bool = False
+
+
 class Beads:
     """A handle on one Beads project. Construct via Workspace.project()."""
 
@@ -3556,6 +3782,12 @@ class Beads:
         if not isinstance(d, dict):
             raise BeadsError(f"show {item_id} returned no object")
         it = Item.from_beads(d)
+        # `bd show`'s own JSON carries no errata field at all -- read them
+        # the same read-only SQL way `_get_item_via_sql` does for its own
+        # branch, so a `with_links=True` read (this branch) never disagrees
+        # with a `with_links=False` one about whether an item is corrected.
+        it.errata = _errata_via_sql(self.project_name, item_id)
+        it.corrected = bool(it.errata)
 
         def _link(x: dict, direction: str) -> dict:
             raw_status = x.get("status")
@@ -4188,6 +4420,83 @@ class Beads:
             reopen_reason=reason,
             actor=who,
         )
+
+    def erratum(self, item_id: str, *, actor: str, text: str) -> ErratumOutcome:
+        """Append an ERRATUM to a RESOLVED item's own record: the record is
+        wrong, but the work itself stands. The opposite case -- the WORK
+        must be redone -- is `reopen`, not this. Unlike every other
+        lifecycle verb here, `erratum` never touches `status`, `closed_at`,
+        `resolution`, or the holder, and requires no claim at all: any
+        actor, at any time, may append one. See the module's `Erratum` /
+        `_format_erratum_comment` for the storage shape (one append-only
+        bd COMMENT), reusing the SAME channel `edit_item`'s audit trail
+        already writes through -- no Beads schema change.
+
+        FOUR distinct, loud preconditions, checked in this order -- never
+        one generic refusal standing in for all of them:
+
+          1. `actor` must be non-empty (this verb has no `self._actor`
+             fallback the way `comment`/`edit_item` do -- an erratum's
+             attribution is never left to guesswork).
+          2. `item_id` must exist -- surfaced via `self.get`'s own error
+             ("no issues found matching the provided IDs").
+          3. The item must be RESOLVED. An OPEN item's wrong record is a
+             content edit, not a correction to a PUBLISHED fact -- the
+             error names `edit`/`work_edit` as the remedy instead.
+          4. `text` must be non-empty after stripping.
+
+        Then the idempotency rule: a BYTE-IDENTICAL erratum (same text,
+        after the same CRLF/outer-whitespace normalization `resolve`'s own
+        same-text rule already uses) already recorded by ANY actor is an
+        idempotent no-op SUCCESS (`already_recorded=True`, nothing
+        written) -- mirrors `resolve_outcome`'s own same-text rule,
+        applied to errata rather than to the resolution field.
+
+        VERIFIED BY READ-BACK (`_verified_write`) on BOTH paths, like every
+        other item-level write verb here (ledger row CCV1-015). The
+        predicate is COUNT-based -- an ERRATUM comment matching THIS
+        actor+text now exists -- the same discipline `comment()`'s own
+        verify uses, and for the same reason: two errata with identical
+        text from the SAME actor is a real, legitimate case (a second,
+        unrelated resolution later turns out wrong the same way), so "a
+        matching erratum exists" by itself cannot prove THIS call's write
+        landed.
+        """
+        who = (actor or "").strip()
+        if not who:
+            raise BeadsError(f"erratum {item_id}: --actor is required and must not be empty")
+        cur = self.get(item_id)  # existence check -- raises "not found" if missing
+        if cur.status != "resolved":
+            raise BeadsError(
+                f"refusing to add an erratum to {item_id}: status is {cur.status!r}, not "
+                f"'resolved' -- a correction to an OPEN item's record is a content edit, "
+                f"not an erratum. Use `edit`/`work_edit` instead."
+            )
+        if not (text or "").strip():
+            raise BeadsError(f"erratum {item_id}: text is required and must not be empty")
+
+        norm_text = _norm_resolution(text)  # same generic CRLF/whitespace rule `resolve` uses
+        for existing in cur.errata:
+            if _norm_resolution(existing.text) == norm_text:
+                return ErratumOutcome(item=cur, already_recorded=True)
+
+        at = _erratum_now_iso()
+        formatted = _format_erratum_comment(at, who, text)
+
+        def _matching() -> int:
+            return sum(
+                1
+                for e in _errata_via_sql(self.project_name, item_id)
+                if e.by == who and _norm_resolution(e.text) == norm_text
+            )
+
+        before = _matching()
+        self._verified_write(
+            lambda: self._run(["comment", item_id, formatted], actor=who),
+            lambda: _matching() > before,
+            what=f"erratum {item_id}",
+        )
+        return ErratumOutcome(item=self.get(item_id), already_recorded=False)
 
     def _read_back_or_none(self, item_id: str) -> Item | None:
         """Contention-free read-back (see `get`'s docstring -- never `bd

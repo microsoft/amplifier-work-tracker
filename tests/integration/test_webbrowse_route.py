@@ -129,3 +129,31 @@ def test_l1_and_l2_reflect_status_transitions_live(browse_env, unique_actor):
     resolved_html = client.get(f"/projects/{name}/items/{item_id}").text
     assert "done and dusted" in resolved_html
     assert "Resolution" in resolved_html
+
+
+def test_l1_and_l2_show_the_corrected_badge_and_errata_block_after_an_erratum(
+    browse_env, unique_actor
+):
+    """The resolution TEXT renders unchanged; an erratum is an ADDITIONAL,
+    clearly-marked block -- never a rewrite of what was actually published.
+    Both L1 (list row) and L2 (detail) surfaces must show the correction."""
+    name, bd, client = browse_env
+    item_id = bd.create("Erratum probe item", tags=[A.LANE_WORK])
+    bd.claim_item(item_id, actor=unique_actor)
+    bd.resolve(item_id, "the original published verdict", actor=unique_actor)
+
+    # Before the erratum: neither surface claims the item is corrected.
+    l1_before = client.get(f"/projects/{name}").text
+    assert "corrected" not in l1_before
+
+    bd.erratum(item_id, actor="corrector", text="the underlying data was mislabeled")
+
+    l1_after = client.get(f"/projects/{name}").text
+    assert "corrected" in l1_after
+
+    l2_html = client.get(f"/projects/{name}/items/{item_id}").text
+    assert "the original published verdict" in l2_html  # resolution unchanged
+    assert "Errata" in l2_html
+    assert "corrector" in l2_html
+    assert "the underlying data was mislabeled" in l2_html
+    assert "corrected" in l2_html

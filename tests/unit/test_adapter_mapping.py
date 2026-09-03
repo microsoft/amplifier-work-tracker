@@ -687,9 +687,12 @@ def _full_item() -> A.Item:
 
 
 def test_summary_default_is_lean_and_omits_body_fields():
-    """The default (list) shape -- unchanged from before this feature --
-    must never carry acceptance/description/design at all, not even as
-    null keys, so a bulk listing payload stays small by construction."""
+    """The default (list) shape must never carry acceptance/description/
+    design at all, not even as null keys, so a bulk listing payload stays
+    small by construction. `corrected` is the one addition to this lean
+    shape (a cheap boolean, never the erratum TEXT/list) -- see
+    `Item.errata`'s own docstring note on why a lean row carries the flag
+    but not the list."""
     row = _full_item().summary()
     assert row == {
         "id": "proj-abc1",
@@ -697,10 +700,12 @@ def test_summary_default_is_lean_and_omits_body_fields():
         "status": "held",
         "holder": "someone",
         "resolution": "fixed it",
+        "corrected": False,
     }
     assert "acceptance" not in row
     assert "description" not in row
     assert "design" not in row
+    assert "errata" not in row
 
 
 def test_summary_full_adds_the_same_body_fields_claim_returns():

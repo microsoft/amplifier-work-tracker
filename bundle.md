@@ -51,6 +51,7 @@ this table whenever that module's tools change.
 | Tool | `work_declare` | Report `working` / `awaiting_human` for the held item |
 | Tool | `work_resolve` | Fenced close of the currently held item -- refuses (writing nothing) if the item is already closed with DIFFERENT text |
 | Tool | `work_reopen` | Return a resolved item to the queue so its published resolution can be corrected; archives the previous record first |
+| Tool | `work_erratum` | Append an append-only correction to a resolved item's record when the record is wrong but the work stands -- never rewrites `resolution`, needs no claim |
 | Tool | `work_status` | Read-only: projects, queue depths, what this session holds |
 | Tool | `work_file` | File newly discovered work, linked `discovered-from` the held item |
 | Tool | `work_add` | File a new engineering-lane item directly, no held item required -- the sanctioned way to seed a project's FIRST item(s) |
