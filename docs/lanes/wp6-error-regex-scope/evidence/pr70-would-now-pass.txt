@@ -1,0 +1,57 @@
+=== WOULD PR #70 NOW PASS? ===
+
+Source of truth: a REAL `doctor --quick` run from PR #70's own head,
+not a synthetic fixture.
+  worktree : /tmp/wp6-pr70 (git worktree of origin/pr-70)
+  head     : 20557bc5bde2f3983615f30494234bf71510dba1
+  install  : its own uv venv, `uv pip install -e '.[dev,web]'`
+  command  : .venv/bin/python -m amplifier_work_tracker.cli doctor --quick
+  exit code: 0   (run against the REAL workspace root, so `sweeps.alive`
+             passes -- i.e. the healthy-CI condition, NOT the local
+             jyg-masked one where doctor exits 1)
+  stdout   : 35 rows, 4032 bytes;  tail: All 35 assumptions hold. Safe to run parallel agents.
+  stderr   : "project 'contract1788424171165atomic': healing an abandoned creation attempt (lock /tmp/awtcontract_vnsevrfc/projects/co"
+
+The assumption row PR #70 adds, verbatim from that run:
+"  [PASS] read.unavailable_not_absent         an infrastructure read failure raises BeadsUnavailableError with its cause intact on read/claim and reports UNAVAILABLE (not ERROR) per project, while genuine absence on a healthy database still reports plain 'not found'"
+
+PARENT predicate  r'\berror\b'  (tests/_util.py @ ea233a7):
+    MATCH
+    matched 'ERROR' at offset 302 of combined stdout+stderr
+    context: ...its cause intact on read/claim and reports UNAVAILABLE (not ERROR) per project, while genuine absence on a healthy database s...
+    => assert_no_silent_failure raises on exit 0
+    => test_doctor_quick_succeeds_against_the_real_installed_bd FAILS
+    => THIS IS THE CI FAILURE THAT BLOCKS #70, reproduced locally.
+
+THIS BRANCH's predicate (announcement shapes):
+    no announcement found
+    => assert_no_silent_failure(exit 0) does NOT raise
+
+VERDICT: on PR #70's real doctor output, the silent-failure check PASSES.
+
+What this does and does not prove
+---------------------------------
+DOES: the wp6 defect is gone from #70's actual output. The exact bytes
+      that tripped CI no longer trip the check.
+DOES NOT: re-run #70's CI. Nobody in this lane merged anything.
+DOES NOT: touch model_performance-jyg. On a machine whose sweep
+      heartbeats live outside the isolated test root -- including this
+      one -- that same test still dies EARLIER, at
+      `assert result.returncode == 0`, because `sweeps.alive` FAILs and
+      doctor exits 1. jyg is separately filed and separately owned. The
+      run above deliberately used the real root to get past it.
+
+One transient, reported rather than dropped
+-------------------------------------------
+The FIRST pr-70 run (evidence/pr70-doctor-quick.run1-transient.stderr.txt)
+printed, on stderr, while still exiting 0:
+    project 'contract...rm': bd init hit a dirty schema migration --
+      dropping and retrying once: [mysql] ... busy buffer
+    Error: failed to open Dolt store: failed to initialize schema: ...
+i.e. `doctor` HEALED a bd failure and succeeded, but bd's own `Error:`
+announcement leaked to stderr underneath it. Both the old predicate AND
+this branch's flag that -- correctly, by the letter of the invariant:
+an error was announced and the exit code was 0. It did not reproduce on
+the second run (clean stderr). It is NOT caused by #70's description and
+is NOT what blocks #70. It is a real, separate observation about healed-
+but-still-announced errors, filed rather than absorbed.

@@ -1,0 +1,102 @@
+=== ATTEMPT (FAILED) to reach the tier-3 doctor test's silent-failure check locally ===
+
+Hypothesis: run_cli does env.setdefault("AMPLIFIER_WORK_TRACKER_ROOT", ...),
+so exporting the REAL root (/home/bkrabach/.amplifier-work-tracker) would let
+the subprocess see this machine's live reap/notify heartbeats, sweeps.alive
+would PASS, doctor would exit 0, and the test would finally REACH
+assert_no_silent_failure -- the line wp6 is about.
+
+RESULT: hypothesis is WRONG, and the reason matters.
+tests/conftest.py:308 does mp.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(root))
+at session scope, so os.environ ALREADY carries the isolated tmp root by the
+time setdefault runs. An exported value cannot win. sweeps.alive still FAILs
+(see the captured run below), doctor still exits 1, and the test still dies at
+the earlier `assert result.returncode == 0`.
+
+CONSEQUENCE, stated plainly: on any machine whose sweep heartbeats live
+outside the isolated test root, this tier-3 test CANNOT reach the
+silent-failure check at all, and no environment variable fixes that from
+outside. That is model_performance-jyg, and it is exactly why the wp6 defect
+was invisible locally and only surfaced in CI.
+
+It is also why this lane's regression test is TIER 1: a tier-1 test of the
+predicate itself needs no bd, no dolt, and no healthy sweeps, so it cannot be
+masked this way. The end-to-end evidence for #70 was instead obtained by
+running doctor --quick directly, outside pytest, against the real root
+(see pr70-would-now-pass.txt).
+
+--------------------------- the captured run ---------------------------
+=== tier-3 doctor test, THIS BRANCH, in an environment where doctor exits 0 ===
+
+The run_cli fixture uses env.setdefault("AMPLIFIER_WORK_TRACKER_ROOT", ...),
+so exporting the REAL root makes the subprocess see this machine's live reap/
+notify heartbeats -- i.e. sweeps.alive PASSES and doctor exits 0. That is the
+healthy-CI condition, and the only condition under which the wp6 defect is
+reachable at all (see jyg-preexisting.txt).
+
+command: AMPLIFIER_WORK_TRACKER_ROOT=/home/bkrabach/.amplifier-work-tracker \
+  .venv/bin/python -m pytest -m cli tests/cli/test_cli_surface.py::test_doctor_quick_succeeds_against_the_real_installed_bd -q
+
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_doctor_quick_succeeds_against_the_real_installed_bd ___________
+
+run_cli = <function run_cli.<locals>._run at 0xfdfac5791080>
+
+    def test_doctor_quick_succeeds_against_the_real_installed_bd(run_cli):
+        result = run_cli(["doctor", "--quick"])
+>       assert result.returncode == 0, result.stdout + result.stderr
+E       AssertionError:   [PASS] version                             bd 1.1.2
+E           [PASS] capabilities                        all required bd commands present
+E           [PASS] resolve.fenced                      stale holder refused, as required
+E           [PASS] resolve.divergent_text_refused      resolving a closed item with different text refuses and writes nothing
+E           [PASS] resolve.identical_text_idempotent   re-sending identical resolution text is an idempotent success
+E           [PASS] reopen.reopens                      a resolved item reopens unassigned and is directly claimable again
+E           [PASS] reopen.clears_closed_at             reopen clears closed_at (the documented, surfaced accounting cost)
+E           [PASS] reopen.close_reason_disposition     reopen clears close_reason (measured), and the wrapper's archive comment preserves the previous resolution regardless
+E           [PASS] reopen.emits_event                  bd records a `reopened` events row, attributed
+E           [PASS] release.reopens_unresolved          release reopens a held item with no resolution, and it is re-claimable
+E           [PASS] claim.subcommand                    --claim present, rejects --assignee as expected
+E           [PASS] claim.atomic                        skipped (--quick); run full doctor before trusting parallel agents
+E           [PASS] claim.directed_atomic               skipped (--quick); run full doctor before trusting parallel agents
+E           [PASS] link.nonblocking                    discovered-from is non-blocking
+E           [PASS] list.includes_closed                all-flag required and working
+E           [PASS] list.status_filter_includes_closed  an explicit --status filter shows closed items without --all
+E           [PASS] show.dependents                     reverse link visible (1 links)
+E           [PASS] read.no_mutation                    repeated reads (including not-found/wrong-project misses) leave status, holder, and metadata unchanged
+E           [PASS] resolution.readable                 resolution text round-trips
+E           [PASS] timestamps.readable                 created_at/updated_at/closed_at all round-trip as real datetimes
+E           [PASS] metadata.roundtrip                  arbitrary JSON metadata round-trips
+E           [PASS] project.name_rules                  dotted names appear usable now; validator may be relaxed
+E           [PASS] custody.fresh_survives              a fresh renewal survives regardless of total hold duration
+E           [PASS] custody.stale_reclaimed             stale custody is reclaimed: custody stale -- last seen 3600s ago (ttl 900s)
+E           [PASS] custody.idle_not_exempt             awaiting_human with stale custody is still reclaimed: custody stale -- last seen 3600s ago (ttl 900s)
+E           [PASS] custody.fenced                      old holder's renew and resolve are both refused after takeover
+E           [PASS] project.removal                     remove() drops both the directory and database; re-create afterward is genuinely empty
+E           [PASS] project.create_atomic               an abandoned creation lock (dead pid) is healed automatically and create() completes fresh in the same call; path=/tmp/awtcontract_prepwr67/projects/contract1788426046199atomic
+E           [PASS] project.creation_state_reporting    creation_state distinguishes none/creating/abandoned correctly
+E           [PASS] service.installed                   installed and active (unit: /home/bkrabach/.config/systemd/user/amplifier-work-tracker.service)
+E           [PASS] systemd.user_bus_reachable          systemctl --user show-environment succeeded
+E           [PASS] dolt.reachable                      dolt sql-server responds on 127.0.0.1:35975
+E           [FAIL] sweeps.alive                        no heartbeat ever recorded for the reap sweep loop -- it may never have started, or the heartbeat file was removed; restart the service (`amplifier-work-tracker service restart`); no heartbeat ever recorded for the notify sweep loop -- it may never have started, or the heartbeat file was removed; restart the service (`amplifier-work-tracker service restart`)
+E           [PASS] service.restart_policy              installed unit has Restart=always -- survives a clean/unintended exit
+E         
+E         1 assumption(s) VIOLATED. Beads has changed underneath us.
+E         Fix scope: amplifier_work_tracker/adapter.py only -- nothing above the seam encodes Beads behaviour.
+E         project 'contract1788426046199atomic': healing an abandoned creation attempt (lock /tmp/awtcontract_prepwr67/projects/contract1788426046199atomic/.create.lock named a dead pid) before retrying
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/bkrabach/dev/hw-model-performance/lanes/wp6-error-regex-scope/amplifier-work-tracker/.ve...(lock /tmp/awtcontract_prepwr67/projects/contract1788426046199atomic/.create.lock named a dead pid) before retrying\n").returncode
+
+tests/cli/test_cli_surface.py:831: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Starting server with Config HP="127.0.0.1:35975"|T="28800000"|R="false"|L="info"
+---------------------------- Captured stderr setup -----------------------------
+----------------------------- Captured stdout call -----------------------------
+
+
+----------------------------- Captured stderr call -----------------------------
+--------------------------- Captured stderr teardown ---------------------------
+=========================== short test summary info ============================
+FAILED tests/cli/test_cli_surface.py::test_doctor_quick_succeeds_against_the_real_installed_bd
+1 failed in 45.99s
