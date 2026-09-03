@@ -1,0 +1,7 @@
+### make test-unit
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /home/bkrabach/dev/hw-model-performance/lanes/jyg-doctor-sweep-heartbeat/amplifier-work-tracker/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 912 passed, 2 warnings in 45.24s =======================
