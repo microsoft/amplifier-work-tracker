@@ -1,0 +1,211 @@
+FF...FFFFFFFF                                                            [100%]
+=================================== FAILURES ===================================
+__________ test_a_healed_dirty_migration_leaves_no_error_announcement __________
+
+scripted = <function scripted.<locals>._make at 0xea4f3e65d3a0>
+caplog = <_pytest.logging.LogCaptureFixture object at 0xea4f3e83acf0>
+
+    def test_a_healed_dirty_migration_leaves_no_error_announcement(scripted, caplog):
+        """The reproduction, and the fix, in one test.
+    
+        Against the parent commit this FAILS at the `error_announcement`
+        assertion with `shape=error-colon matched='Error:'` -- the recorded leak,
+        on demand.
+        """
+        caplog.set_level(logging.WARNING, logger="amplifier_work_tracker.adapter")
+        ws, run = scripted((1, OBSERVED_BD_BLOB), (0, ""))
+    
+        path = ws.create(PROJECT)
+    
+        # The heal actually happened -- otherwise this test proves nothing about
+        # the heal path.
+        assert run.init_calls == 2, f"expected a retry after the dirty migration, got {run.calls}"
+        assert path.name == PROJECT
+    
+        stderr = _stderr_of(caplog)
+    
+        # 1. The recovery stays VISIBLE. Going quiet would also pass the check
+        #    below, and would be the wrong fix.
+        assert "dropping and retrying once" in stderr
+        assert "dirty schema migration" in stderr
+    
+        # 2. bd's detail survives, so the line is still diagnostic.
+        assert "busy buffer" in stderr
+        assert "failed to open Dolt store" in stderr
+    
+        # 3. ... but it no longer ANNOUNCES. This is the whole item.
+>       assert _util.error_announcement(stderr) is None, (
+            "a handled, recovered condition republished an error announcement: "
+            f"{_util.error_announcement(stderr)!r} in {stderr!r}"
+        )
+E       AssertionError: a handled, recovered condition republished an error announcement: ('error-colon', 'Error:') in "project 'kxkheal': bd init hit a dirty schema migration -- dropping and retrying once: [mysql] 2026/09/03 01:25:03 connection.go:214 busy buffer\nError: failed to open Dolt store: failed to initialize schema: schema migration: pending schema migrations alter pre-existing dirty tables: comments, compaction_snapshots, dependencies, events, issue_snapshots, labels; run 'bd dolt commit' to"
+E       assert ('error-colon', 'Error:') is None
+E        +  where ('error-colon', 'Error:') = <function error_announcement at 0xea4f3e63d940>("project 'kxkheal': bd init hit a dirty schema migration -- dropping and retrying once: [mysql] 2026/09/03 01:25:03 co...g dirty tables: comments, compaction_snapshots, dependencies, events, issue_snapshots, labels; run 'bd dolt commit' to")
+E        +    where <function error_announcement at 0xea4f3e63d940> = _util.error_announcement
+
+tests/unit/test_handled_output_is_not_an_announcement.py:184: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Starting server with Config HP="127.0.0.1:36673"|T="28800000"|R="false"|L="info"
+---------------------------- Captured stderr setup -----------------------------
+time="2026-09-03T04:20:50-07:00" level=info msg="Creating root@localhost superuser"
+time="2026-09-03T04:20:50-07:00" level=info msg="Server ready. Accepting connections."
+time="2026-09-03T04:20:50-07:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-09-03T04:20:50-07:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-09-03T04:20:50-07:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-09-03T04:20:50-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-09-03T04:20:50-07:00" level=info msg=ConnectionClosed connectionID=1
+----------------------------- Captured stderr call -----------------------------
+time="2026-09-03T04:20:50-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-09-03T04:20:50-07:00" level=info msg=ConnectionClosed connectionID=2
+------------------------------ Captured log call -------------------------------
+WARNING  amplifier_work_tracker.adapter:adapter.py:4794 project 'kxkheal': bd init hit a dirty schema migration -- dropping and retrying once: [mysql] 2026/09/03 01:25:03 connection.go:214 busy buffer
+Error: failed to open Dolt store: failed to initialize schema: schema migration: pending schema migrations alter pre-existing dirty tables: comments, compaction_snapshots, dependencies, events, issue_snapshots, labels; run 'bd dolt commit' to
+___________________ test_the_healed_warning_is_a_single_line ___________________
+
+scripted = <function scripted.<locals>._make at 0xea4f3e63ea20>
+caplog = <_pytest.logging.LogCaptureFixture object at 0xea4f3e83c0e0>
+
+    def test_the_healed_warning_is_a_single_line(scripted, caplog):
+        """A quoted multi-line blob is half the illusion: it puts bd's `Error:`
+        at the START of a line of our stderr, which is where a reader (and a
+        log scraper) reads it as ours. One record, one line."""
+        caplog.set_level(logging.WARNING, logger="amplifier_work_tracker.adapter")
+        ws, _ = scripted((1, OBSERVED_BD_BLOB), (0, ""))
+        ws.create(PROJECT)
+    
+        heal_lines = [r.getMessage() for r in caplog.records if "dirty schema migration" in r.getMessage()]
+        assert len(heal_lines) == 1
+>       assert "\n" not in heal_lines[0]
+E       assert '\n' not in "project 'kx...t commit' to"
+E         
+E         '\n' is contained here:
+E           usy buffer
+E           Error: failed to open Dolt store: failed to initialize schema: schema migration: pending schema migrations alter pre-existing dirty tables: comments, compaction_snapshots, dependencies, events, issue_snapshots, labels; run 'bd dolt commit' to
+
+tests/unit/test_handled_output_is_not_an_announcement.py:206: AssertionError
+----------------------------- Captured stderr call -----------------------------
+time="2026-09-03T04:20:50-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-09-03T04:20:50-07:00" level=info msg=ConnectionClosed connectionID=3
+------------------------------ Captured log call -------------------------------
+WARNING  amplifier_work_tracker.adapter:adapter.py:4794 project 'kxkheal': bd init hit a dirty schema migration -- dropping and retrying once: [mysql] 2026/09/03 01:25:03 connection.go:214 busy buffer
+Error: failed to open Dolt store: failed to initialize schema: schema migration: pending schema migrations alter pre-existing dirty tables: comments, compaction_snapshots, dependencies, events, issue_snapshots, labels; run 'bd dolt commit' to
+__________ test_quote_handled_output_defuses_every_shape[error-colon] __________
+
+shape = 'error-colon'
+
+    @pytest.mark.parametrize("shape", sorted(SHAPE_SAMPLES))
+    def test_quote_handled_output_defuses_every_shape(shape):
+        sample = SHAPE_SAMPLES[shape]
+        # The sample really is an announcement before the treatment -- otherwise
+        # this test could pass against a function that does nothing at all.
+        assert _util.error_announcement(sample) is not None, shape
+>       quoted = A._quote_handled_output(sample)
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_quote_handled_output'
+
+tests/unit/test_handled_output_is_not_an_announcement.py:298: AttributeError
+_________ test_quote_handled_output_defuses_every_shape[error-running] _________
+
+shape = 'error-running'
+
+    @pytest.mark.parametrize("shape", sorted(SHAPE_SAMPLES))
+    def test_quote_handled_output_defuses_every_shape(shape):
+        sample = SHAPE_SAMPLES[shape]
+        # The sample really is an announcement before the treatment -- otherwise
+        # this test could pass against a function that does nothing at all.
+        assert _util.error_announcement(sample) is not None, shape
+>       quoted = A._quote_handled_output(sample)
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_quote_handled_output'
+
+tests/unit/test_handled_output_is_not_an_announcement.py:298: AttributeError
+_______ test_quote_handled_output_defuses_every_shape[json-error-field] ________
+
+shape = 'json-error-field'
+
+    @pytest.mark.parametrize("shape", sorted(SHAPE_SAMPLES))
+    def test_quote_handled_output_defuses_every_shape(shape):
+        sample = SHAPE_SAMPLES[shape]
+        # The sample really is an announcement before the treatment -- otherwise
+        # this test could pass against a function that does nothing at all.
+        assert _util.error_announcement(sample) is not None, shape
+>       quoted = A._quote_handled_output(sample)
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_quote_handled_output'
+
+tests/unit/test_handled_output_is_not_an_announcement.py:298: AttributeError
+_______ test_quote_handled_output_defuses_every_shape[python-traceback] ________
+
+shape = 'python-traceback'
+
+    @pytest.mark.parametrize("shape", sorted(SHAPE_SAMPLES))
+    def test_quote_handled_output_defuses_every_shape(shape):
+        sample = SHAPE_SAMPLES[shape]
+        # The sample really is an announcement before the treatment -- otherwise
+        # this test could pass against a function that does nothing at all.
+        assert _util.error_announcement(sample) is not None, shape
+>       quoted = A._quote_handled_output(sample)
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_quote_handled_output'
+
+tests/unit/test_handled_output_is_not_an_announcement.py:298: AttributeError
+________ test_quote_handled_output_defuses_every_shape[unknown-command] ________
+
+shape = 'unknown-command'
+
+    @pytest.mark.parametrize("shape", sorted(SHAPE_SAMPLES))
+    def test_quote_handled_output_defuses_every_shape(shape):
+        sample = SHAPE_SAMPLES[shape]
+        # The sample really is an announcement before the treatment -- otherwise
+        # this test could pass against a function that does nothing at all.
+        assert _util.error_announcement(sample) is not None, shape
+>       quoted = A._quote_handled_output(sample)
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_quote_handled_output'
+
+tests/unit/test_handled_output_is_not_an_announcement.py:298: AttributeError
+_____________ test_quote_handled_output_keeps_the_detail_readable ______________
+
+    def test_quote_handled_output_keeps_the_detail_readable():
+        """Defusing is not redacting. The words a human would grep for survive."""
+>       quoted = A._quote_handled_output(OBSERVED_BD_BLOB)
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_quote_handled_output'
+
+tests/unit/test_handled_output_is_not_an_announcement.py:304: AttributeError
+_______ test_quote_handled_output_reports_emptiness_rather_than_nothing ________
+
+    def test_quote_handled_output_reports_emptiness_rather_than_nothing():
+>       assert A._quote_handled_output("") == "(bd reported no detail)"
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_quote_handled_output'
+
+tests/unit/test_handled_output_is_not_an_announcement.py:313: AttributeError
+____________ test_quote_handled_output_truncates_at_a_word_boundary ____________
+
+    def test_quote_handled_output_truncates_at_a_word_boundary():
+        """The old `[:300]` slice cut mid-sentence ("run 'bd dolt commit' to"),
+        which is exactly the fragment problem `truncate_status` already solved."""
+>       quoted = A._quote_handled_output("word " * 200)
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_quote_handled_output'
+
+tests/unit/test_handled_output_is_not_an_announcement.py:321: AttributeError
+--------------------------- Captured stderr teardown ---------------------------
+time="2026-09-03T04:20:51-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=6
+time="2026-09-03T04:20:51-07:00" level=info msg=ConnectionClosed connectionID=6
+time="2026-09-03T04:20:51-07:00" level=info msg="Server closing listener. No longer accepting connections."
+time="2026-09-03T04:20:51-07:00" level=info msg="stats stopped: context canceled"
+=========================== short test summary info ============================
+FAILED tests/unit/test_handled_output_is_not_an_announcement.py::test_a_healed_dirty_migration_leaves_no_error_announcement
+FAILED tests/unit/test_handled_output_is_not_an_announcement.py::test_the_healed_warning_is_a_single_line
+FAILED tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_defuses_every_shape[error-colon]
+FAILED tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_defuses_every_shape[error-running]
+FAILED tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_defuses_every_shape[json-error-field]
+FAILED tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_defuses_every_shape[python-traceback]
+FAILED tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_defuses_every_shape[unknown-command]
+FAILED tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_keeps_the_detail_readable
+FAILED tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_reports_emptiness_rather_than_nothing
+FAILED tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_truncates_at_a_word_boundary
+10 failed, 3 passed in 0.27s
+exit=1
