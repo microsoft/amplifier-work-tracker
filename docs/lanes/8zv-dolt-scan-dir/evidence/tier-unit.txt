@@ -1,0 +1,24 @@
+### make test-unit (tests/unit)
+........................................................................ [  8%]
+........................................................................ [ 17%]
+........................................................................ [ 26%]
+........................................................................ [ 35%]
+........................................................................ [ 44%]
+........................................................................ [ 53%]
+........................................................................ [ 62%]
+........................................................................ [ 71%]
+........................................................................ [ 80%]
+........................................................................ [ 88%]
+........................................................................ [ 97%]
+..................                                                       [100%]
+=============================== warnings summary ===============================
+tests/unit/test_webapp_setup.py:29
+  /home/bkrabach/dev/hw-model-performance/lanes/8zv-dolt-scan-dir/amplifier-work-tracker/tests/unit/test_webapp_setup.py:29: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient  # noqa: E402
+
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /home/bkrabach/dev/hw-model-performance/lanes/8zv-dolt-scan-dir/amplifier-work-tracker/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+810 passed, 2 warnings in 42.62s

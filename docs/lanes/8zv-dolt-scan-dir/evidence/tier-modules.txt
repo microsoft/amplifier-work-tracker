@@ -1,0 +1,26 @@
+### modules/tool-work-tracker/tests (NOT in root testpaths; separate package)
+time="2026-09-02T23:02:43-07:00" level=warning msg="error running query" connectTime="2026-09-02 23:02:43.955050565 -0700 PDT m=+12.575233939" connectionDb=reapproj58d3725f1c connectionID=148 error="table not found: schema_migrations" queryTime="2026-09-02 23:02:43.956241985 -0700 PDT m=+12.576425343"
+time="2026-09-02T23:02:43-07:00" level=warning msg="error running query" connectTime="2026-09-02 23:02:43.956689615 -0700 PDT m=+12.576873005" connectionDb=reapproj58d3725f1c connectionID=149 error="table not found: schema_migrations" queryTime="2026-09-02 23:02:43.957590395 -0700 PDT m=+12.577773753"
+time="2026-09-02T23:02:43-07:00" level=warning msg="error running query" connectTime="2026-09-02 23:02:43.956689615 -0700 PDT m=+12.576873005" connectionDb=reapproj58d3725f1c connectionID=149 error="table not found: schema_migrations" queryTime="2026-09-02 23:02:43.959183653 -0700 PDT m=+12.579367027"
+time="2026-09-02T23:02:43-07:00" level=warning msg="error running query" connectTime="2026-09-02 23:02:43.956689615 -0700 PDT m=+12.576873005" connectionDb=reapproj58d3725f1c connectionID=149 error="table not found: schema_migrations" queryTime="2026-09-02 23:02:43.960855982 -0700 PDT m=+12.581039340"
+time="2026-09-02T23:02:45-07:00" level=warning msg="error running query" connectTime="2026-09-02 23:02:43.956689615 -0700 PDT m=+12.576873005" connectionDb=reapproj58d3725f1c connectionID=149 error="table not found: ignored_schema_migrations" queryTime="2026-09-02 23:02:45.52065395 -0700 PDT m=+14.140837308"
+----------------------------- Captured stdout call -----------------------------
+
+----------------------------- Captured stderr call -----------------------------
+time="2026-09-02T23:02:46-07:00" level=warning msg="error running query" connectTime="2026-09-02 23:02:46.842046777 -0700 PDT m=+15.462230151" connectionDb=reapproj58d3725f1c connectionID=165 error="backup 'backup_export' not found" queryTime="2026-09-02 23:02:46.930393999 -0700 PDT m=+15.550577341"
+------------------------------ Captured log call -------------------------------
+ERROR    amplifier_work_tracker.webpush:webpush.py:435 ntfy alarm unexpected failure for reclaimed reapproj58d3725f1c-00q: asyncio.run() cannot be called from a running event loop
+--------------------------- Captured stderr teardown ---------------------------
+=============================== warnings summary ===============================
+modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim
+modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_declare_refusal_after_reap_clears_held_and_allows_new_claim
+modules/tool-work-tracker/tests/test_reap_recovery.py::test_background_renew_loop_detects_reap_and_clears_held_state
+  /home/bkrabach/dev/hw-model-performance/lanes/8zv-dolt-scan-dir/amplifier-work-tracker/.venv/lib/python3.12/site-packages/_pytest/stash.py:108: RuntimeWarning: coroutine 'alarm_for_reclaimed_item' was never awaited
+    del self._storage[key]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim
+1 failed, 100 passed, 3 warnings in 313.32s (0:05:13)
