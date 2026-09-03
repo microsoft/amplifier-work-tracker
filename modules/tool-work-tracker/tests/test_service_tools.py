@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import shutil
 import stat
+import subprocess
 from dataclasses import dataclass
 
 import pytest
@@ -287,3 +288,195 @@ async def test_install_tool_refuses_running_unmanaged_without_advising_to_kill_i
     output = str(result.output).lower()
     assert "works as-is" in output or "already healthy" in output
     assert "just to install" not in output or "do not stop it just to install" in output
+
+
+# ---------------------------------------------------------------------------
+# running_systemd_unreachable -- a genuinely-managed unit must never be
+# reported as `running_unmanaged` just because THIS process couldn't query
+# systemd --user (see service.py's `_systemd_user_env`). The literal
+# first-time-setup bug this closes: a peer's `work_tracker_status` reported
+# a real, systemd-managed, active unit as `running_unmanaged` purely because
+# this process's own environment (spawned outside a login session) lacked a
+# reachable session bus.
+# ---------------------------------------------------------------------------
+
+
+def test_classify_state_reports_running_systemd_unreachable_not_running_unmanaged(
+    tmp_path, monkeypatch
+):
+    _bypass_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        S,
+        "describe_service",
+        lambda: _FakeServiceInfo(
+            installed=True,
+            active=None,
+            detail="installed, but active/inactive could not be determined -- XDG_RUNTIME_DIR ...",
+        ),
+    )
+    monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: True)
+
+    state, fix = classify_state(tmp_path / "root")
+
+    assert state == "running_systemd_unreachable"
+    assert state != "running_unmanaged"
+    assert "stop" not in fix.lower() or "do not stop" in fix.lower()
+
+
+def test_classify_state_reports_installed_not_running_when_systemd_unreachable_and_port_down(
+    tmp_path, monkeypatch
+):
+    """Same bus-unreachable `active=None`, but no dolt server answering
+    either -- this is honestly `installed_not_running` (with an explanation),
+    never `running_systemd_unreachable` (which claims a server IS
+    reachable)."""
+    _bypass_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        S, "describe_service", lambda: _FakeServiceInfo(installed=True, active=None)
+    )
+    monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: False)
+
+    state, fix = classify_state(tmp_path / "root")
+
+    assert state == "installed_not_running"
+    assert "XDG_RUNTIME_DIR" in fix
+
+
+def test_classify_state_never_reachable_unknown_state_when_never_installed(tmp_path, monkeypatch):
+    """Regression guard for the existing `running_unmanaged` behaviour:
+    `installed=False` also carries `active=None` by convention (see
+    `ServiceInfo`), and must NOT be caught by the new
+    `running_systemd_unreachable` branch -- only `installed=True` with
+    `active=None` means "couldn't query systemd."""
+    _bypass_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        S, "describe_service", lambda: _FakeServiceInfo(installed=False, active=None)
+    )
+    monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: True)
+
+    state, _fix = classify_state(tmp_path / "root")
+
+    assert state == "running_unmanaged"
+
+
+@pytest.mark.asyncio
+async def test_install_tool_refuses_running_systemd_unreachable_without_advising_to_kill_it(
+    tmp_path, monkeypatch
+):
+    _bypass_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        S, "describe_service", lambda: _FakeServiceInfo(installed=True, active=None)
+    )
+    monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: True)
+    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(tmp_path / "root"))
+
+    tool = WorkTrackerInstallTool(config=None)
+    result = await tool.execute({})
+
+    assert result.success is False
+    output = str(result.output).lower()
+    assert "not installing" in output
+    assert "stop" not in output or "do not stop" in output
+
+
+# ---------------------------------------------------------------------------
+# work_tracker_install's diagnosis of a REAL systemctl failure -- the other
+# half of the measured bug. A `subprocess.CalledProcessError` carrying a
+# bus-connection stderr must be diagnosed via `diagnose_systemd_failure`
+# (naming XDG_RUNTIME_DIR), never the old generic "systemd/launchd itself
+# isn't functioning here" text.
+# ---------------------------------------------------------------------------
+
+
+def _bus_unreachable_called_process_error(rollback_detail: str | None = None):
+    err = subprocess.CalledProcessError(
+        1,
+        ["systemctl", "--user", "daemon-reload"],
+        output="",
+        stderr="Failed to connect to bus: No medium found\n",
+    )
+    if rollback_detail is not None:
+        err.rollback_detail = rollback_detail  # type: ignore[attr-defined]
+    return err
+
+
+@pytest.mark.asyncio
+async def test_install_tool_diagnoses_bus_unreachable_instead_of_generic_systemd_message(
+    tmp_path, monkeypatch
+):
+    _bypass_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        S, "describe_service", lambda: _FakeServiceInfo(installed=False, active=None)
+    )
+    monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: False)
+
+    def fake_service_install(root):
+        raise _bus_unreachable_called_process_error(
+            "disable: ok; remove unit file: ok; daemon-reload: ok"
+        )
+
+    monkeypatch.setattr(S, "service_install", fake_service_install)
+    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(tmp_path / "root"))
+
+    tool = WorkTrackerInstallTool(config=None)
+    result = await tool.execute({})
+
+    assert result.success is False
+    output = str(result.output)
+    assert "XDG_RUNTIME_DIR" in output
+    # The old misdiagnosis, measured on a peer's machine -- must be gone.
+    assert "isn't functioning here" not in output
+    assert "does not appear to use systemd" not in output
+
+
+@pytest.mark.asyncio
+async def test_install_tool_still_admits_unknown_rollback_for_called_process_error(
+    tmp_path, monkeypatch
+):
+    """Same `rollback_detail`-honesty contract as the generic-exception path
+    (see `test_install_tool_admits_unknown_rollback_when_no_detail_was_observed`),
+    now proven for the new `CalledProcessError` branch too."""
+    _bypass_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        S, "describe_service", lambda: _FakeServiceInfo(installed=False, active=None)
+    )
+    monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: False)
+
+    def fake_service_install(root):
+        raise _bus_unreachable_called_process_error(None)
+
+    monkeypatch.setattr(S, "service_install", fake_service_install)
+    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(tmp_path / "root"))
+
+    tool = WorkTrackerInstallTool(config=None)
+    result = await tool.execute({})
+
+    assert result.success is False
+    assert "unknown" in str(result.output).lower()
+
+
+@pytest.mark.asyncio
+async def test_install_tool_reports_not_the_init_system_when_marker_absent(tmp_path, monkeypatch):
+    """A `CalledProcessError` whose stderr matches NEITHER known pattern, on
+    a host genuinely without `/run/systemd/system` -- the ONLY case
+    reserved for "does not appear to use systemd" now."""
+    _bypass_prereqs(monkeypatch)
+    monkeypatch.setattr(
+        S, "describe_service", lambda: _FakeServiceInfo(installed=False, active=None)
+    )
+    monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: False)
+    monkeypatch.setattr(S, "_systemd_is_init_system", lambda: False)
+
+    def fake_service_install(root):
+        raise subprocess.CalledProcessError(
+            1, ["systemctl", "--user", "daemon-reload"], output="", stderr="some other error\n"
+        )
+
+    monkeypatch.setattr(S, "service_install", fake_service_install)
+    monkeypatch.setenv("AMPLIFIER_WORK_TRACKER_ROOT", str(tmp_path / "root"))
+
+    tool = WorkTrackerInstallTool(config=None)
+    result = await tool.execute({})
+
+    assert result.success is False
+    assert "does not appear to use systemd" in str(result.output)

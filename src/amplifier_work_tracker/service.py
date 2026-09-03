@@ -67,6 +67,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from xml.sax.saxutils import escape as _xml_escape
 
 SERVICE_NAME = "amplifier-work-tracker"
@@ -588,6 +589,154 @@ def _systemd_unit_content(
     return _SYSTEMD_UNIT_TEMPLATE.format(exec_start=exec_start, safe_path=safe_path)
 
 
+# ---------------------------------------------------------------------------
+# systemd --user session-bus self-heal
+#
+# Measured first-time-setup bug: a peer's `work_tracker_install` failed with
+# `Failed to connect to bus: No medium found` and the tool concluded "system
+# does not appear to use systemd." False -- systemd --user was running fine
+# and the account was lingering. The real cause: Amplifier sessions spawned
+# OUTSIDE a login session (tmux, ssh, an agent spawn) inherit no
+# `XDG_RUNTIME_DIR`, so `systemctl --user` has no way to locate the session
+# bus socket at `/run/user/<uid>/bus`. Setting `XDG_RUNTIME_DIR=/run/user/
+# $(id -u)` made the CLI's own `service install` work immediately -- this
+# section self-heals exactly that gap for every systemctl invocation this
+# module makes, and `diagnose_systemd_failure` below gives the RIGHT
+# explanation on the (rarer) occasions self-heal itself cannot fix it.
+#
+# Second symptom, same root cause: `work_tracker_status`/`service status`
+# reported a genuinely-managed unit as `running_unmanaged` because the
+# `is-active` probe (see `_systemd_describe`) could not reach systemd either
+# and was read as "confirmed inactive" instead of "genuinely unknown."
+# ---------------------------------------------------------------------------
+
+# Overridable in tests -- the real, hardcoded systemd/pam convention for a
+# user's XDG runtime directory (`/run/user/<uid>`). Never anything but this
+# path outside tests.
+_RUN_USER_BASE_DIR: Path = Path("/run/user")
+
+# Overridable in tests -- the real, hardcoded marker systemd itself uses to
+# say "I am PID 1 / the running init system" (see systemd's own
+# `sd_booted(3)`). Never anything but this path outside tests.
+_SYSTEMD_INIT_MARKER: Path = Path("/run/systemd/system")
+
+
+def _candidate_runtime_dir() -> Path:
+    return _RUN_USER_BASE_DIR / str(os.getuid())
+
+
+def _systemd_is_init_system() -> bool:
+    """True if this system is actually booted with systemd as its init
+    system (`/run/systemd/system` exists -- the same marker systemd's own
+    `sd_booted(3)` uses). `systemctl` can be on PATH without this being true
+    (e.g. a stub/shim binary, or a container image that carries systemd's
+    client tools without ever running as PID 1) -- see
+    `diagnose_systemd_failure`, which reserves "this system does not appear
+    to use systemd" for exactly that case, never for a session-bus-only
+    gap.
+    """
+    return _SYSTEMD_INIT_MARKER.is_dir()
+
+
+def _systemd_user_env() -> tuple[dict[str, str], str | None]:
+    """Environment for every `systemctl --user` subprocess call, self-healing
+    the two variables it needs to locate the session bus when a process was
+    spawned OUTSIDE a login session (tmux, ssh, an agent spawn) and therefore
+    never inherited them from a real login/PAM session.
+
+    Never overrides a value already present in `os.environ` -- an operator
+    or supervisor that already set these deliberately is always trusted over
+    our own guess.
+
+    Returns `(env, note)`. `note` is a short human-readable description of
+    what was injected (for `service install`/`service status` output to
+    say, e.g., "session bus located via /run/user/<uid>"), or `None` when
+    nothing needed to change -- either the ambient environment already had a
+    usable value, or no candidate runtime dir/bus socket could be found (in
+    which case the subsequent systemctl call fails on its own and
+    `diagnose_systemd_failure` explains why).
+    """
+    env = dict(os.environ)
+    note: str | None = None
+
+    if not env.get("XDG_RUNTIME_DIR"):
+        candidate = _candidate_runtime_dir()
+        if candidate.is_dir():
+            env["XDG_RUNTIME_DIR"] = str(candidate)
+            note = f"XDG_RUNTIME_DIR located at {candidate} (was unset in this process)"
+
+    if not env.get("DBUS_SESSION_BUS_ADDRESS"):
+        runtime_dir = env.get("XDG_RUNTIME_DIR")
+        if runtime_dir:
+            bus_path = Path(runtime_dir) / "bus"
+            if bus_path.exists():
+                env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus_path}"
+                if note is None:
+                    note = f"session bus located at {bus_path} (DBUS_SESSION_BUS_ADDRESS was unset)"
+
+    return env, note
+
+
+_BUS_UNREACHABLE_MARKERS = (
+    "failed to connect to bus",
+    "no medium found",
+)
+
+
+def _looks_like_bus_unreachable(stderr: str) -> bool:
+    """Does this systemctl stderr describe a session-bus-connection failure
+    (this PROCESS's environment gap) rather than an unrelated systemctl
+    error? Matches the exact strings measured in the field: `Failed to
+    connect to bus: No medium found` (no XDG_RUNTIME_DIR at all) and a bare
+    `Connection refused` naming the bus (a stale/absent socket).
+    """
+    lowered = (stderr or "").lower()
+    if any(marker in lowered for marker in _BUS_UNREACHABLE_MARKERS):
+        return True
+    return "bus" in lowered and "connection refused" in lowered
+
+
+_XDG_RUNTIME_DIR_FIX_DETAIL = (
+    "systemctl --user cannot reach the user session bus from this process environment "
+    "(XDG_RUNTIME_DIR unset / no /run/user/<uid>) -- common for sessions spawned outside a "
+    "login session (tmux, ssh, agent spawns). Fix: export XDG_RUNTIME_DIR=/run/user/$(id -u); "
+    "ensure `loginctl enable-linger <user>`."
+)
+
+_SYSTEMD_NOT_INIT_SYSTEM_DETAIL = (
+    "systemctl is on PATH, but this system does not appear to use systemd as its init system "
+    "(/run/systemd/system is absent) -- e.g. a container without systemd, WSL1, or another init "
+    "system. Run `amplifier-work-tracker serve --root <path>` directly to start the supervisor "
+    "without a service manager."
+)
+
+
+def diagnose_systemd_failure(stderr: str) -> str:
+    """Turn a failed `systemctl --user` call's stderr into the RIGHT root
+    cause. Two failure modes must never be conflated (see this section's
+    docstring for the measured incident):
+
+      1. The session bus is unreachable from THIS PROCESS's environment
+         (typically `XDG_RUNTIME_DIR` unset -- a session spawned outside a
+         login session) even though systemd --user itself is running fine.
+         Misdiagnosing this as "system does not use systemd" sends an
+         operator down a completely wrong path.
+      2. `systemctl` really is on PATH but this system genuinely is not
+         booted with systemd (`/run/systemd/system` absent) -- a container
+         without systemd, WSL1, etc. "This system does not appear to use
+         systemd" is reserved for ONLY this case now.
+
+    A failure that matches neither is reported as observed, never invented
+    -- this function is a classifier, not a guess generator.
+    """
+    if _looks_like_bus_unreachable(stderr):
+        return _XDG_RUNTIME_DIR_FIX_DETAIL
+    if not _systemd_is_init_system():
+        return _SYSTEMD_NOT_INIT_SYSTEM_DETAIL
+    detail = (stderr or "").strip()
+    return "systemctl --user failed" + (f": {detail}" if detail else " (no output)")
+
+
 def _systemd_call(args: list[str], *, check: bool) -> subprocess.CompletedProcess:
     """Every non-interactive systemctl invocation in this module goes
     through here: `capture_output=True` so nothing -- e.g. a
@@ -595,8 +744,25 @@ def _systemd_call(args: list[str], *, check: bool) -> subprocess.CompletedProces
     found` -- prints directly to the caller's terminal outside of any
     tool result. `_systemd_status`/`_systemd_logs` are the deliberate
     exception (they exist specifically to stream/print for a human at a
-    terminal) and do NOT go through this helper."""
-    return subprocess.run(args, capture_output=True, text=True, check=check)
+    terminal) and do NOT go through this helper -- they self-heal the same
+    environment directly instead (see their own bodies).
+
+    Runs through `_systemd_user_env()` so a session missing
+    `XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS` (tmux, ssh, an agent spawn)
+    self-heals before ever shelling out -- see this section's docstring.
+    The env-injection note (`None` if nothing needed injecting) is attached
+    to the result (or the raised `CalledProcessError`) as
+    `.env_injection_note`, never returned as a silent side channel only some
+    callers know about.
+    """
+    env, note = _systemd_user_env()
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, check=check, env=env)
+    except subprocess.CalledProcessError as e:
+        e.env_injection_note = note  # type: ignore[attr-defined]
+        raise
+    result.env_injection_note = note  # type: ignore[attr-defined]
+    return result
 
 
 def _observe(label: str, result: subprocess.CompletedProcess) -> str:
@@ -712,14 +878,25 @@ def _systemd_restart() -> None:
 
 
 def _systemd_status() -> None:
+    # Deliberate `_systemd_call` exception (streams straight to the human's
+    # terminal, see that function's docstring) -- but still self-heals the
+    # session-bus env directly, since a human running `service status` from
+    # exactly the same bus-less environment is the other half of the
+    # measured incident (`systemctl --user status` from a shell with a
+    # working bus was the peer's own way of confirming the unit was really
+    # managed).
     # Not check=True -- a stopped/failed unit is a normal `status` outcome
     # (nonzero exit), not a reason to raise.
-    subprocess.run(["systemctl", "--user", "status", SERVICE_NAME, "--no-pager"], check=False)
+    env, _note = _systemd_user_env()
+    subprocess.run(
+        ["systemctl", "--user", "status", SERVICE_NAME, "--no-pager"], check=False, env=env
+    )
 
 
 def _systemd_logs() -> None:
+    env, _note = _systemd_user_env()
     try:
-        subprocess.run(["journalctl", "--user", "-u", SERVICE_NAME, "-f"], check=False)
+        subprocess.run(["journalctl", "--user", "-u", SERVICE_NAME, "-f"], check=False, env=env)
     except KeyboardInterrupt:
         pass
 
@@ -727,16 +904,30 @@ def _systemd_logs() -> None:
 def _systemd_describe() -> ServiceInfo:
     installed = _SYSTEMD_UNIT_PATH.is_file()
     active: bool | None = None
+    bus_unreachable_detail: str | None = None
     if installed:
-        result = subprocess.run(
-            ["systemctl", "--user", "is-active", SERVICE_NAME],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        active = result.stdout.strip() == "active"
+        result = _systemd_call(["systemctl", "--user", "is-active", SERVICE_NAME], check=False)
+        # A nonzero exit here is normally just "not active" (systemctl's own
+        # convention for is-active). But when the CALL ITSELF couldn't reach
+        # the bus, stdout is empty and stderr carries the bus-connection
+        # error -- that is a genuinely UNKNOWN state, never "confirmed
+        # inactive." Reading it as inactive is exactly the measured
+        # `running_unmanaged` misdiagnosis: a real, managed, active unit
+        # reported as unmanaged because this process couldn't ask systemd at
+        # all. See `ServiceInfo.active`'s docstring ("None when ... state
+        # genuinely unknown") and `classify_state`'s handling of this case.
+        if _looks_like_bus_unreachable(result.stderr):
+            active = None
+            bus_unreachable_detail = diagnose_systemd_failure(result.stderr)
+        else:
+            active = result.stdout.strip() == "active"
     if not installed:
         detail = f"not installed (would install at {_SYSTEMD_UNIT_PATH})"
+    elif bus_unreachable_detail is not None:
+        detail = (
+            f"installed, but active/inactive could not be determined (unit: "
+            f"{_SYSTEMD_UNIT_PATH}) -- {bus_unreachable_detail}"
+        )
     elif active:
         detail = f"installed and active (unit: {_SYSTEMD_UNIT_PATH})"
     else:
@@ -985,6 +1176,44 @@ def _no_systemctl_detail() -> str:
     )
 
 
+SystemdBusProbeState = Literal["skipped", "reachable", "unreachable"]
+
+
+def probe_systemd_user_bus() -> tuple[SystemdBusProbeState, str]:
+    """Doctor-gate probe (`systemd.user_bus_reachable`): can `systemctl
+    --user` actually reach the session bus from THIS process's environment,
+    through the same self-healing env every other systemd call in this
+    module uses (`_systemd_user_env`)?
+
+    This is deliberately NOT the same question `describe_service()` answers
+    -- that asks "is our unit active," which can't even be asked until this
+    one is true. A cheap, side-effect-free `show-environment` call, never
+    `is-active`/`status` (which would fold in "unit not installed" as a
+    reachability failure too).
+
+    Returns `(state, detail)`:
+      - "skipped": non-Linux, or Linux without `systemctl` on PATH -- there
+        is no systemd --user bus to probe here at all. Never a failure.
+      - "reachable": systemctl --user answered; `detail` names whether env
+        injection was needed (see `_systemd_user_env`'s `note`).
+      - "unreachable": systemctl --user could not be queried; `detail` names
+        the real root cause via `diagnose_systemd_failure`, never a raw,
+        unexplained subprocess error.
+    """
+    if _is_windows() or _is_darwin():
+        return "skipped", "no systemd --user bus on this platform"
+    if not _have_systemctl():
+        return "skipped", _no_systemctl_detail()
+    result = _systemd_call(["systemctl", "--user", "show-environment"], check=False)
+    if result.returncode == 0:
+        note = getattr(result, "env_injection_note", None)
+        detail = "systemctl --user show-environment succeeded"
+        if note:
+            detail += f" -- {note}"
+        return "reachable", detail
+    return "unreachable", diagnose_systemd_failure(result.stderr or result.stdout or "")
+
+
 def service_install(
     root: str | Path,
     *,
@@ -1189,7 +1418,10 @@ __all__ = [
     "SERVICE_NAME",
     "ServiceInfo",
     "ServiceUnsupportedError",
+    "SystemdBusProbeState",
     "describe_service",
+    "diagnose_systemd_failure",
+    "probe_systemd_user_bus",
     "service_install",
     "service_logs",
     "service_restart",
