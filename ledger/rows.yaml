@@ -86,26 +86,48 @@
     duration is never an input.
 
 - id: CCV1-003
-  title: a failed take_custody leaves the item held with no custody record
+  title: a claim whose custody step fails is compensated -- the item goes back to ready
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 3
     quote: |
       A claim that cannot establish custody must not leave the work item in a held state with
       no custody record.
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-aih
   assertion:
     kind: probe
     ref: test_row_ccv1_003
   notes: >
-    Two sequential writes (claim, then take_custody) with no rollback on
-    the second. The tool returns success=False naming the failure, but the
-    item stays held by this actor with no custody record and no session
-    tracking it -- only a running reap sweep frees it (up to 300s later,
-    and only where a sweep runs at all). Evidence brief sec.D-1; ratified
-    Call 4 (option B): Core, contract-then-fix. The probe pins the current
-    broken shape on purpose.
+    CLOSED by work_item_pipeline-aih (was VIOLATION; the probe pinned the
+    broken two-write shape). `work_claim` is still two writes, but the
+    second one's failure now COMPENSATES: the just-claimed item is released
+    via the adapter's read-back-verified `release`, that release is
+    confirmed by the tool's OWN contention-free read-back
+    (`get_readonly` -> `_get_item_via_sql`, a pure SELECT), and the failure
+    text names both facts ("claim landed; custody could not be established;
+    item released back to ready: <reason>"). The one residual case -- the
+    compensating release ITSELF failing -- is reported loudly, naming the
+    item id and the actor that may still hold it, never silently.
+    Evidence (file:line):
+      modules/tool-work-tracker/amplifier_module_tool_work_tracker/__init__.py:293
+        (`WorkTrackerSession._release_after_failed_custody`; release :339,
+         own read-back :350, released-back-to-ready text :375)
+      modules/tool-work-tracker/amplifier_module_tool_work_tracker/__init__.py:448
+        (the `except A.BeadsError` arm of `claim` that calls it)
+    Behavioral fixtures (real bd/dolt, this suite's isolated server; run
+    2026-09-02, both passing, and both FAIL against the pre-fix code --
+    verified by reverting the module file and re-running):
+      modules/tool-work-tracker/tests/test_custody_atomic.py:72
+        test_failed_take_custody_releases_the_claim_back_to_ready
+      modules/tool-work-tracker/tests/test_custody_atomic.py:127
+        test_failed_take_custody_then_failed_release_says_the_item_may_still_be_held
+    HONEST LIMIT: the probe below is a source-shape assertion (this ledger
+    kit is in-process only -- no bd, no subprocess), and the fixtures above
+    live in the tool module's separately-packaged suite, which still runs
+    in no CI (CCV1-022). Command used: `cd modules/tool-work-tracker &&
+    .venv/bin/python -m pytest tests/test_custody_atomic.py -q`. Upgrade
+    this row to an `indexed` cite when CCV1-022 goes green.
 
 - id: CCV1-004
   title: custody renewal is one-strike; any failure ends renewal for good
