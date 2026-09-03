@@ -51,6 +51,7 @@ from ._support import (
 # contention contract. Kept local to this module (only CCV1-016 pins it).
 CLI = REPO_ROOT / "src" / "amplifier_work_tracker" / "cli.py"
 
+
 def _beads_method(name: str) -> str:
     """The whitespace-collapsed source of exactly ONE `Beads` method.
 
