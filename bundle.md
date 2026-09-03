@@ -49,7 +49,8 @@ this table whenever that module's tools change.
 |---|---|---|
 | Tool | `work_claim` | Atomically claim + start PID-bound custody, in one call |
 | Tool | `work_declare` | Report `working` / `awaiting_human` for the held item |
-| Tool | `work_resolve` | Fenced close of the currently held item |
+| Tool | `work_resolve` | Fenced close of the currently held item -- refuses (writing nothing) if the item is already closed with DIFFERENT text |
+| Tool | `work_reopen` | Return a resolved item to the queue so its published resolution can be corrected; archives the previous record first |
 | Tool | `work_status` | Read-only: projects, queue depths, what this session holds |
 | Tool | `work_file` | File newly discovered work, linked `discovered-from` the held item |
 | Tool | `work_add` | File a new engineering-lane item directly, no held item required -- the sanctioned way to seed a project's FIRST item(s) |

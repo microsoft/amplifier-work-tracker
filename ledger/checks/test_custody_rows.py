@@ -282,13 +282,18 @@ def test_row_ccv1_009() -> None:
          both halves. This module is in-process only: it proves shape,
          never behaviour (see the module docstring) -- so it verifies the
          fixture's continued existence rather than pretending to be it.
+
+    Body sliced from `resolve_outcome` (the fence moved there, 2026-09-02,
+    merging origin/main's PR #67 -- item model_performance-f5c; `resolve`
+    itself is now a one-line projection). The pre-write region is
+    delimited by the `close` write itself rather than by "the first
+    `try:`", because the merged method's OWN pre-write read (the
+    already-resolved rule PR #67 added) also opens with a `try:`.
     """
     src = read(ADAPTER)
-    body = src[
-        src.index("    def resolve(self, item_id: str") : src.index("    def _read_back_or_none")
-    ]
-    pre_write = body[: body.index("        try:")]
-    gate = '        if current.status == "held":'
+    body = src[src.index("    def resolve_outcome(") : src.index("    def _read_back_or_none")]
+    pre_write = body[: body.index('p = self._run(["close"')]
+    gate = 'current.status == "held":'
     assert gate in pre_write, "Core 7: the held-item fence disappeared entirely"
 
     identity_fence = "            elif cust_holder == who and current.holder != who:"
@@ -431,6 +436,7 @@ _VERIFIED_WRITE_VERBS = (
     "claim_next",
     "claim_item",
     "release",
+    "reopen",  # added 2026-09-02 merging origin/main's PR #67
     "_set_status_with_reason",  # defer / block
     "_clear_status_with_reason",  # undefer / unblock
     "add_dependency",
@@ -445,6 +451,15 @@ def test_row_ccv1_015() -> None:
     of the retry budget does not prove a write did not land, so a reported
     failure is decided by a contention-free read-back before it is
     believed -- and a reported success is verified too.
+
+    `reopen` (item model_performance-f5c, merged 2026-09-02 from
+    origin/main's PR #67) joined this list on arrival rather than shipping
+    with its own bespoke inline shape: it carries TWO verified writes (the
+    `bd reopen` itself, and the conditional stale-assignee clear), both
+    routed through this same helper -- see that method's own docstring for
+    why the assignee clear needed it too (a bare unverified `_run` call
+    there previously could not recover from a conflict once the reopen
+    itself had already landed).
     """
     helper = _beads_method("_verified_write")
     assert "except BeadsError:" in helper and "if self._landed(verify):" in helper, (
@@ -480,9 +495,10 @@ def test_row_ccv1_015() -> None:
     assert contains(ADAPTER, "left an incomplete copy in"), (
         "CCV1-015: move_item's own row-count verification is gone"
     )
-    assert count(ADAPTER, "_read_back_or_none") == 3, (
+    assert count(ADAPTER, "_read_back_or_none") == 5, (
         "CCV1-015: `_read_back_or_none`'s call sites moved (expected 1 definition + "
-        "resolve's conflict branch + release's verify). Re-check that every verb still "
+        "resolve's conflict branch + release's verify + reopen's two verifies -- the "
+        "main write and the stale-assignee clear). Re-check that every verb still "
         "verifies before adjusting this count."
     )
 
@@ -644,18 +660,30 @@ def test_row_ccv1_023() -> None:
             f"are implemented-and-runnable, update the row, and resolve "
             f"work_item_pipeline-qmj when all four are."
         )
-    # Fixture 4 (single-hold) is asserted by no test anywhere in either suite.
+    # Fixture 4 (single-hold) is asserted by NO test in the root suite -- the
+    # only suite `make test` runs, which is what the Freeze Bar clause
+    # actually requires ("executable via `make test`").
     hits = [
         p
         for p in (REPO_ROOT / "tests").rglob("test_*.py")
         if "single_hold" in read(p) or "already holding" in read(p)
     ]
-    hits += [
-        p
+    assert not hits, f"CCV1-023 pin: a single-hold fixture now exists ({hits}) -- update the row"
+    # In the MODULES suite (which `make test` does not run -- CCV1-022) the
+    # single-hold refusal is now asserted, but only incidentally: as one
+    # branch of `work_reopen`'s claim-degradation path (item
+    # model_performance-f5c), not as the dedicated fixture the contract
+    # names. Pinned by exact file set so a REAL Fixture 4 appearing there
+    # still flips this probe rather than hiding behind the incidental hit.
+    module_hits = {
+        p.name
         for p in (REPO_ROOT / "modules" / "tool-work-tracker" / "tests").rglob("test_*.py")
         if "single_hold" in read(p) or "already holding" in read(p)
-    ]
-    assert not hits, f"CCV1-023 pin: a single-hold fixture now exists ({hits}) -- update the row"
+    }
+    assert module_hits == {"test_work_reopen.py"}, (
+        f"CCV1-023 pin: the modules-suite single-hold assertions changed ({module_hits}) "
+        f"-- re-check whether Fixture 4 now exists as a dedicated fixture and update the row"
+    )
     # The contract still names those non-existent locations (drift the row records).
     assert contains(
         CONTRACT_PATH, "**Test location:** `tests/test_single_hold.py` (to be added)."

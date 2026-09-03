@@ -566,6 +566,62 @@ def test_supersede_verifies_by_readback_when_the_wrapper_reports_conflict(
     assert shared_bd.get_readonly(old_id).status == "resolved"
 
 
+# --------------------------------------------------------------- CCV1-015 reopen
+#
+# `reopen` (item model_performance-f5c) joined this list on merge (2026-09-02,
+# origin/main's PR #67): it carries TWO verified writes -- the `bd reopen`
+# itself, and the conditional stale-assignee clear -- both routed through
+# `_verified_write` rather than either being a bare unverified `_run` call.
+
+
+def test_reopen_verifies_by_readback_when_the_wrapper_reports_conflict(
+    shared_bd, unique_lane, monkeypatch
+):
+    """The same conflict-after-landed shape every other verb here proves:
+    `bd reopen` really lands against the isolated dolt server, then
+    `Beads._run` raises its own exhausted-retries `BeadsError` anyway.
+    `reopen` must notice the item is no longer `resolved` and report
+    SUCCESS rather than propagate the wrapper's false failure.
+    """
+    actor = f"reopen-conflict-{unique_lane}"
+    item_id = shared_bd.create(f"reopen conflict {unique_lane}", tags=[unique_lane])
+    shared_bd.claim_item(item_id, actor=actor)
+    shared_bd.resolve(item_id, "first pass", actor=actor)
+
+    calls = _conflict_after_real_write(monkeypatch, lambda a: bool(a) and a[0] == "reopen")
+
+    outcome = shared_bd.reopen(item_id, "correcting under contention", actor=actor)
+
+    assert len(calls) == 1, "the reopen path must have been exercised exactly once"
+    assert outcome.item.status != "resolved"
+    assert outcome.previous_resolution == "first pass"
+    monkeypatch.undo()
+    assert shared_bd.get_readonly(item_id).status != "resolved"
+
+
+def test_reopen_still_raises_when_readback_shows_the_reopen_genuinely_did_not_land(
+    shared_bd, unique_lane, monkeypatch
+):
+    """Contrast case: if `_run` raises AND the item is genuinely still
+    resolved (the reopen never landed at all), `reopen` must still raise --
+    verify-by-read-back is a safety net for a landed write, never a way to
+    silently swallow a real failure.
+    """
+    actor = f"reopen-genuine-{unique_lane}"
+    item_id = shared_bd.create(f"reopen genuine fail {unique_lane}", tags=[unique_lane])
+    shared_bd.claim_item(item_id, actor=actor)
+    shared_bd.resolve(item_id, "first pass", actor=actor)
+
+    _conflict_without_write(monkeypatch, lambda a: bool(a) and a[0] == "reopen")
+
+    with pytest.raises(A.BeadsError, match="still conflicting"):
+        shared_bd.reopen(item_id, "should not land", actor=actor)
+
+    monkeypatch.undo()
+    assert shared_bd.get_readonly(item_id).status == "resolved"
+    shared_bd.reopen(item_id, "correcting for real", actor=actor)
+
+
 # ------------------------------------------------------------------ move
 #
 # `move_item` is the one verb in this list that never touches `bd` or

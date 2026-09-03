@@ -4,7 +4,7 @@ You're one of several agents pulling from a shared work queue. First use in
 a session, or any `work_*` call fails to connect: call `work_tracker_status`
 before assuming a server is running — see "Where to go next" below.
 
-Six things here fail **silently** if you get them wrong — no error, no undo:
+Seven things here fail **silently** if you get them wrong — no error, no undo:
 
 1. **Claim only via `work_claim` / `work_status`; never list-then-pick.** The
    obvious approach — read the ready queue, choose an item, mark it yours —
@@ -72,6 +72,22 @@ Six things here fail **silently** if you get them wrong — no error, no undo:
    first (`work_list`'s `item_id` form, or `get_readonly` — a read-only
    path that cannot itself conflict) to see its real current state, then
    decide whether the original operation still needs doing.
+
+7. **A published resolution is corrected by `work_reopen`, never by
+   re-resolving.** `work_resolve` against an item that is ALREADY resolved
+   is a no-op success **only when the text you send is byte-for-byte what
+   is already stored** (the legitimate retry case — the payload says
+   `"idempotent": true`). Sending *different* text now **fails non-zero and
+   writes nothing**, showing you the stored text and yours side by side.
+   Before this, that call exited 0 and echoed the OLD text back as if your
+   correction had landed, and seven wrong resolutions shipped that way. To
+   actually correct the record: `work_reopen(project, item_id, reason)` →
+   `work_claim` → `work_resolve` with the corrected text. Reopening is
+   deliberately explicit, and deliberately NOT idempotent (reopening an
+   already-open item is an error): it clears `closed_at`, so the item
+   re-lands on the correction date and every throughput roll-up moves by
+   one item. That cost is shown to you (`closed_at_cleared`,
+   `previous_closed_at`) rather than hidden.
 
 ## Where to go next
 
