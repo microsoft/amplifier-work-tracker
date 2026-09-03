@@ -2317,6 +2317,135 @@ class ReleaseOutcome:
     already_closed: bool
 
 
+# ---------------------------------------------------------------- resolution
+#
+# The resolution TEXT -- not merely the item's status -- is what `resolve`
+# compares to decide whether its own write landed. Comparing status alone
+# was the measured defect (work_tracker item model_performance-uma, spec
+# `w3-uma-work-tracker-reopen/SPEC.md`): a `resolve` against an ALREADY
+# closed item exited 0 and echoed the OLD stored text back as if it were
+# the text just written, so a correction was silently discarded and the
+# caller was told it had landed.
+
+RESOLUTION_ECHO_LIMIT = 400
+
+
+def _norm_resolution(text: str | None) -> str:
+    """Normalize a resolution for comparison: line endings unified, outer
+    whitespace stripped. NOTHING ELSE.
+
+    Case is significant and internal whitespace is significant, both
+    deliberately -- those are real edits to what a human will read, and a
+    normalization that swallowed them would re-open exactly the silent-
+    discard hole this comparison exists to close. Only the two differences
+    a transport can introduce on its own (CRLF, a trailing newline) are
+    normalized away.
+    """
+    return (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def _resolution_landed(stored: str | None, sent: str) -> bool:
+    """Is `stored` (what the item actually carries) the same resolution as
+    `sent` (what this caller asked to write), after `_norm_resolution`?"""
+    return _norm_resolution(stored) == _norm_resolution(sent)
+
+
+def _echo_resolution(text: str | None, *, limit: int = RESOLUTION_ECHO_LIMIT) -> str:
+    """One resolution rendered for a side-by-side error message -- never
+    silently truncated: an elided text says so, with its real length."""
+    s = text or ""
+    if not s.strip():
+        return "(none -- blank)"
+    if len(s) <= limit:
+        return s
+    return f"{s[:limit]}... [truncated, {len(s)} chars]"
+
+
+def _divergent_resolution_error(
+    item_id: str,
+    *,
+    project: str,
+    stored: str | None,
+    sent: str,
+    contended: bool = False,
+) -> BeadsError:
+    """The refusal a caller gets for resolving an already-closed item with
+    text that is NOT what the item stores.
+
+    Every requirement on this message was earned by a measured failure:
+
+      1. BOTH texts, side by side. The only way this defect was ever
+         caught was a human diffing the echoed text against what was sent.
+         Do that diff for the caller.
+      2. The words "NOTHING WAS WRITTEN", literally. Under the contention
+         contract (`cli.py`'s module docstring) an agent's default reading
+         of a failure is "the transaction aborted" -- which here is true,
+         and must not be second-guessed into a blind retry that would
+         re-send the same discarded text.
+      3. The remedy as a RUNNABLE command, on both surfaces (CLI and
+         tool), because the caller's next question is always "then how do
+         I correct it?" and the answer (`reopen`) is new.
+    """
+    lead = (
+        f"refusing to resolve {item_id}: it is already resolved, and the resolution "
+        f"stored on the item is NOT the text you sent. NOTHING WAS WRITTEN."
+    )
+    if contended:
+        lead = (
+            f"refusing to report success for resolve {item_id}: the write raised under "
+            f"contention, and the readback shows the item resolved with a resolution that "
+            f"is NOT the text you sent. YOUR TEXT WAS NOT WRITTEN."
+        )
+    return BeadsError(
+        f"{lead}\n\n"
+        f"  stored (unchanged): {_echo_resolution(stored)}\n"
+        f"  you sent:           {_echo_resolution(sent)}\n\n"
+        f"To correct the official record, reopen it first:\n"
+        f"  amplifier-work-tracker reopen --project {project} --id {item_id} "
+        f"--reason '<why the stored text is wrong>'\n"
+        f"  (agents: work_reopen(project={project!r}, item_id={item_id!r}, reason=...))"
+    )
+
+
+@dataclass(frozen=True)
+class ResolveOutcome:
+    """Result of `Beads.resolve_outcome` -- the item as it stands after a
+    verified close, plus whether this call actually WROTE that resolution
+    or merely found its own identical text already stored.
+
+    `idempotent` exists because those two are byte-identical today and the
+    difference matters when reconciling a contended run: a caller that
+    re-ran `resolve` after an ambiguous failure needs to tell "my write
+    landed earlier" from "my write landed just now". See `resolve_outcome`
+    for the full rule.
+    """
+
+    item: Item
+    idempotent: bool = False
+
+
+@dataclass(frozen=True)
+class ReopenOutcome:
+    """Result of `Beads.reopen` -- the reopened item, plus the record the
+    reopen destroyed.
+
+    `previous_resolution` is carried out in the RESULT, not merely filed
+    in the item's comment history, because the caller is about to write
+    the replacement and the most common correction is a targeted edit of
+    the old text; making them go find it invites a rewrite that loses
+    detail. `previous_closed_at` is surfaced for the opposite reason -- it
+    is a real cost, not a footnote: `bd reopen` clears `closed_at`, so a
+    corrected item stops counting toward the day it was genuinely resolved
+    and re-lands on the correction date (see `_velocity_raw_daily`).
+    """
+
+    item: Item
+    previous_resolution: str | None
+    previous_closed_at: datetime | None
+    reopen_reason: str
+    actor: str
+
+
 class Beads:
     """A handle on one Beads project. Construct via Workspace.project()."""
 
@@ -3091,7 +3220,52 @@ class Beads:
         )
 
     def resolve(self, item_id: str, reason: str, *, actor: str | None = None) -> Item:
+        """Close an item and VERIFY the write landed -- the `Item`-returning
+        projection of `resolve_outcome`, which every existing caller already
+        uses and which is unchanged for them.
+
+        A pure one-line projection ON PURPOSE: two entry points to one
+        operation can only stay honest if one of them cannot hold logic of
+        its own to drift with. Callers that need to distinguish "I wrote
+        this resolution just now" from "this identical resolution was
+        already stored" (the CLI, `work_resolve`) call `resolve_outcome`
+        directly for its `idempotent` flag.
+        """
+        return self.resolve_outcome(item_id, reason, actor=actor).item
+
+    def resolve_outcome(
+        self, item_id: str, reason: str, *, actor: str | None = None
+    ) -> ResolveOutcome:
         """Close an item and VERIFY the write landed. Exit code is not proof.
+
+        WHAT "LANDED" MEANS: the item stores the TEXT THIS CALL SENT --
+        not merely that the item is closed. Comparing status alone was the
+        measured defect (work_tracker item model_performance-uma): a
+        resolve against an already-closed item exited 0 and echoed the OLD
+        text back as if it were the new one, silently discarding a
+        correction. `resolve` is checked against `_resolution_landed` at
+        BOTH places it decides that question -- the normal post-write
+        readback AND the contended path below -- because a caller on the
+        contended path is precisely the one least able to reason about
+        what actually happened.
+
+        THE RULE, on a target that is ALREADY resolved (checked BEFORE any
+        write, so "NOTHING WAS WRITTEN" is literally true):
+
+          - text IDENTICAL (after `_norm_resolution`) -> success,
+            `idempotent=True`, no write attempted. This carve-out is
+            required, not a softening: the shipped contention contract
+            sells resolve's no-op as RETRY SAFETY, and a retry re-sends
+            the identical string. A blanket error would fail a legitimate
+            retry of a write that did land, and tell its caller their
+            resolve failed when it succeeded.
+          - text DIFFERS -> `BeadsError` (`_divergent_resolution_error`),
+            nothing written, the remedy (`reopen`) named as a runnable
+            command. Correcting a published record is a deliberate,
+            audited transition -- never an invisible side effect of a call
+            the caller believes is idempotent.
+
+        Resolving an OPEN item is unchanged, byte for byte.
 
         FENCED, but only while the item is ACTUALLY currently held --
         resolving an unheld item (open/blocked/deferred/resolved), even one
@@ -3121,22 +3295,42 @@ class Beads:
         holder, or wait for `reap` to reclaim a stale hold.
         """
         who = actor or self._actor
-        if who:
-            current = self.get(item_id)
-            if current.status == "held":
-                cust = current.meta.get(C.CUSTODY_KEY) if isinstance(current.meta, dict) else None
-                if isinstance(cust, dict) and cust.get("holder"):
-                    if current.holder != who or cust.get("holder") != who:
-                        raise FencedError(
-                            f"refusing to close {item_id}: current holder is "
-                            f"{current.holder!r} (custody holder {cust.get('holder')!r}), "
-                            f"not {who!r}. Your claim was reclaimed while you were away."
-                        )
-                elif current.holder and current.holder != who:
+        # ONE pre-write read serves both preconditions (the custody fence
+        # and the already-resolved rule). Deliberately tolerant of a read
+        # failure when no actor is given, so an item that does not exist
+        # still surfaces through bd's own `close` error exactly as before
+        # -- this method must not newly re-diagnose "not found".
+        try:
+            current: Item | None = self.get(item_id)
+        except BeadsError:
+            if who:
+                raise
+            current = None
+        if who and current is not None and current.status == "held":
+            cust = current.meta.get(C.CUSTODY_KEY) if isinstance(current.meta, dict) else None
+            if isinstance(cust, dict) and cust.get("holder"):
+                if current.holder != who or cust.get("holder") != who:
                     raise FencedError(
-                        f"refusing to close {item_id}: it is held by {current.holder!r}, "
+                        f"refusing to close {item_id}: current holder is "
+                        f"{current.holder!r} (custody holder {cust.get('holder')!r}), "
                         f"not {who!r}. Your claim was reclaimed while you were away."
                     )
+            elif current.holder and current.holder != who:
+                raise FencedError(
+                    f"refusing to close {item_id}: it is held by {current.holder!r}, "
+                    f"not {who!r}. Your claim was reclaimed while you were away."
+                )
+        if current is not None and current.status == "resolved":
+            # Decided BEFORE any write -- that ordering is what makes the
+            # refusal's own "NOTHING WAS WRITTEN" promise literally true.
+            if _resolution_landed(current.resolution, reason):
+                return ResolveOutcome(item=current, idempotent=True)
+            raise _divergent_resolution_error(
+                item_id,
+                project=self.project_name,
+                stored=current.resolution,
+                sent=reason,
+            )
         try:
             p = self._run(["close", item_id, "--reason", reason], actor=actor)
         except BeadsError:
@@ -3152,9 +3346,24 @@ class Beads:
             # wrapper's failure: if the item is genuinely resolved, report
             # success rather than propagate a false failure that would
             # otherwise wedge the caller's custody state forever.
+            #
+            # "Genuinely resolved" means resolved WITH THIS CALL'S TEXT.
+            # Status alone is the wrong proxy here for the same reason it
+            # is wrong at the post-write readback below -- and this is the
+            # site it is easiest to leave half-fixed. A closed item whose
+            # stored resolution is somebody else's text means our write did
+            # NOT land, however closed the item looks.
             back = self._read_back_or_none(item_id)
             if back is not None and back.status == "resolved":
-                return back
+                if _resolution_landed(back.resolution, reason):
+                    return ResolveOutcome(item=back, idempotent=False)
+                raise _divergent_resolution_error(
+                    item_id,
+                    project=self.project_name,
+                    stored=back.resolution,
+                    sent=reason,
+                    contended=True,
+                ) from None
             raise
         if p.returncode != 0:
             raise BeadsError(f"close {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
@@ -3164,7 +3373,142 @@ class Beads:
                 f"close {item_id} reported success but readback shows status="
                 f"{back.status!r} -- refusing to report success"
             )
-        return back
+        if not _resolution_landed(back.resolution, reason):
+            raise _divergent_resolution_error(
+                item_id,
+                project=self.project_name,
+                stored=back.resolution,
+                sent=reason,
+                contended=True,
+            )
+        return ResolveOutcome(item=back, idempotent=False)
+
+    def reopen(self, item_id: str, reason: str, *, actor: str | None = None) -> ReopenOutcome:
+        """Return a RESOLVED item to the queue so its official record can be
+        corrected -- the remedy `resolve`'s divergent-text refusal names, and
+        the only sanctioned way to change a published resolution.
+
+        Deliberately NOT idempotent: reopening an already-open item RAISES
+        rather than no-ops. This program's recurring defect is an operation
+        that looks like it worked, and "reopen succeeded" on an item that
+        was already open tells the caller something false about what they
+        just did -- the mirror image of `resolve`'s own rule above.
+
+        ARCHIVE FIRST, then transition. The comment carrying the verbatim
+        previous resolution is written BEFORE `bd reopen` runs, and that
+        ordering is load-bearing rather than stylistic: bd 1.1.2's
+        treatment of `close_reason` across a reopen is UNDOCUMENTED and
+        unverified upstream, so the wrapper's guarantee must not depend on
+        it. What this method promises is therefore true whatever bd does:
+
+            after a successful reopen, the previous resolution text is
+            durably recorded in the item's attributed comment history.
+
+        (`contract.py`'s `reopen.close_reason_disposition` separately PINS
+        the behaviour measured against the live binary, so a future bd
+        change breaks `doctor` loudly instead of quietly altering what a
+        reopened item carries.)
+
+        THE COST, surfaced rather than hidden: `bd reopen` clears
+        `closed_at` (see `_velocity_raw_daily`), so a corrected item stops
+        counting toward the day it was genuinely resolved and re-lands on
+        the correction date -- every throughput roll-up moves by one item
+        per correction. `ReopenOutcome.previous_closed_at` carries what was
+        destroyed. That cost is exactly why this stays an explicit verb
+        instead of being folded into `resolve` as an invisible side effect.
+
+        Does NOT claim the item, but DOES clear the stale assignee bd leaves
+        behind (see below) so the item is genuinely claimable again. A
+        reopened item lands back in the ready queue, where parallel agents
+        are polling -- so the caller almost always wants to claim it
+        immediately (see `work_reopen`'s `claim` parameter, and the CLI's
+        opt-in `--claim`). That is the CALLER's decision to make, because a
+        claim from an interactive shell strands custody nobody is renewing.
+        """
+        who = actor or self._actor or "unknown"
+        if not (reason or "").strip():
+            raise BeadsError(
+                f"reopen {item_id}: --reason is required and must not be empty -- "
+                f"a reopen destroys a record's finality and its closed_at; an "
+                f"unexplained one is not auditable"
+            )
+        cur = self.get(item_id)
+        if cur.status != "resolved":
+            raise BeadsError(
+                f"refusing to reopen {item_id}: status is {cur.status!r}, not 'resolved' "
+                f"-- nothing to reopen"
+            )
+        previous_resolution = cur.resolution
+        previous_closed_at = cur.closed_at
+        archived_text = (
+            previous_resolution if (previous_resolution or "").strip() else "(none -- was blank)"
+        )
+        self.comment(
+            item_id,
+            (
+                f"{who} reopened this item to correct the record.\n"
+                f"REASON: {reason}\n"
+                f"PREVIOUS RESOLUTION (superseded, verbatim):\n"
+                f"{archived_text}\n"
+                f"PREVIOUS closed_at: "
+                f"{previous_closed_at.isoformat() if previous_closed_at else '(none)'}"
+            ),
+            actor=actor,
+        )
+        try:
+            p = self._run(["reopen", item_id, "--reason", reason], actor=actor)
+        except BeadsError:
+            # Same verify-on-conflict discipline `resolve`/`release` apply
+            # (see `resolve`'s own comment for the measured incident): a
+            # wrapper that exhausted its retry budget has NOT proven the
+            # write failed. Here -- unlike `resolve` -- STATUS is the
+            # correct success proxy, because reopen's success condition IS
+            # a status change; there is no text of ours to look for.
+            back = self._read_back_or_none(item_id)
+            if back is not None and back.status != "resolved":
+                return ReopenOutcome(
+                    item=back,
+                    previous_resolution=previous_resolution,
+                    previous_closed_at=previous_closed_at,
+                    reopen_reason=reason,
+                    actor=who,
+                )
+            raise
+        if p.returncode != 0:
+            raise BeadsError(f"reopen {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
+        back = self.get(item_id)
+        if back.status == "resolved":
+            raise BeadsError(
+                f"reopen {item_id} reported success but readback still shows "
+                f"status='resolved' -- refusing to report success"
+            )
+        if back.holder:
+            # MEASURED (bd 1.1.2, 2026-09-02): `bd reopen` flips status back
+            # to open and clears closed_at, but LEAVES THE OLD ASSIGNEE IN
+            # PLACE. The item then looks open while still being "claimed by"
+            # whoever closed it -- and a directed claim by anyone else is
+            # refused outright ("issue already claimed by <old holder>"), so
+            # the correction path this verb exists to open is closed again by
+            # a stale name. `release` already clears the assignee for exactly
+            # this reason (`update --status open --assignee ""`); a reopen
+            # that did not would hand back an item nobody can take.
+            self._run(["update", item_id, "--assignee", ""], actor=actor)
+            back = self.get(item_id)
+            if back.holder:
+                raise BeadsError(
+                    f"reopen {item_id} LANDED (it is {back.status!r}, not resolved) but the "
+                    f"item is still assigned to {back.holder!r} and could not be cleared -- "
+                    f"nobody else can claim it to correct it. Clear it with "
+                    f"`amplifier-work-tracker unclaim --project {self.project_name} "
+                    f"--id {item_id}`, then claim it."
+                )
+        return ReopenOutcome(
+            item=back,
+            previous_resolution=previous_resolution,
+            previous_closed_at=previous_closed_at,
+            reopen_reason=reason,
+            actor=who,
+        )
 
     def _read_back_or_none(self, item_id: str) -> Item | None:
         """Contention-free read-back (see `get`'s docstring -- never `bd
