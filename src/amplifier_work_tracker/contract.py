@@ -968,9 +968,264 @@ def check_creation_state_reporting(p: Probe) -> Result:
     )
 
 
+def _reopen_probe_item(p: Probe, lane: str, resolution: str) -> str:
+    """A freshly created, resolved item for the reopen checks to work on."""
+    assert p.bd
+    i = p.bd.create(f"reopen probe ({lane})", tags=[lane], priority=1)
+    p.bd.resolve(i, resolution)
+    return i
+
+
+def check_reopen_reopens(p: Probe) -> Result:
+    """A resolved item can be returned to the queue and CLAIMED again.
+
+    Asserted together, because either half alone is defeated silently: the
+    status flipping back is worthless if the item never re-enters the ready
+    queue, and this is the whole mechanism by which a wrong published
+    resolution becomes correctable at all. `resolution.readable` already
+    asserted a resolution is READABLE; nothing asserted it was
+    CORRECTABLE, and that gap is why seven wrong resolutions shipped.
+    """
+    assert p.bd
+    lane = "lane:reopen"
+    item_id = _reopen_probe_item(p, lane, "probe first-pass resolution")
+    try:
+        p.bd.reopen(item_id, "probe correction")
+    except A.BeadsError as e:
+        return Result("reopen.reopens", False, f"reopen raised: {e}")
+    back = p.bd.get(item_id)
+    if back.status == "resolved":
+        return Result(
+            "reopen.reopens",
+            False,
+            f"reopen left the item {back.status!r} -- a published resolution "
+            f"cannot be corrected at all",
+        )
+    if back.holder:
+        # MEASURED: `bd reopen` leaves the OLD assignee in place, which makes
+        # a directed claim by anyone else refuse ("already claimed by ..."),
+        # so `Beads.reopen` clears it. If this fires, that clearing broke.
+        return Result(
+            "reopen.reopens",
+            False,
+            f"a reopened item is still assigned to {back.holder!r} -- nobody else "
+            f"can claim it, so the correction path is closed by a stale name",
+        )
+    # A DIRECTED claim by a DIFFERENT actor: the strongest form, and the one
+    # that actually fails when the stale assignee survives.
+    try:
+        taken = p.bd.claim_item(item_id, actor="reopen_probe_holder")
+    except A.BeadsError as e:
+        return Result(
+            "reopen.reopens",
+            False,
+            f"a reopened item could not be claimed by another actor ({e}) -- it did "
+            f"not genuinely return to the queue",
+        )
+    if taken.id != item_id:
+        return Result("reopen.reopens", False, "directed claim returned a different item")
+    return Result(
+        "reopen.reopens",
+        True,
+        "a resolved item reopens unassigned and is directly claimable again",
+    )
+
+
+def check_reopen_clears_closed_at(p: Probe) -> Result:
+    """Pins the ACCOUNTING side effect every throughput number depends on.
+
+    `bd reopen` clears `closed_at`, so a corrected item stops counting
+    toward the day it was genuinely resolved and re-lands on the correction
+    date (`_velocity_raw_daily`, `_daily_resolved_counts`). That cost is
+    documented and surfaced (`closed_at_cleared`), not hidden -- and if bd
+    ever stops doing it, every one of those functions' honest caveats
+    becomes wrong, silently. This is the alarm for that.
+    """
+    assert p.bd
+    item_id = _reopen_probe_item(p, "lane:reopen_closed_at", "probe resolution for closed_at")
+    before = p.bd.get(item_id)
+    if before.closed_at is None:
+        return Result(
+            "reopen.clears_closed_at", False, "resolve did not set closed_at -- cannot measure"
+        )
+    try:
+        outcome = p.bd.reopen(item_id, "probe correction")
+    except A.BeadsError as e:
+        return Result("reopen.clears_closed_at", False, f"reopen raised: {e}")
+    if outcome.item.closed_at is not None:
+        return Result(
+            "reopen.clears_closed_at",
+            False,
+            f"closed_at survived a reopen ({outcome.item.closed_at!r}) -- bd changed "
+            f"the accounting side effect that velocity/throughput reporting and "
+            f"reopen's own documented cost both assume",
+        )
+    return Result(
+        "reopen.clears_closed_at",
+        True,
+        "reopen clears closed_at (the documented, surfaced accounting cost)",
+    )
+
+
+def check_reopen_close_reason_disposition(p: Probe) -> Result:
+    """What bd does to `close_reason` across a reopen -- MEASURED, pinned.
+
+    bd 1.1.2 (20e493e56), measured 2026-09-02: a reopen CLEARS
+    `close_reason`. The previous resolution text is GONE from the issue
+    row. bd documents nothing either way, which is exactly why
+    `Beads.reopen` archives the previous resolution into the item's
+    attributed comment history BEFORE transitioning -- had the wrapper
+    trusted bd to keep it, every correction would have destroyed the record
+    it was correcting.
+
+    The job of this assumption is the ALARM, not a preferred answer: it
+    asserts what was measured on the day it was written, so a bd change
+    breaks `doctor` loudly instead of quietly altering what a reopened item
+    carries. If it fails, re-measure, then update this check AND
+    `reopen`'s docstring deliberately.
+    """
+    assert p.bd
+    text = "probe resolution measured for close_reason disposition"
+    item_id = _reopen_probe_item(p, "lane:reopen_disposition", text)
+    try:
+        outcome = p.bd.reopen(item_id, "probe correction")
+    except A.BeadsError as e:
+        return Result("reopen.close_reason_disposition", False, f"reopen raised: {e}")
+    if (outcome.item.resolution or "").strip():
+        return Result(
+            "reopen.close_reason_disposition",
+            False,
+            f"MEASURED bd 1.1.2 behaviour was: reopen CLEARS close_reason. It now "
+            f"PRESERVES it ({outcome.item.resolution!r}). Not a wrapper failure "
+            f"(reopen archives the old text in the comment history regardless), but "
+            f"re-measure and update this assumption deliberately",
+        )
+    archived = [e.detail or e.summary for e in p.bd.activity(item_id) if e.kind == "comment"]
+    if not any(text in (a or "") for a in archived):
+        return Result(
+            "reopen.close_reason_disposition",
+            False,
+            "the previous resolution is neither on the item NOR in its comment "
+            "history -- the record was destroyed by the correction",
+        )
+    return Result(
+        "reopen.close_reason_disposition",
+        True,
+        "reopen clears close_reason (measured), and the wrapper's archive comment "
+        "preserves the previous resolution regardless",
+    )
+
+
+def check_reopen_emits_event(p: Probe) -> Result:
+    """bd's own `events` row is one of the three independent audit records
+    a correction leaves. If it silently stops being written, `reopened_count`
+    (the \"reopened after resolve\" quality signal) reports zero forever and
+    nobody can tell a corrected record from a first-pass one."""
+    assert p.bd
+    item_id = _reopen_probe_item(p, "lane:reopen_event", "probe resolution for event")
+    try:
+        p.bd.reopen(item_id, "probe correction reason")
+    except A.BeadsError as e:
+        return Result("reopen.emits_event", False, f"reopen raised: {e}")
+    q = A._dolt_sql(
+        f"SELECT COUNT(*) FROM `{p.bd.project_name}`.`events` "
+        f"WHERE `issue_id` = '{A._sql_literal(item_id)}' AND `event_type` = 'reopened'"
+    )
+    if q.returncode != 0:
+        return Result("reopen.emits_event", False, f"could not read events: {q.stderr or q.stdout}")
+    rows = [ln for ln in (q.stdout or "").splitlines() if ln.strip()][1:]
+    count = int(rows[0].strip()) if rows and rows[0].strip().isdigit() else 0
+    if count < 1:
+        return Result(
+            "reopen.emits_event",
+            False,
+            "bd wrote no `reopened` events row -- the audit trail for corrections "
+            "has silently stopped being written",
+        )
+    return Result("reopen.emits_event", True, "bd records a `reopened` events row, attributed")
+
+
+def check_resolve_divergent_text_refused(p: Probe) -> Result:
+    """THE regression fence for this whole defect.
+
+    Resolving an already-closed item with text that DIFFERS from what is
+    stored must raise and write nothing. Before the fix it exited 0 and
+    echoed the OLD text back as if the correction had landed -- silent data
+    loss on the one field users actually read.
+    """
+    assert p.bd
+    stored = "probe: the original, wrong resolution"
+    i = p.bd.create("resolve divergence probe", tags=["lane:probe_divergent"])
+    p.bd.resolve(i, stored)
+    try:
+        p.bd.resolve(i, "probe: a completely different resolution")
+    except A.BeadsError:
+        back = p.bd.get(i)
+        if (back.resolution or "").strip() != stored:
+            return Result(
+                "resolve.divergent_text_refused",
+                False,
+                f"refused, but the stored resolution changed anyway "
+                f"({back.resolution!r}) -- 'NOTHING WAS WRITTEN' is not true",
+            )
+        return Result(
+            "resolve.divergent_text_refused",
+            True,
+            "resolving a closed item with different text refuses and writes nothing",
+        )
+    return Result(
+        "resolve.divergent_text_refused",
+        False,
+        "A DIVERGENT RESOLVE ON A CLOSED ITEM SUCCEEDED -- the caller's correction "
+        "was silently discarded and they were told it landed",
+    )
+
+
+def check_resolve_identical_text_idempotent(p: Probe) -> Result:
+    """The retry-safety carve-out, fenced in the other direction.
+
+    The shipped contention contract tells agents that re-running `resolve`
+    after an ambiguous failure is safe. A retry re-sends the identical
+    string, so identical text must stay a success -- otherwise the fix
+    above would break the promise it was made under.
+    """
+    assert p.bd
+    text = "probe: the one true resolution"
+    i = p.bd.create("resolve idempotency probe", tags=["lane:probe_idempotent"])
+    p.bd.resolve(i, text)
+    try:
+        outcome = p.bd.resolve_outcome(i, text)
+    except A.BeadsError as e:
+        return Result(
+            "resolve.identical_text_idempotent",
+            False,
+            f"re-sending the IDENTICAL resolution text failed ({e}) -- the "
+            f"contention contract's retry-safety promise is broken",
+        )
+    if not outcome.idempotent:
+        return Result(
+            "resolve.identical_text_idempotent",
+            False,
+            "the identical-text retry succeeded but was not reported as idempotent "
+            "-- a caller reconciling a contended run cannot tell 'landed earlier' "
+            "from 'landed just now'",
+        )
+    return Result(
+        "resolve.identical_text_idempotent",
+        True,
+        "re-sending identical resolution text is an idempotent success",
+    )
+
+
 CHECKS = [
     ("capabilities", check_capabilities),
     ("resolve.fenced", check_resolve_fenced),
+    ("resolve.divergent_text_refused", check_resolve_divergent_text_refused),
+    ("resolve.identical_text_idempotent", check_resolve_identical_text_idempotent),
+    ("reopen.reopens", check_reopen_reopens),
+    ("reopen.clears_closed_at", check_reopen_clears_closed_at),
+    ("reopen.close_reason_disposition", check_reopen_close_reason_disposition),
+    ("reopen.emits_event", check_reopen_emits_event),
     ("release.reopens_unresolved", check_release_reopens_unresolved),
     ("claim.subcommand", check_claim_subcommand),
     ("claim.atomic", check_claim_atomic),

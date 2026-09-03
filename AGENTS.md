@@ -26,7 +26,7 @@ Nothing above the seam should ever need to change for a Beads upgrade.
 ## `doctor` is the gate, not a suggestion
 
 Run `amplifier-work-tracker doctor` after any `bd` upgrade and before
-trusting parallel agents against a queue. It must report **28/28
+trusting parallel agents against a queue. It must report **34/34
 assumptions hold**; anything less means Beads' behavior moved out from
 under an assumption we depend on (or, for `sweeps.alive`, that the
 reap/notify sweep loops have stopped completing sweeps, or, for
@@ -43,7 +43,9 @@ agent spawn) -- see service.py's `_systemd_user_env`/
 misreported here as 26/26 while the CLI actually emitted 27 -- 23 from
 `contract.run_all` plus 4 service/dolt checks; `systemd.user_bus_reachable`
 is the 5th service-level check added alongside this reconciliation, for
-28 total.)
+28 total. This branch's six `reopen`/`resolve` assumptions bring the
+merged total to 34, which is MEASURED from `doctor` on the merged tree --
+not 33+2 arithmetic, which would have said 35.)
 
 ## Test scope
 
@@ -129,7 +131,7 @@ runs itself is how you lose data you meant to keep.
 
 ## What "done" looks like
 
-Full suite green, `doctor` 28/28, `ruff check` / `ruff format --check` /
+Full suite green, `doctor` 34/34, `ruff check` / `ruff format --check` /
 `pyright` clean. For any change to the bundle's zero-state install path
 (service bootstrap, `work_tracker_install`, prereqs), the acceptance gate is
 a fresh Digital Twin Universe run from a genuinely empty machine (no `bd`,

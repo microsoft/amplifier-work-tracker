@@ -26,13 +26,19 @@ before resubmitting the same logical operation, re-read the item (`list --id`
 conflict) to confirm its actual current state. This matters most for
 non-idempotent writes (`add`/`create` -- retrying blind can create a
 duplicate item) and less for idempotent ones (`resolve` on an already-
-resolved item is a readback-checked no-op) -- but re-reading first is always
-the safe move. `resolve`/`unclaim` additionally verify their OWN write landed
-by reading the item back before reporting success (exit code is not proof by
-itself) -- so a reported SUCCESS is independently confirmed already; this
-contract is about what to do after a reported FAILURE. See `context/
-awareness.md` for the same contract in agent-facing form, and work_tracker
-item pipeline-bug for the contention-hardening work this documents.
+resolved item is a readback-checked no-op ONLY when the text you send is
+byte-for-byte what is already stored -- which is exactly the retry case;
+sending DIFFERENT text against a closed item now fails non-zero having
+written nothing, and names `reopen` as the remedy) -- but re-reading first
+is always the safe move. `resolve`/`unclaim` additionally verify their OWN
+write landed by reading the item back before reporting success (exit code is
+not proof by itself), and `resolve` compares the stored resolution TEXT, not
+merely the item's status -- so a reported SUCCESS is independently confirmed
+already; this contract is about what to do after a reported FAILURE. See
+`context/awareness.md` for the same contract in agent-facing form,
+work_tracker item pipeline-bug for the contention-hardening work this
+documents, and model_performance-uma for the silent-discard defect the text
+comparison closes.
 """
 
 from __future__ import annotations
@@ -964,12 +970,82 @@ def cmd_reap(a):
 
 
 def cmd_resolve(a):
+    """Close an item with a user-readable reason, verified by readback.
+
+    On an ALREADY-resolved item this either succeeds as a no-op (the text
+    you sent is byte-for-byte what is stored -- the retry case, reported
+    with `"idempotent": true`) or fails non-zero having written nothing
+    (the text differs -- correcting a published record goes through
+    `reopen`). See `adapter.Beads.resolve_outcome`.
+    """
     _guard()
     try:
-        item = _ws(a).project(a.project).resolve(a.id, a.reason, actor=a.actor)
+        outcome = _ws(a).project(a.project).resolve_outcome(a.id, a.reason, actor=a.actor)
     except A.BeadsError as e:
         die(str(e))
-    print(json.dumps({"resolved": item.id, "resolution": item.resolution}, indent=2))
+    payload = {"resolved": outcome.item.id, "resolution": outcome.item.resolution}
+    if outcome.idempotent:
+        # Deliberately present ONLY on the idempotent path, so a consumer
+        # can distinguish "my write landed earlier" from "my write landed
+        # just now" -- byte-identical outputs before this, and the
+        # difference is what a caller reconciling a contended run needs.
+        payload["idempotent"] = True
+    print(json.dumps(payload, indent=2))
+
+
+def cmd_reopen(a):
+    """Return a RESOLVED item to the queue so its record can be corrected.
+
+    The remedy `resolve`'s divergent-text refusal names. Refuses loudly
+    (non-zero, nothing written) on an item that is not resolved -- reopen
+    is deliberately not idempotent.
+
+    `--claim` is OPT-IN here, unlike the `work_reopen` tool where it
+    defaults on: this surface is also driven by humans inspecting state,
+    and a claim from an interactive shell strands custody nobody is
+    renewing. When passed, the claim is a separate leg -- if it fails, the
+    REOPEN STILL STANDS and is reported that way rather than rolled back.
+    """
+    _guard()
+    bd = _ws(a).project(a.project)
+    try:
+        outcome = bd.reopen(a.id, a.reason, actor=a.actor)
+    except A.BeadsError as e:
+        die(str(e))
+    payload = {
+        "reopened": outcome.item.id,
+        "project": a.project,
+        "status": outcome.item.status,
+        "reopen_reason": outcome.reopen_reason,
+        "previous_resolution": outcome.previous_resolution,
+        "previous_closed_at": (
+            outcome.previous_closed_at.isoformat() if outcome.previous_closed_at else None
+        ),
+        # Surfaced, never hidden: a reopened item stops counting toward the
+        # day it was genuinely resolved and re-lands on the correction date,
+        # so every throughput roll-up moves by one item per correction.
+        "closed_at_cleared": outcome.item.closed_at is None,
+        "claimed": False,
+    }
+    if a.claim:
+        try:
+            bd.claim_item(a.id, actor=a.actor)
+        except A.BeadsError as e:
+            payload["claim_error"] = str(e)
+        else:
+            payload["claimed"] = True
+            payload["holder"] = a.actor
+            payload["next_step"] = (
+                f"run `amplifier-work-tracker custody --project {a.project} "
+                f"--actor {a.actor} --id {a.id}` in the background to maintain custody, "
+                f"then correct the record with `resolve`"
+            )
+    else:
+        payload["next_step"] = (
+            "the item is back in the ready queue -- claim it before correcting it, "
+            "or another agent may claim it first"
+        )
+    print(json.dumps(payload, indent=2))
 
 
 def cmd_unclaim(a):
@@ -1713,6 +1789,25 @@ def main():
     p.add_argument("--reason", required=True)
     p.add_argument("--actor", default="agent")
     p.set_defaults(fn=cmd_resolve)
+
+    p = sub.add_parser(
+        "reopen",
+        help="return a RESOLVED item to the queue so its record can be corrected",
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("--id", required=True)
+    p.add_argument("--reason", required=True, help="why the stored resolution is wrong")
+    p.add_argument("--actor", default="agent")
+    p.add_argument(
+        "--claim",
+        action="store_true",
+        help=(
+            "also claim the item immediately (off by default -- a claim from an "
+            "interactive shell strands custody nobody is renewing)"
+        ),
+    )
+    p.set_defaults(fn=cmd_reopen)
 
     p = sub.add_parser(
         "unclaim",

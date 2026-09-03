@@ -428,7 +428,8 @@ class WorkTrackerSession:
                 )
             try:
                 bd = self._project(held.project)
-                item = bd.resolve(item_id, reason, actor=held.actor)
+                outcome = bd.resolve_outcome(item_id, reason, actor=held.actor)
+                item = outcome.item
             except A.FencedError as e:
                 # Reclaimed/reassigned while we were away -- clear local
                 # state and stop custody so this session can claim again.
@@ -442,9 +443,93 @@ class WorkTrackerSession:
                 return ToolResult(success=False, output=str(e))
             held.stop.set()
             self._held = None
-            return ToolResult(
-                success=True, output={"resolved": item.id, "resolution": item.resolution}
+            out: dict[str, Any] = {"resolved": item.id, "resolution": item.resolution}
+            if outcome.idempotent:
+                # Only ever present on the idempotent path (the identical
+                # text was already stored, nothing written now) -- see
+                # adapter.Beads.resolve_outcome. A caller reconciling a
+                # contended run needs to tell that from a fresh write.
+                out["idempotent"] = True
+            return ToolResult(success=True, output=out)
+
+    async def reopen(
+        self, project: str, item_id: str, reason: str, *, claim: bool = True
+    ) -> ToolResult:
+        """Return a RESOLVED item to the queue so its record can be
+        corrected, then (by default) claim it for this session.
+
+        Takes `project` + `item_id` rather than `work_resolve`'s bare `id`
+        because, by definition, this session does NOT hold the item -- it
+        is closed. Same shape as `edit`/`defer`/`block`, the other tools
+        that address an item the session does not hold.
+
+        `claim=True` is the default and is not cosmetic: a reopened item
+        lands back in the ready queue that parallel lanes poll
+        continuously, so a bare reopen opens a race in which another agent
+        claims the very item you reopened in order to correct.
+
+        THE CLAIM IS A SEPARATE LEG AND MAY LEGITIMATELY FAIL -- most often
+        because this session already holds a different item (one item per
+        session; see `_Held` and `claim`'s own refusal). When it does, the
+        REOPEN STILL STANDS: this reports `claimed: false` with
+        `claim_error` at success, and NEVER drops the caller's existing
+        custody to make room. Rolling the reopen back is not an option
+        either -- that would mean a second close with invented text, which
+        is the disease this verb exists to cure.
+        """
+        try:
+            bd = self._project(project)
+            outcome = bd.reopen(item_id, reason, actor=self._actor)
+        except A.BeadsError as e:
+            return ToolResult(success=False, output=str(e))
+        out: dict[str, Any] = {
+            "reopened": outcome.item.id,
+            "project": project,
+            "status": outcome.item.status,
+            "reopen_reason": outcome.reopen_reason,
+            # Echoed in the RESULT, not merely filed in the item's comment
+            # history: the caller is about to write the replacement, and the
+            # most common correction is a targeted edit of the old text.
+            "previous_resolution": outcome.previous_resolution,
+            "previous_closed_at": (
+                outcome.previous_closed_at.isoformat() if outcome.previous_closed_at else None
+            ),
+            # A real cost, shown rather than hidden: the item re-lands on
+            # the correction date, so throughput roll-ups move by one item.
+            "closed_at_cleared": outcome.item.closed_at is None,
+            "claimed": False,
+        }
+        if claim:
+            # Reuses `claim` wholesale rather than re-implementing the claim
+            # leg: that is the ONE atomic claim-plus-custody path (custody
+            # thread, auto-subscribe, one-item-per-session refusal included),
+            # and a second implementation of it here is exactly how a
+            # double-claim hole gets reopened.
+            claimed = await self.claim(project, item_id=item_id)
+            claimed_ok = (
+                claimed.success
+                and isinstance(claimed.output, dict)
+                and bool(claimed.output.get("claimed"))
             )
+            if claimed_ok:
+                out["claimed"] = True
+                out["holder"] = self._actor
+                out["next_step"] = (
+                    "correct the record with work_resolve(id=..., reason=...) -- the item is yours"
+                )
+            else:
+                out["claim_error"] = str(claimed.output)
+                out["next_step"] = (
+                    "the reopen STANDS but this session does not hold the item -- "
+                    "claim it (work_claim with item_id) before correcting it, or "
+                    "another agent may claim it first"
+                )
+        else:
+            out["next_step"] = (
+                "the item is back in the ready queue -- claim it before correcting it, "
+                "or another agent may claim it first"
+            )
+        return ToolResult(success=True, output=out)
 
     async def status(self) -> ToolResult:
         """Read-only project roll-up -- every known project with its FULL
@@ -1094,6 +1179,83 @@ class WorkResolveTool:
     @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
         return await self._session.resolve(input["id"], input["reason"])
+
+
+class WorkReopenTool:
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_reopen"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Return a RESOLVED item to the queue so its official record can be "
+            "corrected -- the ONLY sanctioned way to change a published "
+            "resolution, and the remedy work_resolve names when it refuses. "
+            "Takes project + item_id (not work_resolve's bare id) because by "
+            "definition this session does not hold a closed item. Requires a "
+            "non-empty 'reason' (a reopen destroys a record's finality; an "
+            "unexplained one is not auditable). Before transitioning, it files "
+            "the VERBATIM previous resolution and previous closed_at into the "
+            "item's attributed comment history, so the old text survives "
+            "whatever bd does to it -- and echoes that text back in the result, "
+            "because the correction you are about to write is usually an edit "
+            "of it. Deliberately NOT idempotent: reopening an item that is not "
+            "resolved is an error, never a silent no-op. Deliberately explicit, "
+            "too -- reopening CLEARS closed_at, so the item re-lands on the "
+            "correction date and every throughput roll-up moves by one item; "
+            "that cost is reported ('closed_at_cleared', 'previous_closed_at') "
+            "rather than hidden, which is why this is not folded into "
+            "work_resolve. claim=true (the default) immediately claims the "
+            "reopened item for this session, because a reopened item lands back "
+            "in the ready queue other agents poll. If that claim leg fails -- "
+            "most often because this session already holds a different item -- "
+            "the REOPEN STILL STANDS and is reported with claimed:false plus "
+            "claim_error; your existing custody is never dropped to make room."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project the item lives in."},
+                "item_id": {
+                    "type": "string",
+                    "description": "Item id to reopen. Must currently be resolved.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": (
+                        "Why the stored resolution is wrong. Required, must be "
+                        "non-empty -- it is the audit record for destroying a "
+                        "published record's finality."
+                    ),
+                },
+                "claim": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "Also claim the reopened item for this session (default "
+                        "true). Set false only if you do not intend to correct it "
+                        "yourself right now."
+                    ),
+                },
+            },
+            "required": ["project", "item_id", "reason"],
+        }
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        return await self._session.reopen(
+            input["project"],
+            input["item_id"],
+            input["reason"],
+            claim=bool(input.get("claim", True)),
+        )
 
 
 class WorkReleaseTool:
@@ -1753,7 +1915,7 @@ class WorkSubscriptionsTool:
 
 
 async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Mount all thirteen work_* tools, sharing one WorkTrackerSession.
+    """Mount every work_* tool, sharing one WorkTrackerSession.
 
     IRON LAW: every tool below is registered via `coordinator.mount()`.
     Skipping any of them (or returning without mounting) fails
@@ -1774,6 +1936,7 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
         WorkClaimTool(session),
         WorkDeclareTool(session),
         WorkResolveTool(session),
+        WorkReopenTool(session),
         WorkReleaseTool(session),
         WorkStatusTool(session),
         WorkStatsTool(session),

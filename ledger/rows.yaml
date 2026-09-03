@@ -256,6 +256,12 @@
     ratified Call 3 (option A). A correct fix must keep BOTH halves: refuse
     the stale holder, and still allow an integrator's single-call resolve
     of an item nobody holds.
+    2026-09-02 (item model_performance-f5c): the close path grew a pre-write
+    read of its own (the already-resolved rule) and the fence moved from
+    `resolve` into `resolve_outcome`, which `resolve` now projects. The
+    probe's landmarks were re-pointed to follow it; the CLAIM is unchanged
+    and re-verified -- the fence still runs only under `status == "held"`,
+    so a post-reclaim close is still unfenced. Disposition stays VIOLATION.
 
 - id: CCV1-010
   title: a session that lost custody can discover it and recover in-process
@@ -402,7 +408,8 @@
     kind: probe
     ref: test_row_ccv1_015
   notes: >
-    `_read_back_or_none` has exactly two call sites. Every other write verb
+    `_read_back_or_none` has three call sites: resolve, release, and (since
+    2026-09-02, item model_performance-f5c) reopen. Every other write verb
     -- take_custody, renew_custody, claim_item, defer/block, supersede,
     update/edit, add_dependency, comment -- still propagates an
     exhausted-retry BeadsError directly, and exhaustion does not prove the
@@ -410,6 +417,9 @@
     take_custody (a false failure produces exactly the CCV1-003
     held-without-custody state) and renew_custody (a false failure ends
     renewal one-strike and dooms a live hold).
+    DRIFT TOWARD SPEC, recorded not absorbed: reopen adopting the discipline
+    is real movement, and the count moved 3 -> 4. The row stays GAP because
+    neither custody-relevant write is covered.
 
 - id: CCV1-016
   title: awareness.md still asserts a reported conflict means the write did not land
@@ -594,6 +604,13 @@
     session latch) rather than the ADAPTER-layer gap CCV1-009 pins. FIXTURE
     3 (in-process recovery): tests/test_recovery.py does not exist; the
     adapter half is covered elsewhere (CCV1-010), the tool-seam half is in
-    the unrun suite. FIXTURE 4 (single-hold): does not exist in any suite;
-    `already holding` appears only at its own enforcement site. Blocked on
+    the unrun suite. FIXTURE 4 (single-hold): still not implemented as a
+    dedicated fixture, and still not executable via `make test`. As of
+    2026-09-02 (item model_performance-f5c) the refusal IS now asserted
+    INCIDENTALLY in the modules suite --
+    modules/tool-work-tracker/tests/test_work_reopen.py exercises it as one
+    branch of work_reopen's claim-degradation path -- but that suite is the
+    one `make test` does not run, so the Freeze Bar clause quoted above is
+    still unmet. Recorded here rather than absorbed silently; the probe now
+    pins that exact file set so a real Fixture 4 still flips it. Blocked on
     CCV1-022 for anything that must live in the modules suite.
