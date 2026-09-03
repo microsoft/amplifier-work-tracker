@@ -1,0 +1,37 @@
+### TIER 3 -- make test-cli
+2026-09-03T11:23:16Z
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2723
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2724
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2723
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2724
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2725
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2725
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2726
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2727
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2726
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2727
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2728
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2728
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2729
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2729
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2730
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2730
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2731
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2731
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2732
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2732
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2733
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2733
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2734
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2734
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2735
+time="2026-09-03T04:27:24-07:00" level=warning msg="error running query" connectTime="2026-09-03 04:27:24.942700665 -0700 PDT m=+248.484588765" connectionID=2735 error="database not found: contract1788434799710rm" queryTime="2026-09-03 04:27:24.944609541 -0700 PDT m=+248.486497641"
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2735
+time="2026-09-03T04:27:24-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2736
+time="2026-09-03T04:27:24-07:00" level=info msg=ConnectionClosed connectionID=2736
+time="2026-09-03T04:27:25-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2737
+time="2026-09-03T04:27:25-07:00" level=info msg=ConnectionClosed connectionID=2737
+=========================== short test summary info ============================
+FAILED tests/cli/test_cli_surface.py::test_doctor_quick_succeeds_against_the_real_installed_bd
+=================== 1 failed, 88 passed in 296.13s (0:04:56) ===================
+make: *** [Makefile:34: test-cli] Error 1

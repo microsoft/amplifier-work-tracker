@@ -1,0 +1,32 @@
+### TIER 2 -- make test-integration (real bd + shared dolt)
+2026-09-03T11:38:31Z
+tests/integration/test_write_readback.py::test_comment_raises_when_bd_reports_success_but_no_comment_landed PASSED [ 96%]
+tests/integration/test_write_readback.py::test_defer_verifies_by_readback_when_the_wrapper_reports_conflict PASSED [ 96%]
+tests/integration/test_write_readback.py::test_defer_raises_when_bd_reports_success_but_the_status_did_not_move PASSED [ 97%]
+tests/integration/test_write_readback.py::test_block_verifies_by_readback_when_the_wrapper_reports_conflict PASSED [ 97%]
+tests/integration/test_write_readback.py::test_unblock_verifies_by_readback_when_the_wrapper_reports_conflict PASSED [ 97%]
+tests/integration/test_write_readback.py::test_add_dependency_verifies_by_readback_when_the_wrapper_reports_conflict PASSED [ 97%]
+tests/integration/test_write_readback.py::test_add_dependency_raises_when_bd_reports_success_but_no_edge_landed PASSED [ 98%]
+tests/integration/test_write_readback.py::test_take_custody_verifies_by_readback_when_the_wrapper_reports_conflict PASSED [ 98%]
+tests/integration/test_write_readback.py::test_renew_custody_verifies_by_readback_when_the_wrapper_reports_conflict PASSED [ 98%]
+tests/integration/test_write_readback.py::test_renew_custody_raises_when_bd_reports_success_but_the_record_did_not_move PASSED [ 98%]
+tests/integration/test_write_readback.py::test_supersede_verifies_by_readback_when_the_wrapper_reports_conflict PASSED [ 99%]
+tests/integration/test_write_readback.py::test_reopen_verifies_by_readback_when_the_wrapper_reports_conflict PASSED [ 99%]
+tests/integration/test_write_readback.py::test_reopen_still_raises_when_readback_shows_the_reopen_genuinely_did_not_land PASSED [ 99%]
+tests/integration/test_write_readback.py::test_move_refuses_when_the_copy_reports_success_but_the_rows_are_not_there PASSED [100%]
+
+=============================== warnings summary ===============================
+tests/integration/test_observatory_web.py:20
+  /home/bkrabach/dev/hw-model-performance/lanes/kxk-healed-migration-stderr/amplifier-work-tracker/tests/integration/test_observatory_web.py:20: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient  # noqa: E402
+
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /home/bkrabach/dev/hw-model-performance/lanes/kxk-healed-migration-stderr/amplifier-work-tracker/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/integration/test_web.py:699: bd set no `owner` on this item -- happens where the environment has no git identity (e.g. a bare CI container with no `git config user.email`). `owner` is an environment-provided value, not a code invariant; the environment-independent humanization guarantees are covered by test_humanize_identity_* in tests/unit.
+SKIPPED [1] tests/integration/test_web_pwa.py:234: Pillow not installed (dev/build-only tool)
+SKIPPED [1] tests/integration/test_web_pwa.py:249: Pillow not installed (dev/build-only tool)
+============ 367 passed, 3 skipped, 2 warnings in 954.56s (0:15:54) ============
