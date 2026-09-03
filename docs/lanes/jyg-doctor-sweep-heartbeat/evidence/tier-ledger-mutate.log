@@ -1,0 +1,54 @@
+.venv/bin/python -m ledger.checks.mutation_harness
+LEDGER MUTATION HARNESS -- discriminating-power evidence
+Each probe is run against a counterfactual repo and must go RED.
+Injection only: no product-code edit, no subprocess, nothing written to the repo.
+
+PINNING PROBES  (row is red; probe pins the CURRENT non-conformant shape;
+                 counterfactual = the FIXED behaviour)
+  (none)
+
+CONFORMANCE PROBES  (row is green; probe asserts the invariant;
+                     counterfactual = the known-wrong shape it forbids)
+  [PROVEN ] CCV1-000  LEDGER-INTEGRITY  (CONFORMS)
+             test_row_ccv1_000 :: the governed contract moved under the pinned hash
+  [PROVEN ] CCV1-003  REGRESSION  (CONFORMS)
+             test_row_ccv1_003 :: the failed-custody arm returns a bare failure again (no compensating release)
+  [PROVEN ] CCV1-004  REGRESSION  (CONFORMS)
+             test_row_ccv1_004 :: a failed renewal no longer stops the loop (retry returns)
+  [PROVEN ] CCV1-005  REGRESSION  (CONFORMS)
+             test_row_ccv1_005 :: the custody-keeps-itself-fresh reassurance returns to the skill
+  [PROVEN ] CCV1-008  REGRESSION  (CONFORMS)
+             test_row_ccv1_008 :: awareness.md states the TTL release as automatic again
+  [PROVEN ] CCV1-009  REGRESSION  (CONFORMS)
+             test_row_ccv1_009 :: the close fence is re-gated on item status (the original post-reclaim gap)
+  [PROVEN ] CCV1-011  REGRESSION  (CONFORMS)
+             test_row_ccv1_011 :: renewal fences on holder only -- a zombie's generation matches again
+  [PROVEN ] CCV1-012  REGRESSION  (CONFORMS)
+             test_row_ccv1_012 :: release reports its outcome from the exit code, not the read-back
+  [PROVEN ] CCV1-013  REGRESSION  (CONFORMS)
+             test_row_ccv1_013 :: claim_item returns an Item parsed from the writing process's own stdout
+  [PROVEN ] CCV1-015  REGRESSION  (CONFORMS)
+             test_row_ccv1_015 :: _verified_write stops verifying the SUCCESS path
+  [PROVEN ] CCV1-016  REGRESSION  (CONFORMS)
+             test_row_ccv1_016 :: the transaction-was-aborted guarantee Incident B disproved returns to the prose
+  [PROVEN ] CCV1-017  REGRESSION  (CONFORMS)
+             test_row_ccv1_017 :: the single-hold refusal is removed from the tool seam
+  [PROVEN ] CCV1-021  REGRESSION  (CONFORMS)
+             test_row_ccv1_021 :: `make test` stops collecting ledger/checks
+  [PROVEN ] CCV1-022  REGRESSION  (CONFORMS)
+             test_row_ccv1_022 :: CI stops installing the tool module editable (suite runs in nothing again)
+  [PROVEN ] CCV1-023  REGRESSION  (CONFORMS)
+             test_row_ccv1_023 :: the contract's corrected Fixture 1 Test-location line regresses to the stale path
+
+DENOMINATOR (this is the record)
+  pinning mutations       proven 0 / 0
+  pinning probes covered  proven 0 / 0
+  conformance mutations   proven 15 / 15
+  ALL mutations           proven 15 / 15
+
+UNPROVEN, named with reason
+  (none)
+
+Flip direction for every pinning probe above: VIOLATION-MOVEMENT.
+A pinning probe going red means the behaviour moved TOWARD the contract:
+update the row to CONFORMS and retarget the probe in the SAME change.
