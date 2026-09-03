@@ -290,6 +290,92 @@ class WorkTrackerSession:
 
     # ------------------------------------------------------------ tools
 
+    def _release_after_failed_custody(self, bd: A.Beads, item_id: str, cause: A.BeadsError) -> str:
+        """Undo a claim whose custody step failed, and describe what really
+        happened -- the compensating half of `claim`'s "one indivisible
+        call" promise (contract `Core 3`, ledger row CCV1-003).
+
+        `work_claim` is one call but TWO writes: the bd claim, then
+        `take_custody`. Before this compensation existed, a `take_custody`
+        failure after a successful claim returned a plain failure and left
+        the item HELD by this actor with NO custody record and no session
+        tracking it -- invisible to `work_release` (this session never set
+        `self._held`, so it refuses), and freed only by the next reap sweep,
+        up to a custody TTL later and only where a sweep runs at all. The
+        claim landed, so the only honest recovery is to give the item back.
+
+        Order, and why: `adapter.Beads.release` first (it checks status
+        BEFORE any write, so it can never reopen an already-closed item, and
+        it is read-back-verified on the conflict path -- PR #63), then OUR
+        OWN read-back via the contention-free read path (`get_readonly` ->
+        `_get_item_via_sql`, a pure SELECT that cannot lose a serialization
+        conflict). The second read is not redundant: a write's own report of
+        success is exactly what this bundle has repeatedly measured to be
+        unreliable, and "released" is the fact the caller will act on.
+
+        Every branch returns text naming BOTH facts -- that the claim
+        landed, and what became of the item -- because the one outcome that
+        must never be silent is the compensating release ITSELF failing:
+        then the item may still be held by this actor, and the message says
+        so, names the id, and says what to do about it.
+
+        Custody-record note: a `take_custody` that failed at its own
+        read-back verification may still have LANDED its metadata write, so
+        a released item can carry a stale custody record. That is benign --
+        the record is inert on an `open` item (nothing renews it, no sweep
+        acts on it), and the next `take_custody` bumps `generation` past it
+        (see `adapter.Beads.take_custody`). Clearing it would mean a new
+        adapter write verb; the item's STATUS is what "released back to
+        ready" means, and that is what this verifies.
+
+        Called with `self._lock` already held (from `claim`); acquires
+        nothing itself. Returns the message rather than raising, because a
+        failed `ToolResult` is this module's loud-error channel (see
+        `_guard.guarded` and `test_result_guard.py`).
+        """
+        try:
+            outcome = bd.release(item_id)
+        except A.BeadsError as release_error:
+            return (
+                f"claim landed; custody could not be established; the compensating "
+                f"release ALSO FAILED -- {item_id} may STILL BE HELD by "
+                f"{self._actor!r} with no custody record. Re-read it "
+                f"(work_list item_id={item_id!r}) and release it explicitly before "
+                f"claiming again. custody failure: {cause}; release failure: "
+                f"{release_error}"
+            )
+        try:
+            back = bd.get_readonly(item_id)
+        except A.BeadsError as read_error:
+            return (
+                f"claim landed; custody could not be established; the compensating "
+                f"release reported success but COULD NOT BE CONFIRMED by read-back, "
+                f"so {item_id} may still be held by {self._actor!r}. Re-read it "
+                f"before claiming again. custody failure: {cause}; read-back "
+                f"failure: {read_error}"
+            )
+        if back.status == "held" or back.holder == self._actor:
+            return (
+                f"claim landed; custody could not be established; the compensating "
+                f"release reported success but read-back shows {item_id} is STILL "
+                f"status={back.status!r} holder={back.holder!r} -- it may still be "
+                f"held by {self._actor!r}. Release it explicitly before claiming "
+                f"again. custody failure: {cause}"
+            )
+        if outcome.already_closed:
+            return (
+                f"claim landed; custody could not be established; no release was "
+                f"needed -- {item_id} read back as already closed "
+                f"(status={back.status!r}), so nothing is left held. custody "
+                f"failure: {cause}"
+            )
+        return (
+            f"claim landed; custody could not be established; item released back to "
+            f"ready: {cause} (read-back confirms {item_id} is now "
+            f"status={back.status!r} holder={back.holder!r}; nothing is held by "
+            f"{self._actor!r})"
+        )
+
     async def claim(self, project: str, *, item_id: str | None = None) -> ToolResult:
         """Claim work and establish custody in one indivisible call.
 
@@ -303,6 +389,15 @@ class WorkTrackerSession:
             already held by someone else, does not exist, or is blocked by
             an open dependency -- no override; resolve the blocker or
             claim again.
+
+        "Indivisible" is enforced, not merely asserted: the call is two
+        writes (bd claim, then `take_custody`), so a `take_custody` failure
+        after a successful claim COMPENSATES -- the just-claimed item is
+        released back to ready and that release is confirmed by our own
+        read-back before the failure is reported. See
+        `_release_after_failed_custody` for the full contract (Core 3) and
+        for the one case that can still leave something held: a compensating
+        release that itself fails, which is reported loudly and by id.
         """
         with self._lock:
             if self._held is not None:
@@ -341,9 +436,14 @@ class WorkTrackerSession:
                     host=socket.gethostname(),
                 )
             except A.BeadsError as e:
+                # The bd claim ALREADY LANDED. Returning here without undoing
+                # it is what left an item held-with-no-custody (contract
+                # Core 3, ledger row CCV1-003): invisible to work_release,
+                # untracked by any session, freed only by a reap sweep. Give
+                # it back, verify by our own read-back, and report both facts.
                 return ToolResult(
                     success=False,
-                    output=f"claimed {item.id} but could not establish custody: {e}",
+                    output=self._release_after_failed_custody(bd, item.id, e),
                 )
             held = _Held(
                 project=project,

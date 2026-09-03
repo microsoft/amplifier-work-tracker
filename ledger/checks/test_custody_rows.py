@@ -75,23 +75,65 @@ def test_row_ccv1_000() -> None:
 
 
 def test_row_ccv1_003() -> None:
-    """Core 3 VIOLATION pin: a failed `take_custody` after a successful claim
-    returns a failure and leaves the item HELD with no custody record --
-    no release, no rollback.
+    """Core 3 CONFORMS: a `take_custody` failure after a successful claim
+    COMPENSATES -- it releases the just-claimed item, confirms that release
+    by its own contention-free read-back, and reports both facts.
+
+    Three separable things must all hold, so each is asserted separately:
+    the failing arm calls the compensation (rather than returning), the
+    compensation actually releases AND independently verifies, and the
+    residual case -- a compensating release that itself fails -- stays
+    loud. A fix that quietly dropped the verification read, or softened the
+    still-held message into a rollback claim, would pass a single blunt
+    check and fail these.
+
+    Behavioral proof lives in the tool module's own suite (real bd/dolt);
+    this kit is in-process only, so what it can prove is the SHAPE. See the
+    row's `notes` for the fixture names and the honest limit.
     """
     assert contains(
         TOOL_MODULE,
         """
-            except A.BeadsError as e:
                 return ToolResult(
                     success=False,
-                    output=f"claimed {item.id} but could not establish custody: {e}",
+                    output=self._release_after_failed_custody(bd, item.id, e),
                 )
         """,
     ), (
-        "CCV1-003 (Core 3, VIOLATION) pin no longer matches. If the claim/custody "
-        "two-write hole was CLOSED, this is the expected failure: flip the row to "
-        "CONFORMS, cite the discriminating fixture, and resolve work_item_pipeline-aih."
+        "CCV1-003 (Core 3): the failing `take_custody` arm of `claim` no longer "
+        "routes to the compensating release. If it returns a bare failure again, "
+        "the two-write hole is BACK: the item stays held with no custody record "
+        "until a reap sweep frees it (work_item_pipeline-aih)."
+    )
+    assert contains(
+        TOOL_MODULE,
+        """
+            outcome = bd.release(item_id)
+        """,
+    ) and contains(
+        TOOL_MODULE,
+        """
+            back = bd.get_readonly(item_id)
+        """,
+    ), (
+        "CCV1-003 (Core 3): the compensation must both RELEASE the claim and "
+        "verify by its OWN read-back -- a write's self-report of success is "
+        "exactly what this repo has repeatedly measured to be unreliable."
+    )
+    # Matched as fragments, not whole sentences: these messages are built
+    # from adjacent f-string literals, so the source text a reader sees as
+    # one sentence carries a `" f"` seam that whitespace-collapsing cannot
+    # remove. Each fragment is still specific enough that a reworded
+    # message fails here.
+    assert contains(
+        TOOL_MODULE, "claim landed; custody could not be established; item released back to "
+    ), "CCV1-003 (Core 3): the success-path message must name BOTH facts"
+    assert contains(TOOL_MODULE, "release ALSO FAILED --") and contains(
+        TOOL_MODULE, "may STILL BE HELD by"
+    ), (
+        "CCV1-003 (Core 3): a compensating release that itself fails must stay "
+        "loud -- it is the one path that can still leave an item held, and it "
+        "must never be reported as a rollback that happened."
     )
 
 
