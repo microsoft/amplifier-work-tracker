@@ -547,28 +547,42 @@
     suite runs is CCV1-022.
 
 - id: CCV1-022
-  title: modules/tool-work-tracker/tests is run by nothing
+  title: modules/tool-work-tracker/tests is importable and run by make test and CI
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Freeze Bar
     quote: |
       Test suite (`tests/test_*.py`) is importable and run as part of CI
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-a7n
   assertion:
-    kind: absence
+    kind: probe
     ref: test_row_ccv1_022
   notes: >
-    Measured this run, verbatim -- `./.venv/bin/python -c "import
-    amplifier_module_tool_work_tracker"` -> ModuleNotFoundError; `make
-    test` is `pytest tests -v`; ci.yml runs tests/unit, tests/integration,
-    tests/cli. The identical ImportError was recorded in the Phase-0
-    evidence brief (sec.D-11) against main @ deffa54 and reproduces on
-    b5b23ca. THE FREEZE BLOCKER: the only mechanical assertions of
-    post-reclaim custody behavior live in that suite -- six tests, all
-    green claims nobody has ever run. Rows CCV1-004, CCV1-009, CCV1-010 and
-    CCV1-017 are all weaker than they should be because of it. Ratified
-    Call 8 makes running the kit a Freeze precondition.
+    CLOSED by work_item_pipeline-a7n. Was VIOLATION (the Freeze blocker):
+    `import amplifier_module_tool_work_tracker` raised ModuleNotFoundError
+    in the repo venv, `make test` was `pytest tests ledger/checks -v`, and
+    ci.yml named only tiers 1-4 -- so the only mechanical assertions of
+    post-reclaim custody behaviour were green claims nobody had ever run
+    (Phase-0 evidence brief sec.D-11, reproduced on b5b23ca). Now wired
+    three ways, one venv and one setup command: `make venv` and ci.yml's
+    "Set up amplifier-work-tracker" both install the module editable
+    (`-e "modules/tool-work-tracker[dev]"`, whose dev extra carries
+    amplifier-core + pytest-asyncio); the Makefile gains a `test-module`
+    target and `make test` runs the suite as its own pytest invocation;
+    ci.yml gains a "Tier 5 -- tool module tests" step. MEASURED 2026-09-02
+    on this branch: `import amplifier_module_tool_work_tracker` exits 0 and
+    `make test-module` collects 94 and reports 93 passed, 1 xfailed in
+    332s against real bd + this suite's own isolated dolt server. HONEST LIMIT: that single xfail(strict=True) is
+    test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_
+    held_and_allows_new_claim -- a PRODUCT defect, not a wiring one, and it
+    is CCV1-009's post-reclaim fence gap, now measured behaviourally for
+    the first time rather than inferred from source. Its strictness is what
+    keeps this row honest: the day CCV1-009 is fixed, the xfail fails.
+    Consequence for the rows that were weakened by this one (CCV1-004,
+    CCV1-009, CCV1-010, CCV1-017): they may now be upgraded from
+    source-pinned probes to behavioural cites -- NOT done here (a
+    single-row lane), left as named follow-up.
 
 - id: CCV1-023
   title: Conformance Fixtures 2, 3 and 4 are not implemented-and-runnable
