@@ -645,14 +645,16 @@ def test_row_ccv1_022() -> None:
 
 
 def test_row_ccv1_023() -> None:
-    """Freeze Bar CONFORMS: all four Conformance fixtures exist as
+    """Freeze 3 CONFORMS: all four Conformance fixtures exist as
     discriminating good/bad pairs, in files the already-wired test paths
-    collect, with nothing quietly disabled.
+    collect, with nothing quietly disabled -- AND the contract's own four
+    Test-location lines actually name those real paths.
 
     Source-level on purpose (this ledger is in-process only -- no bd, no
-    dolt, no subprocess), so this probe asserts the three things a static
-    check honestly CAN: the fixture files exist, each fixture contributes
-    real test functions, and no half is marked `xfail`/`skip`. That the
+    dolt, no subprocess), so this probe asserts the things a static check
+    honestly CAN: the fixture files exist, each fixture contributes real
+    test functions, no half is marked `xfail`/`skip`, and the contract text
+    names the real paths rather than the four that never existed. That the
     fixtures actually PASS is measured by running them (`make test-module`
     / CI Tier 5) and recorded in the row's notes -- see CCV1-020 on why a
     probe is never the behavioural proof.
@@ -661,6 +663,13 @@ def test_row_ccv1_023() -> None:
     `test_row_ccv1_022` (venv install + `test-module` target + `make test`
     aggregation + the CI step). Not restated here: two rows asserting the
     same wiring is how one of them silently stops meaning anything.
+
+    Part 5 below USED TO pin the contract's four stale Test-location lines
+    on purpose (a recorded-but-not-fixed drift). The 2026-09-03 owner-
+    ratified DRAFT amendment fixed that drift for real, so part 5 no longer
+    pins anything -- it is a genuine conformance check now, same as parts
+    1-4, and its expected flip direction is REGRESSION (a stale line
+    returning), not VIOLATION-MOVEMENT.
     """
     module_suite = REPO_ROOT / "modules" / "tool-work-tracker" / "tests"
     fixtures_2_3_4 = module_suite / "test_conformance_fixtures.py"
@@ -716,18 +725,37 @@ def test_row_ccv1_023() -> None:
         f"off CONFORMS and name the disabled half before landing that."
     )
 
-    # 5. The DRIFT this row also records: the contract's own "Test location"
-    #    lines still name files that have never existed. The fixtures are
-    #    real; the pointers at them are not. Editing `contracts/` is an
-    #    amendment, not a lane edit, so the row's notes carry the correction
-    #    and this pin keeps it from being forgotten.
+    # 5. DISCHARGED 2026-09-03: the contract's four "Test location" lines
+    #    used to name files that had never existed; the owner-ratified DRAFT
+    #    amendment corrected all four to the real paths above and dropped
+    #    their "(to be added)" / "(currently unrun in CI)" qualifiers. This
+    #    now asserts the CORRECTED lines are present and the stale ones
+    #    (and their status qualifiers) are gone -- a regression back to any
+    #    of them is exactly the drift this row once had to just record.
+    assert contains(
+        CONTRACT_PATH, "**Test location:** `tests/integration/test_phantom_conflict_recovery.py`."
+    ), "CCV1-023: Fixture 1's corrected Test-location line is gone"
+    assert contains(
+        CONTRACT_PATH,
+        "**Test location:** `modules/tool-work-tracker/tests/test_conformance_fixtures.py` "
+        "(tool seam) and `tests/integration/test_post_reclaim_fence.py` (adapter layer).",
+    ), "CCV1-023: Fixture 2's corrected Test-location line is gone"
+    assert (
+        count(
+            CONTRACT_PATH,
+            "**Test location:** `modules/tool-work-tracker/tests/test_conformance_fixtures.py`.",
+        )
+        == 2
+    ), "CCV1-023: Fixtures 3 and 4 must each still point at test_conformance_fixtures.py"
     for stale in (
-        "**Test location:** `tests/test_incident_b.py` (to be added).",
-        "**Test location:** `tests/test_reap_recovery.py:67-72` (currently unrun in CI).",
-        "**Test location:** `tests/test_recovery.py` (to be added).",
-        "**Test location:** `tests/test_single_hold.py` (to be added).",
+        "tests/test_incident_b.py",
+        "tests/test_reap_recovery.py:67-72",
+        "tests/test_recovery.py",
+        "tests/test_single_hold.py",
+        "(to be added)",
+        "(currently unrun in CI)",
     ):
-        assert contains(CONTRACT_PATH, stale), (
-            f"CCV1-023: the contract's fixture-location line changed ({stale!r}). If it now "
-            f"names the real paths, drop the stale-pointer half of this row's notes."
+        assert not contains(CONTRACT_PATH, stale), (
+            f"CCV1-023 regression: the contract names a stale, never-existed path or status "
+            f"qualifier again ({stale!r})."
         )

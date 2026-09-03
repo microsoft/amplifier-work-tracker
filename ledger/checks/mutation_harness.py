@@ -298,25 +298,17 @@ def _m022_ci_drops_the_editable_install(w: World) -> None:
     w.replace(CI_WORKFLOW, '-e "modules/tool-work-tracker[dev]"', '-e "."')
 
 
-def _m023_named_fixture_now_exists(w: World) -> None:
-    root = w.fake_root()
-    (root / "tests" / "test_single_hold.py").write_text(
-        "def test_a_second_claim_is_refused() -> None: ...\n", encoding="utf-8"
-    )
-
-
-def _m023_single_hold_fixture_now_exists(w: World) -> None:
-    root = w.fake_root()
-    (root / "modules" / "tool-work-tracker" / "tests" / "test_holds.py").write_text(
-        'def test_refusal() -> None:\n    assert "already holding" in out\n', encoding="utf-8"
-    )
-
-
-def _m023_contract_pointer_corrected(w: World) -> None:
+def _m023_test_location_regresses(w: World) -> None:
+    """REGRESSION (2026-09-03 amendment retargeted this row's probe from a
+    pin to a genuine conformance check -- see the three retired `_m023_*`
+    mutations this replaced, git-blame). The contract's corrected Fixture 1
+    Test-location line reverts to the stale, never-existed path -- exactly
+    the drift CCV1-023's part 5 now forbids rather than records.
+    """
     w.replace(
         CONTRACT_PATH,
-        "**Test location:** `tests/test_single_hold.py` (to be added).",
-        "**Test location:** `tests/integration/test_single_hold.py`.",
+        "**Test location:** `tests/integration/test_phantom_conflict_recovery.py`.",
+        "**Test location:** `tests/test_incident_b.py` (to be added).",
     )
 
 
@@ -390,18 +382,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "CCV1-023",
-        "FIXED: the contract's named fixture file tests/test_single_hold.py now exists",
-        _m023_named_fixture_now_exists,
-    ),
-    Mutation(
-        "CCV1-023",
-        "FIXED: a single-hold fixture now exists in the tool module suite",
-        _m023_single_hold_fixture_now_exists,
-    ),
-    Mutation(
-        "CCV1-023",
-        "FIXED: the contract's Fixture 4 location line points at a real path",
-        _m023_contract_pointer_corrected,
+        "the contract's corrected Fixture 1 Test-location line regresses to the stale path",
+        _m023_test_location_regresses,
     ),
 )
 

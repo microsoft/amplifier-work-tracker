@@ -85,7 +85,13 @@ def test_every_clause_id_is_a_bare_identifier_the_contract_actually_names() -> N
     # Sections the contract does not number get a section-name clause id --
     # a deliberate, reported deviation from the format's "bare numbered
     # identifier" rule, because the contract itself offers no number there.
-    unnumbered = {"Conformance: Checks", "Freeze Bar"}
+    # "Freeze Bar" was in this set until the 2026-09-03 DRAFT amendment gave
+    # the Freeze Bar its own `Freeze 1`..`Freeze 9` bare ids (CCV1-022 and
+    # CCV1-023 were retargeted to them); `Conformance: Checks` remains
+    # unnumbered -- the amendment only numbered the four Conformance
+    # fixtures, not the separate `Checks` subsection, and that was out of
+    # this amendment's scope (CCV1-021 was left as is).
+    unnumbered = {"Conformance: Checks"}
     for r in rows():
         if r["id"] == "CCV1-000":
             continue

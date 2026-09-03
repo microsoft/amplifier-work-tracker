@@ -17,7 +17,7 @@
   contract:
     files:
       - file: contracts/custody-coordination.v1.md
-        sha256: 00e65ca7eada5c8699823ddd2a0fa12b1f9c6027376db53de2366d640b813672
+        sha256: ec4b736f8d6dca4ee3c29b6df8397a9d7b51d2eadd76965854e898924f529e1a
       - file: docs/VISION.md
         sha256: b7547519a2b05432652c28c5c4201e669ea8a79ce8621d8615dacadb2f55da4c
   disposition: CONFORMS
@@ -25,11 +25,35 @@
     kind: probe
     ref: test_row_ccv1_000
   notes: >
-    Pinned at repo commit b5b23ca (branch converge/seed-custody-ledger),
-    contract ratified by the owner at the ENCODE gate on 2026-09-01. A hash
-    mismatch triggers a MANDATORY full-ledger re-review -- never a silent
-    hash bump. Quote verification proves the quoted text still exists; only
-    the re-review confirms each row still READS it correctly.
+    REHASHED 2026-09-03: owner-ratified DRAFT amendment ("ok, yes, proceed"),
+    a three-part true-up recommended by the protocol authority -- (1) struck
+    all `**Current state:**` annotations from every Core/NOT-ASSERTABLE
+    clause and replaced the `Residual Issues` section's D-1..D-6 status
+    enumeration with one sentence pointing at this ledger (conformance status
+    lives ONLY here, per pillar 1); (2) numbered the Conformance fixtures
+    (`Conformance 1`..`4`) and the Freeze Bar conditions (`Freeze 1`..`9`) for
+    bare-id ledger citation (LEDGER-FORMAT.md sec.2); (3) corrected the four
+    stale `Test location` lines to the real, existing paths and dropped their
+    "(to be added)" / "(currently unrun in CI)" qualifiers. FULL RE-REVIEW
+    PERFORMED (mandatory on any hash change, never a silent bump): every
+    row's quote re-verified against the new bytes (`pytest ledger/checks`),
+    rows anchored into struck/renamed text re-anchored to surviving
+    NORMATIVE text in the SAME clause (CCV1-003, -009, -012 -- see those
+    rows' notes), rows citing section-name clause ids retargeted to the new
+    bare numbered ids where the amendment created one (CCV1-022 -> `Freeze
+    5`, CCV1-023 -> `Freeze 3`; CCV1-021's `Conformance: Checks` is a
+    distinct, still-unnumbered section and was left as is -- out of this
+    amendment's scope), and CCV1-023's probe (which pinned the four now-fixed
+    stale Test-location lines) flipped to assert the corrected paths present
+    and the stale ones absent. `docs/VISION.md` was not touched; its hash is
+    unchanged from the SEED pin. Disposition stays CONFORMS throughout -- no
+    row's READING of the contract changed, only the bytes it reads moved.
+    Previously pinned at repo commit b5b23ca (branch
+    converge/seed-custody-ledger), contract ratified by the owner at the
+    ENCODE gate on 2026-09-01. A hash mismatch triggers a MANDATORY
+    full-ledger re-review -- never a silent hash bump. Quote verification
+    proves the quoted text still exists; only the re-review confirms each
+    row still READS it correctly.
 
 - id: CCV1-001
   title: claim is atomic in both modes; a loser learns it loudly
@@ -297,8 +321,14 @@
     is the fixture, not the probe (see CCV1-020). Same fix flips the
     previously-red tool-layer fixture
     modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim
-    green (verified 2026-09-02 in a throwaway venv; that suite still runs
-    in no gate -- CCV1-022).
+    green (verified 2026-09-02 in a throwaway venv). STALE-NOTE FIX
+    2026-09-03 (mandatory full-ledger re-review, CCV1-000): that sentence
+    used to add "that suite still runs in no gate -- CCV1-022", true only
+    at the moment this lane's note was written -- CCV1-022 (also wave-1,
+    same PR #68) wired the suite into CI in parallel, and the fixture's own
+    xfail(strict=True) marker (which had pinned exactly this gap) was
+    removed by highway wave 2 (PR #71, ea233a7) once it started XPASSing.
+    The suite runs in CI now; see CCV1-022 for the current measured count.
     MERGED 2026-09-02 with `origin/main`'s PR #67 (`reopen` +
     resolve-on-closed fail-loud): the close path grew a pre-write read of
     its own (the already-resolved rule) and the fence moved from `resolve`
@@ -644,7 +674,7 @@
   title: modules/tool-work-tracker/tests is importable and run by make test and CI
   contract:
     file: contracts/custody-coordination.v1.md
-    clause: Freeze Bar
+    clause: Freeze 5
     quote: |
       Test suite (`tests/test_*.py`) is importable and run as part of CI
   disposition: CONFORMS
@@ -666,23 +696,27 @@
     target and `make test` runs the suite as its own pytest invocation;
     ci.yml gains a "Tier 5 -- tool module tests" step. MEASURED 2026-09-02
     on this branch: `import amplifier_module_tool_work_tracker` exits 0 and
-    `make test-module` collects 94 and reports 93 passed, 1 xfailed in
-    332s against real bd + this suite's own isolated dolt server. HONEST LIMIT: that single xfail(strict=True) is
-    test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_
-    held_and_allows_new_claim -- a PRODUCT defect, not a wiring one, and it
-    is CCV1-009's post-reclaim fence gap, now measured behaviourally for
-    the first time rather than inferred from source. Its strictness is what
-    keeps this row honest: the day CCV1-009 is fixed, the xfail fails.
-    Consequence for the rows that were weakened by this one (CCV1-004,
-    CCV1-009, CCV1-010, CCV1-017): they may now be upgraded from
-    source-pinned probes to behavioural cites -- NOT done here (a
-    single-row lane), left as named follow-up.
+    `make test-module` collected 94 and reported 93 passed, 1 xfailed in
+    332s against real bd + this suite's own isolated dolt server.
+    RE-MEASURED 2026-09-03 (mandatory full-ledger re-review triggered by
+    the contract amendment, CCV1-000): `make test-module` now collects and
+    reports 113 passed, 0 xfailed, 0 failed in 468s against the same real
+    bd + isolated dolt server. The single xfail(strict=True) this row used
+    to carry -- test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim,
+    CCV1-009's post-reclaim fence gap, measured behaviourally rather than
+    inferred from source -- was removed by highway wave 2 (PR #71, ea233a7)
+    once CCV1-009's fix landed and the strict marker started XPASSing,
+    exactly as its strictness was designed to force. Consequence for the
+    rows that were weakened by this one (CCV1-004, CCV1-009, CCV1-010,
+    CCV1-017): they may now be upgraded from source-pinned probes to
+    behavioural cites -- NOT done here (out of this amendment's scope),
+    left as named follow-up.
 
 - id: CCV1-023
   title: Conformance Fixtures 2, 3 and 4 exist as runnable discriminating pairs
   contract:
     file: contracts/custody-coordination.v1.md
-    clause: Freeze Bar
+    clause: Freeze 3
     quote: |
       All four Conformance fixtures implemented, passing, and executable via `make test`
   disposition: CONFORMS
@@ -729,18 +763,23 @@
     None` gate fails both of Fixture 4's refusal tests. Runs in `make test`
     and CI via the modules/tool-work-tracker/tests path CCV1-022 wired
     (Makefile `test-module` + the all-tiers `test` target, ci.yml "Tier 5"),
-    so no new wiring was needed. CONTRACT DRIFT THIS ROW RECORDS AND DOES
-    NOT FIX: the contract's four "Test location" lines all name paths that
-    have never existed -- tests/test_incident_b.py, tests/test_reap_recovery.py:67-72,
-    tests/test_recovery.py, tests/test_single_hold.py. The real locations
-    are the two files named above. Correcting contracts/ is an amendment,
-    not a lane edit, so the probe pins the stale lines instead and this
-    note carries the correction. RESIDUAL, out of this row's scope: the
+    so no new wiring was needed. CONTRACT DRIFT THIS ROW ONCE RECORDED,
+    DISCHARGED 2026-09-03: the contract's four "Test location" lines used
+    to name paths that had never existed -- tests/test_incident_b.py,
+    tests/test_reap_recovery.py:67-72, tests/test_recovery.py,
+    tests/test_single_hold.py. The owner-ratified DRAFT amendment
+    ("ok, yes, proceed") corrected all four to the real paths named above
+    and dropped their "(to be added)" / "(currently unrun in CI)"
+    qualifiers, as part of the mandatory full-ledger re-review a contract
+    hash change triggers (CCV1-000). The probe's part 5, which used to PIN
+    the stale lines on purpose, now asserts the corrected lines are present
+    and the stale ones are gone -- a genuine conformance check, same as its
+    other four parts. RESIDUAL, discharged in the same re-review: the
     now-obsolete xfail(strict=True) on
     modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim
-    was removed in the same commit -- it pinned CCV1-009's pre-fix gap, the
-    fence landed, and the strict marker was XPASSing and failing the suite
-    (exactly as CCV1-022's own notes predicted it would). CCV1-009's and
-    CCV1-022's notes still describe that xfail as present; neither row was
-    edited here.
+    was removed by highway wave 2 (PR #71, ea233a7) -- it pinned CCV1-009's
+    pre-fix gap, the fence landed, and the strict marker was XPASSing and
+    failing the suite (exactly as CCV1-022's own notes predicted it would).
+    CCV1-009's and CCV1-022's notes described that xfail as still present;
+    both corrected in this same re-review (see those rows).
 
