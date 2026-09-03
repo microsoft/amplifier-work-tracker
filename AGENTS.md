@@ -26,10 +26,13 @@ Nothing above the seam should ever need to change for a Beads upgrade.
 ## `doctor` is the gate, not a suggestion
 
 Run `amplifier-work-tracker doctor` after any `bd` upgrade and before
-trusting parallel agents against a queue. It must report **37/37
+trusting parallel agents against a queue. It must report **38/38
 assumptions hold**; anything less means Beads' behavior moved out from
 under an assumption we depend on (or, for `sweeps.alive`, that the
 reap/notify sweep loops have stopped completing sweeps, or, for
+`sweeps.reclaiming`, that the reap loop is still turning but its last
+sweep FAILED on one or more projects -- alive and not reclaiming are
+different states, and `sweeps.alive` alone cannot tell them apart, or, for
 `project.removal`, that `remove`/`new` no longer honestly handle a
 database that outlives its project directory, or, for
 `service.restart_policy`, that the installed unit's Restart= line has
@@ -50,7 +53,10 @@ not 33+2 arithmetic, which would have said 35. The two
 destructive-reopen defect, `model_performance-2nx` -- then take it to
 **36**, again MEASURED from `doctor`, not computed. `read.unavailable_not_absent`
 (model_performance-8zv) makes it **37** -- measured on the rebased branch, not
-computed from 36+1.)
+computed from 36+1. `sweeps.reclaiming` (model_performance-oy4) makes it
+**38** -- again MEASURED by running `doctor` on this branch, not computed;
+the run is committed at
+`docs/lanes/oy4-dead-holder-reclaim/evidence/doctor-measured.txt`.)
 
 ## Test scope
 
@@ -136,7 +142,7 @@ runs itself is how you lose data you meant to keep.
 
 ## What "done" looks like
 
-Full suite green, `doctor` 37/37, `ruff check` / `ruff format --check` /
+Full suite green, `doctor` 38/38, `ruff check` / `ruff format --check` /
 `pyright` clean. For any change to the bundle's zero-state install path
 (service bootstrap, `work_tracker_install`, prereqs), the acceptance gate is
 a fresh Digital Twin Universe run from a genuinely empty machine (no `bd`,

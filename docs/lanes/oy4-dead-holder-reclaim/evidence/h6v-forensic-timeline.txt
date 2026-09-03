@@ -1,0 +1,38 @@
+FORENSIC TIMELINE for model_performance-h6v, reconstructed from `events` on the
+live shared dolt server (READ-ONLY). events.created_at is written in the dolt
+server's LOCAL timezone (PDT, UTC-7) -- see adapter.py's TIMEZONE GOTCHA block --
+so every timestamp below is +7h to UTC.  Captured by lane oy4.
+
+--- lifecycle events ---
+  2026-09-03T06:52:14Z  created         agent-spark-1-2894760      
+  2026-09-03T06:52:14Z  label_added     agent-spark-1-2894760      
+  2026-09-03T07:03:16Z  claimed         agent-spark-1-563997       {"assignee":"agent-spark-1-563997","status":"in_progress"}
+  2026-09-03T07:57:51Z  status_changed  Amplifier                  {"assignee":"","status":"open"}
+  2026-09-03T07:59:09Z  claimed         agent-spark-1-2053775      {"assignee":"agent-spark-1-2053775","status":"in_progress"}
+  2026-09-03T07:59:42Z  status_changed  agent-spark-1-2053775      {"assignee":"","status":"open"}
+  2026-09-03T08:01:39Z  claimed         agent-spark-1-2015412      {"assignee":"agent-spark-1-2015412","status":"in_progress"}
+  2026-09-03T08:01:59Z  closed          agent-spark-1-2015412      BLOCKED-AND-RECOVERED by the manager. The lane died markerless at ~00:33 mid str
+
+--- every custody RENEWAL write (n=22) ---
+  2026-09-03T07:03:17Z  agent-spark-1-563997       last_seen":"2026-09-03T07:03:16Z"
+  2026-09-03T07:05:18Z  agent-spark-1-563997       last_seen":"2026-09-03T07:05:17Z"
+  2026-09-03T07:07:19Z  agent-spark-1-563997       last_seen":"2026-09-03T07:07:18Z"
+  2026-09-03T07:09:20Z  agent-spark-1-563997       last_seen":"2026-09-03T07:09:19Z"
+  2026-09-03T07:11:21Z  agent-spark-1-563997       last_seen":"2026-09-03T07:11:20Z"
+  2026-09-03T07:13:21Z  agent-spark-1-563997       last_seen":"2026-09-03T07:13:21Z"
+  2026-09-03T07:15:22Z  agent-spark-1-563997       last_seen":"2026-09-03T07:15:22Z"
+  2026-09-03T07:17:23Z  agent-spark-1-563997       last_seen":"2026-09-03T07:17:23Z"
+  2026-09-03T07:19:24Z  agent-spark-1-563997       last_seen":"2026-09-03T07:19:24Z"
+  2026-09-03T07:21:25Z  agent-spark-1-563997       last_seen":"2026-09-03T07:21:25Z"
+  2026-09-03T07:23:26Z  agent-spark-1-563997       last_seen":"2026-09-03T07:23:25Z"
+  2026-09-03T07:25:27Z  agent-spark-1-563997       last_seen":"2026-09-03T07:25:26Z"
+  2026-09-03T07:27:28Z  agent-spark-1-563997       last_seen":"2026-09-03T07:27:28Z"
+  2026-09-03T07:29:29Z  agent-spark-1-563997       last_seen":"2026-09-03T07:29:29Z"
+  2026-09-03T07:31:30Z  agent-spark-1-563997       last_seen":"2026-09-03T07:31:30Z"
+  2026-09-03T07:33:32Z  agent-spark-1-563997       last_seen":"2026-09-03T07:33:31Z"
+  2026-09-03T07:35:33Z  agent-spark-1-563997       last_seen":"2026-09-03T07:35:32Z"
+  2026-09-03T07:37:34Z  agent-spark-1-563997       last_seen":"2026-09-03T07:37:33Z"
+  2026-09-03T07:39:35Z  agent-spark-1-563997       last_seen":"2026-09-03T07:39:35Z"
+  2026-09-03T07:41:36Z  agent-spark-1-563997       last_seen":"2026-09-03T07:41:36Z"
+  2026-09-03T07:59:10Z  agent-spark-1-2053775      last_seen":"2026-09-03T07:59:10Z"
+  2026-09-03T08:01:40Z  agent-spark-1-2015412      last_seen":"2026-09-03T08:01:39Z"

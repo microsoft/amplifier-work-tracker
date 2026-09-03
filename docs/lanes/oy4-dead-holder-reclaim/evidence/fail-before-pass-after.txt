@@ -1,0 +1,48 @@
+FAIL-BEFORE / PASS-AFTER for model_performance-oy4
+==================================================
+
+Probe: `failbefore_probe.py` (in this directory), run as a pytest integration
+test against this repo's isolated dolt server + real `bd`. IDENTICAL script on
+both trees -- the only difference is whether `src/` carries the fix (captured
+by `git stash push -- src/` and `git stash pop`), so what changes below is
+BEHAVIOUR, not an API that did not exist yet.
+
+Scenario, reproducing the measured `model_performance-h6v` shape exactly:
+an item claimed and given custody by an agent whose process is then genuinely
+dead (a real subprocess, started and reaped, so `os.kill(pid, 0)` really does
+report it gone), whose custody was last renewed 400 seconds ago -- i.e. WELL
+INSIDE the documented 900s `CUSTODY_TTL_SECONDS`. Reaped with the default TTL:
+exactly the call the background service makes every 300s.
+
+
+-------------------------- FAIL-BEFORE (pre-fix tree) --------------------------
+
+    holder pid 3821490 running? False
+    custody last_seen 400s ago; CUSTODY_TTL_SECONDS=900
+    work_stats view:  held=1  held_stale=0  held_stale_oldest_age_seconds=None
+    reap_project(default ttl): reclaimed_count=0 reasons=[]
+    after sweep: status=held holder='dead-agent'
+    successor work_claim: REFUSED -- claim failbefore26743d9e270d-57i as
+      'successor-agent' failed: Error claiming failbefore26743d9e270d-57i:
+      issue already claimed by dead-agent
+
+Note `held_stale=0` with `held_stale_oldest_age_seconds=None` beside it, and a
+refusal naming a dead agent id. That is the incident's signature verbatim --
+the successor session measured exactly those three values on the live queue at
+2026-09-03T07:52Z.
+
+
+---------------------------- PASS-AFTER (with fix) ----------------------------
+
+    holder pid 3824385 running? False
+    custody last_seen 400s ago; CUSTODY_TTL_SECONDS=900
+    work_stats view:  held=1  held_stale=1  held_stale_oldest_age_seconds=401.256
+    reap_project(default ttl): reclaimed_count=1 reasons=["holder process is dead
+      -- pid 3824385 on host 'spark-1' is not running, and custody has been silent
+      401s (corroboration window 240s); ttl 900s not yet reached, but the holder
+      is gone"]
+    after sweep: status=open holder=None
+    successor work_claim: SUCCESS
+
+The reclaim reason states plainly that the TTL is NOT what fired, so a later
+reader cannot mistake this for ordinary staleness arriving early.

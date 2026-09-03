@@ -25,12 +25,48 @@ never buys exemption from staleness -- an agent that declares awaiting_human
 and then dies must still go stale and be reclaimed like any other. Its only
 effect on the reclaim decision is the escalation ceiling below, which is a
 one-way door toward reclaim, never a hold against it.
+
+DEAD HOLDERS (model_performance-oy4). Silence is a *proxy* for death, and a
+slow one: the TTL cannot fire until a full CUSTODY_TTL_SECONDS after the last
+renewal, and the sweep that acts on it runs on its own interval on top of
+that. MEASURED on the live queue for item `model_performance-h6v`: its holder
+renewed on a perfectly regular 120s cadence up to 2026-09-03T07:41:36Z and
+then stopped dead; four successor `work_claim` attempts (07:47, 07:50, 07:51,
+07:56Z) were all refused, and all four were refused CORRECTLY -- the last one
+landed 45s inside the 900s TTL. The stranding was not a broken TTL, a wrong
+field, or a dead sweep: it was the TTL doing exactly what it says while the
+one fact that mattered -- the holder's process was gone -- sat unread in the
+custody record's own `pid`/`host` fields.
+
+So there is a THIRD path to reclaim-eligible, and it observes the holder
+rather than inferring from its silence: a custody record naming a pid ON THIS
+HOST that the kernel says is not running. It is fenced by three conditions so
+it can only ever be an ACCELERATION of the TTL, never a way to take work from
+a live agent:
+
+  1. `host` must equal this host. A pid on another machine is unknowable
+     from here -- never guessed.
+  2. `pid` must be a real positive pid.
+  3. The custody signal must already have been SILENT for at least
+     `DEAD_HOLDER_MIN_SILENCE_SECONDS` (default: two renewal intervals). A
+     live agent renews every RENEW_INTERVAL_SECONDS, so this is independent
+     corroboration that the holder has ALREADY missed a renewal before any
+     pid probe is allowed to decide anything -- which is what protects an
+     agent whose pid is not addressable from here (a container in its own
+     pid namespace that happens to report the same hostname): it keeps
+     renewing, so it never enters the window where the probe is consulted.
+
+Every failure of those conditions resolves to NOT eligible: unknowable is
+never treated as dead. The probe is injectable for the same reason
+`heartbeat.evaluate_freshness`'s is -- so every branch is testable with no
+real processes and no real sleeps.
 """
 
 from __future__ import annotations
 
 import calendar
 import os
+import socket
 import time
 from dataclasses import asdict, dataclass
 
@@ -47,6 +83,20 @@ ESCALATION_HOURS = float(os.environ.get("AMPLIFIER_WORK_TRACKER_ESCALATION_HOURS
 
 # How often `amplifier-work-tracker custody` renews by default.
 RENEW_INTERVAL_SECONDS = int(os.environ.get("AMPLIFIER_WORK_TRACKER_RENEW_INTERVAL_SECONDS", "120"))
+
+# How long a custody signal must ALREADY have been silent before a holder-
+# liveness probe is allowed to decide anything (see the module docstring's
+# condition 3). Two renewal intervals: a live agent renews every
+# RENEW_INTERVAL_SECONDS, so crossing this window means it has already missed
+# a renewal outright -- independent corroboration, gathered without a probe,
+# before any probe is consulted. Always well under CUSTODY_TTL_SECONDS, or
+# this path would never accelerate anything.
+DEAD_HOLDER_MIN_SILENCE_SECONDS = int(
+    os.environ.get(
+        "AMPLIFIER_WORK_TRACKER_DEAD_HOLDER_MIN_SILENCE_SECONDS",
+        str(2 * RENEW_INTERVAL_SECONDS),
+    )
+)
 
 STATE_WORKING = "working"
 STATE_AWAITING_HUMAN = "awaiting_human"
@@ -136,27 +186,117 @@ def is_fresh(
     return age_seconds(c.last_seen, now=now) <= ttl
 
 
+def local_host() -> str:
+    """This host's name, in the SAME form every writer stores in a custody
+    record's `host` field (`socket.gethostname()` -- see the tool module's
+    `take_custody` call site and `cli.cmd_custody`). Compared as an exact
+    string: a mismatch means "not knowable from here", never "dead".
+    """
+    return socket.gethostname()
+
+
+def pid_alive(pid: int) -> bool:
+    """Best-effort: is *pid* a live process on this host? Never raises.
+
+    `os.kill(pid, 0)` sends no signal -- it only asks the kernel whether the
+    pid is addressable. A pid owned by another user raises PermissionError,
+    which PROVES it exists, so that answers True.
+
+    Deliberately a mirror of `heartbeat.pid_alive` rather than an import of
+    it, for the reason `heartbeat._parse_iso` already states about its own
+    twin here: this module is the pure domain core and must stay importable
+    with no dependency on the supervisor/service plumbing stack.
+
+    PID REUSE is the one imprecision, and it is imprecise in the SAFE
+    direction only: a recycled pid answers True, which merely falls back to
+    the TTL. It can never manufacture a False for a live holder.
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, just owned by someone else
+    except OSError:
+        return False
+    return True
+
+
+def holder_process_dead(
+    custody: dict | Custody | None,
+    *,
+    host: str | None = None,
+    min_silence: int = DEAD_HOLDER_MIN_SILENCE_SECONDS,
+    now: float | None = None,
+    is_pid_alive=pid_alive,
+) -> tuple[bool, str]:
+    """Is this custody record's named holder PROVABLY not running?
+
+    Returns (dead, reason). Every unknowable case returns False with an
+    empty reason -- see the module docstring for the three fences and why
+    each one resolves toward "not dead". This is the only place in the
+    system that reads `Custody.pid` / `Custody.host` for a decision.
+    """
+    c = _coerce(custody)
+    if c is None:
+        return False, ""
+    if c.pid <= 0:
+        return False, ""
+    this_host = host if host is not None else local_host()
+    if not c.host or c.host != this_host:
+        # A pid on another machine says nothing to this one. Never guessed.
+        return False, ""
+    silence = age_seconds(c.last_seen, now=now) if c.last_seen else float("inf")
+    if silence < min_silence:
+        # Renewed too recently to corroborate death -- a probe here would be
+        # deciding on the probe alone. See module docstring, condition 3.
+        return False, ""
+    if is_pid_alive(c.pid):
+        return False, ""
+    return True, (
+        f"holder process is dead -- pid {c.pid} on host {c.host!r} is not running, "
+        f"and custody has been silent {silence:.0f}s "
+        f"(corroboration window {min_silence}s)"
+    )
+
+
 def reclaim_eligible(
     custody: dict | Custody | None,
     *,
     ttl: int = CUSTODY_TTL_SECONDS,
     escalation_hours: float = ESCALATION_HOURS,
     now: float | None = None,
+    host: str | None = None,
+    dead_holder_min_silence: int = DEAD_HOLDER_MIN_SILENCE_SECONDS,
+    is_pid_alive=pid_alive,
 ) -> tuple[bool, str]:
     """The whole reclaim decision, and nothing else decides it.
 
-    Two paths to eligible, and only two:
+    Three paths to eligible, and only three:
       1. STALE -- custody was never renewed, or the renewal window lapsed.
          Total hold duration is irrelevant; only recency of the last renewal
          matters, so a healthily-renewed 12-hour hold is never touched.
-      2. ESCALATION CEILING -- fresh, declaring awaiting_human, but has held
+      2. DEAD HOLDER -- the record names a pid on THIS host that the kernel
+         says is not running, and custody has already been silent long
+         enough to corroborate it (`holder_process_dead`). Strictly an
+         ACCELERATION of path 1: it can only ever fire inside the TTL window
+         path 1 would eventually cover anyway, and only on positive evidence
+         of death. Added for `model_performance-oy4` -- see the module
+         docstring for the measured stranding that motivated it.
+      3. ESCALATION CEILING -- fresh, declaring awaiting_human, but has held
          that declaration past `escalation_hours`. A terminal state, not a
          lock: one unresponsive human cannot immobilize an item forever.
 
-    `declared_state` affects ONLY path 2, and only as a ceiling stacked on
+    `declared_state` affects ONLY path 3, and only as a ceiling stacked on
     top of freshness -- never as a way to buy exemption from staleness. An
     item declaring awaiting_human with STALE custody is reclaimed via path 1,
-    same as any other stale item.
+    same as any other stale item; one whose process has died is reclaimed via
+    path 2, likewise regardless of what it declared.
+
+    Path 1 is evaluated FIRST so an already-TTL-stale hold keeps its existing
+    reason string verbatim (and costs no pid probe at all).
     """
     c = _coerce(custody)
     if c is None:
@@ -164,6 +304,15 @@ def reclaim_eligible(
     if not is_fresh(c, ttl=ttl, now=now):
         age = age_seconds(c.last_seen, now=now)
         return True, f"custody stale -- last seen {age:.0f}s ago (ttl {ttl}s)"
+    dead, why = holder_process_dead(
+        c,
+        host=host,
+        min_silence=dead_holder_min_silence,
+        now=now,
+        is_pid_alive=is_pid_alive,
+    )
+    if dead:
+        return True, f"{why}; ttl {ttl}s not yet reached, but the holder is gone"
     if c.declared_state == STATE_AWAITING_HUMAN and c.declared_since:
         held_hours = age_seconds(c.declared_since, now=now) / 3600.0
         if held_hours >= escalation_hours:
