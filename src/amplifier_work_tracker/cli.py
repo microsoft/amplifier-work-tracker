@@ -106,6 +106,20 @@ def _check_service_installed() -> contract.Result:
         )
     if info.active:
         return contract.Result("service.installed", True, f"{info.detail}")
+    if info.active is None:
+        # Installed, but active/inactive could not be determined AT ALL --
+        # most commonly this process's own systemd --user session bus is
+        # unreachable (see `systemd.user_bus_reachable` below), NOT evidence
+        # the service is actually down. Reporting a hard FAIL here would be
+        # the exact misdiagnosis measured on a peer's first-time setup:
+        # systemd --user was genuinely fine, this process just couldn't
+        # query it.
+        return contract.Result(
+            "service.installed",
+            True,
+            f"{info.detail} -- see the systemd.user_bus_reachable check below before assuming "
+            f"this means the service is actually down",
+        )
     return contract.Result(
         "service.installed",
         False,
@@ -261,6 +275,31 @@ def _check_restart_policy(service_check: contract.Result) -> contract.Result:
     )
 
 
+def _check_systemd_user_bus_reachable() -> contract.Result:
+    """Can `systemctl --user` actually reach the session bus from THIS
+    process's environment?
+
+    Distinct from `service.installed`'s active/inactive check -- this asks
+    the more basic question that check depends on being able to ask at all.
+    Measured first-time-setup bug this pins: a peer's `work_tracker_install`
+    misdiagnosed a session-bus-less environment (this process spawned
+    outside a login session -- tmux, ssh, an agent spawn -- so
+    `XDG_RUNTIME_DIR` was never inherited) as "systemd itself is not
+    functioning," and `work_tracker_status`/`service status` read the same
+    gap as a genuinely-managed unit being "unmanaged." See service.py's
+    `_systemd_user_env`/`diagnose_systemd_failure`.
+
+    SKIPPED (never failed) on a platform with no systemd --user bus to
+    probe at all -- non-Linux, or Linux without `systemctl` on PATH.
+    """
+    state, detail = S.probe_systemd_user_bus()
+    if state == "skipped":
+        return contract.Result("systemd.user_bus_reachable", True, f"skipped ({detail})")
+    if state == "reachable":
+        return contract.Result("systemd.user_bus_reachable", True, detail)
+    return contract.Result("systemd.user_bus_reachable", False, detail)
+
+
 def cmd_doctor(a):
     """Prove the installed Beads still behaves the way we depend on, and that
     our own service/dolt-reachability are in a state parallel agents can
@@ -268,6 +307,7 @@ def cmd_doctor(a):
     results = contract.run_all(quick=a.quick)
     service_check = _check_service_installed()
     results.append(service_check)
+    results.append(_check_systemd_user_bus_reachable())
     results.append(_check_dolt_reachable(service_check))
     results.append(_check_sweeps_alive(_ws(a).root))
     results.append(_check_restart_policy(service_check))

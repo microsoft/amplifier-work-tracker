@@ -34,6 +34,22 @@ there is no `bd`/`dolt` binary to run anything with in the first place:
                                `classify_port_holders` for the same
                                responds/owned-by-us discrimination applied
                                at `serve` startup time.
+  - running_systemd_unreachable -- a dolt server IS answering on the port,
+                               and our unit IS installed, but THIS PROCESS
+                               could not query systemd --user at all (most
+                               commonly: no reachable session bus -- see
+                               `amplifier_work_tracker.service._systemd_user_env`)
+                               to confirm whether that responder is our own
+                               managed unit. Distinct from `running_unmanaged`
+                               on purpose: reporting the former here would
+                               repeat the exact first-time-setup bug this
+                               state exists to close -- a peer's genuinely
+                               systemd-managed, healthy unit was reported as
+                               unmanaged only because this process's own
+                               environment (spawned outside a login session:
+                               tmux, ssh, an agent spawn) couldn't reach the
+                               bus. Same guardrail as `running_unmanaged`:
+                               never advises stopping it.
 
 `work_tracker_install` is the ONLY thing that changes system state, and it is
 never invoked as a side effect of `work_tracker_status` or any other tool --
@@ -47,6 +63,7 @@ prerequisite binary is missing -- see `WorkTrackerInstallTool.execute`.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
@@ -67,6 +84,7 @@ WorkTrackerState = Literal[
     "installed_not_running",
     "running_healthy",
     "running_unmanaged",
+    "running_systemd_unreachable",
 ]
 
 # States where the fix is "install a missing/too-old binary yourself" --
@@ -109,6 +127,43 @@ def classify_state(root: Path) -> tuple[WorkTrackerState, str]:
 
     info = S.describe_service()
     port_reachable = SV.port_holder_responds(SV.DEFAULT_DOLT_HOST, SV.DEFAULT_DOLT_PORT)
+
+    # `info.active is None` while `info.installed` is True is a DIFFERENT
+    # fact than "never installed" (also None, but with installed=False) or
+    # "installed, confirmed inactive" (False): it means THIS PROCESS could
+    # not query systemd --user at all -- most commonly no reachable session
+    # bus from this process's own environment (a session spawned outside a
+    # login session: tmux, ssh, an agent spawn) -- see service.py's
+    # `_systemd_user_env`/`diagnose_systemd_failure`. A dolt server
+    # answering on the port in that state is NOT evidence of an unmanaged
+    # server; it may well be the very unit this process just couldn't ask
+    # systemd about. Must be checked BEFORE `running_unmanaged` below, whose
+    # `not (info.installed and info.active)` condition is ALSO true here --
+    # this is the exact first-time-setup bug measured on a peer's machine
+    # (a genuinely systemd-managed, active unit reported as unmanaged).
+    if info.installed and info.active is None:
+        if port_reachable:
+            return (
+                "running_systemd_unreachable",
+                f"a dolt server is reachable on {SV.DEFAULT_DOLT_HOST}:{SV.DEFAULT_DOLT_PORT}, and "
+                f"the amplifier-work-tracker unit at {info.unit_path} IS installed, but this "
+                f"process could not query systemd --user to confirm it's the one serving it "
+                f"({info.detail}) -- most likely THIS PROCESS itself lacks a reachable session "
+                f"bus, not that the server is unmanaged. Do not stop this process on the "
+                f"assumption it's a stray/foreign server -- confirm first with `systemctl --user "
+                f"status amplifier-work-tracker` from a shell with a working session bus, or fix "
+                f"this process's own environment (export XDG_RUNTIME_DIR=/run/user/$(id -u)) and "
+                f"re-check work_tracker_status.",
+            )
+        return (
+            "installed_not_running",
+            f"the amplifier-work-tracker unit at {info.unit_path} is installed, but this process "
+            f"could not query systemd --user to confirm whether it's active ({info.detail}), and "
+            f"no dolt server is reachable on {SV.DEFAULT_DOLT_HOST}:{SV.DEFAULT_DOLT_PORT} either "
+            f"-- fix this process's systemd --user reachability (export "
+            f"XDG_RUNTIME_DIR=/run/user/$(id -u)) and re-check, or run `systemctl --user status "
+            f"amplifier-work-tracker` from a shell with a working session bus.",
+        )
 
     if port_reachable and not (info.installed and info.active):
         # A real, actively-responding dolt IS a usable shared server --
@@ -182,13 +237,19 @@ class WorkTrackerStatusTool:
             "Read-only: is the amplifier-work-tracker background service (shared dolt server + "
             "reap/notify sweeps) installed and healthy on THIS machine? Returns one of "
             "'bd_missing', 'bd_too_old', 'dolt_missing', 'not_installed', "
-            "'installed_not_running', 'running_healthy', or 'running_unmanaged', plus the exact "
-            "fix command for every state except 'running_healthy'/'running_unmanaged' (both "
+            "'installed_not_running', 'running_healthy', 'running_unmanaged', or "
+            "'running_systemd_unreachable', plus the exact fix command for every state except "
+            "'running_healthy'/'running_unmanaged'/'running_systemd_unreachable' (all three "
             "already work; nothing to fix). 'running_unmanaged' means a dolt server is already "
             "healthy and reachable but not managed by this service -- it is USABLE as-is, never "
-            "something to stop. Call this FIRST the first time you use work-tracker in a session "
-            "-- work_claim/work_status and the amplifier-work-tracker CLI both need a reachable "
-            "dolt server, and this is how you find out whether one exists before assuming it does."
+            "something to stop. 'running_systemd_unreachable' means a dolt server is reachable and "
+            "our unit IS installed, but THIS PROCESS could not query systemd --user at all "
+            "(commonly no reachable session bus, e.g. spawned outside a login session) to confirm "
+            "it's the one serving it -- also USABLE as-is, and also never something to stop; see "
+            "the `fix` for how to confirm from a shell that can reach systemd. Call this FIRST the "
+            "first time you use work-tracker in a session -- work_claim/work_status and the "
+            "amplifier-work-tracker CLI both need a reachable dolt server, and this is how you "
+            "find out whether one exists before assuming it does."
         )
 
     @property
@@ -275,25 +336,73 @@ class WorkTrackerInstallTool:
                     f"supervised service."
                 ),
             )
+        if state == "running_systemd_unreachable":
+            # Same refuse-to-install shape as `running_unmanaged` -- a fresh
+            # unit/restart could collide with a server that may well ALREADY
+            # be this very unit -- but the guidance is "fix this process's
+            # own systemd reachability and re-check," never "stop it," since
+            # unlike `running_unmanaged` we don't even know it's foreign.
+            return ToolResult(
+                success=False,
+                output=(f"not installing: {fix}"),
+            )
         try:
             info = await asyncio.to_thread(S.service_install, root)
         except S.ServiceUnsupportedError as e:
             return ToolResult(success=False, output=f"could not install: {e}")
-        except Exception as e:  # noqa: BLE001 -- see module docstring: never a raw traceback string
-            # A raw `str(CalledProcessError(...))` (e.g. "Command
-            # ['systemctl', '--user', 'daemon-reload'] returned non-zero exit
-            # status 1.") reads like an unhandled crash and gives no hint
-            # this might mean "no systemd --user session in this
-            # container/environment." Wrap it with what was attempted and an
-            # actionable next step.
+        except subprocess.CalledProcessError as e:
+            # A failed `systemctl --user` step (daemon-reload/enable/
+            # restart) -- unlike the generic `Exception` branch below, we
+            # KNOW this came from a real systemctl invocation and have its
+            # stderr, so `diagnose_systemd_failure` can name the REAL root
+            # cause instead of a generic guess. This is the exact
+            # first-time-setup misdiagnosis measured on a peer's machine:
+            # `Failed to connect to bus: No medium found` (this process's
+            # own environment lacked XDG_RUNTIME_DIR, systemd --user was
+            # genuinely fine) was previously reported as "systemd/launchd
+            # itself isn't functioning here."
             #
             # `rollback_detail`, when `service_install` set it (see
-            # service.py's `_systemd_install`/`_launchd_install`), reports
-            # what rollback ACTUALLY did -- observed per-step results, never
-            # an asserted claim. Never hardcode "nothing was left behind":
-            # that was a lie whenever rollback itself failed a step (e.g.
-            # the unit file couldn't be removed), and this code has no way
-            # to know that without asking what actually happened.
+            # service.py's `_systemd_install`), reports what rollback
+            # ACTUALLY did -- observed per-step results, never an asserted
+            # claim. Never hardcode "nothing was left behind": that was a
+            # lie whenever rollback itself failed a step (e.g. the unit file
+            # couldn't be removed), and this code has no way to know that
+            # without asking what actually happened.
+            rollback_detail = getattr(e, "rollback_detail", None)
+            rollback_report = (
+                f"Rollback attempted: {rollback_detail}"
+                if rollback_detail
+                else "Rollback outcome unknown -- this failure did not come with an observed "
+                "rollback report; check `amplifier-work-tracker service status` / "
+                "`systemctl --user status amplifier-work-tracker` for any residue."
+            )
+            stderr = getattr(e, "stderr", None) or ""
+            root_cause = S.diagnose_systemd_failure(stderr)
+            note = getattr(e, "env_injection_note", None)
+            note_report = f" ({note}, but it still failed.)" if note else ""
+            return ToolResult(
+                success=False,
+                output=(
+                    f"could not install the background service: {e}. {root_cause}{note_report} "
+                    f"{rollback_report} If this platform can't run a background service, "
+                    f"run `amplifier-work-tracker serve --root {root}` directly in a persistent "
+                    f"terminal/tmux session instead."
+                ),
+            )
+        except Exception as e:  # noqa: BLE001 -- see module docstring: never a raw traceback string
+            # Genuinely unanticipated failure (e.g. launchd's own
+            # `RuntimeError` on macOS, or something this code didn't name
+            # explicitly above) -- unlike the `CalledProcessError` branch,
+            # there's no captured systemctl stderr to classify here, so this
+            # stays a general (not systemd-specific) explanation.
+            #
+            # `rollback_detail`, when `service_install` set it (see
+            # service.py's `_launchd_install`), reports what rollback
+            # ACTUALLY did -- observed per-step results, never an asserted
+            # claim. Never hardcode "nothing was left behind": that was a
+            # lie whenever rollback itself failed a step, and this code has
+            # no way to know that without asking what actually happened.
             rollback_detail = getattr(e, "rollback_detail", None)
             rollback_report = (
                 f"Rollback attempted: {rollback_detail}"

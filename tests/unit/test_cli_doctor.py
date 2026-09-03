@@ -189,3 +189,83 @@ def test_restart_policy_fails_when_unit_has_no_restart_line_at_all(monkeypatch, 
     result = cli._check_restart_policy(service_check)
     assert result.ok is False
     assert "no Restart=" in result.detail
+
+
+# ------------------------------------------------------------- service.installed
+#
+# `info.active is None` while `info.installed` is True is a DIFFERENT fact
+# than "never installed" (installed=False, also active=None) -- it means this
+# process could not query systemd --user at all (most commonly no reachable
+# session bus). Reporting a hard FAIL here would repeat the exact
+# misdiagnosis measured on a peer's first-time setup: systemd --user was
+# genuinely fine, this process just couldn't ask it.
+
+
+def test_service_installed_passes_with_a_note_when_active_is_genuinely_unknown(monkeypatch):
+    monkeypatch.setattr(
+        S,
+        "describe_service",
+        lambda: _Info(
+            installed=True,
+            active=None,
+            detail="installed, but active/inactive could not be determined -- XDG_RUNTIME_DIR ...",
+        ),
+    )
+    result = cli._check_service_installed()
+    assert result.ok is True
+    assert result.id == "service.installed"
+    assert "systemd.user_bus_reachable" in result.detail
+
+
+def test_service_installed_still_fails_when_genuinely_confirmed_inactive(monkeypatch):
+    monkeypatch.setattr(
+        S,
+        "describe_service",
+        lambda: _Info(installed=True, active=False, detail="installed but NOT active"),
+    )
+    result = cli._check_service_installed()
+    assert result.ok is False
+
+
+def test_service_installed_passes_when_never_installed(monkeypatch):
+    monkeypatch.setattr(S, "describe_service", lambda: _Info(installed=False, active=None))
+    result = cli._check_service_installed()
+    assert result.ok is True
+    assert "not installed" in result.detail
+
+
+# ------------------------------------------------------- systemd.user_bus_reachable
+
+
+def test_systemd_user_bus_reachable_skips_when_probe_reports_skipped(monkeypatch):
+    monkeypatch.setattr(
+        S, "probe_systemd_user_bus", lambda: ("skipped", "no systemd --user bus on this platform")
+    )
+    result = cli._check_systemd_user_bus_reachable()
+    assert result.ok is True
+    assert result.id == "systemd.user_bus_reachable"
+    assert "skipped" in result.detail
+
+
+def test_systemd_user_bus_reachable_passes_when_probe_reports_reachable(monkeypatch):
+    monkeypatch.setattr(
+        S,
+        "probe_systemd_user_bus",
+        lambda: ("reachable", "systemctl --user show-environment succeeded"),
+    )
+    result = cli._check_systemd_user_bus_reachable()
+    assert result.ok is True
+
+
+def test_systemd_user_bus_reachable_fails_when_probe_reports_unreachable(monkeypatch):
+    monkeypatch.setattr(
+        S,
+        "probe_systemd_user_bus",
+        lambda: (
+            "unreachable",
+            "systemctl --user cannot reach the user session bus ... XDG_RUNTIME_DIR ...",
+        ),
+    )
+    result = cli._check_systemd_user_bus_reachable()
+    assert result.ok is False
+    assert "XDG_RUNTIME_DIR" in result.detail
