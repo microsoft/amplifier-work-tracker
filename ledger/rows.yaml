@@ -270,24 +270,35 @@
       A close operation is guarded against a holder that no longer holds the item. This
       includes the released-but-not-yet-re-claimed state (after reclaim has moved the item to
       open status, but custody has not yet been reassigned).
-  disposition: VIOLATION
-  work: work_item_pipeline-dn4
+  disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_ccv1_009
   notes: >
-    The flagship divergence. `Beads.resolve`'s entire fence block runs only
-    under `if current.status == "held":`; a reaped item is `open` with the
-    assignee cleared and the custody record still naming the old holder, so
-    a stale holder's close skips the fence and lands. adapter.py's own
-    docstring names this exact shape as the previously-MEASURED bug the
-    fence was built to close -- the status gate added in PR #51 (integrator
-    resolve, item pipeline-79t) reinstated it. Neither doctor check covers
-    it: `custody.fenced` and `resolve.fenced` both stage a TAKEOVER, so
-    status is `held` when the fence is tested. Evidence brief sec.D-2;
-    ratified Call 3 (option A). A correct fix must keep BOTH halves: refuse
-    the stale holder, and still allow an integrator's single-call resolve
-    of an item nobody holds.
+    Closed by work_item_pipeline-dn4. The fence is no longer keyed on the
+    item's status at all -- it is keyed on custody IDENTITY, so it reaches
+    every post-reclaim state including the released-but-not-yet-re-claimed
+    one: adapter.py:3168-3175, the `elif cust_holder == who and
+    current.holder != who` branch OUTSIDE the `status == "held"` gate,
+    refusing with "not held by this session ... Your claim was reclaimed
+    (or released) while you were away." PR #51's integrator resolve (item
+    pipeline-79t) is preserved by the same key: only the session the
+    custody record names is refused, so a plain close of an item nobody
+    holds stays a single call for everyone else. The `current.holder !=
+    who` guard is what keeps a holder's own already-landed close
+    re-attemptable (PR #63's phantom-conflict recovery) -- a resolved item
+    retains its assignee. MEASURED 2026-09-02, not merely inspected:
+    tests/integration/test_post_reclaim_fence.py is red on the pre-fix code
+    (`DID NOT RAISE FencedError` on both fence halves) and green after,
+    with test_resolve_fence.py (the integrator half) and
+    test_phantom_conflict_recovery.py green throughout. The probe below is
+    still an in-process SHAPE assertion -- it additionally verifies that
+    fixture exists and still carries both halves, but the behavioural proof
+    is the fixture, not the probe (see CCV1-020). Same fix flips the
+    previously-red tool-layer fixture
+    modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim
+    green (verified 2026-09-02 in a throwaway venv; that suite still runs
+    in no gate -- CCV1-022).
 
 - id: CCV1-010
   title: a session that lost custody can discover it and recover in-process

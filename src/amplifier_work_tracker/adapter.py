@@ -3093,43 +3093,71 @@ class Beads:
     def resolve(self, item_id: str, reason: str, *, actor: str | None = None) -> Item:
         """Close an item and VERIFY the write landed. Exit code is not proof.
 
-        FENCED, but only while the item is ACTUALLY currently held --
-        resolving an unheld item (open/blocked/deferred/resolved), even one
-        filed or last held by someone else entirely, is a single call, no
-        fence, no override needed. Without the status gate below, a STALE
-        custody record from a hold that ended long ago (released, reaped,
-        or simply never re-claimed) would keep naming a "current holder"
-        who no longer holds anything -- refusing an integrator's plain
-        resolve of someone else's already-unheld report. That was the
-        measured bug (work_tracker item 79t): the custody-based fence used
-        to fire on custody metadata ALONE, with no check that the item was
-        still `held` at all.
+        FENCED in every state a caller can no longer legitimately close
+        from -- but the fence is keyed on WHO the custody record names,
+        never on the item's status alone. Both halves matter, and each one
+        was, at some point, a measured bug:
 
-        Two fence sources, checked together ONLY when `current.status ==
-        "held"`, because they cover different gaps: bd's own assignee
-        catches a live takeover by another holder (assignee is now someone
-        else). It does NOT catch our own custody-based reclaim, because
-        reclaiming an item clears bd's assignee back to empty rather than
-        reassigning it -- measured: a stale holder's resolve on a
-        released-but-not-yet-reclaimed item sailed through with exit 0
-        because "no current holder" looked the same as "never held at
-        all." A custody record, once it exists, is left in place across a
-        reclaim precisely so it can still answer "who held this last" --
-        so when one exists AND the item is still held, it is authoritative
-        over bd's own (now-cleared) assignee field. The refusal always
-        names the real holder -- the exact recovery is to resolve as that
-        holder, or wait for `reap` to reclaim a stale hold.
+        HALF ONE -- an integrator's plain resolve must stay a single call.
+        Resolving an item nobody currently holds (open/blocked/deferred/
+        resolved), even one filed or last held by someone else entirely,
+        needs no fence and no override. The fence used to fire on custody
+        metadata ALONE, so a STALE record from a hold that ended long ago
+        kept naming a "current holder" who held nothing, refusing an
+        integrator's close of someone else's already-unheld report
+        (work_tracker item 79t, PR #51). Anyone who is not the session that
+        record names is exactly as unfenced as before.
+
+        HALF TWO -- the stale holder itself is refused in EVERY
+        post-reclaim state, including the released-but-not-yet-re-claimed
+        one (contract `custody-coordination.v1` Core 7; ledger row
+        CCV1-009; work_tracker item pipeline-dn4). 79t's fix reached for
+        the item's status as its discriminator (`status == "held"`), which
+        reinstated the very bug the fence exists to close: `reap` does not
+        leave a reclaimed item `held` -- `supervisor.reap_project` calls
+        `release`, which puts it back to `open` and clears bd's assignee --
+        so the one state the fence is FOR was the one state it skipped, and
+        the stale holder's close landed with exit 0 and no refusal
+        anywhere. Status was never the right question; custody identity is.
+
+        Hence the three checks below, in the order they can be answered:
+
+          - held, with a custody record: that record is authoritative over
+            bd's own assignee, because a reclaim CLEARS the assignee rather
+            than reassigning it -- "no current holder" and "never held at
+            all" look identical in bd, and only the custody record can tell
+            them apart. Refuse unless BOTH name this caller.
+          - held, no custody record: fall back to bd's assignee alone --
+            enough to catch a live takeover by another session.
+          - NOT held, but the custody record still names this caller: this
+            session's hold ended without this session closing the item --
+            reclaimed by `reap`, or handed back by `release`, which are
+            indistinguishable by construction (see `agent_stats`, which
+            documents why). Either way it does not hold the item now, and
+            its close is refused.
+
+        A custody record is deliberately left in place across a reclaim, so
+        it can still answer "who held this last" -- that is what makes the
+        third check possible at all. The `current.holder != who` guard on
+        it is what keeps a holder's own already-landed close re-attemptable
+        (a resolved item retains its assignee, so a wedged session
+        confirming its own close is never mistaken for a reclaimed one --
+        see this method's verify-by-read-back branch below).
+
+        Every refusal names the real holder and the recovery: re-claim the
+        item, or wait for `reap` to reclaim a stale hold.
         """
         who = actor or self._actor
         if who:
             current = self.get(item_id)
+            cust = current.meta.get(C.CUSTODY_KEY) if isinstance(current.meta, dict) else None
+            cust_holder = cust.get("holder") if isinstance(cust, dict) else None
             if current.status == "held":
-                cust = current.meta.get(C.CUSTODY_KEY) if isinstance(current.meta, dict) else None
-                if isinstance(cust, dict) and cust.get("holder"):
-                    if current.holder != who or cust.get("holder") != who:
+                if cust_holder:
+                    if current.holder != who or cust_holder != who:
                         raise FencedError(
                             f"refusing to close {item_id}: current holder is "
-                            f"{current.holder!r} (custody holder {cust.get('holder')!r}), "
+                            f"{current.holder!r} (custody holder {cust_holder!r}), "
                             f"not {who!r}. Your claim was reclaimed while you were away."
                         )
                 elif current.holder and current.holder != who:
@@ -3137,6 +3165,14 @@ class Beads:
                         f"refusing to close {item_id}: it is held by {current.holder!r}, "
                         f"not {who!r}. Your claim was reclaimed while you were away."
                     )
+            elif cust_holder == who and current.holder != who:
+                raise FencedError(
+                    f"refusing to close {item_id}: not held by this session -- custody "
+                    f"names {who!r} as its last holder, but the item is now "
+                    f"{current.status!r} with no current holder. Your claim was "
+                    f"reclaimed (or released) while you were away. Re-claim it first, "
+                    f"then resolve."
+                )
         try:
             p = self._run(["close", item_id, "--reason", reason], actor=actor)
         except BeadsError:
