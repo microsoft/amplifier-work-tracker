@@ -24,6 +24,7 @@ import re
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
 import uuid
 from collections.abc import Callable
@@ -186,6 +187,18 @@ _RETRYABLE_CONNECTION = (
     "invalid connection",
     "i/o timeout",
     "server has gone away",
+    # The dolt CLI enumerates its data directory and `lstat()`s every entry
+    # on EVERY invocation -- including pure client mode (`--host/--port`
+    # against an already-running shared server, where no local database is
+    # even relevant). If an entry vanishes between `readdir` and `lstat`,
+    # dolt aborts the whole query with this message. Measured (lane
+    # model_performance-rpz, `probes/rpz-dolt-error-misreport/repro.sh`):
+    # 6 failures in 25 attempts from a churning 40k-entry directory, 0 in
+    # 25 from a pinned one. `_dolt_scan_dir` now REMOVES the cause; this
+    # entry is the belt to that braces -- it is a filesystem-race
+    # signature that can never appear in a legitimate bd domain result, so
+    # riding through it can never turn a real failure into a false success.
+    "failed to load database names",
 )
 # Connection retries are bounded MUCH tighter than serialization retries: a
 # transient blip clears in well under a second, whereas a genuinely-down
@@ -418,9 +431,91 @@ def _bd_init_server_args() -> list[str]:
     return ["--shared-server"]
 
 
+_DOLT_SCAN_DIR: Path | None = None
+
+
+def _dolt_scan_dir() -> Path:
+    """A stable, empty, WE-OWN-IT directory for the `dolt` CLI to scan.
+
+    THE fix for a measured intermittent failure, not a tidiness nicety.
+
+    Mechanism (measured, lane `model_performance-rpz`, harness
+    `probes/rpz-dolt-error-misreport/repro.sh`): the `dolt` CLI enumerates
+    the entries of its data directory -- which, with no `--data-dir` given,
+    is its INHERITED CURRENT WORKING DIRECTORY -- and `lstat()`s each one on
+    EVERY invocation. This happens even in the pure client mode every
+    `_dolt_*` helper here uses (`--host/--port` against the already-running
+    shared server), where no local database is relevant at all. Two
+    consequences, both measured on this host with the SAME query against the
+    SAME server:
+
+      - COST, proportional to entry count: 0.031s from a 2-entry directory,
+        0.805s from `/tmp` (52,281 entries) -- 26x, paid on every one of the
+        19 direct-SQL call sites in this module.
+      - FAILURE: if any entry vanishes between `readdir` and `lstat`, dolt
+        aborts the entire query with `failed to load database names: lstat
+        <path>: no such file or directory`. Under a churning 40,000-entry
+        directory: 6 failures in 25 attempts.
+
+    `_dolt_sql`/`_dolt_sql_json` passed no `cwd=` to `_run_bounded`, so the
+    directory dolt scanned was whatever directory the CALLING AGENT happened
+    to be in -- `/tmp` in both field reports. That is the whole defect: a
+    read failure whose probability is set by an unrelated process's litter.
+
+    Both remedies were measured at 0/25 under identical load, and both are
+    applied here (they are independent, and the second survives a future
+    refactor that drops the first): `cwd=` this directory on the two hot
+    helpers, and `--data-dir` this directory on every `dolt` invocation via
+    `_dolt_conn_args`.
+
+    Location: honours `AMPLIFIER_WORK_TRACKER_DOLT_SCAN_DIR` (tests, and an
+    operator with an opinion), else `$XDG_CACHE_HOME`/`~/.cache` under this
+    tool's own name. Deliberately NOT the workspace root (it holds a
+    directory per project, and grows), NOT `~/.beads/shared-server/dolt`
+    (that is the live data directory, which churns as dolt writes), and NOT
+    a per-call temp directory (a fresh `mkdtemp` per query would reintroduce
+    a per-call cost and litter). Memoised: one `mkdir` per process, not one
+    per query.
+
+    Never raises. A home directory that cannot be written (read-only,
+    unusual container) falls back to one process-lifetime temp directory
+    rather than breaking every SQL read in the module -- degrading to
+    today's behaviour is strictly better than a hard failure, and a temp
+    directory of our own is still quiet and stable.
+    """
+    global _DOLT_SCAN_DIR
+    override = os.environ.get("AMPLIFIER_WORK_TRACKER_DOLT_SCAN_DIR")
+    if override:
+        # Not memoised: an override is what tests move around, and a cached
+        # first value would silently outlive the monkeypatch that set it.
+        d = Path(override)
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+        except OSError:
+            pass
+    if _DOLT_SCAN_DIR is not None and _DOLT_SCAN_DIR.is_dir():
+        return _DOLT_SCAN_DIR
+    cache_root = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    candidate = Path(cache_root) / "amplifier-work-tracker" / "dolt-scan"
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        candidate = Path(tempfile.mkdtemp(prefix="awt-dolt-scan-"))
+    _DOLT_SCAN_DIR = candidate
+    return candidate
+
+
 def _dolt_conn_args() -> list[str]:
     """Global `dolt` CLI flags to reach the shared server directly over SQL,
     bypassing any per-project `.beads` directory entirely.
+
+    `--data-dir` is here rather than only on the two hot helpers so EVERY
+    `dolt` invocation in this module (the `sql -q` reads, `DROP DATABASE`,
+    `SHOW CREATE`, the copy script) gets the pinned scan directory by
+    construction -- see `_dolt_scan_dir` for the measured failure this
+    removes, and why "remember to pass it at each call site" is exactly the
+    discipline that failed here in the first place.
 
     This is the ONLY way to make a project's shared-server database actually
     disappear: `bd` has no command for it. Verified empirically against the
@@ -436,13 +531,59 @@ def _dolt_conn_args() -> list[str]:
     """
     from . import supervisor as SV
 
-    return ["--host", SV.DEFAULT_DOLT_HOST, "--port", str(SV.DEFAULT_DOLT_PORT), "--no-tls"]
+    return [
+        "--data-dir",
+        str(_dolt_scan_dir()),  # pinned scan directory -- see `_dolt_scan_dir`
+        "--host",
+        SV.DEFAULT_DOLT_HOST,
+        "--port",
+        str(SV.DEFAULT_DOLT_PORT),
+        "--no-tls",
+    ]
+
+
+def _run_dolt_sql_bounded(args: list[str]) -> subprocess.CompletedProcess:
+    """Run one direct-SQL `dolt` invocation, riding through a transient
+    CONNECTION-transport blip the same bounded way `Beads._run` already does
+    for `bd` subprocesses -- and, unlike every previous version of this code
+    path, with the scan directory pinned (`cwd=_dolt_scan_dir()`).
+
+    Why this exists at all: the retry classification lived ONLY in
+    `Beads._run`, which wraps `bd`. The direct dolt-SQL path -- 19 call
+    sites in this module, including the single-item read behind
+    `get`/`get_readonly`/`claim_item` and the project read behind
+    `project_summary` -- had NO retry of any kind. Adding a transient
+    signature to `_RETRYABLE_CONNECTION` alone would land in a table this
+    code path never consulted. Putting the loop HERE, rather than at each
+    call site, is what makes all 19 benefit by construction.
+
+    Same shape and the same budget as `Beads._run`'s connection leg
+    (`_MAX_CONNECTION_RETRIES`, short capped backoff, few-second ceiling),
+    for the same reason: a transient blip clears in well under a second,
+    whereas a genuinely-unreachable server must fail FAST rather than
+    hammer. On a spent budget this RETURNS the failed process unchanged --
+    never a new exception type -- so every existing `p.returncode != 0`
+    call site behaves exactly as before, just a couple of seconds later.
+
+    `cwd=` and `--data-dir` (via `_dolt_conn_args`) are deliberately both
+    applied: they are independent remedies, each measured at 0/25 failures
+    under the load that produced 6/25 unpinned.
+    """
+    attempt = 0
+    while True:
+        p = _run_bounded(args, env=_bd_env(), cwd=_dolt_scan_dir())
+        if p.returncode == 0 or attempt >= _MAX_CONNECTION_RETRIES:
+            return p
+        if not _connection_retryable((p.stdout or "") + (p.stderr or "")):
+            return p
+        backoff = min(_CONNECTION_RETRY_BACKOFF_CAP, 0.1 * (2**attempt))
+        time.sleep(backoff * (0.5 + os.urandom(1)[0] / 255))
+        attempt += 1
 
 
 def _dolt_sql(query: str) -> subprocess.CompletedProcess:
-    return _run_bounded(
+    return _run_dolt_sql_bounded(
         ["dolt", *_dolt_conn_args(), "sql", "-q", query, "-r", "csv"],
-        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
     )
 
 
@@ -476,9 +617,8 @@ def _dolt_sql_json(query: str) -> subprocess.CompletedProcess:
     `_dolt_show_create`'s own use of the same format) carries each field as
     a single JSON string with no such ambiguity.
     """
-    return _run_bounded(
+    return _run_dolt_sql_bounded(
         ["dolt", *_dolt_conn_args(), "sql", "-q", query, "-r", "json"],
-        env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
     )
 
 
@@ -688,15 +828,17 @@ def _summary_items_via_sql(db: str) -> list[Item]:
     cols = ", ".join(f"`{c}`" for c in _SUMMARY_ITEM_COLUMNS)
     p = _dolt_sql(f"SELECT {cols} FROM `{db}`.`issues`")
     if p.returncode != 0:
-        raise BeadsError(
+        raise _sql_failure(
             f"could not read items of database {db!r} over SQL: "
-            f"{_clean_bd_error(p.stderr or p.stdout)}"
+            f"{_clean_bd_error(p.stderr or p.stdout)}",
+            p,
         )
     lp = _dolt_sql(f"SELECT `issue_id`, `label` FROM `{db}`.`labels`")
     if lp.returncode != 0:
-        raise BeadsError(
+        raise _sql_failure(
             f"could not read labels of database {db!r} over SQL: "
-            f"{_clean_bd_error(lp.stderr or lp.stdout)}"
+            f"{_clean_bd_error(lp.stderr or lp.stdout)}",
+            lp,
         )
     tags_by_id: dict[str, list[str]] = {}
     for row in csv.reader((lp.stdout or "").splitlines()[1:]):  # drop CSV header
@@ -839,9 +981,10 @@ def _list_rows_via_sql(db: str, *, where_sql: str | None, limit: int) -> list[It
         query += f" LIMIT {int(limit)}"
     p = _dolt_sql_json(query)
     if p.returncode != 0:
-        raise BeadsError(
+        raise _sql_failure(
             f"could not read items of database {db!r} over SQL: "
-            f"{_clean_bd_error(p.stderr or p.stdout)}"
+            f"{_clean_bd_error(p.stderr or p.stdout)}",
+            p,
         )
     try:
         rows = json.loads(p.stdout or "{}").get("rows", [])
@@ -850,9 +993,10 @@ def _list_rows_via_sql(db: str, *, where_sql: str | None, limit: int) -> list[It
 
     lp = _dolt_sql(f"SELECT `issue_id`, `label` FROM `{db}`.`labels`")
     if lp.returncode != 0:
-        raise BeadsError(
+        raise _sql_failure(
             f"could not read labels of database {db!r} over SQL: "
-            f"{_clean_bd_error(lp.stderr or lp.stdout)}"
+            f"{_clean_bd_error(lp.stderr or lp.stdout)}",
+            lp,
         )
     tags_by_id: dict[str, list[str]] = {}
     for row in csv.reader((lp.stdout or "").splitlines()[1:]):  # drop CSV header
@@ -1423,6 +1567,39 @@ class BeadsError(Exception):
     """A Beads operation failed. Never caught to degrade -- only to report."""
 
 
+class BeadsUnavailableError(BeadsError):
+    """The INFRASTRUCTURE could not be read -- so the answer is UNKNOWN, not
+    negative. Distinct from every other `BeadsError`, which reports a real
+    domain outcome bd actually computed.
+
+    This exists because the two were indistinguishable, and the system said
+    the wrong one out loud. Measured (lane `model_performance-rpz`): under a
+    transient dolt read failure, `claim --id` on an item that EXISTS
+    reported "item not found" in 9 of 12 attempts; `list --id` on an item
+    the calling session HELD reported a bare "item 'X' not found in project
+    'Y'" -- cause discarded entirely -- in 2 of 8; `instances` printed a
+    healthy project as `ERROR` with null counts in 5 of 10, interleaved with
+    correct `ok` rows seconds either side.
+
+    A SUBSTRING is not the fix. Callers must not have to grep an error
+    message to learn whether absence was observed or merely assumed, so the
+    distinction is carried in the TYPE: `except BeadsUnavailableError` comes
+    before `except BeadsError` at each of the three sites that used to
+    flatten (`Beads.claim_item`, `Beads.get_readonly`, `project_summary`),
+    and the transient case is re-raised untouched, cause intact.
+
+    What this deliberately does NOT do: widen. A genuinely absent item on a
+    healthy database still reports plain absence, in exactly the same words
+    as before -- see the `read.unavailable_not_absent` contract check, which
+    fences BOTH directions. Replacing "it does not exist" with "it might not
+    exist" everywhere would be a second lie, not a fix.
+
+    Raised only where a `dolt`/`bd` read failed at the TRANSPORT layer --
+    classified by `_connection_retryable`, the same conservative predicate
+    that decides what is safe to retry, applied in `_sql_failure`.
+    """
+
+
 class AssumptionViolated(BeadsError):
     """The installed Beads no longer behaves the way we depend on."""
 
@@ -1816,9 +1993,10 @@ def _forward_active_blockers_via_sql(db: str, item_id: str) -> list[dict]:
         f"WHERE `dep`.`issue_id` = '{_sql_literal(item_id)}'"
     )
     if p.returncode != 0:
-        raise BeadsError(
+        raise _sql_failure(
             f"could not read dependencies of {item_id!r} over SQL: "
-            f"{_clean_bd_error(p.stderr or p.stdout)}"
+            f"{_clean_bd_error(p.stderr or p.stdout)}",
+            p,
         )
     try:
         rows = json.loads(p.stdout or "{}").get("rows", [])
@@ -1882,9 +2060,10 @@ def _forward_dependency_links_via_sql(db: str, item_id: str) -> list[dict]:
         f"WHERE `dep`.`issue_id` = '{_sql_literal(item_id)}'"
     )
     if p.returncode != 0:
-        raise BeadsError(
+        raise _sql_failure(
             f"could not read forward dependency links of {item_id!r} over SQL: "
-            f"{_clean_bd_error(p.stderr or p.stdout)}"
+            f"{_clean_bd_error(p.stderr or p.stdout)}",
+            p,
         )
     try:
         rows = json.loads(p.stdout or "{}").get("rows", [])
@@ -1911,6 +2090,27 @@ def _forward_dependency_links_via_sql(db: str, item_id: str) -> list[dict]:
             }
         )
     return links
+
+
+def _sql_failure(message: str, p: subprocess.CompletedProcess) -> BeadsError:
+    """Build the right exception for a failed direct-SQL `dolt` read.
+
+    ONE classifier, so the six SQL read sites cannot drift into six
+    different opinions about what a transport failure looks like. Returns a
+    `BeadsUnavailableError` (infrastructure unreachable -- the answer is
+    UNKNOWN) when `p`'s own output carries a transport signature, else a
+    plain `BeadsError` (a real, computed failure).
+
+    Reuses `_connection_retryable` verbatim rather than inventing a second
+    signature list: "safe to retry" and "this was infrastructure, not an
+    answer" are the same judgement, and a second list would be a second
+    place for it to go stale. Conservative by construction -- a signature
+    that can never appear in a legitimate bd domain result -- so this can
+    never soften a genuine failure into "maybe transient".
+    """
+    if _connection_retryable((p.stdout or "") + (p.stderr or "")):
+        return BeadsUnavailableError(message)
+    return BeadsError(message)
 
 
 def _retryable(blob: str) -> bool:
@@ -3137,6 +3337,15 @@ class Beads:
         """
         try:
             self.get(item_id)  # existence check only -- raises if missing
+        except BeadsUnavailableError:
+            # The existence check could not be PERFORMED -- the database was
+            # unreachable, so nothing was learned about whether this item
+            # exists. Re-raised untouched: relabelling it "item not found"
+            # is the fourth outcome this docstring promises never to
+            # conflate with the first, and it lied in 9 of 12 measured
+            # attempts against an item that existed. See
+            # `BeadsUnavailableError`.
+            raise
         except BeadsError as e:
             raise BeadsError(f"cannot claim {item_id}: item not found ({e})") from e
 
@@ -3383,6 +3592,20 @@ class Beads:
         """
         try:
             return self.get(item_id, with_links=with_links)
+        except BeadsUnavailableError:
+            # WORST of the three flattening sites, and the reason this one
+            # is fenced first. Both branches below assert ABSENCE, and the
+            # second discarded the cause outright -- a bare "item 'X' not
+            # found in project 'Y'" with no parenthetical, nothing an agent
+            # or a human could tell apart from real absence. Measured
+            # against an item the calling session HELD: 2 of 8 attempts
+            # denied its existence. This is also the exact path
+            # `context/awareness.md` hazard #6 tells agents to TRUST as the
+            # safe recovery after an ambiguous write ("re-read the item
+            # first ... a read-only path that cannot itself conflict"), so
+            # a lie here is a lie told to a caller who was following our
+            # own instructions. Re-raised untouched, cause intact.
+            raise
         except BeadsError as e:
             prefix = f"{self.project_name}-"
             if not item_id.startswith(prefix):
@@ -4880,6 +5103,31 @@ STATUS_OK = "ok"
 STATUS_CREATING = "creating"  # a `new` for this project is in progress right now
 STATUS_BROKEN = "broken"  # a previous `new` never finished; heals on the next `new`
 
+#: Prefix for the FOURTH state, added because `instances` had no vocabulary
+#: between `ok` and `ERROR`: the database is fine, WE could not reach it.
+#: `"ERROR: ..."` asserts the project's data is unreadable; measured (lane
+#: `model_performance-rpz`), a healthy project printed exactly that in 5 of
+#: 10 attempts, interleaved with correct `ok` rows for the same project
+#: seconds either side. That is a claim about the project; this is a claim
+#: about the connection, and they must not share a word.
+#:
+#: A PREFIX rather than a bare token, matching the existing `"ERROR: "`
+#: convention, because the diagnostic text after it is the actionable part.
+#: `is_unavailable_status` is the one place that recognises it -- callers
+#: must not re-derive the test with their own `startswith`.
+STATUS_UNAVAILABLE_PREFIX = "UNAVAILABLE: "
+
+
+def is_unavailable_status(status: str | None) -> bool:
+    """True if `status` is a `ProjectSummary.status` reporting that the
+    database could not be REACHED (as opposed to read and found broken).
+
+    One home for the test so the CLI table, the JSON rows, and the web
+    dashboard cannot drift into three different opinions about which
+    strings mean "unknown" -- the same reason `truncate_status` is shared.
+    """
+    return bool(status) and str(status).startswith(STATUS_UNAVAILABLE_PREFIX)
+
 
 @dataclass
 class ProjectSummary:
@@ -4896,7 +5144,11 @@ class ProjectSummary:
     from `Workspace.creation_state`, consulted BEFORE any item read so a
     half-created project is never mistaken for a healthy empty one); or a
     truncated `"ERROR: ..."` string (see `truncate_status`) when the
-    database exists but could not be read at all. In EVERY non-`ok` case
+    database exists but could not be read at all; or a truncated
+    `"UNAVAILABLE: ..."` string (`STATUS_UNAVAILABLE_PREFIX`,
+    `is_unavailable_status`) when the database could not be REACHED, which
+    is a claim about the connection and not about the project. In EVERY
+    non-`ok` case
     every field below is `None`/empty, not zero, so a caller can never
     mistake "not healthy" for "read as empty."
 
@@ -5128,9 +5380,19 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
          reported a healthy `ok` with 0 items. `webapp.py` calls this function
          directly, so putting the check HERE -- not only in `cli.cmd_instances`
          -- is what makes the web dashboard honest too.
-      2. A database that then cannot be read reports `status="ERROR: ..."`
-         (truncated), again with every field `None`/empty.
-      3. Otherwise `STATUS_OK`, with real counts.
+      2. A database that could not be REACHED reports
+         `status="UNAVAILABLE: ..."` (truncated) -- distinct from both `ok`
+         and `ERROR`, because it is a claim about the connection, not about
+         the project. Measured (lane `model_performance-rpz`): under a
+         transient dolt read failure a healthy project printed as `ERROR`
+         with null counts in 5 of 10 attempts, interleaved with correct
+         `ok` rows for that same project. `_dolt_sql*` now retries a
+         transport blip first (`_run_dolt_sql_bounded`), so this state is
+         reached only PAST that bounded budget.
+      3. A database that IS reachable but cannot be read reports
+         `status="ERROR: ..."` (truncated), again with every field
+         `None`/empty.
+      4. Otherwise `STATUS_OK`, with real counts.
 
     On the healthy path, fetches items exactly ONCE
     (`ws.project(name).list(include_resolved=True)`) and derives every field
@@ -5167,6 +5429,13 @@ def project_summary(ws: Workspace, name: str) -> ProjectSummary:
         return ProjectSummary(name=name, status=STATUS_BROKEN)
     try:
         items = _summary_items_via_sql(name)
+    except BeadsUnavailableError as e:
+        # The database was UNREACHABLE -- we learned nothing about this
+        # project. Reporting `ERROR:` here asserts its data is unreadable,
+        # which was false in 5 of 10 measured attempts against a healthy
+        # project. See `STATUS_UNAVAILABLE_PREFIX`. Ordered before the
+        # `BeadsError` arm because it is a subclass.
+        return ProjectSummary(name=name, status=truncate_status(f"{STATUS_UNAVAILABLE_PREFIX}{e}"))
     except BeadsError as e:
         return ProjectSummary(name=name, status=truncate_status(f"ERROR: {e}"))
     held_items = [i for i in items if i.status == "held"]

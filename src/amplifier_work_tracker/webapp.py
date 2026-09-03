@@ -2069,17 +2069,33 @@ def _dashboard_row(s: A.ProjectSummary) -> str:
         # alarm without depending on a dedicated token landing first.
         st = s.status
         creating = st.lower().startswith(("creating", "provisioning"))
+        # A project we could not REACH is not a broken project -- painting it
+        # crimson "Broken" asserts its data is bad when all we know is that
+        # our own read did not arrive. Measured (lane `model_performance-rpz`)
+        # 5 of 10 attempts against a healthy project. Amber "Unavailable"
+        # says the true thing: unknown, not bad.
+        unavailable = A.is_unavailable_status(st)
         if creating:
             kind, word, accent = "warn", "Provisioning", "var(--amber)"
             tint = "var(--alarm-surface)"
             detail = "Being created \u2014 counts appear once its database is ready."
+        elif unavailable:
+            kind, word, accent = "warn", "Unavailable", "var(--amber)"
+            tint = "var(--alarm-surface)"
+            detail = st  # "UNAVAILABLE: ..." (already truncated by the adapter)
         else:
             kind, word, accent = "bad", "Broken", "var(--crimson)"
             tint = "var(--blocked-surface)"
             detail = st  # e.g. "ERROR: ..." (already truncated by the adapter)
         # keep the reading width sane: one legible line, full text on hover
         shown = detail if len(detail) <= 120 else detail[:119] + "\u2026"
-        key = f"{s.name} {'provisioning' if creating else 'broken'} {st}".lower()
+        if creating:
+            state_word = "provisioning"
+        elif unavailable:
+            state_word = "unavailable"
+        else:
+            state_word = "broken"
+        key = f"{s.name} {state_word} {st}".lower()
         row_style = f"background:{tint};box-shadow:inset 4px 0 0 {accent}"
         return (
             f'<tr class="alarm" data-t="{_esc(key)}" style="{row_style}">'

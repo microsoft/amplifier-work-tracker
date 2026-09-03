@@ -1,0 +1,87 @@
+=== FAIL-BEFORE: new tests run against the PARENT commit's source (fix reverted) ===
+parent: 2468a6946ee7e04e82ad9d563af86d48a5d66355
+src/ + AGENTS.md reverted to parent; the three NEW test files kept.
+
+--- tests/unit/test_dolt_scan_dir.py + tests/unit/test_unavailable_not_absent.py
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xe6d3198b3b30>
+
+    def test_project_summary_real_read_failure_still_reports_ERROR(probe_workspace, monkeypatch):
+        """No-blurring guardrail, summary side: a database that IS reachable but
+        cannot be read is still an honest `ERROR`, not softened to 'unknown'."""
+    
+        def domain_failure(*_a, **_k):
+            return subprocess.CompletedProcess(
+                ["dolt"], 1, "", "Error 1049: Unknown database 'probeproj'"
+            )
+    
+        monkeypatch.setattr(A, "_dolt_sql", domain_failure)
+        monkeypatch.setattr(A, "_dolt_sql_json", domain_failure)
+        s = A.project_summary(probe_workspace, PROJECT)
+        assert s.status.startswith("ERROR:")
+>       assert not A.is_unavailable_status(s.status)
+                   ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'amplifier_work_tracker.adapter' has no attribute 'is_unavailable_status'
+
+tests/unit/test_unavailable_not_absent.py:193: AttributeError
+=========================== short test summary info ============================
+FAILED tests/unit/test_dolt_scan_dir.py::test_scan_dir_exists_and_is_reused
+FAILED tests/unit/test_dolt_scan_dir.py::test_scan_dir_is_not_the_process_cwd
+FAILED tests/unit/test_dolt_scan_dir.py::test_conn_args_pin_the_data_dir - As...
+FAILED tests/unit/test_dolt_scan_dir.py::test_dolt_sql_pins_cwd - assert None...
+FAILED tests/unit/test_dolt_scan_dir.py::test_dolt_sql_json_pins_cwd - TypeEr...
+FAILED tests/unit/test_dolt_scan_dir.py::test_lstat_race_is_classified_transient
+FAILED tests/unit/test_dolt_scan_dir.py::test_a_real_domain_failure_is_not_classified_transient
+FAILED tests/unit/test_dolt_scan_dir.py::test_direct_sql_retries_a_transient_failure_and_then_succeeds
+FAILED tests/unit/test_dolt_scan_dir.py::test_direct_sql_retry_is_BOUNDED_and_surfaces_the_failure
+FAILED tests/unit/test_unavailable_not_absent.py::test_get_readonly_under_transport_failure_does_not_claim_absence
+FAILED tests/unit/test_unavailable_not_absent.py::test_get_readonly_transport_failure_is_a_distinct_TYPE
+FAILED tests/unit/test_unavailable_not_absent.py::test_get_readonly_genuine_absence_is_UNCHANGED
+FAILED tests/unit/test_unavailable_not_absent.py::test_get_readonly_wrong_project_prefix_is_UNCHANGED
+FAILED tests/unit/test_unavailable_not_absent.py::test_claim_item_under_transport_failure_does_not_say_item_not_found
+FAILED tests/unit/test_unavailable_not_absent.py::test_claim_item_genuine_absence_is_UNCHANGED
+FAILED tests/unit/test_unavailable_not_absent.py::test_project_summary_under_transport_failure_is_UNAVAILABLE_not_ERROR
+FAILED tests/unit/test_unavailable_not_absent.py::test_project_summary_unavailable_is_distinct_from_every_other_status
+FAILED tests/unit/test_unavailable_not_absent.py::test_project_summary_real_read_failure_still_reports_ERROR
+18 failed, 2 passed in 0.33s
+
+--- tests/cli/test_cli_unavailable_not_absent.py
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=104
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=105
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=106
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=106
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=107
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=108
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=107
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=108
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=109
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=109
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=110
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=111
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=110
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=111
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=112
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=112
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=113
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=113
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=114
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=114
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=115
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=115
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=116
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=116
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=117
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=118
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=117
+time="2026-09-02T22:40:21-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=119
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=119
+time="2026-09-02T22:40:21-07:00" level=warning msg="error running query" connectTime="2026-09-02 22:40:21.639642618 -0700 PDT m=+18.240557502" connectionDb=proj906a90aeaaec connectionID=118 error="backup 'backup_export' not found" queryTime="2026-09-02 22:40:21.75500604 -0700 PDT m=+18.355920908"
+time="2026-09-02T22:40:21-07:00" level=info msg=ConnectionClosed connectionID=118
+--------------------------- Captured stderr teardown ---------------------------
+time="2026-09-02T22:40:22-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=120
+time="2026-09-02T22:40:22-07:00" level=info msg="stats stopped: context canceled"
+time="2026-09-02T22:40:22-07:00" level=info msg=ConnectionClosed connectionID=120
+=========================== short test summary info ============================
+FAILED tests/cli/test_cli_unavailable_not_absent.py::test_list_id_on_an_existing_item_does_not_deny_it_when_the_db_is_unreachable
+FAILED tests/cli/test_cli_unavailable_not_absent.py::test_claim_id_on_an_existing_item_does_not_say_item_not_found_when_unreachable
+FAILED tests/cli/test_cli_unavailable_not_absent.py::test_instances_reports_UNAVAILABLE_not_ERROR_when_the_db_is_unreachable
+3 failed, 3 passed in 22.41s

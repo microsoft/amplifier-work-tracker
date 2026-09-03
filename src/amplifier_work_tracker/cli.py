@@ -535,6 +535,21 @@ def cmd_instances(a):
     broken by one that never finished is reported as such -- `creating` or
     `broken` -- and `ok` is restored to actually meaning "writable."
 
+    Second measured misreport, 2026-09-02 (lane `model_performance-rpz`):
+    this table had no vocabulary between `ok` and `ERROR`, so a transient
+    dolt read failure printed a perfectly healthy project as
+    `ERROR: could not read items of database ...` with every count blank --
+    5 of 10 attempts, interleaved with correct `ok` rows for that same
+    project seconds either side. `ERROR` asserts the project's data is
+    unreadable; all that was actually known is that OUR read did not
+    arrive. `adapter.project_summary` now reports that fourth state as
+    `UNAVAILABLE: ...` (`adapter.STATUS_UNAVAILABLE_PREFIX`), distinct from
+    BOTH `ok` and `ERROR`, and only past the bounded transport retry
+    `_run_dolt_sql_bounded` added to the direct-SQL path. This table prints
+    `s.status` verbatim, so the distinction lands here for free -- there is
+    deliberately no second copy of the "which strings mean unknown" rule in
+    this file (see `adapter.is_unavailable_status`).
+
     Counting logic beyond creation-state lives in `adapter.project_summary`
     -- shared with the web dashboard (see `webapp.py`) so the two can never
     silently disagree on what "ready"/"held"/"intake"/"blocked" mean, or on
