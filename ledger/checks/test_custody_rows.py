@@ -38,6 +38,7 @@ from ._support import (
     TOOL_MODULE,
     contains,
     count,
+    function_names,
     read,
     row,
     sha256,
@@ -150,14 +151,25 @@ def test_row_ccv1_008() -> None:
 
 
 def test_row_ccv1_009() -> None:
-    """Core 7 VIOLATION pin: the whole close fence runs only while the item is
-    still `held`. A reaped item is `open` with its assignee cleared, so a
-    stale holder's close skips the fence entirely.
+    """Core 7 CONFORMS: the close fence is keyed on custody IDENTITY, not on
+    the item's status, so it also refuses the released-but-not-yet-re-claimed
+    state a reap leaves behind -- while still letting an integrator close an
+    item nobody holds.
 
-    Pinned structurally rather than by one line, so that ADDING a fence for
-    the released state (a legitimate fix shape that keeps the existing gate)
-    also flips this probe: every `raise FencedError` in resolve's pre-write
-    region must still sit inside the `status == "held"` block.
+    Three parts, because each is defeatable alone:
+
+      1. a refusal exists OUTSIDE the `status == "held"` gate -- the gate
+         was the whole gap (a reaped item is `open` with its assignee
+         cleared, so a status-gated fence skipped exactly the state it
+         existed for);
+      2. that refusal is reached ONLY when the custody record names THIS
+         caller and the item is not theirs -- the identity key is what
+         keeps PR #51's integrator resolve unfenced, and what keeps a
+         holder's own already-landed close re-attemptable;
+      3. the discriminating BEHAVIOURAL fixture exists and still carries
+         both halves. This module is in-process only: it proves shape,
+         never behaviour (see the module docstring) -- so it verifies the
+         fixture's continued existence rather than pretending to be it.
     """
     src = read(ADAPTER)
     body = src[
@@ -165,14 +177,36 @@ def test_row_ccv1_009() -> None:
     ]
     pre_write = body[: body.index("        try:")]
     gate = '        if current.status == "held":'
-    assert gate in pre_write, "CCV1-009 pin: the status gate is gone"
-    fences = [m.start() for m in re.finditer(r"raise FencedError", pre_write)]
-    assert fences and all(pos > pre_write.index(gate) for pos in fences), (
-        "CCV1-009 (Core 7, VIOLATION) pin no longer matches. If the post-reclaim fence "
-        "was FIXED, this is the expected failure: flip the row to CONFORMS, cite the "
-        "discriminating fixture (both halves -- refuse the stale holder, still allow the "
-        "integrator's plain resolve), and resolve work_item_pipeline-dn4."
+    assert gate in pre_write, "Core 7: the held-item fence disappeared entirely"
+
+    identity_fence = "            elif cust_holder == who and current.holder != who:"
+    assert identity_fence in pre_write, (
+        "Core 7: the status-independent, custody-identity-keyed fence changed shape. "
+        "A close by the session the custody record still names must be refused even "
+        "when the item is no longer `held` (the post-reclaim state)."
     )
+    fences = [m.start() for m in re.finditer(r"raise FencedError", pre_write)]
+    assert any(pos > pre_write.index(identity_fence) for pos in fences), (
+        "Core 7: the post-reclaim branch no longer raises FencedError -- a refusal that "
+        "is not a FencedError does not clear the caller's local custody state"
+    )
+    assert "not held by this session" in pre_write, (
+        "Core 7: the refusal must still name 'not held by this session' -- the wording "
+        "the contract's own `fence.close_post_reclaim` machine check specifies"
+    )
+
+    fixture = REPO_ROOT / "tests" / "integration" / "test_post_reclaim_fence.py"
+    assert fixture.exists(), f"Core 7: the discriminating fixture {fixture.name} is gone"
+    names = function_names(fixture)
+    for half in (
+        "test_stale_holder_close_is_refused_after_a_real_reap",
+        "test_stale_holder_close_is_refused_after_release_without_reclaim",
+        "test_integrator_close_of_a_reclaimed_item_still_succeeds",
+    ):
+        assert half in names, (
+            f"Core 7: {fixture.name} no longer carries {half} -- both halves must stay "
+            f"measured together, or a fix to one silently trades away the other"
+        )
 
 
 # --------------------------------------------------------------- CCV1-011
