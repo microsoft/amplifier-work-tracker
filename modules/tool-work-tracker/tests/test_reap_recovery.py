@@ -50,16 +50,6 @@ def _force_reap(session: WorkTrackerSession, project_name: str) -> dict[str, Any
     return SV.reap_project(bd, ttl_seconds=0)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "CCV1-009 (work_item_pipeline-dn4): a post-reclaim close is not fenced -- "
-        "`Beads.resolve`'s fence block runs only under `if current.status == 'held'`, "
-        "and a reaped item is `open`, so the stale holder's resolve lands instead of "
-        "being refused. PRODUCT defect, first mechanically measured by this test once "
-        "the suite was actually wired into `make test`/CI (CCV1-022); not fixed here."
-    ),
-)
 @pytest.mark.asyncio
 async def test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim(project):
     """Trigger path 1: the explicit `work_resolve` refusal. Claim -> force
