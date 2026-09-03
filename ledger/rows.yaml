@@ -127,25 +127,30 @@
     CCV1-022 goes green.
 
 - id: CCV1-005
-  title: the claiming skill tells agents custody keeps itself fresh
+  title: agent-facing prose states renewal as one-strike and names its passive signal
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 4
     quote: |
       An agent that fails to renew once discovers it via the passive signal
       `holding.custody_lost` and must recover in-process.
-  disposition: GAP
-  work: work_item_pipeline-m7o
+  disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_ccv1_005
   notes: >
-    Doc drift, not a code defect. skills/claiming-work-safely/SKILL.md
-    still says "you do not need to do anything to keep it fresh under
-    normal operation" -- inverted for exactly the failure Core 4 names: a
-    non-fenced renewal failure stops renewal, leaves self._held set, and
-    surfaces only if the agent thinks to poll work_status. Evidence brief
-    sec.D-7; ratified lane work item 3.
+    Was GAP (doc drift, never a code defect): the skill said "you do not
+    need to do anything to keep it fresh under normal operation" --
+    inverted for exactly the failure Core 4 names. CORRECTED, both
+    surfaces. Evidence: skills/claiming-work-safely/SKILL.md:69-73 (the
+    loop step now points at the hazard) and :111-134 ("Renewal is
+    one-strike" -- one failure ends renewal for good, the non-fenced case
+    leaves self._held set, discovery is work_status's holding.custody_lost,
+    checked before long-running steps and after any tool error);
+    context/awareness.md:19-25 (the same claim, compressed). HONEST LIMIT:
+    like every doc row, the probe asserts the prose says the true thing --
+    the BEHAVIOUR it describes is asserted by CCV1-004. Evidence brief
+    sec.D-7; ratified lane work item 3; work_item_pipeline-m7o.
 
 - id: CCV1-006
   title: declared_state is reporting only; awaiting_human is not exempt
@@ -207,27 +212,32 @@
     code, and is carried by CCV1-022 instead.
 
 - id: CCV1-008
-  title: agent-facing prose states the TTL as self-enforcing
+  title: agent-facing prose states the TTL as reclaim-eligibility enforced by the sweep
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 6
     quote: |
       without the sweep running, the TTL is aspirational. An item held by a dead agent stays
       held indefinitely until the sweep runs.
-  disposition: GAP
-  work: work_item_pipeline-qjn
+  disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_ccv1_008
   notes: >
-    Doc drift, not a code defect. context/awareness.md ("15 minutes without
-    a renewal releases the item back to the queue") and
-    skills/claiming-work-safely/SKILL.md ("An unrenewed 15-minute hold is
-    released back to the queue") both state the release unconditionally;
-    neither mentions that reclaim requires an installed, running sweep, and
-    the agent-facing constants table omits the reap interval entirely. The
-    OPERATOR-facing skill already says it plainly. Evidence brief sec.D-9;
-    ratified Call 2 (option C) names this as lane work.
+    Was GAP (doc drift, never a code defect): both agent-facing documents
+    stated the release unconditionally ("15 minutes without a renewal
+    releases the item back to the queue" / "An unrenewed 15-minute hold is
+    released back to the queue"), neither named the sweep, and the
+    agent-facing constants table omitted the reap interval. CORRECTED, both
+    surfaces. Evidence: context/awareness.md:26-32 ("The TTL does not
+    enforce itself" -- 15 min makes a hold merely reclaim-ELIGIBLE, the
+    out-of-band reap sweep reclaims it, only where an operator runs one,
+    reclaim lands up to a sweep interval late, and a dead agent's hold
+    persists indefinitely where no sweep runs);
+    skills/claiming-work-safely/SKILL.md:98-108 (same, expanded) and :91
+    (the reap interval now appears in the constants table). The
+    OPERATOR-facing skill already said it plainly. Evidence brief sec.D-9;
+    ratified Call 2 (option C); work_item_pipeline-qjn.
 
 - id: CCV1-009
   title: a post-reclaim close is not fenced -- the fence is gated on status held
@@ -412,27 +422,34 @@
     renewal one-strike and dooms a live hold).
 
 - id: CCV1-016
-  title: awareness.md still asserts a reported conflict means the write did not land
+  title: prose states a reported conflict as UNKNOWN, and scopes the read-back guarantee
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 11
     quote: |
       a reported conflict error must be accompanied by a readback that confirms the conflict
-  disposition: GAP
-  work: work_item_pipeline-ryp
+  disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_ccv1_016
   notes: >
-    Doc drift DISCOVERED BY THIS RECONCILE -- it was not on the ratified
+    Was GAP -- doc drift DISCOVERED BY THIS RECONCILE, not on the ratified
     lane-work list, because the prose only became wrong when PR #63
-    shipped. context/awareness.md still states as a database guarantee that
-    the retryable error family means "the write genuinely did not happen."
-    Incident B measured the opposite, and the read-back code exists because
-    of it. An agent following this prose would treat a reported conflict as
-    a safe no-op -- the exact reasoning that produced five spaced retries
-    over ~2.5h in the real incident. The surrounding "re-read first, never
-    blindly retry" guidance is correct and must survive the correction.
+    shipped: context/awareness.md stated as a database guarantee that the
+    retryable error family means "the write genuinely did not happen."
+    Incident B measured the opposite. CORRECTED, and on BOTH prose
+    surfaces -- the row now also pins the CLI's own CONTENTION / RETRY
+    CONTRACT (argparse's `description`), which carried the same claim and
+    which the original row did not cover. Evidence:
+    context/awareness.md:51-75 (a reported failure is UNKNOWN; resolve and
+    release re-read on conflict and report success when the write landed,
+    so a reported success from those two is confirmed; every other write
+    verb surfaces the raw conflict unverified) and
+    src/amplifier_work_tracker/cli.py:13-40 (same, operator-facing). The
+    correct half of the original guidance -- re-read via a read-only path
+    that cannot itself conflict, never resubmit a non-idempotent write
+    blind -- survives on both surfaces and is pinned as such.
+    work_item_pipeline-ryp.
 
 - id: CCV1-017
   title: a session holds at most one item at a time

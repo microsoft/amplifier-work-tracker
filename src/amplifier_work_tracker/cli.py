@@ -16,23 +16,27 @@ single-writer dolt server that other agents' claims/renewals/resolves are
 hitting concurrently. `adapter.Beads._run` rides out dolt serialization
 conflicts (MySQL 1213/1205, "serialization failure", "try restarting
 transaction") with up to 8 retries and exponential backoff before giving up
-and raising -- a message of the shape "still conflicting after 8 retries" (or
-any `BeadsError` at all from a write command) means the underlying
-transaction was ABORTED, never partially committed: those specific error
-signatures are, by dolt/MySQL's own transaction semantics, "this transaction
-did not happen," not "it might have happened." VERIFY, DO NOT BLINDLY RETRY:
-before resubmitting the same logical operation, re-read the item (`list --id`
-/ `work_list`'s `item_id` form -- a read-only SQL path that cannot itself
+and raising -- but a message of the shape "still conflicting after 8 retries"
+(or any `BeadsError` at all from a write command) does NOT prove the write
+failed. A conflicted write can still have LANDED: that is the measured
+incident this hardening exists because of, and why `resolve`/`unclaim` read
+the item back on conflict. Treat a reported failure as "this MIGHT have
+happened," never as "this did not happen." `resolve`/`unclaim` handle it for
+you at both ends: on a conflict they re-read and report success when the
+write actually landed, and they verify their OWN success path by read-back
+before reporting it (exit code is not proof by itself) -- so a reported
+SUCCESS from those two is independently confirmed. Every other write verb
+(`add`, `edit`, `defer`, `block`, `dep`, `comment`, custody writes) still
+surfaces the raw conflict unverified. VERIFY, DO NOT BLINDLY RETRY: before
+resubmitting the same logical operation, re-read the item (`list --id` /
+`work_list`'s `item_id` form -- a read-only SQL path that cannot itself
 conflict) to confirm its actual current state. This matters most for
-non-idempotent writes (`add`/`create` -- retrying blind can create a
-duplicate item) and less for idempotent ones (`resolve` on an already-
-resolved item is a readback-checked no-op) -- but re-reading first is always
-the safe move. `resolve`/`unclaim` additionally verify their OWN write landed
-by reading the item back before reporting success (exit code is not proof by
-itself) -- so a reported SUCCESS is independently confirmed already; this
-contract is about what to do after a reported FAILURE. See `context/
-awareness.md` for the same contract in agent-facing form, and work_tracker
-item pipeline-bug for the contention-hardening work this documents.
+non-idempotent writes (`add`/`create` -- retrying blind after a conflict that
+actually landed creates a duplicate item) and less for idempotent ones
+(`resolve` on an already-resolved item is a readback-checked no-op) -- but
+re-reading first is always the safe move. See `context/awareness.md` for the
+same contract in agent-facing form, and work_tracker item pipeline-bug for
+the contention-hardening work this documents.
 """
 
 from __future__ import annotations
