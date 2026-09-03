@@ -1,0 +1,51 @@
+=== FAIL-BEFORE: the model_performance-2nx tests, run against the PARENT commit ===
+parent commit : 2468a6946ee7e04e82ad9d563af86d48a5d66355  (feat: `reopen` verb + `work_reopen` tool; `resolve` on a closed item fails loud (#67))
+date          : 2026-09-03T07:05:58Z
+bd            : bd version 1.1.2 (20e493e56: HEAD@20e493e569c9)
+pinned source : /tmp/2nx-parent/src/amplifier_work_tracker/__init__.py
+                (the lane worktree's editable install would otherwise resolve
+                 amplifier_work_tracker to the FIXED source and pass falsely)
+
+The three test files under test are the lane's NEW ones, copied verbatim onto
+the parent tree; only src/ is the parent's.
+
+--- tier 2 (integration): tests/integration/test_defer_block.py ---
+>       with pytest.raises(A.BeadsError):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE BeadsError
+
+tests/integration/test_defer_block.py:224: Failed
+----------------------------- Captured stderr call -----------------------------
+=========================== short test summary info ============================
+FAILED tests/integration/test_defer_block.py::test_defer_block_on_a_resolved_item_refuse_and_the_resolution_survives[defer]
+FAILED tests/integration/test_defer_block.py::test_defer_block_on_a_resolved_item_refuse_and_the_resolution_survives[block]
+FAILED tests/integration/test_defer_block.py::test_the_destructive_loop_now_stops_at_its_first_verb
+FAILED tests/integration/test_defer_block.py::test_reopen_still_succeeds_on_the_same_item_and_still_archives_first
+4 failed, 17 passed in 25.42s
+
+--- tier 3 (cli): tests/cli/test_cli_new_verbs.py ---
+----------------------------- Captured stdout call -----------------------------
+
+----------------------------- Captured stderr call -----------------------------
+--------------------------- Captured stderr teardown ---------------------------
+=========================== short test summary info ============================
+FAILED tests/cli/test_cli_new_verbs.py::test_defer_block_on_a_resolved_item_fail_non_zero_and_keep_the_resolution[defer]
+FAILED tests/cli/test_cli_new_verbs.py::test_defer_block_on_a_resolved_item_fail_non_zero_and_keep_the_resolution[block]
+2 failed, 8 passed in 45.49s
+
+--- modules tier: modules/tool-work-tracker/tests/test_work_defer_block.py ---
+----------------------------- Captured stdout call -----------------------------
+
+----------------------------- Captured stderr call -----------------------------
+--------------------------- Captured stderr teardown ---------------------------
+=========================== short test summary info ============================
+FAILED modules/tool-work-tracker/tests/test_work_defer_block.py::test_defer_block_on_a_resolved_item_report_failure_and_keep_the_resolution[defer]
+FAILED modules/tool-work-tracker/tests/test_work_defer_block.py::test_defer_block_on_a_resolved_item_report_failure_and_keep_the_resolution[block]
+2 failed, 7 passed in 36.88s
+
+--- doctor assumptions: the two NEW checks against the PARENT adapter ---
+    (contract.py -- the assumption file, i.e. the test -- is the lane's;
+     adapter.py -- the code under test -- is the parent's, unmodified)
+    adapter under test: /tmp/2nx-parent/src/amplifier_work_tracker/adapter.py
+  [FAIL] defer.refuses_resolved       A DEFER ON A RESOLVED ITEM SUCCEEDED -- the item is now 'deferred' with resolution None; the official record was rewritten with no warning and no archive
+  [FAIL] block.refuses_resolved       A BLOCK ON A RESOLVED ITEM SUCCEEDED -- the item is now 'blocked' with resolution None; the official record was rewritten with no warning and no archive

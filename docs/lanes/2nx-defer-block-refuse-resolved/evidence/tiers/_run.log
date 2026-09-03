@@ -1,0 +1,16 @@
+RUN STARTED 2026-09-03T07:51:32Z
+=== lint START 07:51:32Z ===
+=== lint EXIT=0 07:51:32Z ===
+All checks passed!
+=== format START 07:51:32Z ===
+=== format EXIT=0 07:51:32Z ===
+145 files already formatted
+=== types START 07:51:32Z ===
+=== types EXIT=0 07:51:38Z ===
+0 errors, 0 warnings, 0 informations
+=== doctor START 07:51:38Z ===
+=== doctor EXIT=0 07:54:55Z ===
+  [PASS] service.restart_policy              installed unit has Restart=always -- survives a clean/unintended exit
+
+All 36 assumptions hold. Safe to run parallel agents.
+=== tier1-unit START 07:54:55Z ===
