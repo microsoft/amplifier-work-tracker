@@ -326,11 +326,33 @@ class _FakeBeads:
         self.items = items
         self.released: list[str] = []
         self.resolved: list[tuple[str, str, str]] = []
+        #: Every `list()` call's kwargs, so a test can assert HOW the reaper
+        #: asked -- `model_performance-oy4`: asking with bd's default page
+        #: size silently hid held items past the 50th from the reaper.
+        self.list_calls: list[dict] = []
 
-    def list(self, *, lane: str | None = None, include_resolved: bool = False):
+    def list(
+        self,
+        *,
+        lane: str | None = None,
+        include_resolved: bool = False,
+        status: str | None = None,
+        limit: int | None = None,
+    ):
+        """Mirrors `A.Beads.list`'s real signature, including `status` and
+        `limit` -- a double that silently ignored either would let a caller
+        pass a filter that never took effect and still look correct here.
+        """
+        self.list_calls.append(
+            {"lane": lane, "include_resolved": include_resolved, "status": status, "limit": limit}
+        )
         out = list(self.items.values())
-        if not include_resolved:
+        if status is not None:
+            out = [i for i in out if i.status == status]
+        elif not include_resolved:
             out = [i for i in out if i.status != "resolved"]
+        if limit:  # 0/None both mean unlimited, matching bd's own convention
+            out = out[:limit]
         return out
 
     def get(self, item_id: str, *, with_links: bool = False):
@@ -406,13 +428,68 @@ def test_reap_sweep_isolates_a_broken_project_from_the_others():
     )
 
     class _ExplodingBeads(_FakeBeads):
-        def list(self, *, lane: str | None = None, include_resolved: bool = False):
+        def list(self, **_kwargs):
             raise RuntimeError("simulated bd outage")
 
     ws = _FakeWorkspace({"broken": _ExplodingBeads({}), "good": good_bd})
     results = SV.reap_sweep(ws, ttl_seconds=900)  # type: ignore[arg-type]
     assert "error" in results["broken"]
     assert results["good"]["reclaimed_count"] == 1
+    # The isolation must not also be a silence: the broken project has to be
+    # nameable by the sweep-level reporting the `sweeps.reclaiming` doctor
+    # check reads (`model_performance-oy4`).
+    assert SV.sweep_failures(results) == ["broken"]
+
+
+def test_reap_project_asks_for_every_held_item_not_bds_default_page():
+    """`model_performance-oy4`. `Beads.list()` with no `limit` applies bd's
+    own default cap (`LIST_DEFAULT_LIMIT`, 50) ordered `priority ASC,
+    created_at DESC, id ASC`. The reaper used to read that default page, so
+    in a project with more than 50 non-closed items a held item outside it
+    was invisible to the reaper permanently -- and nothing anywhere reported
+    that it had been skipped. Asserted on the CALL, not just the outcome,
+    because the outcome looks identical on any project small enough to fit.
+    """
+    bd = _FakeBeads({})
+    SV.reap_project(bd, ttl_seconds=900)  # type: ignore[arg-type]
+    assert bd.list_calls == [
+        {"lane": None, "include_resolved": False, "status": "held", "limit": 0}
+    ]
+
+
+def test_reap_project_reports_an_item_it_could_not_release_instead_of_aborting():
+    """One wedged item must not shadow the rest of the project's stale holds.
+    Before this, the first `release` that raised propagated out of
+    `reap_project`, `reap_sweep` caught it per project, and every remaining
+    hold went unreaped -- on that sweep and, since the failure is
+    deterministic, on every sweep after it.
+    """
+
+    def _stale(holder: str) -> dict:
+        return {C.CUSTODY_KEY: {"holder": holder, "last_seen": _ts(3600)}}
+
+    bd = _FakeBeads(
+        {
+            "w-1": _FakeItem("w-1", status="held", holder="agent-a", meta=_stale("agent-a")),
+            "w-2": _FakeItem("w-2", status="held", holder="agent-b", meta=_stale("agent-b")),
+        }
+    )
+    real_release = bd.release
+
+    def _release(item_id: str) -> None:
+        if item_id == "w-1":
+            raise RuntimeError("simulated wedged release")
+        real_release(item_id)
+
+    bd.release = _release  # type: ignore[method-assign]
+
+    result = SV.reap_project(bd, ttl_seconds=900)  # type: ignore[arg-type]
+
+    assert result["reclaimed_count"] == 1
+    assert result["reclaimed"][0]["id"] == "w-2"
+    assert result["failed_count"] == 1
+    assert result["failed"][0]["id"] == "w-1"
+    assert "simulated wedged release" in result["failed"][0]["error"]
 
 
 def test_notify_project_flips_only_linked_unresolved_reports():

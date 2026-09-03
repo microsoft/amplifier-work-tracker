@@ -1,0 +1,21 @@
+........................................................................ [ 19%]
+........................................................................ [ 38%]
+........................................................................ [ 57%]
+..................................................s..................... [ 76%]
+..............................ss........................................ [ 95%]
+.................                                                        [100%]
+=============================== warnings summary ===============================
+tests/integration/test_observatory_web.py:20
+  /home/bkrabach/dev/hw-model-performance/lanes/oy4-dead-holder-reclaim/amplifier-work-tracker/tests/integration/test_observatory_web.py:20: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient  # noqa: E402
+
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /home/bkrabach/dev/hw-model-performance/lanes/oy4-dead-holder-reclaim/amplifier-work-tracker/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/integration/test_web.py:699: bd set no `owner` on this item -- happens where the environment has no git identity (e.g. a bare CI container with no `git config user.email`). `owner` is an environment-provided value, not a code invariant; the environment-independent humanization guarantees are covered by test_humanize_identity_* in tests/unit.
+SKIPPED [1] tests/integration/test_web_pwa.py:234: Pillow not installed (dev/build-only tool)
+SKIPPED [1] tests/integration/test_web_pwa.py:249: Pillow not installed (dev/build-only tool)
+374 passed, 3 skipped, 2 warnings in 1125.40s (0:18:45)
