@@ -271,6 +271,11 @@ Stated, not guessed.
    suite itself is honest about being non-conformant. **Implemented as the pin;
    flagged for a conformance ruling.** If the ruling goes the other way, the ten
    red rows' probes convert to xfail-marked fixtures — mechanical, ~1 lane hour.
+   **ANSWERED 2026-09-01 (protocol-authority, Ruling-1): yes — the pin is
+   conformant and PREFERRED over `xfail`,** subject to three conditions
+   (notes on each pinning row · a named flip direction for "a VIOLATION was
+   fixed" · complete, committed mutation evidence with the denominator
+   stated). All three are discharged in §11; no probe converts to `xfail`.
 2. **Format deviation: two rows carry an unnumbered clause id.** `Conformance:
    Checks` and `Freeze Bar` are contract sections the contract does not number,
    but `LEDGER-FORMAT.md` §2 requires "the bare numbered identifier exactly as the
@@ -317,8 +322,112 @@ Nothing was committed or pushed; the orchestrator lands this branch via PR.
 
 ---
 
+## 11. Format deviations — local extensions to `LEDGER-FORMAT.md`
+
+Recorded here rather than applied silently, per that document's own charter:
+these are **data for `ledger-format.v1`**, not a private dialect.
+
+### 11.1 New flip direction: `VIOLATION-MOVEMENT`
+
+`LEDGER-FORMAT.md` names four flip directions — `REGRESSION`,
+`UN-DIVERGENCE`, `UNDECIDED-MOVEMENT`, `LEDGER-INTEGRITY`. **None of them
+covers "a VIOLATION was fixed."** That is not a hypothetical gap: it is the
+direction this repo's pinning probes exist to catch, and without a name for
+it a lane that lands a fix sees a red check with no instruction attached.
+
+| | |
+|---|---|
+| **Direction** | `VIOLATION-MOVEMENT` |
+| **Applies to** | any `GAP` / `VIOLATION` row whose `assertion.kind` is `probe` or `absence` (`_support.is_pinning`) |
+| **Meaning** | the pinning probe went red **because the behaviour moved TOWARD the contract** — a silent fix, which this ledger refuses to let pass unrecorded |
+| **Action** | update the row to `CONFORMS` **and retarget the probe at the fixed shape in the SAME change**. Doing one without the other leaves main carrying a ledger that lies |
+| **Not** | `REGRESSION` — nothing moved away from the contract, so the repo-fix/contract-amend response is the wrong one |
+| **Defined in** | `ledger/checks/_support.py` (`FLIP_VIOLATION_MOVEMENT`, `FLIP_DIRECTIONS`, `LOCAL_FLIP_DIRECTIONS`, `expected_flip_direction`) |
+
+`expected_flip_direction(row)` gives every row exactly one direction, so a red
+ledger names its own meaning instead of leaving a reader to guess whether a
+fix or a regression landed. `test_ledger_integrity.py` asserts every pinning
+probe carries this direction.
+
+**Grounding.** `LEDGER-FORMAT.md` §2 `assertion.kind: absence`; `PROTOCOL.md`
+§3.3 "drift is bidirectional"; the protocol-authority's Ruling-1 (2026-09-01),
+which held pin-the-wrong-shape **conformant and preferred over `xfail`**,
+subject to the three conditions this section and §11.3 discharge.
+
+### 11.2 Pinning-probe census (Ruling-1 condition 1)
+
+**As of 2026-09-02, after the custody-ledger lanes merged: zero `VIOLATION`
+rows remain.** Current census — 21 `CONFORMS`, 1 `GAP`, 2 `NOT-ASSERTABLE`.
+The four rows that were `VIOLATION` at SEED (`CCV1-003`, `-009`, `-012`,
+`-022`) were each fixed and flipped to `CONFORMS`, with their probes
+retargeted at the fixed shape in the same change — i.e. `VIOLATION-MOVEMENT`
+handled correctly four times before the direction had a name.
+
+**One pinning row remains: `CCV1-023`** (`GAP`, `assertion.kind: absence`).
+Its `notes` now carry the required statement verbatim — *"Probe pins the
+current non-conformant behavior so a silent fix flips it red; a passing probe
+here is NOT conformance — see disposition."* Condition 1 is therefore
+discharged for the whole current pinning population (1 of 1).
+
+> **Residual 1, named not fixed:** §1's disposition table is the **SEED**
+> snapshot (2026-09-01) and no longer matches `rows.yaml`. Rewriting it is a
+> reconcile run's job, not this lane's — flagged for the orchestrator.
+>
+> **Residual 2 — a live `VIOLATION-MOVEMENT` event, unhandled:**
+> `modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim`
+> now fails `make test` with **`XPASS(strict)`**, its `xfail` reason still
+> reading *"a post-reclaim close is not fenced … PRODUCT defect … not fixed
+> here."* CCV1-009 **was** fixed (`work_item_pipeline-dn4`) and the row is
+> `CONFORMS`, but that strict `xfail` marker — a pin in the modules suite
+> rather than in this kit — was never retargeted in the same change. This is
+> exactly the failure mode §11.1 names, and CCV1-022's own notes predicted it
+> ("the day CCV1-009 is fixed, the xfail fails"). **Action:** drop the marker
+> and let the test assert the fence directly. Out of this lane's scope
+> (`modules/`), flagged for the orchestrator; it is the only `make test`
+> failure on this tree that is not on the known pre-existing list.
+
+### 11.3 Mutation evidence (Ruling-1 condition 3)
+
+`ledger/checks/mutation_harness.py`, run by `make ledger-mutate`. It runs
+**every** probe against a counterfactual repo assembled in memory and requires
+the probe to go RED. Injection over the check kit's own readers only — no
+product-code edit, no subprocess, nothing written to the repo. The direction
+pushed is derived from the ledger, not chosen per probe: a pinning row gets
+the **fixed behaviour**, a green row gets the **known-wrong shape it forbids**,
+the SYNC row gets a moved contract.
+
+Measured 2026-09-02 on this tree:
+
+```
+pinning mutations       proven 3 / 3
+pinning probes covered  proven 1 / 1
+conformance mutations   proven 14 / 14
+ALL mutations           proven 17 / 17
+UNPROVEN, named with reason: (none)
+```
+
+Every probe in the kit is covered (15 probes; `CCV1-023` carries three
+mutations, one per separable half of its pin). The harness exits non-zero on
+any unproven mutation, and `test_ledger_integrity.py` runs it as tripwires 4
+and 5, so a probe that quietly stops discriminating fails `make test` rather
+than waiting for someone to remember this file.
+
+**Negative control** (2026-09-02): replacing one mutation with a no-op that
+changes nothing reports it `UNPROVEN — probe still PASSED under the
+counterfactual`, drops the count to `pinning mutations proven 0 / 1`, and
+exits 1. The harness can report a hole, so `proven 17 / 17` is a measurement
+rather than a self-report.
+
+---
+
 ## Changelog
 
+- **2026-09-02 — Ruling-1 conditions.** Pinning probes made auditable:
+  `VIOLATION-MOVEMENT` flip direction defined locally (§11.1), pinning-row
+  census recorded — zero `VIOLATION` rows remain, one `GAP` pin (§11.2) —
+  and `ledger/checks/mutation_harness.py` + `make ledger-mutate` committed,
+  proving **17 / 17** mutations flip their probe red (§11.3). Two tripwires
+  added; ledger kit now 26 checks.
 - **2026-09-01 — SEED.** First population. 24 rows (12 CONFORMS · 4 VIOLATION ·
   6 GAP · 2 NOT-ASSERTABLE), 10 items filed, tripwires green, SYNC pinned at
   `b5b23ca`. Freeze BLOCKED on 4 conformance blockers + 2 process items. Six

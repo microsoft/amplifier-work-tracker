@@ -54,7 +54,18 @@ def _force_reap(session: WorkTrackerSession, project_name: str) -> dict[str, Any
 async def test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim(project):
     """Trigger path 1: the explicit `work_resolve` refusal. Claim -> force
     reap -> resolve refuses (fenced) -> but the SAME session's next
-    `work_claim` must still succeed, in the same process."""
+    `work_claim` must still succeed, in the same process.
+
+    Was `xfail(strict=True)` for ledger row CCV1-009 (`work_item_pipeline-dn4`)
+    while `Beads.resolve`'s fence ran only under `if current.status == "held"`
+    and a reaped item is `open`, so the stale holder's close landed. That
+    PRODUCT defect is fixed -- the fence is now keyed on custody IDENTITY,
+    not item status, and CCV1-009 reads CONFORMS -- so the marker was
+    XPASSing (strict) and failing this suite. Removed rather than re-aimed:
+    the behaviour it described no longer exists. The same refusal is pinned
+    as a discriminating good/bad pair in `test_conformance_fixtures.py`
+    (contract Fixture 2) and at the adapter layer in
+    `tests/integration/test_post_reclaim_fence.py`."""
     add_session = WorkTrackerSession({"actor": _unique("adder")})
     first = await add_session.add(project, "first reap-recovery item", acceptance="n/a")
     assert first.success is True

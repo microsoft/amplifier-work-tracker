@@ -645,46 +645,89 @@ def test_row_ccv1_022() -> None:
 
 
 def test_row_ccv1_023() -> None:
-    """Freeze Bar GAP pin (absence): three of the four Conformance fixtures are
-    not implemented-and-runnable, and the contract's own "Test location"
-    lines point at files that do not exist.
+    """Freeze Bar CONFORMS: all four Conformance fixtures exist as
+    discriminating good/bad pairs, in files the already-wired test paths
+    collect, with nothing quietly disabled.
+
+    Source-level on purpose (this ledger is in-process only -- no bd, no
+    dolt, no subprocess), so this probe asserts the three things a static
+    check honestly CAN: the fixture files exist, each fixture contributes
+    real test functions, and no half is marked `xfail`/`skip`. That the
+    fixtures actually PASS is measured by running them (`make test-module`
+    / CI Tier 5) and recorded in the row's notes -- see CCV1-020 on why a
+    probe is never the behavioural proof.
+
+    That those paths are RUN at all is CCV1-022's clause, asserted by
+    `test_row_ccv1_022` (venv install + `test-module` target + `make test`
+    aggregation + the CI step). Not restated here: two rows asserting the
+    same wiring is how one of them silently stops meaning anything.
     """
-    for named in (
-        "tests/test_incident_b.py",
-        "tests/test_reap_recovery.py",
-        "tests/test_recovery.py",
-        "tests/test_single_hold.py",
-    ):
-        assert not (REPO_ROOT / named).exists(), (
-            f"CCV1-023 (Freeze Bar, GAP) pin: {named} now exists. Re-check which fixtures "
-            f"are implemented-and-runnable, update the row, and resolve "
-            f"work_item_pipeline-qmj when all four are."
-        )
-    # Fixture 4 (single-hold) is asserted by NO test in the root suite -- the
-    # only suite `make test` runs, which is what the Freeze Bar clause
-    # actually requires ("executable via `make test`").
-    hits = [
-        p
-        for p in (REPO_ROOT / "tests").rglob("test_*.py")
-        if "single_hold" in read(p) or "already holding" in read(p)
-    ]
-    assert not hits, f"CCV1-023 pin: a single-hold fixture now exists ({hits}) -- update the row"
-    # In the MODULES suite (which `make test` does not run -- CCV1-022) the
-    # single-hold refusal is now asserted, but only incidentally: as one
-    # branch of `work_reopen`'s claim-degradation path (item
-    # model_performance-f5c), not as the dedicated fixture the contract
-    # names. Pinned by exact file set so a REAL Fixture 4 appearing there
-    # still flips this probe rather than hiding behind the incidental hit.
-    module_hits = {
-        p.name
-        for p in (REPO_ROOT / "modules" / "tool-work-tracker" / "tests").rglob("test_*.py")
-        if "single_hold" in read(p) or "already holding" in read(p)
-    }
-    assert module_hits == {"test_work_reopen.py"}, (
-        f"CCV1-023 pin: the modules-suite single-hold assertions changed ({module_hits}) "
-        f"-- re-check whether Fixture 4 now exists as a dedicated fixture and update the row"
+    module_suite = REPO_ROOT / "modules" / "tool-work-tracker" / "tests"
+    fixtures_2_3_4 = module_suite / "test_conformance_fixtures.py"
+    fixture_1 = REPO_ROOT / "tests" / "integration" / "test_phantom_conflict_recovery.py"
+
+    # 1. Fixture 1 (conflicted-but-landed close) -- already existed when this
+    #    row was opened; only the contract's pointer at it was ever wrong.
+    assert fixture_1.exists(), (
+        "CCV1-023 (Freeze Bar, CONFORMS): tests/integration/test_phantom_conflict_recovery.py "
+        "is gone -- Fixture 1 has no home again."
     )
-    # The contract still names those non-existent locations (drift the row records).
-    assert contains(
-        CONTRACT_PATH, "**Test location:** `tests/test_single_hold.py` (to be added)."
-    ), "CCV1-023 pin: the contract's Fixture 4 location line changed"
+
+    # 2. Fixtures 2-4 live at the agent seam the contract writes them against
+    #    (work_resolve / work_status / work_claim), i.e. the tool module's
+    #    own suite -- the only suite that can exercise `WorkTrackerSession`.
+    assert fixtures_2_3_4.exists(), (
+        "CCV1-023 (Freeze Bar, CONFORMS): "
+        "modules/tool-work-tracker/tests/test_conformance_fixtures.py is gone -- "
+        "Conformance Fixtures 2, 3 and 4 are back to being unimplemented "
+        "(the GAP work_item_pipeline-qmj closed)."
+    )
+
+    # 3. Each fixture contributes real, separately-named tests. Two apiece is
+    #    the floor a good/bad PAIR requires: a fixture reduced to one test has
+    #    stopped discriminating, which is the failure mode this row exists for.
+    names = function_names(fixtures_2_3_4)
+    for fixture, subject in (
+        ("2", "post-reclaim close fence"),
+        ("3", "in-process recovery after reclaim"),
+        ("4", "single-hold constraint"),
+    ):
+        halves = sorted(n for n in names if n.startswith(f"test_fixture{fixture}_"))
+        assert len(halves) >= 2, (
+            f"CCV1-023: Conformance Fixture {fixture} ({subject}) has {len(halves)} test(s) "
+            f"in {fixtures_2_3_4.name} -- a fixture is a good/bad PAIR, and one half alone "
+            f"passes against the broken implementation too. Found: {halves}"
+        )
+
+    # 4. Nothing quietly disabled. An xfail'd or skipped half is a fixture
+    #    that is not "passing" in the Freeze Bar's sense, and the row would
+    #    have to say so; failing here forces that conversation.
+    tree = ast.parse(read(fixtures_2_3_4))
+    disabled = [
+        f"{node.name} ({ast.unparse(dec)})"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+        for dec in node.decorator_list
+        if re.search(r"\b(xfail|skip|skipif)\b", ast.unparse(dec))
+    ]
+    assert not disabled, (
+        f"CCV1-023: a Conformance fixture half is disabled: {disabled}. The Freeze Bar "
+        f"clause is 'implemented, PASSING, and executable via make test' -- flip this row "
+        f"off CONFORMS and name the disabled half before landing that."
+    )
+
+    # 5. The DRIFT this row also records: the contract's own "Test location"
+    #    lines still name files that have never existed. The fixtures are
+    #    real; the pointers at them are not. Editing `contracts/` is an
+    #    amendment, not a lane edit, so the row's notes carry the correction
+    #    and this pin keeps it from being forgotten.
+    for stale in (
+        "**Test location:** `tests/test_incident_b.py` (to be added).",
+        "**Test location:** `tests/test_reap_recovery.py:67-72` (currently unrun in CI).",
+        "**Test location:** `tests/test_recovery.py` (to be added).",
+        "**Test location:** `tests/test_single_hold.py` (to be added).",
+    ):
+        assert contains(CONTRACT_PATH, stale), (
+            f"CCV1-023: the contract's fixture-location line changed ({stale!r}). If it now "
+            f"names the real paths, drop the stale-pointer half of this row's notes."
+        )

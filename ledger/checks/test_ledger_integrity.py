@@ -148,6 +148,44 @@ def test_every_probe_belongs_to_a_row() -> None:
     )
 
 
+def test_every_probe_has_a_declared_mutation() -> None:
+    """Tripwire 4: discriminating power. A probe nobody has ever observed to
+    FAIL is a probe that might assert nothing -- `test-ledger` proves the
+    probes pass, and cannot prove any of them would notice a change.
+    `mutation_harness.py` supplies the missing half; this asserts it covers
+    the whole probe population rather than a convenient subset.
+    """
+    from .mutation_harness import declared_probe_names
+
+    declared = declared_probe_names()
+    found = {n for n in function_names(PROBE_MODULE) if n.startswith("test_row_")}
+    assert found == declared, (
+        f"mutation-harness coverage gap\n  probes with no mutation: {sorted(found - declared)}\n"
+        f"  mutations with no probe: {sorted(declared - found)}"
+    )
+
+
+def test_the_mutation_harness_runs_and_every_mutation_flips_its_probe_red() -> None:
+    """Tripwire 5: the harness is RUN here, not merely present. An unproven
+    mutation means either the probe stopped discriminating or the source it
+    anchors on moved -- both make the ledger claim more than it can show.
+    """
+    from .mutation_harness import run_all
+
+    results = run_all()
+    assert results, "the mutation harness declared nothing"
+    unproven = [f"{r.row_id} :: {r.label} -- {r.reason}" for r in results if not r.proven]
+    assert not unproven, (
+        "mutation harness has unproven mutations (run `make ledger-mutate` for the "
+        "full report):\n  " + "\n  ".join(unproven)
+    )
+    pinning = [r for r in results if r.pinning]
+    assert all(r.direction == "VIOLATION-MOVEMENT" for r in pinning), (
+        "every pinning probe's flip direction must be the locally-defined "
+        "VIOLATION-MOVEMENT (reconcile-report.md sec.11)"
+    )
+
+
 def test_indexed_cites_are_reserved_for_measured_rows() -> None:
     """An `indexed` cite proves a test EXISTS, never that it still asserts the
     claim. Every indexed row must therefore record when its cited tests were
