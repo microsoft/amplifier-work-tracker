@@ -86,26 +86,48 @@
     duration is never an input.
 
 - id: CCV1-003
-  title: a failed take_custody leaves the item held with no custody record
+  title: a claim whose custody step fails is compensated -- the item goes back to ready
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 3
     quote: |
       A claim that cannot establish custody must not leave the work item in a held state with
       no custody record.
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-aih
   assertion:
     kind: probe
     ref: test_row_ccv1_003
   notes: >
-    Two sequential writes (claim, then take_custody) with no rollback on
-    the second. The tool returns success=False naming the failure, but the
-    item stays held by this actor with no custody record and no session
-    tracking it -- only a running reap sweep frees it (up to 300s later,
-    and only where a sweep runs at all). Evidence brief sec.D-1; ratified
-    Call 4 (option B): Core, contract-then-fix. The probe pins the current
-    broken shape on purpose.
+    CLOSED by work_item_pipeline-aih (was VIOLATION; the probe pinned the
+    broken two-write shape). `work_claim` is still two writes, but the
+    second one's failure now COMPENSATES: the just-claimed item is released
+    via the adapter's read-back-verified `release`, that release is
+    confirmed by the tool's OWN contention-free read-back
+    (`get_readonly` -> `_get_item_via_sql`, a pure SELECT), and the failure
+    text names both facts ("claim landed; custody could not be established;
+    item released back to ready: <reason>"). The one residual case -- the
+    compensating release ITSELF failing -- is reported loudly, naming the
+    item id and the actor that may still hold it, never silently.
+    Evidence (file:line):
+      modules/tool-work-tracker/amplifier_module_tool_work_tracker/__init__.py:293
+        (`WorkTrackerSession._release_after_failed_custody`; release :339,
+         own read-back :350, released-back-to-ready text :375)
+      modules/tool-work-tracker/amplifier_module_tool_work_tracker/__init__.py:448
+        (the `except A.BeadsError` arm of `claim` that calls it)
+    Behavioral fixtures (real bd/dolt, this suite's isolated server; run
+    2026-09-02, both passing, and both FAIL against the pre-fix code --
+    verified by reverting the module file and re-running):
+      modules/tool-work-tracker/tests/test_custody_atomic.py:72
+        test_failed_take_custody_releases_the_claim_back_to_ready
+      modules/tool-work-tracker/tests/test_custody_atomic.py:127
+        test_failed_take_custody_then_failed_release_says_the_item_may_still_be_held
+    HONEST LIMIT: the probe below is a source-shape assertion (this ledger
+    kit is in-process only -- no bd, no subprocess), and the fixtures above
+    live in the tool module's separately-packaged suite, which still runs
+    in no CI (CCV1-022). Command used: `cd modules/tool-work-tracker &&
+    .venv/bin/python -m pytest tests/test_custody_atomic.py -q`. Upgrade
+    this row to an `indexed` cite when CCV1-022 goes green.
 
 - id: CCV1-004
   title: custody renewal is one-strike; any failure ends renewal for good
@@ -127,25 +149,30 @@
     CCV1-022 goes green.
 
 - id: CCV1-005
-  title: the claiming skill tells agents custody keeps itself fresh
+  title: agent-facing prose states renewal as one-strike and names its passive signal
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 4
     quote: |
       An agent that fails to renew once discovers it via the passive signal
       `holding.custody_lost` and must recover in-process.
-  disposition: GAP
-  work: work_item_pipeline-m7o
+  disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_ccv1_005
   notes: >
-    Doc drift, not a code defect. skills/claiming-work-safely/SKILL.md
-    still says "you do not need to do anything to keep it fresh under
-    normal operation" -- inverted for exactly the failure Core 4 names: a
-    non-fenced renewal failure stops renewal, leaves self._held set, and
-    surfaces only if the agent thinks to poll work_status. Evidence brief
-    sec.D-7; ratified lane work item 3.
+    Was GAP (doc drift, never a code defect): the skill said "you do not
+    need to do anything to keep it fresh under normal operation" --
+    inverted for exactly the failure Core 4 names. CORRECTED, both
+    surfaces. Evidence: skills/claiming-work-safely/SKILL.md:69-73 (the
+    loop step now points at the hazard) and :111-134 ("Renewal is
+    one-strike" -- one failure ends renewal for good, the non-fenced case
+    leaves self._held set, discovery is work_status's holding.custody_lost,
+    checked before long-running steps and after any tool error);
+    context/awareness.md:19-25 (the same claim, compressed). HONEST LIMIT:
+    like every doc row, the probe asserts the prose says the true thing --
+    the BEHAVIOUR it describes is asserted by CCV1-004. Evidence brief
+    sec.D-7; ratified lane work item 3; work_item_pipeline-m7o.
 
 - id: CCV1-006
   title: declared_state is reporting only; awaiting_human is not exempt
@@ -207,27 +234,32 @@
     code, and is carried by CCV1-022 instead.
 
 - id: CCV1-008
-  title: agent-facing prose states the TTL as self-enforcing
+  title: agent-facing prose states the TTL as reclaim-eligibility enforced by the sweep
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 6
     quote: |
       without the sweep running, the TTL is aspirational. An item held by a dead agent stays
       held indefinitely until the sweep runs.
-  disposition: GAP
-  work: work_item_pipeline-qjn
+  disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_ccv1_008
   notes: >
-    Doc drift, not a code defect. context/awareness.md ("15 minutes without
-    a renewal releases the item back to the queue") and
-    skills/claiming-work-safely/SKILL.md ("An unrenewed 15-minute hold is
-    released back to the queue") both state the release unconditionally;
-    neither mentions that reclaim requires an installed, running sweep, and
-    the agent-facing constants table omits the reap interval entirely. The
-    OPERATOR-facing skill already says it plainly. Evidence brief sec.D-9;
-    ratified Call 2 (option C) names this as lane work.
+    Was GAP (doc drift, never a code defect): both agent-facing documents
+    stated the release unconditionally ("15 minutes without a renewal
+    releases the item back to the queue" / "An unrenewed 15-minute hold is
+    released back to the queue"), neither named the sweep, and the
+    agent-facing constants table omitted the reap interval. CORRECTED, both
+    surfaces. Evidence: context/awareness.md:26-32 ("The TTL does not
+    enforce itself" -- 15 min makes a hold merely reclaim-ELIGIBLE, the
+    out-of-band reap sweep reclaims it, only where an operator runs one,
+    reclaim lands up to a sweep interval late, and a dead agent's hold
+    persists indefinitely where no sweep runs);
+    skills/claiming-work-safely/SKILL.md:98-108 (same, expanded) and :91
+    (the reap interval now appears in the constants table). The
+    OPERATOR-facing skill already said it plainly. Evidence brief sec.D-9;
+    ratified Call 2 (option C); work_item_pipeline-qjn.
 
 - id: CCV1-009
   title: a post-reclaim close is not fenced -- the fence is gated on status held
@@ -238,30 +270,48 @@
       A close operation is guarded against a holder that no longer holds the item. This
       includes the released-but-not-yet-re-claimed state (after reclaim has moved the item to
       open status, but custody has not yet been reassigned).
-  disposition: VIOLATION
-  work: work_item_pipeline-dn4
+  disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_ccv1_009
   notes: >
-    The flagship divergence. `Beads.resolve`'s entire fence block runs only
-    under `if current.status == "held":`; a reaped item is `open` with the
-    assignee cleared and the custody record still naming the old holder, so
-    a stale holder's close skips the fence and lands. adapter.py's own
-    docstring names this exact shape as the previously-MEASURED bug the
-    fence was built to close -- the status gate added in PR #51 (integrator
-    resolve, item pipeline-79t) reinstated it. Neither doctor check covers
-    it: `custody.fenced` and `resolve.fenced` both stage a TAKEOVER, so
-    status is `held` when the fence is tested. Evidence brief sec.D-2;
-    ratified Call 3 (option A). A correct fix must keep BOTH halves: refuse
-    the stale holder, and still allow an integrator's single-call resolve
-    of an item nobody holds.
-    2026-09-02 (item model_performance-f5c): the close path grew a pre-write
-    read of its own (the already-resolved rule) and the fence moved from
-    `resolve` into `resolve_outcome`, which `resolve` now projects. The
-    probe's landmarks were re-pointed to follow it; the CLAIM is unchanged
-    and re-verified -- the fence still runs only under `status == "held"`,
-    so a post-reclaim close is still unfenced. Disposition stays VIOLATION.
+    Closed by work_item_pipeline-dn4. The fence is no longer keyed on the
+    item's status at all -- it is keyed on custody IDENTITY, so it reaches
+    every post-reclaim state including the released-but-not-yet-re-claimed
+    one: `Beads.resolve_outcome`'s `elif cust_holder == who and
+    current.holder != who` branch, OUTSIDE the `status == "held"` gate,
+    refusing with "not held by this session ... Your claim was reclaimed
+    (or released) while you were away." PR #51's integrator resolve (item
+    pipeline-79t) is preserved by the same key: only the session the
+    custody record names is refused, so a plain close of an item nobody
+    holds stays a single call for everyone else. The `current.holder !=
+    who` guard is what keeps a holder's own already-landed close
+    re-attemptable (PR #63's phantom-conflict recovery) -- a resolved item
+    retains its assignee. MEASURED 2026-09-02, not merely inspected:
+    tests/integration/test_post_reclaim_fence.py is red on the pre-fix code
+    (`DID NOT RAISE FencedError` on both fence halves) and green after,
+    with test_resolve_fence.py (the integrator half) and
+    test_phantom_conflict_recovery.py green throughout. The probe below is
+    still an in-process SHAPE assertion -- it additionally verifies that
+    fixture exists and still carries both halves, but the behavioural proof
+    is the fixture, not the probe (see CCV1-020). Same fix flips the
+    previously-red tool-layer fixture
+    modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim
+    green (verified 2026-09-02 in a throwaway venv; that suite still runs
+    in no gate -- CCV1-022).
+    MERGED 2026-09-02 with `origin/main`'s PR #67 (`reopen` +
+    resolve-on-closed fail-loud): the close path grew a pre-write read of
+    its own (the already-resolved rule) and the fence moved from `resolve`
+    into `resolve_outcome`, which `resolve` now projects -- ONE pre-write
+    read now serves both preconditions, identity fence first, then the
+    already-resolved rule, both still fully decided before any write. The
+    two combine cleanly: a phantom-conflict recovery on a resolve whose
+    OWN text already landed (CCV1-014) is unaffected by #67's fail-loud
+    rule, because `_resolution_landed` treats identical text as the
+    idempotent no-op the retry-safety contract already promised, on both
+    the pre-write AND the contended path. The probe's landmarks were
+    re-pointed to follow `resolve_outcome`; the CLAIM is unchanged and
+    re-verified.
 
 - id: CCV1-010
   title: a session that lost custody can discover it and recover in-process
@@ -319,49 +369,64 @@
     with_custody_takeover_mismatch_while_held (measured 2026-09-01).
 
 - id: CCV1-012
-  title: release() reports success off the exit code, with no read-back
+  title: release() confirms the hold actually cleared before reporting success
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 10
     quote: |
       an operation like `release()` must confirm the item status changed before returning
       success.
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-1f2
   assertion:
     kind: probe
     ref: test_row_ccv1_012
   notes: >
-    NARROWED BY TRUE-UP. PR #63 gave release() a pre-write status check and
-    a read-back on the CONFLICT path; the SUCCESS path was untouched and
-    still returns straight off `p.returncode == 0`. Every sibling write
-    verifies itself (take_custody, renew_custody, resolve, defer/block,
-    supersede, add_dependency, CLI unclaim). release does not -- and it is
-    what BOTH work_release AND every reap reclaim call, so a `bd update`
-    that silently did not land leaves a "reclaimed" item still held while
-    the sweep reports it reclaimed. Evidence brief sec.D-4.
+    FIXED. `release` now routes its `bd update --status open --assignee ""`
+    through the shared `_verified_write` helper, whose verify demands a
+    contention-free read-back showing the item is no longer `held` -- on
+    the SUCCESS path as well as the conflict path PR #63 already gave it.
+    The pre-write `already_closed` branch is untouched, and the returned
+    `ReleaseOutcome` is now derived from that same read-back rather than
+    asserted from the exit code. This matters because `release` is what
+    BOTH work_release AND every reap reclaim call: a `bd update` that
+    exited 0 without clearing the hold used to leave the item HELD while
+    the sweep reported it reclaimed. Measured 2026-09-02, discriminating
+    both ways, in tests/integration/test_write_readback.py::
+    test_release_raises_when_bd_reports_success_but_the_hold_did_not_clear
+    (phantom success -> raises; the item really is still held) and
+    ::test_release_success_path_returns_only_after_the_readback_shows_no_hold
+    (a real release still succeeds). The conflict half stays covered by
+    tests/integration/test_phantom_conflict_recovery.py (CCV1-014).
 
 - id: CCV1-013
-  title: neither claim path verifies its own write by read-back
+  title: both claim paths verify their own write by read-back
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 10
     quote: |
       Every write that changes custody state must read the item back and verify the change
       landed before reporting success.
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-1gz
   assertion:
     kind: probe
     ref: test_row_ccv1_013
   notes: >
-    Both `claim_item` and `claim_next` return an Item parsed from the
-    WRITING process's own stdout, with no independent read through the
-    contention-free path and no conflict-path read-back. PR #63 named this
-    residual in its own resolution text on work_item_pipeline-yym:
-    "claim/claim_next are covered by the source-level returncode gate but
-    lack the verify-by-read-back second layer." Ratified Call 4 (option B)
-    puts it in Core, contract-then-fix.
+    FIXED. `claim_item` and `claim_next` both route through
+    `_verified_write` and both now RETURN the contention-free read-back
+    rather than an Item parsed from the writing process's own stdout --
+    bd must show this actor holding the item, or the claim raises. The two
+    differ only in their conflict-path key: `claim_item` knows the id, so
+    it is a plain keyed read; `claim_next` does not (bd chooses, and the
+    conflict destroys its stdout), so it uses the id-set difference over
+    items assigned to this actor, snapshotted before the write, with
+    "more than one new hold" treated as ambiguous and re-raised rather
+    than guessed. An empty queue stays a normal `None`, never a failed
+    write. Measured 2026-09-02 in tests/integration/test_write_readback.py
+    -- six cases covering, for each path, conflict-after-landed (reports
+    success), conflict-with-no-write (still raises), and phantom success
+    (raises), plus ::test_claim_next_on_an_empty_queue_is_still_a_normal_none.
 
 - id: CCV1-014
   title: a landed write is never reported as a failure (resolve / release)
@@ -395,54 +460,73 @@
     NOT covered: see CCV1-015.
 
 - id: CCV1-015
-  title: only resolve and release verify a conflicted write
+  title: every item-level write verb verifies a conflicted write
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 11
     quote: |
       If a write is reported as failed (exception raised, error returned), the item state must
       not have changed as if the write succeeded.
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-2x3
   assertion:
     kind: probe
     ref: test_row_ccv1_015
   notes: >
-    `_read_back_or_none` has three call sites: resolve, release, and (since
-    2026-09-02, item model_performance-f5c) reopen. Every other write verb
-    -- take_custody, renew_custody, claim_item, defer/block, supersede,
-    update/edit, add_dependency, comment -- still propagates an
-    exhausted-retry BeadsError directly, and exhaustion does not prove the
-    write did not land. The two that matter most for custody are
-    take_custody (a false failure produces exactly the CCV1-003
-    held-without-custody state) and renew_custody (a false failure ends
-    renewal one-strike and dooms a live hold).
-    DRIFT TOWARD SPEC, recorded not absorbed: reopen adopting the discipline
-    is real movement, and the count moved 3 -> 4. The row stays GAP because
-    neither custody-relevant write is covered.
+    FIXED. One shared helper, `Beads._verified_write`, now carries the
+    discipline for every item-level write verb: on a conflict-family
+    failure (the wrapper's exhausted-retry raise, or a non-zero exit whose
+    output names a serialization/connection failure) it decides the real
+    outcome by a contention-free read-back instead of trusting the
+    wrapper, and on a reported SUCCESS it verifies anyway. A genuine
+    domain refusal is never verified away, and a write that truly did not
+    land still raises. Routed: create, update, comment, edit_item (both
+    halves), supersede, claim_item, claim_next, release, reopen (added
+    2026-09-02 merging origin/main's PR #67 -- item model_performance-f5c),
+    defer/undefer, block/unblock, add_dependency, take_custody,
+    renew_custody (the write behind the tool's `declare`). `resolve` keeps
+    its own PR #63 shape verbatim -- the region is pinned by CCV1-009 and
+    owned by another change; the behaviour is identical. `move_item` is
+    deliberately NOT routed: it never touches bd or `Beads._run` (direct
+    dolt SQL), so the retry hazard cannot reach it, and it already verifies
+    by real row counts in dst plus a residue check in src, with a
+    compensating cleanup on failure. Measured 2026-09-02 in
+    tests/integration/test_write_readback.py -- a conflict-after-landed
+    case per verb (including reopen's own, added with the merge), phantom-
+    success negatives for release/claim x2/create/comment/defer/dep/
+    renew_custody, genuine-failure negatives for claim x2/create, and ::
+    test_move_refuses_when_the_copy_reports_success_but_the_rows_are_not_there
+    for move's own mechanism.
 
 - id: CCV1-016
-  title: awareness.md still asserts a reported conflict means the write did not land
+  title: prose states a reported conflict as UNKNOWN, and scopes the read-back guarantee
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 11
     quote: |
       a reported conflict error must be accompanied by a readback that confirms the conflict
-  disposition: GAP
-  work: work_item_pipeline-ryp
+  disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_ccv1_016
   notes: >
-    Doc drift DISCOVERED BY THIS RECONCILE -- it was not on the ratified
+    Was GAP -- doc drift DISCOVERED BY THIS RECONCILE, not on the ratified
     lane-work list, because the prose only became wrong when PR #63
-    shipped. context/awareness.md still states as a database guarantee that
-    the retryable error family means "the write genuinely did not happen."
-    Incident B measured the opposite, and the read-back code exists because
-    of it. An agent following this prose would treat a reported conflict as
-    a safe no-op -- the exact reasoning that produced five spaced retries
-    over ~2.5h in the real incident. The surrounding "re-read first, never
-    blindly retry" guidance is correct and must survive the correction.
+    shipped: context/awareness.md stated as a database guarantee that the
+    retryable error family means "the write genuinely did not happen."
+    Incident B measured the opposite. CORRECTED, and on BOTH prose
+    surfaces -- the row now also pins the CLI's own CONTENTION / RETRY
+    CONTRACT (argparse's `description`), which carried the same claim and
+    which the original row did not cover. Evidence:
+    context/awareness.md:51-75 (a reported failure is UNKNOWN; resolve and
+    release re-read on conflict and report success when the write landed,
+    so a reported success from those two is confirmed; every other write
+    verb surfaces the raw conflict unverified) and
+    src/amplifier_work_tracker/cli.py:13-40 (same, operator-facing). The
+    correct half of the original guidance -- re-read via a read-only path
+    that cannot itself conflict, never resubmit a non-idempotent write
+    blind -- survives on both surfaces and is pinned as such.
+    work_item_pipeline-ryp.
 
 - id: CCV1-017
   title: a session holds at most one item at a time
@@ -557,28 +641,42 @@
     suite runs is CCV1-022.
 
 - id: CCV1-022
-  title: modules/tool-work-tracker/tests is run by nothing
+  title: modules/tool-work-tracker/tests is importable and run by make test and CI
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Freeze Bar
     quote: |
       Test suite (`tests/test_*.py`) is importable and run as part of CI
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-a7n
   assertion:
-    kind: absence
+    kind: probe
     ref: test_row_ccv1_022
   notes: >
-    Measured this run, verbatim -- `./.venv/bin/python -c "import
-    amplifier_module_tool_work_tracker"` -> ModuleNotFoundError; `make
-    test` is `pytest tests -v`; ci.yml runs tests/unit, tests/integration,
-    tests/cli. The identical ImportError was recorded in the Phase-0
-    evidence brief (sec.D-11) against main @ deffa54 and reproduces on
-    b5b23ca. THE FREEZE BLOCKER: the only mechanical assertions of
-    post-reclaim custody behavior live in that suite -- six tests, all
-    green claims nobody has ever run. Rows CCV1-004, CCV1-009, CCV1-010 and
-    CCV1-017 are all weaker than they should be because of it. Ratified
-    Call 8 makes running the kit a Freeze precondition.
+    CLOSED by work_item_pipeline-a7n. Was VIOLATION (the Freeze blocker):
+    `import amplifier_module_tool_work_tracker` raised ModuleNotFoundError
+    in the repo venv, `make test` was `pytest tests ledger/checks -v`, and
+    ci.yml named only tiers 1-4 -- so the only mechanical assertions of
+    post-reclaim custody behaviour were green claims nobody had ever run
+    (Phase-0 evidence brief sec.D-11, reproduced on b5b23ca). Now wired
+    three ways, one venv and one setup command: `make venv` and ci.yml's
+    "Set up amplifier-work-tracker" both install the module editable
+    (`-e "modules/tool-work-tracker[dev]"`, whose dev extra carries
+    amplifier-core + pytest-asyncio); the Makefile gains a `test-module`
+    target and `make test` runs the suite as its own pytest invocation;
+    ci.yml gains a "Tier 5 -- tool module tests" step. MEASURED 2026-09-02
+    on this branch: `import amplifier_module_tool_work_tracker` exits 0 and
+    `make test-module` collects 94 and reports 93 passed, 1 xfailed in
+    332s against real bd + this suite's own isolated dolt server. HONEST LIMIT: that single xfail(strict=True) is
+    test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_
+    held_and_allows_new_claim -- a PRODUCT defect, not a wiring one, and it
+    is CCV1-009's post-reclaim fence gap, now measured behaviourally for
+    the first time rather than inferred from source. Its strictness is what
+    keeps this row honest: the day CCV1-009 is fixed, the xfail fails.
+    Consequence for the rows that were weakened by this one (CCV1-004,
+    CCV1-009, CCV1-010, CCV1-017): they may now be upgraded from
+    source-pinned probes to behavioural cites -- NOT done here (a
+    single-row lane), left as named follow-up.
 
 - id: CCV1-023
   title: Conformance Fixtures 2, 3 and 4 are not implemented-and-runnable

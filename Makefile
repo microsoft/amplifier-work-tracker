@@ -1,4 +1,4 @@
-.PHONY: venv test test-unit test-integration test-cli test-ledger check lint types doctor clean
+.PHONY: venv test test-unit test-integration test-cli test-ledger test-module check lint types doctor clean
 
 PYTHON  ?= python3.12
 VENV    := .venv
@@ -7,9 +7,19 @@ PYTEST  := $(PY) -m pytest
 
 # One-time (or after dependency changes) environment setup. Uses `uv` for
 # speed; falls back to nothing fancier than a normal editable install.
+#
+# ONE venv, ONE command. The second editable target is the amplifier tool
+# module under modules/ -- it is a separate installable package with its own
+# pyproject.toml, and without it `import amplifier_module_tool_work_tracker`
+# raises ModuleNotFoundError in this venv, which is exactly why its test
+# suite ran in nothing (ledger row CCV1-022). Its `[dev]` extra carries the
+# two test-only dependencies that suite needs and the root package does not
+# (amplifier-core, pytest-asyncio); they are declared there rather than
+# duplicated into the root `dev` extra so each package keeps owning its own
+# dependencies.
 venv:
 	uv venv $(VENV) --python $(PYTHON)
-	uv pip install --python $(PY) -e ".[dev,web]"
+	uv pip install --python $(PY) -e ".[dev,web]" -e "modules/tool-work-tracker[dev]"
 
 ## Tier 1 -- unit: pure logic, no bd, no network. Target: whole tier < 5s.
 test-unit:
@@ -30,9 +40,30 @@ test-cli:
 test-ledger:
 	$(PYTEST) ledger/checks -v
 
-## All four tiers.
+## Tier 5 -- tool module: modules/tool-work-tracker's own suite, the only
+## place the post-reclaim custody behaviour of the AGENT SEAM (work_claim /
+## work_declare / work_resolve / work_release) is asserted mechanically.
+## Deliberately its own pytest invocation rather than another path argument
+## on `test` below: that suite ships its own session-scoped isolated dolt
+## server fixture (a copy of the root suite's, since fixtures cannot cross
+## a pytest run), and folding the two together would stand up two servers
+## in one session for no gain. Requires `make venv` (the module must be
+## installed into the venv) and a real `bd` on PATH -- without bd the
+## real-storage tests skip rather than fail.
+test-module:
+	$(PYTEST) modules/tool-work-tracker/tests -v
+
+## All five tiers. Two pytest invocations (see `test-module` above), and
+## deliberately NOT fail-fast between them: the whole point of wiring the
+## module suite in (ledger row CCV1-022) is that it stops being silently
+## skippable, and a pre-existing failure in the root suite must not go back
+## to hiding tier 5's result. Both always run; the target still fails if
+## either did.
 test:
-	$(PYTEST) tests ledger/checks -v
+	@rc=0; \
+	$(PYTEST) tests ledger/checks -v || rc=$$?; \
+	$(PYTEST) modules/tool-work-tracker/tests -v || rc=$$?; \
+	exit $$rc
 
 ## Lint + type-check.
 check: lint types

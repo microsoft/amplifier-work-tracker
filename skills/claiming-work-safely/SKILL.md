@@ -66,9 +66,11 @@ intend to do the work.
      do instead.
 2. Read `acceptance` — that is your spec. `description` / `design` are
    context. A linked user report (if any) is color, never the spec.
-3. Work the item. Custody renews automatically in the background for as
-   long as your session process stays alive — you do not need to do
-   anything to keep it fresh under normal operation.
+3. Work the item. Custody renews automatically in the background while your
+   session process lives — but renewal is **one-strike**, and its failure
+   is silent. See "Renewal is one-strike" below: check `work_status`'s
+   `holding.custody_lost` before any long-running step and after any tool
+   error, rather than assuming the hold is still fresh.
 4. If you're about to go idle waiting on a human, call
    `work_declare(state="awaiting_human")` once before you go idle. Call
    `work_declare(state="working")` again when you resume, if you want the
@@ -80,19 +82,59 @@ intend to do the work.
 
 ## Custody: freshness, not duration
 
-Two clocks matter, and only one of them can cost you the item:
+Four settings make up the whole timing model, and only staleness of the
+renewal signal can cost you the item:
 
 | Setting | Default | Effect |
 |---|---|---|
 | Renew interval | 120s (`AMPLIFIER_WORK_TRACKER_RENEW_INTERVAL_SECONDS`) | How often the background renewal fires |
-| Custody TTL | 900s / 15 min (`AMPLIFIER_WORK_TRACKER_CUSTODY_TTL_SECONDS`) | No renewal within this window → stale → reclaimable |
+| Custody TTL | 900s / 15 min (`AMPLIFIER_WORK_TRACKER_CUSTODY_TTL_SECONDS`) | No renewal within this window → stale → reclaim*able* |
+| Reap sweep interval | 300s (`AMPLIFIER_WORK_TRACKER_REAP_INTERVAL_SECONDS`) | How often the out-of-band sweep looks for stale holds. The reclaim happens **here**, not in your process |
 | Escalation ceiling | 24h (`AMPLIFIER_WORK_TRACKER_ESCALATION_HOURS`) | A *fresh* `awaiting_human` hold past this age becomes reclaim-eligible anyway |
 
 **Total hold duration is irrelevant. Only recency of the last renewal
 matters.** A healthily-renewed 12-hour hold is never touched. An unrenewed
-15-minute hold is released back to the queue.
+15-minute hold becomes reclaim-*eligible* — it is not released by the clock.
 
-The two declared states:
+**The TTL is not self-enforcing.** Nothing in your process, and no timer in
+the database, hands a stale hold back. The out-of-band `reap` sweep does,
+and only where an operator has one installed and running. Two consequences
+you must plan for:
+
+- A reclaim arrives **up to a sweep interval late** — expect ~15–20 min
+  after the last renewal at the defaults, not exactly 15.
+- Where no sweep runs, a dead agent's hold **persists indefinitely**. An
+  item stuck in `held` is not evidence that its holder is alive, and
+  waiting will not free it; check `work_tracker_status` (which reports
+  whether the service, and therefore the sweep, is running at all).
+
+### Renewal is one-strike
+
+Renewal runs on a background thread while your session process lives. **Any
+single renewal failure ends renewal permanently** — there is no retry on the
+next tick. From that moment the hold stops being refreshed and is on its way
+to becoming reclaim-eligible.
+
+The failure is *silent* in the case that matters most. A fenced failure (bd
+no longer considers you the holder) clears this session's belief that it
+holds the item. A plain, non-fenced failure — a transient bd/dolt command
+failure — does **not**: renewal has stopped, but the session still believes
+it holds the item, and nothing tells you.
+
+The one way to discover it is a passive check: `work_status` reports
+`holding.custody_lost`. Non-null means renewal stopped, and carries the
+reason. Check it:
+
+- before starting any long-running step (a build, a long test run, a
+  delegation) — losing custody mid-step means the work is being thrown away,
+- after any tool error, however unrelated it looks,
+- before `work_resolve`, if a long time has passed since the claim.
+
+If it is non-null, treat it exactly like a reap refusal — see "After a reap"
+below: stop, report the state you left the work in, do not re-claim the same
+item to resume.
+
+### The two declared states
 
 - **`working`** — the default. If your custody signal goes stale while
   declaring this, you are reclaimed exactly like anything else.
