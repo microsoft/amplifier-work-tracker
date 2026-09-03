@@ -1,0 +1,43 @@
+project 'contract1788443959148atomic': healing an abandoned creation attempt (lock /tmp/awtcontract_ewti2_z_/projects/contract1788443959148atomic/.create.lock named a dead pid) before retrying
+  [PASS] version                             bd 1.1.2
+  [PASS] capabilities                        all required bd commands present
+  [PASS] read.unavailable_not_absent         an infrastructure read failure raises BeadsUnavailableError with its cause intact on read/claim and reports UNAVAILABLE (not ERROR) per project, while genuine absence on a healthy database still reports plain 'not found'
+  [PASS] resolve.fenced                      stale holder refused, as required
+  [PASS] resolve.divergent_text_refused      resolving a closed item with different text refuses and writes nothing
+  [PASS] resolve.identical_text_idempotent   re-sending identical resolution text is an idempotent success
+  [PASS] reopen.reopens                      a resolved item reopens unassigned and is directly claimable again
+  [PASS] reopen.clears_closed_at             reopen clears closed_at (the documented, surfaced accounting cost)
+  [PASS] reopen.close_reason_disposition     reopen clears close_reason (measured), and the wrapper's archive comment preserves the previous resolution regardless
+  [PASS] reopen.emits_event                  bd records a `reopened` events row, attributed
+  [PASS] defer.refuses_resolved              defer on a resolved item refuses, writes nothing, and names `reopen`
+  [PASS] block.refuses_resolved              block on a resolved item refuses, writes nothing, and names `reopen`
+  [PASS] release.reopens_unresolved          release reopens a held item with no resolution, and it is re-claimable
+  [PASS] claim.subcommand                    --claim present, rejects --assignee as expected
+  [PASS] claim.atomic                        skipped (--quick); run full doctor before trusting parallel agents
+  [PASS] claim.directed_atomic               skipped (--quick); run full doctor before trusting parallel agents
+  [PASS] link.nonblocking                    discovered-from is non-blocking
+  [PASS] list.includes_closed                all-flag required and working
+  [PASS] list.status_filter_includes_closed  an explicit --status filter shows closed items without --all
+  [PASS] show.dependents                     reverse link visible (1 links)
+  [PASS] read.no_mutation                    repeated reads (including not-found/wrong-project misses) leave status, holder, and metadata unchanged
+  [PASS] resolution.readable                 resolution text round-trips
+  [PASS] timestamps.readable                 created_at/updated_at/closed_at all round-trip as real datetimes
+  [PASS] metadata.roundtrip                  arbitrary JSON metadata round-trips
+  [PASS] project.name_rules                  dotted names appear usable now; validator may be relaxed
+  [PASS] custody.fresh_survives              a fresh renewal survives regardless of total hold duration
+  [PASS] custody.stale_reclaimed             stale custody is reclaimed: custody stale -- last seen 3600s ago (ttl 900s)
+  [PASS] custody.idle_not_exempt             awaiting_human with stale custody is still reclaimed: custody stale -- last seen 3600s ago (ttl 900s)
+  [PASS] custody.fenced                      old holder's renew and resolve are both refused after takeover
+  [PASS] project.removal                     remove() drops both the directory and database; re-create afterward is genuinely empty
+  [PASS] project.create_atomic               an abandoned creation lock (dead pid) is healed automatically and create() completes fresh in the same call; path=/tmp/awtcontract_ewti2_z_/projects/contract1788443959148atomic
+  [PASS] project.creation_state_reporting    creation_state distinguishes none/creating/abandoned correctly
+  [PASS] service.installed                   installed and active (unit: /home/bkrabach/.config/systemd/user/amplifier-work-tracker.service)
+  [PASS] systemd.user_bus_reachable          systemctl --user show-environment succeeded
+  [PASS] dolt.reachable                      dolt sql-server responds on 127.0.0.1:3308
+  [FAIL] sweeps.alive                        no heartbeat ever recorded for the reap sweep loop -- it may never have started, or the heartbeat file was removed; restart the service (`amplifier-work-tracker service restart`); no heartbeat ever recorded for the notify sweep loop -- it may never have started, or the heartbeat file was removed; restart the service (`amplifier-work-tracker service restart`)
+  [PASS] sweeps.reclaiming                   skipped -- no reap heartbeat recorded yet (see the reap sweep liveness check, which reports that directly)
+  [PASS] service.restart_policy              installed unit has Restart=always -- survives a clean/unintended exit
+
+1 assumption(s) VIOLATED. Beads has changed underneath us.
+Fix scope: amplifier_work_tracker/adapter.py only -- nothing above the seam encodes Beads behaviour.
+exit=1

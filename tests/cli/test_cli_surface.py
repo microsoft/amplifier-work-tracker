@@ -827,7 +827,20 @@ def test_commands_fail_loudly_when_bd_binary_is_entirely_absent(
 
 
 def test_doctor_quick_succeeds_against_the_real_installed_bd(run_cli):
+    """The only place `doctor` runs against the real installed `bd`.
+
+    Three independent properties -- exit 0, the `All N assumptions hold`
+    summary, and the silent-failure guard -- checked SEPARATELY and reported
+    TOGETHER (`_util.assert_doctor_run_is_clean`).
+
+    This used to be three sequential asserts with `returncode == 0` first,
+    which meant a single exit-1 killed the test before the other two ever
+    ran. That masking hid real defects twice: `model_performance-wp6`'s
+    announcement-predicate collision (invisible locally, CI-only, blocked
+    PR #70 for days) and `model_performance-kxk`. The environmental exit-1
+    that did the masking is itself fixed (`model_performance-jyg`), but the
+    ordering was a defect of its own -- the NEXT environmental failure, from
+    any cause, would have hidden the next real one identically.
+    """
     result = run_cli(["doctor", "--quick"])
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "All" in result.stdout
-    _util.assert_no_silent_failure(result)
+    _util.assert_doctor_run_is_clean(result)

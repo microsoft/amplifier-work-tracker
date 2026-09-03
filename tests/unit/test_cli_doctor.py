@@ -33,6 +33,12 @@ class _Info:
     unit_path = None
     detail: str = "installed and active"
     platform: str = "linux"
+    # None means "which root this service serves could not be determined."
+    # The sweep checks treat that CONSERVATIVELY -- they go on to evaluate
+    # the heartbeat and can still FAIL -- which is what keeps every test
+    # below that predates `served_root` asserting exactly what it did
+    # before. See test_sweeps_root_scope.py for the gate itself.
+    served_root = None
 
 
 def test_not_installed_is_skipped_not_failed(monkeypatch, tmp_path):

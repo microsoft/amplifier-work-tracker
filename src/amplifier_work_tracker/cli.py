@@ -53,6 +53,7 @@ import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import NoReturn
 
 from . import adapter as A
@@ -158,6 +159,41 @@ def _check_dolt_reachable(service_check: contract.Result) -> contract.Result:
     )
 
 
+def _served_root_mismatch(info, root) -> str | None:
+    """Is the root we are inspecting a DIFFERENT root than the one the
+    installed service actually serves? Returns an explanation when it is,
+    or None when the two match or the answer is genuinely unknowable.
+
+    Shared by `_check_sweeps_alive` and `_check_sweeps_reclaiming` -- both
+    read a heartbeat file written by the supervisor under ITS root, and
+    both are meaningless against a root the supervisor was never given.
+
+    The conservative case is deliberate: when `served_root` is None (the
+    unit is unreadable, carries no `--root` at all, or the caller passed a
+    description that predates the field) this returns None, so the caller
+    goes on to evaluate the heartbeat and can still FAIL. "Cannot tell"
+    must never become a way to make a real dead-loop failure disappear --
+    silence about a scope mismatch is much cheaper than silence about a
+    stopped sweep.
+    """
+    served = getattr(info, "served_root", None)
+    if served is None:
+        return None
+    try:
+        served_resolved = Path(served).resolve()
+        root_resolved = Path(root).resolve()
+    except OSError:
+        return None
+    if served_resolved == root_resolved:
+        return None
+    return (
+        f"the installed service serves --root {served_resolved}, not {root_resolved}, so no "
+        f"sweep heartbeat is written under this root and its absence proves nothing about the "
+        f"running loops. Point doctor at the served root "
+        f"(AMPLIFIER_WORK_TRACKER_ROOT={served_resolved}) to evaluate this assumption"
+    )
+
+
 def _check_sweeps_alive(root) -> contract.Result:
     """Are the reap/notify sweep loops actually COMPLETING sweeps -- not
     merely is the unit `active`? See `amplifier_work_tracker.heartbeat`'s
@@ -172,6 +208,26 @@ def _check_sweeps_alive(root) -> contract.Result:
     case (a dev box, or a session driving the CLI directly) and a state
     `service.installed` has already reported as a failure. Piling a second
     red line on the same root cause would not add information.
+
+    And one more gate, for a mismatch neither of those covers
+    (`model_performance-jyg`). The service is a SINGLETON per user, serving
+    exactly the one root baked into its unit's `--root`; a workspace root is
+    not a singleton, and `doctor` runs against whichever root it was pointed
+    at (`AMPLIFIER_WORK_TRACKER_ROOT`, `--root`). This check joins a
+    service-scoped fact ("the unit is active") to a ROOT-scoped one ("this
+    root has a fresh sweep heartbeat"), and that join is only sound when the
+    two refer to the same root. Against any other root the heartbeat file is
+    absent BY CONSTRUCTION -- the supervisor was never asked to write one
+    there -- so its absence proves nothing about the loops, and reporting it
+    as a hard FAIL is a false negative, not a finding. The assumption itself
+    is right; it is simply not evaluable here.
+
+    Reported as `unknown`, following the precedent `sweeps.reclaiming` set
+    for exactly this shape (`model_performance-oy4`): where the evidence
+    cannot answer the question, say so in the assumption's own text rather
+    than fail (which red-lines a healthy box) or pass silently (which claims
+    proof we do not have). The FAIL path is untouched for the case that
+    matters: same root, no heartbeat, still a loud failure.
     """
     info = S.describe_service()
     if not info.supported or not info.installed:
@@ -183,6 +239,9 @@ def _check_sweeps_alive(root) -> contract.Result:
         )
     if not info.active:
         return contract.Result("sweeps.alive", True, "skipped (service.installed already failed)")
+    mismatch = _served_root_mismatch(info, root)
+    if mismatch is not None:
+        return contract.Result("sweeps.alive", True, f"unknown -- {mismatch}")
     path = HB.heartbeat_path(root)
     checks = [
         (HB.REAP, SV.DEFAULT_REAP_INTERVAL_SECONDS),
@@ -229,6 +288,9 @@ def _check_sweeps_reclaiming(root) -> contract.Result:
         return contract.Result(
             "sweeps.reclaiming", True, "skipped (service.installed already failed)"
         )
+    mismatch = _served_root_mismatch(info, root)
+    if mismatch is not None:
+        return contract.Result("sweeps.reclaiming", True, f"unknown -- {mismatch}")
     record = HB.read_loop_heartbeat(HB.heartbeat_path(root), HB.REAP)
     ok, detail = HB.evaluate_reclaiming(record, loop=HB.REAP)
     return contract.Result("sweeps.reclaiming", ok, detail)

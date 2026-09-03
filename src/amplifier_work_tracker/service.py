@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import glob
 import os
+import plistlib
 import shlex
 import shutil
 import subprocess
@@ -326,6 +327,19 @@ class ServiceInfo:
     active: bool | None  # None when not installed, or state genuinely unknown
     unit_path: Path | None
     detail: str
+    # WHICH workspace root the installed unit actually serves -- read back
+    # out of the unit's own `--root` argument, never guessed. None when not
+    # installed, when the unit text is unreadable, or when it carries no
+    # `--root` at all (a hand-edited unit).
+    #
+    # The service is a SINGLETON per user; a workspace root is one of many.
+    # Any check that joins a service-scoped fact ("the unit is active") to a
+    # root-scoped one ("this root has a sweep heartbeat") is only sound when
+    # the two refer to the SAME root -- see `cli._check_sweeps_alive`, which
+    # reported a hard FAIL for every root the running service was never
+    # pointed at (`model_performance-jyg`). This field is what makes that
+    # mismatch detectable instead of indistinguishable from a dead loop.
+    served_root: Path | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +601,96 @@ def _systemd_unit_content(
     exec_start = shlex.join(exec_argv)
     safe_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
     return _SYSTEMD_UNIT_TEMPLATE.format(exec_start=exec_start, safe_path=safe_path)
+
+
+# ---------------------------------------------------------------------------
+# Which root does the INSTALLED unit actually serve?
+#
+# `_serve_argv_tail` bakes `--root <path>` into the unit as an explicit
+# argument rather than an `Environment=` line, precisely so every path the
+# supervisor uses is visible in the unit itself. These two functions read
+# that decision back out. Pure (text in, Path out) so both formats are
+# exhaustively testable with no systemd, no launchd, and no install.
+#
+# Why it matters: the service is a singleton per user and a workspace root is
+# not. `doctor` can be pointed at any root (`AMPLIFIER_WORK_TRACKER_ROOT`,
+# `--root`), and the sweep heartbeat lives under the root the SUPERVISOR was
+# given. Without this, "no heartbeat under the root I am looking at" was
+# indistinguishable from "the sweep loops are dead" -- see
+# `cli._check_sweeps_alive` and `model_performance-jyg`.
+# ---------------------------------------------------------------------------
+
+
+def _root_from_argv(argv: list[str]) -> Path | None:
+    """`--root <path>` (or `--root=<path>`) out of an argv token list, or
+    None if it carries no root at all. Shared by both formats so systemd and
+    launchd can never disagree about how the flag is spelled."""
+    for i, tok in enumerate(argv):
+        if tok == "--root" and i + 1 < len(argv):
+            return Path(argv[i + 1])
+        if tok.startswith("--root="):
+            value = tok[len("--root=") :]
+            if value:
+                return Path(value)
+    return None
+
+
+def parse_systemd_served_root(unit_text: str) -> Path | None:
+    """The root an installed systemd unit serves, read from its `ExecStart=`.
+
+    Tolerant of systemd's ExecStart prefix characters (`-`, `@`, `+`, `!`)
+    even though our own template emits none: a unit a human edited is still
+    a unit we must read honestly rather than misreport. Returns None on
+    anything unparseable -- callers treat None as "cannot tell", never as
+    "no match", because guessing in either direction is exactly the failure
+    this exists to prevent.
+    """
+    for line in unit_text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("ExecStart="):
+            continue
+        value = stripped[len("ExecStart=") :].lstrip("-@+!:").strip()
+        if not value:
+            continue
+        try:
+            argv = shlex.split(value)
+        except ValueError:
+            return None
+        root = _root_from_argv(argv)
+        if root is not None:
+            return root
+    return None
+
+
+def parse_launchd_served_root(plist_text: str) -> Path | None:
+    """The root an installed launchd job serves, read from its
+    `ProgramArguments`. `plistlib` rather than a regex -- the plist is real
+    XML and we already generate it as such. None on anything unparseable,
+    with the same "cannot tell" contract as the systemd reader above."""
+    try:
+        data = plistlib.loads(plist_text.encode("utf-8"))
+    except Exception:
+        return None
+    argv = data.get("ProgramArguments") if isinstance(data, dict) else None
+    if not isinstance(argv, list):
+        return None
+    return _root_from_argv([str(tok) for tok in argv])
+
+
+def _read_served_root(unit_path: Path | None, *, platform: str) -> Path | None:
+    """Best-effort read of the installed unit's served root. Never raises --
+    an unreadable unit reads as None ("cannot tell"), which callers must
+    handle conservatively; this is diagnostic plumbing and must not be able
+    to crash `doctor` or `service status`."""
+    if unit_path is None:
+        return None
+    try:
+        text = unit_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if platform == "darwin":
+        return parse_launchd_served_root(text)
+    return parse_systemd_served_root(text)
 
 
 # ---------------------------------------------------------------------------
@@ -932,13 +1036,15 @@ def _systemd_describe() -> ServiceInfo:
         detail = f"installed and active (unit: {_SYSTEMD_UNIT_PATH})"
     else:
         detail = f"installed but NOT active (unit: {_SYSTEMD_UNIT_PATH})"
+    unit_path = _SYSTEMD_UNIT_PATH if installed else None
     return ServiceInfo(
         platform="linux",
         supported=True,
         installed=installed,
         active=active,
-        unit_path=_SYSTEMD_UNIT_PATH if installed else None,
+        unit_path=unit_path,
         detail=detail,
+        served_root=_read_served_root(unit_path, platform="linux"),
     )
 
 
@@ -1152,13 +1258,15 @@ def _launchd_describe() -> ServiceInfo:
         detail = f"installed and loaded (plist: {_LAUNCHD_PLIST_PATH})"
     else:
         detail = f"installed but NOT loaded (plist: {_LAUNCHD_PLIST_PATH})"
+    unit_path = _LAUNCHD_PLIST_PATH if installed else None
     return ServiceInfo(
         platform="darwin",
         supported=True,
         installed=installed,
         active=active,
-        unit_path=_LAUNCHD_PLIST_PATH if installed else None,
+        unit_path=unit_path,
         detail=detail,
+        served_root=_read_served_root(unit_path, platform="darwin"),
     )
 
 
@@ -1421,6 +1529,8 @@ __all__ = [
     "SystemdBusProbeState",
     "describe_service",
     "diagnose_systemd_failure",
+    "parse_launchd_served_root",
+    "parse_systemd_served_root",
     "probe_systemd_user_bus",
     "service_install",
     "service_logs",
