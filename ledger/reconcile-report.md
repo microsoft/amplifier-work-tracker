@@ -369,9 +369,22 @@ current non-conformant behavior so a silent fix flips it red; a passing probe
 here is NOT conformance — see disposition."* Condition 1 is therefore
 discharged for the whole current pinning population (1 of 1).
 
-> **Residual, named not fixed:** §1's disposition table is the **SEED**
+> **Residual 1, named not fixed:** §1's disposition table is the **SEED**
 > snapshot (2026-09-01) and no longer matches `rows.yaml`. Rewriting it is a
 > reconcile run's job, not this lane's — flagged for the orchestrator.
+>
+> **Residual 2 — a live `VIOLATION-MOVEMENT` event, unhandled:**
+> `modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim`
+> now fails `make test` with **`XPASS(strict)`**, its `xfail` reason still
+> reading *"a post-reclaim close is not fenced … PRODUCT defect … not fixed
+> here."* CCV1-009 **was** fixed (`work_item_pipeline-dn4`) and the row is
+> `CONFORMS`, but that strict `xfail` marker — a pin in the modules suite
+> rather than in this kit — was never retargeted in the same change. This is
+> exactly the failure mode §11.1 names, and CCV1-022's own notes predicted it
+> ("the day CCV1-009 is fixed, the xfail fails"). **Action:** drop the marker
+> and let the test assert the fence directly. Out of this lane's scope
+> (`modules/`), flagged for the orchestrator; it is the only `make test`
+> failure on this tree that is not on the known pre-existing list.
 
 ### 11.3 Mutation evidence (Ruling-1 condition 3)
 
