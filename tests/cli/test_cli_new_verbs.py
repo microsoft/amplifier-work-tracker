@@ -124,6 +124,37 @@ def test_block_then_clear_via_cli(run_cli, cli_project):
     assert json.loads(cleared.stdout)["status"] == "open"
 
 
+@pytest.mark.parametrize("verb", ["defer", "block"])
+def test_defer_block_on_a_resolved_item_fail_non_zero_and_keep_the_resolution(
+    run_cli, cli_project, verb: str
+):
+    """model_performance-2nx, on the surface that actually shipped it.
+
+    The exit CODE is the assertion that matters (see test_cli_reopen.py's
+    module docstring): before the guard this command printed a JSON payload
+    and exited 0 while blanking the item's already-published resolution.
+    """
+    original = "ORIGINAL TEXT -- the official record"
+    add = run_cli(["add", "--project", cli_project, f"{verb} on resolved probe"])
+    assert add.returncode == 0, add.stderr
+    item_id = json.loads(add.stdout)["added"]
+    closed = run_cli(["resolve", "--project", cli_project, "--id", item_id, "--reason", original])
+    assert closed.returncode == 0, closed.stderr
+
+    result = run_cli([verb, "--project", cli_project, "--id", item_id, "--reason", "probe"])
+    assert result.returncode != 0, result.stdout
+    _util.assert_no_silent_failure(result)
+    combined = (result.stdout or "") + (result.stderr or "")
+    assert "reopen" in combined
+    assert "NOTHING WAS WRITTEN" in combined
+
+    listed = run_cli(["list", "--project", cli_project, "--id", item_id, "--json"])
+    assert listed.returncode == 0, listed.stderr
+    row = json.loads(listed.stdout)["items"][0]
+    assert row["status"] == "resolved"
+    assert row["resolution"] == original
+
+
 def test_dep_declares_and_displays_edge_via_cli(run_cli, cli_project):
     blocker = run_cli(["add", "--project", cli_project, "blocker item"])
     assert blocker.returncode == 0, blocker.stderr

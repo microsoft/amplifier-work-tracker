@@ -1,0 +1,173 @@
+=== 2nx destructive-loop measurement: after ===
+date        : 2026-09-03T07:08:38Z
+python      : /home/bkrabach/dev/hw-model-performance/lanes/2nx-defer-block-refuse-resolved/amplifier-work-tracker/.venv/bin/python
+source tree : /home/bkrabach/dev/hw-model-performance/lanes/2nx-defer-block-refuse-resolved/amplifier-work-tracker/src/amplifier_work_tracker/__init__.py
+bd version  : bd version 1.1.2 (20e493e56: HEAD@20e493e569c9)
+project     : p2nxafter764599 (throwaway)
+workspace   : /tmp/awt2nx.after.Bmv0nq
+
+$ amplifier-work-tracker new p2nxafter764599
+created project 'p2nxafter764599' at /tmp/awt2nx.after.Bmv0nq/projects/p2nxafter764599 (verified writable)
+EXIT=0
+
+$ amplifier-work-tracker add --project p2nxafter764599 '2nx destructive-loop probe'  ->  id=p2nxafter764599-jd0
+
+$ amplifier-work-tracker claim --project p2nxafter764599 --id p2nxafter764599-jd0 --actor probe
+{
+  "claimed": "p2nxafter764599-jd0",
+  "title": "2nx destructive-loop probe",
+  "holder": "probe",
+  "acceptance": null,
+  "description": null,
+  "design": null,
+  "next_step": "run `amplifier-work-tracker custody --project p2nxafter764599 --actor probe --id p2nxafter764599-jd0` in the background to establish and maintain custody while you work",
+  "custody_renew_every_seconds": 120
+}
+EXIT=0
+
+$ amplifier-work-tracker resolve --project p2nxafter764599 --id p2nxafter764599-jd0 --reason ORIGINAL TEXT --actor probe
+{
+  "resolved": "p2nxafter764599-jd0",
+  "resolution": "ORIGINAL TEXT"
+}
+EXIT=0
+
+--- readback after resolve (the official record) ---
+
+$ amplifier-work-tracker list --project p2nxafter764599 --id p2nxafter764599-jd0 --json
+{
+  "project": "p2nxafter764599",
+  "items": [
+    {
+      "id": "p2nxafter764599-jd0",
+      "title": "2nx destructive-loop probe",
+      "status": "resolved",
+      "holder": "probe",
+      "resolution": "ORIGINAL TEXT",
+      "acceptance": null,
+      "description": null,
+      "design": null,
+      "repos": [],
+      "context": [],
+      "created_at": "2026-09-03T07:08:53+00:00",
+      "updated_at": "2026-09-03T07:08:55+00:00",
+      "closed_at": "2026-09-03T07:08:55+00:00",
+      "created_by": "Amplifier"
+    }
+  ],
+  "returned_count": 1,
+  "total_count": 1,
+  "truncated": false,
+  "limit": 1
+}
+EXIT=0
+
+--- THE DESTRUCTIVE LOOP ---
+
+$ amplifier-work-tracker defer --project p2nxafter764599 --id p2nxafter764599-jd0 --reason probe --actor probe
+amplifier-work-tracker: refusing to defer p2nxafter764599-jd0: it is already resolved, and defer would move it out of resolved and DESTROY the resolution stored on it. NOTHING WAS WRITTEN.
+
+  status:             resolved
+  stored (unchanged): ORIGINAL TEXT
+  closed_at:          2026-09-03T07:08:55+00:00
+
+If you genuinely mean to reopen it, use `reopen` -- it archives the resolution above (and closed_at) into an attributed comment FIRST:
+  amplifier-work-tracker reopen --project p2nxafter764599 --id p2nxafter764599-jd0 --reason '<why the stored text is wrong>'
+  (agents: work_reopen(project='p2nxafter764599', item_id='p2nxafter764599-jd0', reason=...))
+EXIT=1
+
+$ amplifier-work-tracker block --project p2nxafter764599 --id p2nxafter764599-jd0 --reason probe --actor probe
+amplifier-work-tracker: refusing to block p2nxafter764599-jd0: it is already resolved, and block would move it out of resolved and DESTROY the resolution stored on it. NOTHING WAS WRITTEN.
+
+  status:             resolved
+  stored (unchanged): ORIGINAL TEXT
+  closed_at:          2026-09-03T07:08:55+00:00
+
+If you genuinely mean to reopen it, use `reopen` -- it archives the resolution above (and closed_at) into an attributed comment FIRST:
+  amplifier-work-tracker reopen --project p2nxafter764599 --id p2nxafter764599-jd0 --reason '<why the stored text is wrong>'
+  (agents: work_reopen(project='p2nxafter764599', item_id='p2nxafter764599-jd0', reason=...))
+EXIT=1
+
+--- readback after defer+block: is ORIGINAL TEXT still stored? ---
+
+$ amplifier-work-tracker list --project p2nxafter764599 --id p2nxafter764599-jd0 --json
+{
+  "project": "p2nxafter764599",
+  "items": [
+    {
+      "id": "p2nxafter764599-jd0",
+      "title": "2nx destructive-loop probe",
+      "status": "resolved",
+      "holder": "probe",
+      "resolution": "ORIGINAL TEXT",
+      "acceptance": null,
+      "description": null,
+      "design": null,
+      "repos": [],
+      "context": [],
+      "created_at": "2026-09-03T07:08:53+00:00",
+      "updated_at": "2026-09-03T07:08:55+00:00",
+      "closed_at": "2026-09-03T07:08:55+00:00",
+      "created_by": "Amplifier"
+    }
+  ],
+  "returned_count": 1,
+  "total_count": 1,
+  "truncated": false,
+  "limit": 1
+}
+EXIT=0
+
+$ amplifier-work-tracker block --project p2nxafter764599 --id p2nxafter764599-jd0 --clear --actor probe
+amplifier-work-tracker: cannot un-blocked p2nxafter764599-jd0: it is 'resolved', not 'blocked'
+EXIT=1
+
+$ amplifier-work-tracker claim --project p2nxafter764599 --id p2nxafter764599-jd0 --actor probe
+amplifier-work-tracker: claim p2nxafter764599-jd0 as 'probe' failed: Error claiming p2nxafter764599-jd0: issue not claimable: status closed
+EXIT=1
+
+$ amplifier-work-tracker resolve --project p2nxafter764599 --id p2nxafter764599-jd0 --reason CORRECTED TEXT -- written after the item had already been closed once --actor probe
+amplifier-work-tracker: refusing to resolve p2nxafter764599-jd0: it is already resolved, and the resolution stored on the item is NOT the text you sent. NOTHING WAS WRITTEN.
+
+  stored (unchanged): ORIGINAL TEXT
+  you sent:           CORRECTED TEXT -- written after the item had already been closed once
+
+To correct the official record, reopen it first:
+  amplifier-work-tracker reopen --project p2nxafter764599 --id p2nxafter764599-jd0 --reason '<why the stored text is wrong>'
+  (agents: work_reopen(project='p2nxafter764599', item_id='p2nxafter764599-jd0', reason=...))
+EXIT=1
+
+--- FINAL readback ---
+
+$ amplifier-work-tracker list --project p2nxafter764599 --id p2nxafter764599-jd0 --json
+{
+  "project": "p2nxafter764599",
+  "items": [
+    {
+      "id": "p2nxafter764599-jd0",
+      "title": "2nx destructive-loop probe",
+      "status": "resolved",
+      "holder": "probe",
+      "resolution": "ORIGINAL TEXT",
+      "acceptance": null,
+      "description": null,
+      "design": null,
+      "repos": [],
+      "context": [],
+      "created_at": "2026-09-03T07:08:53+00:00",
+      "updated_at": "2026-09-03T07:08:55+00:00",
+      "closed_at": "2026-09-03T07:08:55+00:00",
+      "created_by": "Amplifier"
+    }
+  ],
+  "returned_count": 1,
+  "total_count": 1,
+  "truncated": false,
+  "limit": 1
+}
+EXIT=0
+
+=== end: after ===
+
+--- cleanup (throwaway project destroyed via the sanctioned CLI) ---
+removed project p2nxafter764599 (directory + shared-server database)

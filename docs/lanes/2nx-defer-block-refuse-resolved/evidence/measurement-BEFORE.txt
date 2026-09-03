@@ -1,0 +1,171 @@
+=== 2nx destructive-loop measurement: before ===
+date        : 2026-09-03T06:55:33Z
+python      : /home/bkrabach/dev/hw-model-performance/lanes/2nx-defer-block-refuse-resolved/amplifier-work-tracker/.venv/bin/python
+source tree : /home/bkrabach/dev/hw-model-performance/lanes/2nx-defer-block-refuse-resolved/amplifier-work-tracker/src/amplifier_work_tracker/__init__.py
+bd version  : bd version 1.1.2 (20e493e56: HEAD@20e493e569c9)
+project     : p2nxbefore394644 (throwaway)
+workspace   : /tmp/awt2nx.before.JbiR9A
+
+$ amplifier-work-tracker new p2nxbefore394644
+created project 'p2nxbefore394644' at /tmp/awt2nx.before.JbiR9A/projects/p2nxbefore394644 (verified writable)
+EXIT=0
+
+$ amplifier-work-tracker add --project p2nxbefore394644 '2nx destructive-loop probe'  ->  id=p2nxbefore394644-hh8
+
+$ amplifier-work-tracker claim --project p2nxbefore394644 --id p2nxbefore394644-hh8 --actor probe
+{
+  "claimed": "p2nxbefore394644-hh8",
+  "title": "2nx destructive-loop probe",
+  "holder": "probe",
+  "acceptance": null,
+  "description": null,
+  "design": null,
+  "next_step": "run `amplifier-work-tracker custody --project p2nxbefore394644 --actor probe --id p2nxbefore394644-hh8` in the background to establish and maintain custody while you work",
+  "custody_renew_every_seconds": 120
+}
+EXIT=0
+
+$ amplifier-work-tracker resolve --project p2nxbefore394644 --id p2nxbefore394644-hh8 --reason ORIGINAL TEXT --actor probe
+{
+  "resolved": "p2nxbefore394644-hh8",
+  "resolution": "ORIGINAL TEXT"
+}
+EXIT=0
+
+--- readback after resolve (the official record) ---
+
+$ amplifier-work-tracker list --project p2nxbefore394644 --id p2nxbefore394644-hh8 --json
+{
+  "project": "p2nxbefore394644",
+  "items": [
+    {
+      "id": "p2nxbefore394644-hh8",
+      "title": "2nx destructive-loop probe",
+      "status": "resolved",
+      "holder": "probe",
+      "resolution": "ORIGINAL TEXT",
+      "acceptance": null,
+      "description": null,
+      "design": null,
+      "repos": [],
+      "context": [],
+      "created_at": "2026-09-03T06:55:47+00:00",
+      "updated_at": "2026-09-03T06:55:49+00:00",
+      "closed_at": "2026-09-03T06:55:49+00:00",
+      "created_by": "Amplifier"
+    }
+  ],
+  "returned_count": 1,
+  "total_count": 1,
+  "truncated": false,
+  "limit": 1
+}
+EXIT=0
+
+--- THE DESTRUCTIVE LOOP ---
+
+$ amplifier-work-tracker defer --project p2nxbefore394644 --id p2nxbefore394644-hh8 --reason probe --actor probe
+{
+  "id": "p2nxbefore394644-hh8",
+  "status": "deferred"
+}
+EXIT=0
+
+$ amplifier-work-tracker block --project p2nxbefore394644 --id p2nxbefore394644-hh8 --reason probe --actor probe
+{
+  "id": "p2nxbefore394644-hh8",
+  "status": "blocked"
+}
+EXIT=0
+
+--- readback after defer+block: is ORIGINAL TEXT still stored? ---
+
+$ amplifier-work-tracker list --project p2nxbefore394644 --id p2nxbefore394644-hh8 --json
+{
+  "project": "p2nxbefore394644",
+  "items": [
+    {
+      "id": "p2nxbefore394644-hh8",
+      "title": "2nx destructive-loop probe",
+      "status": "blocked",
+      "holder": "probe",
+      "resolution": null,
+      "acceptance": null,
+      "description": null,
+      "design": null,
+      "repos": [],
+      "context": [],
+      "created_at": "2026-09-03T06:55:47+00:00",
+      "updated_at": "2026-09-03T06:55:52+00:00",
+      "closed_at": null,
+      "created_by": "Amplifier"
+    }
+  ],
+  "returned_count": 1,
+  "total_count": 1,
+  "truncated": false,
+  "limit": 1
+}
+EXIT=0
+
+$ amplifier-work-tracker block --project p2nxbefore394644 --id p2nxbefore394644-hh8 --clear --actor probe
+{
+  "id": "p2nxbefore394644-hh8",
+  "status": "open"
+}
+EXIT=0
+
+$ amplifier-work-tracker claim --project p2nxbefore394644 --id p2nxbefore394644-hh8 --actor probe
+{
+  "claimed": "p2nxbefore394644-hh8",
+  "title": "2nx destructive-loop probe",
+  "holder": "probe",
+  "acceptance": null,
+  "description": null,
+  "design": null,
+  "next_step": "run `amplifier-work-tracker custody --project p2nxbefore394644 --actor probe --id p2nxbefore394644-hh8` in the background to establish and maintain custody while you work",
+  "custody_renew_every_seconds": 120
+}
+EXIT=0
+
+$ amplifier-work-tracker resolve --project p2nxbefore394644 --id p2nxbefore394644-hh8 --reason CORRECTED TEXT -- written after the item had already been closed once --actor probe
+{
+  "resolved": "p2nxbefore394644-hh8",
+  "resolution": "CORRECTED TEXT -- written after the item had already been closed once"
+}
+EXIT=0
+
+--- FINAL readback ---
+
+$ amplifier-work-tracker list --project p2nxbefore394644 --id p2nxbefore394644-hh8 --json
+{
+  "project": "p2nxbefore394644",
+  "items": [
+    {
+      "id": "p2nxbefore394644-hh8",
+      "title": "2nx destructive-loop probe",
+      "status": "resolved",
+      "holder": "probe",
+      "resolution": "CORRECTED TEXT -- written after the item had already been closed once",
+      "acceptance": null,
+      "description": null,
+      "design": null,
+      "repos": [],
+      "context": [],
+      "created_at": "2026-09-03T06:55:47+00:00",
+      "updated_at": "2026-09-03T06:55:55+00:00",
+      "closed_at": "2026-09-03T06:55:55+00:00",
+      "created_by": "Amplifier"
+    }
+  ],
+  "returned_count": 1,
+  "total_count": 1,
+  "truncated": false,
+  "limit": 1
+}
+EXIT=0
+
+=== end: before ===
+
+--- cleanup (throwaway project destroyed via the sanctioned CLI) ---
+removed project p2nxbefore394644 (directory + shared-server database)

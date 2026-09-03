@@ -2447,6 +2447,62 @@ def _divergent_resolution_error(
     )
 
 
+# The raw bd status a `_set_status_with_reason` call is asking for, mapped to
+# the VERB the caller actually typed -- so a refusal reads "refusing to defer
+# <id>", the words that are on their screen, not "refusing to deferred <id>".
+_STATUS_CHANGE_VERB = {"deferred": "defer", "blocked": "block"}
+
+
+def _status_change_on_resolved_error(
+    item_id: str,
+    *,
+    project: str,
+    verb: str,
+    stored: str | None,
+    closed_at: datetime | None,
+) -> BeadsError:
+    """The refusal a caller gets for `defer`/`block` on an item that is
+    already RESOLVED.
+
+    MEASURED (bd 1.1.2, work_tracker item model_performance-2nx,
+    2026-09-03): `bd update --status deferred` (or `blocked`) against a
+    closed issue succeeds, exit 0, AND blanks `close_reason` -- so the
+    OFFICIAL, ALREADY-PUBLISHED resolution text is destroyed with no
+    warning, no archive, and no trace of what it used to say. That is
+    strictly worse than the defect `resolve`'s divergent-text refusal
+    closes: that one discarded the text you SENT; this one discards the
+    text already STORED. `release` has gone to deliberate lengths to make
+    reopening a closed item "structurally impossible from this path" --
+    while these two did exactly that, destructively, one verb away.
+
+    The message carries the same three things `_divergent_resolution_error`
+    earned, for the same measured reasons:
+
+      1. The TEXT AT RISK, echoed. A caller who cannot see what would be
+         destroyed cannot judge whether they meant to destroy it.
+      2. The words "NOTHING WAS WRITTEN", literally -- under the contention
+         contract (`cli.py`'s module docstring) an agent's default reading
+         of a failure is "the transaction aborted", which here is true and
+         must not be second-guessed into a blind retry.
+      3. The remedy as a RUNNABLE command on both surfaces. `reopen` is the
+         SAFE door to the same place: it archives the previous resolution
+         and `closed_at` into an attributed comment BEFORE transitioning.
+         This refusal closes the unsafe door without closing that one.
+    """
+    return BeadsError(
+        f"refusing to {verb} {item_id}: it is already resolved, and {verb} would move it "
+        f"out of resolved and DESTROY the resolution stored on it. NOTHING WAS WRITTEN.\n\n"
+        f"  status:             resolved\n"
+        f"  stored (unchanged): {_echo_resolution(stored)}\n"
+        f"  closed_at:          {closed_at.isoformat() if closed_at else '(none)'}\n\n"
+        f"If you genuinely mean to reopen it, use `reopen` -- it archives the resolution "
+        f"above (and closed_at) into an attributed comment FIRST:\n"
+        f"  amplifier-work-tracker reopen --project {project} --id {item_id} "
+        f"--reason '<why the stored text is wrong>'\n"
+        f"  (agents: work_reopen(project={project!r}, item_id={item_id!r}, reason=...))"
+    )
+
+
 @dataclass(frozen=True)
 class ResolveOutcome:
     """Result of `Beads.resolve_outcome` -- the item as it stands after a
@@ -3914,6 +3970,34 @@ class Beads:
     ) -> Item:
         if not reason or not reason.strip():
             raise BeadsError(f"{status} {item_id}: a reason is required")
+        # ---- model_performance-2nx: refuse BEFORE any write ----
+        # REFUSE ON A RESOLVED ITEM -- checked BEFORE any write, which is what
+        # makes the refusal's own "NOTHING WAS WRITTEN" promise literally
+        # true (the same ordering `resolve` and `release` both rely on).
+        #
+        # MEASURED (model_performance-2nx): without this, `defer`/`block` on a
+        # closed item exited 0, moved it out of resolved, and BLANKED its
+        # stored resolution -- an unaudited, destructive reopen of the
+        # official record, one verb away from a `release` that refuses the
+        # same transition on purpose.
+        #
+        # Deliberately tolerant of a read failure (mirrors `resolve`'s own
+        # pre-write read): an item that does not exist must keep surfacing
+        # through bd's own `update` error below exactly as before -- this
+        # guard must not newly re-diagnose "not found".
+        try:
+            current: Item | None = self.get(item_id)
+        except BeadsError:
+            current = None
+        if current is not None and current.status == "resolved":
+            raise _status_change_on_resolved_error(
+                item_id,
+                project=self.project_name,
+                verb=_STATUS_CHANGE_VERB.get(status, status),
+                stored=current.resolution,
+                closed_at=current.closed_at,
+            )
+        # ---- #68: verified write (read-back confirms status AND reason) ----
         args = [
             "update",
             item_id,
@@ -3977,6 +4061,12 @@ class Beads:
         `blocked`/`deferred` -- see that method's docstring) AND via an
         explicit `--status deferred` read, with its reason attached. Move
         it back to the queue with `undefer`.
+
+        REFUSES on an item that is already RESOLVED, writing nothing --
+        see `_set_status_with_reason`'s own guard and
+        `_status_change_on_resolved_error`. Deferring a closed item used to
+        succeed and BLANK its stored resolution; `reopen` is the sanctioned
+        (archiving) way to bring a closed item back.
         """
         return self._set_status_with_reason(
             item_id,
@@ -4005,6 +4095,10 @@ class Beads:
         status change with no other issue involved, for "this can't
         proceed right now" situations that are not really "issue B must
         close first." Move it back to the queue with `unblock`.
+
+        REFUSES on an item that is already RESOLVED, writing nothing -- same
+        guard, same reason as `defer` above. `reopen` is the sanctioned
+        (archiving) way to bring a closed item back.
         """
         return self._set_status_with_reason(
             item_id,
