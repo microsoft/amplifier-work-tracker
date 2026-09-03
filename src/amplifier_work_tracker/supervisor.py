@@ -108,21 +108,47 @@ def reap_project(
     ttl_seconds: int | None = None,
     escalation_hours: float | None = None,
 ) -> dict[str, Any]:
-    """Release items in *one* project whose custody has gone stale or hit the
-    escalation ceiling. Identical logic to `cli.cmd_reap` -- extracted here so
-    the sweep (below) and the single-project CLI command can never drift
-    apart on what "reap" means.
+    """Release items in *one* project whose custody has gone stale, whose
+    holder process is provably dead, or which has hit the escalation ceiling.
+    Identical logic to `cli.cmd_reap` -- extracted here so the sweep (below)
+    and the single-project CLI command can never drift apart on what "reap"
+    means.
+
+    Reads with an EXPLICIT `status="held"` and `limit=0` (unlimited). It used
+    to read `bd.list(include_resolved=False)` and filter in Python -- but
+    `Beads.list()` with no `limit` applies bd's own default cap of
+    `LIST_DEFAULT_LIMIT` (50), ordered `priority ASC, created_at DESC, id
+    ASC`. In a project with more than 50 non-closed items, a held item
+    outside that first page was invisible to the reaper *permanently*, with
+    nothing anywhere reporting that it had been skipped. Not the cause of
+    `model_performance-oy4` (that project held 20-22 non-closed items at the
+    time, measured -- the stale hold ranked 2nd-4th), but a live silent-miss
+    on any busier queue, found while root-causing it.
+
+    Per-item isolation: a single item whose `release` raises must not abort
+    the reap of every OTHER stale hold in the project. Before this, one
+    wedged item deterministically shadowed the rest of the queue on every
+    sweep, forever, while the sweep still reported itself completed. Failures
+    are returned in `failed` -- named, never swallowed -- and propagate up
+    through `reap_sweep` into the heartbeat that `doctor`'s
+    `sweeps.reclaiming` check reads.
     """
     ttl = ttl_seconds if ttl_seconds is not None else C.CUSTODY_TTL_SECONDS
     esc = escalation_hours if escalation_hours is not None else C.ESCALATION_HOURS
-    held = [i for i in bd.list(include_resolved=False) if i.status == "held"]
+    held = [i for i in bd.list(status="held", limit=0) if i.status == "held"]
     reclaimed: list[dict[str, Any]] = []
     kept: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
     for item in held:
         rec = item.meta.get(C.CUSTODY_KEY)
         eligible, reason = C.reclaim_eligible(rec, ttl=ttl, escalation_hours=esc)
         if eligible:
-            bd.release(item.id)
+            try:
+                bd.release(item.id)
+            except Exception as e:  # noqa: BLE001 -- one wedged item must never shadow the queue
+                logger.exception("reap could not release %s -- continuing with the rest", item.id)
+                failed.append({"id": item.id, "holder": item.holder, "error": str(e)})
+                continue
             reclaimed.append({"id": item.id, "was_holder": item.holder, "reason": reason})
             # ALARM: custody-TTL breach is a real alarm condition. Sync, never raises
             # (a push failure must never prevent/undo the reclaim above); any failure
@@ -131,7 +157,13 @@ def reap_project(
         else:
             note = "quiet (awaiting_human)" if not C.should_notify(rec) else "ok"
             kept.append({"id": item.id, "holder": item.holder, "note": note})
-    return {"reclaimed": reclaimed, "reclaimed_count": len(reclaimed), "kept": kept}
+    return {
+        "reclaimed": reclaimed,
+        "reclaimed_count": len(reclaimed),
+        "kept": kept,
+        "failed": failed,
+        "failed_count": len(failed),
+    }
 
 
 def notify_project(bd: A.Beads) -> dict[str, Any]:
@@ -178,6 +210,26 @@ def reap_sweep(
     return out
 
 
+def sweep_failures(result: dict[str, dict[str, Any]]) -> list[str]:
+    """Every project name in a `reap_sweep` result that did NOT fully do its
+    job -- either the whole project raised (`{"error": ...}`, caught per
+    project so one broken project cannot abort the sweep) or an individual
+    item's release failed (`failed_count`, see `reap_project`).
+
+    Pure, so it is testable without a sweep. This is the one place that
+    decides what "the sweep failed here" means, shared by the loop's log line
+    and the heartbeat the `sweeps.reclaiming` doctor check reads -- the two
+    can never disagree about what counts (`model_performance-oy4`).
+    """
+    names: list[str] = []
+    for name, r in result.items():
+        if not isinstance(r, dict):
+            names.append(name)
+        elif r.get("error") is not None or int(r.get("failed_count", 0) or 0) > 0:
+            names.append(name)
+    return names
+
+
 def notify_sweep(ws: A.Workspace) -> dict[str, dict[str, Any]]:
     """Sweep `notify_project` across every known project. See `reap_sweep`'s
     docstring -- same per-project isolation."""
@@ -222,10 +274,28 @@ async def reap_loop(
         if stop_event.is_set():
             return
         try:
-            await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 reap_sweep, ws, ttl_seconds=ttl_seconds, escalation_hours=escalation_hours
             )
-            HB.record_sweep_completed(hb_path, HB.REAP, pid=os.getpid())
+            failed = sorted(sweep_failures(result))
+            if failed:
+                logger.error(
+                    "reap sweep completed but FAILED on %d project(s): %s",
+                    len(failed),
+                    ", ".join(failed),
+                )
+            HB.record_sweep_completed(
+                hb_path,
+                HB.REAP,
+                pid=os.getpid(),
+                projects=len(result),
+                reclaimed=sum(
+                    int(r.get("reclaimed_count", 0) or 0)
+                    for r in result.values()
+                    if isinstance(r, dict)
+                ),
+                failed_projects=failed,
+            )
         except Exception:  # noqa: BLE001 -- see docstring
             logger.exception("reap sweep crashed -- continuing on the next interval")
 
@@ -1005,4 +1075,5 @@ __all__ = [
     "read_owned_pid",
     "serve",
     "spawn_dolt",
+    "sweep_failures",
 ]

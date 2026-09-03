@@ -198,6 +198,42 @@ def _check_sweeps_alive(root) -> contract.Result:
     return contract.Result("sweeps.alive", all_ok, "; ".join(details))
 
 
+def _check_sweeps_reclaiming(root) -> contract.Result:
+    """Is the reap sweep actually RECLAIMING -- not merely turning?
+
+    `sweeps.alive` proves the loop completes sweeps. It cannot prove the
+    sweeps do anything, because `supervisor.reap_sweep` catches every
+    per-project exception into its return value and `reap_loop` used to
+    discard that value before stamping a completed heartbeat. So a sweep
+    that errored on every project recorded exactly the same heartbeat as a
+    perfectly healthy one, and `work_tracker_status` reported
+    `running_healthy` either way -- the gap named in
+    `model_performance-oy4`, where "healthy" and "actually reclaiming" were
+    measured to be different states with no instrument between them.
+
+    The decision itself is `heartbeat.evaluate_reclaiming` (pure, so every
+    branch is unit-testable with no service). Same dependency-ordering
+    convention as `_check_sweeps_alive`: skipped, never failed, when the
+    service isn't installed and running -- a second red line on a root cause
+    already reported adds no information.
+    """
+    info = S.describe_service()
+    if not info.supported or not info.installed:
+        return contract.Result(
+            "sweeps.reclaiming",
+            True,
+            "skipped (service not installed) -- no reap sweep runs until "
+            "`amplifier-work-tracker service install` (or a foregrounded `serve`) does",
+        )
+    if not info.active:
+        return contract.Result(
+            "sweeps.reclaiming", True, "skipped (service.installed already failed)"
+        )
+    record = HB.read_loop_heartbeat(HB.heartbeat_path(root), HB.REAP)
+    ok, detail = HB.evaluate_reclaiming(record, loop=HB.REAP)
+    return contract.Result("sweeps.reclaiming", ok, detail)
+
+
 def _check_restart_policy(service_check: contract.Result) -> contract.Result:
     """Does the INSTALLED systemd unit actually carry the self-healing
     restart policy this project depends on (`Restart=always`, not
@@ -312,6 +348,7 @@ def cmd_doctor(a):
     results.append(_check_systemd_user_bus_reachable())
     results.append(_check_dolt_reachable(service_check))
     results.append(_check_sweeps_alive(_ws(a).root))
+    results.append(_check_sweeps_reclaiming(_ws(a).root))
     results.append(_check_restart_policy(service_check))
     width = max(len(r.id) for r in results)
     failed = 0

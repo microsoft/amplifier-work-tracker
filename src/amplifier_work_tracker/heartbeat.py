@@ -40,7 +40,7 @@ import json
 import os
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 REAP = "reap"
@@ -100,11 +100,29 @@ class LoopHeartbeat:
     loop has started but has not yet finished a sweep -- distinct from "no
     record at all" (never started), and distinct from "completed, but long
     ago" (stale). See `evaluate_freshness` for how the three are told apart.
+
+    The last three fields carry the OUTCOME of the most recent sweep, not
+    merely the fact that one finished (`model_performance-oy4`). Without
+    them, `reap_loop` recorded a completed sweep whether the sweep reclaimed
+    everything it should have or errored out on every single project --
+    `reap_sweep` catches per-project exceptions into its return value and
+    that return value was discarded. So `doctor` could report the sweeps
+    healthy while nothing was being reclaimed at all, which is precisely the
+    "installed" vs "actually working" gap this whole module exists to close,
+    reappearing one level up. `evaluate_reclaiming` reads them.
+
+    `failed_projects` absent (rather than empty) distinguishes "a supervisor
+    older than this change wrote this record" from "a sweep ran and nothing
+    failed" -- see `evaluate_reclaiming`, which must never report the first
+    as if it were the second.
     """
 
     pid: int
     loop_started_at: str
     last_completed: str | None = None
+    projects: int | None = None
+    reclaimed: int | None = None
+    failed_projects: list[str] = field(default_factory=list)
 
 
 def _read_all(path: Path) -> dict:
@@ -153,12 +171,29 @@ def record_loop_started(path: Path, loop: str, *, pid: int) -> None:
     _atomic_write(path, data)
 
 
-def record_sweep_completed(path: Path, loop: str, *, pid: int) -> None:
+def record_sweep_completed(
+    path: Path,
+    loop: str,
+    *,
+    pid: int,
+    projects: int | None = None,
+    reclaimed: int | None = None,
+    failed_projects: list[str] | None = None,
+) -> None:
     """Stamp *loop* as having just completed a sweep. Called AFTER the sweep
     returns without raising -- this is what proves the sweep actually ran,
     not merely that the task exists and is sleeping. Preserves
     `loop_started_at` from `record_loop_started` if present; `pid` is
     refreshed defensively (should already match).
+
+    `projects` / `reclaimed` / `failed_projects` carry the sweep's OUTCOME
+    (`model_performance-oy4`). A sweep in which every project raised still
+    "completes" -- `reap_sweep` catches per-project exceptions -- so without
+    these, a completed-sweep stamp proves only that the loop is turning, not
+    that it is doing anything. `failed_projects` is written as `[]` (empty,
+    present) by any caller that passes it, which is what lets
+    `evaluate_reclaiming` tell "nothing failed" from "an older supervisor
+    wrote this record and cannot tell you".
     """
     data = _read_all(path)
     existing = data.get(loop)
@@ -167,9 +202,23 @@ def record_sweep_completed(path: Path, loop: str, *, pid: int) -> None:
         prior_started = existing.get("loop_started_at")
         if isinstance(prior_started, str) and prior_started:
             loop_started_at = prior_started
-    data[loop] = asdict(
-        LoopHeartbeat(pid=pid, loop_started_at=loop_started_at, last_completed=now_iso())
+    record = asdict(
+        LoopHeartbeat(
+            pid=pid,
+            loop_started_at=loop_started_at,
+            last_completed=now_iso(),
+            projects=projects,
+            reclaimed=reclaimed,
+            failed_projects=list(failed_projects) if failed_projects is not None else [],
+        )
     )
+    if failed_projects is None and projects is None and reclaimed is None:
+        # Caller reported no outcome at all (e.g. the notify loop, which has
+        # no reclaim semantics). Do not write an EMPTY `failed_projects`,
+        # which `evaluate_reclaiming` would read as a positive "nothing
+        # failed" claim this caller never made.
+        record.pop("failed_projects", None)
+    data[loop] = record
     _atomic_write(path, data)
 
 
@@ -269,6 +318,56 @@ def evaluate_freshness(
     )
 
 
+def evaluate_reclaiming(record: dict | None, *, loop: str = REAP) -> tuple[bool, str]:
+    """Is *loop* actually DOING its work, not merely turning?
+
+    `evaluate_freshness` answers "is the loop alive". This answers the
+    strictly stronger question `model_performance-oy4` was filed against:
+    `work_tracker_status` reported `running_healthy` while (it appeared)
+    nothing was being reclaimed, and nothing anywhere could tell those two
+    states apart. `reap_sweep` catches every per-project exception into its
+    return value, so a sweep that failed on EVERY project still returns
+    normally and still stamps a completed heartbeat.
+
+    Returns (ok, detail). Pure -- a dict in, a verdict out.
+
+    Three cases, and the third is the one that must not be fudged:
+      - failures recorded -> NOT ok, naming every failed project.
+      - `failed_projects` present and empty -> ok, with the counts.
+      - `failed_projects` ABSENT -> ok, but the detail says plainly that the
+        running supervisor predates outcome reporting and cannot answer.
+        Reported rather than assumed: claiming "0 failed" from a record that
+        never carried the field would be inventing the very reassurance this
+        function exists to stop being invented.
+    """
+    if record is None:
+        return True, (
+            f"skipped -- no {loop} heartbeat recorded yet (see the {loop} sweep "
+            f"liveness check, which reports that directly)"
+        )
+    if "failed_projects" not in record:
+        return True, (
+            f"unknown -- the running supervisor predates per-sweep outcome reporting, "
+            f"so its {loop} heartbeat cannot say whether any project failed; restart the "
+            f"service (`amplifier-work-tracker service restart`) to start recording it"
+        )
+    failed = record.get("failed_projects") or []
+    projects = record.get("projects")
+    reclaimed = record.get("reclaimed")
+    scope = f"{projects} project(s)" if isinstance(projects, int) else "an unknown project count"
+    got = f"{reclaimed} reclaimed" if isinstance(reclaimed, int) else "reclaim count unknown"
+    if failed:
+        names = ", ".join(str(f) for f in failed[:10])
+        more = f" (+{len(failed) - 10} more)" if len(failed) > 10 else ""
+        return False, (
+            f"the last {loop} sweep swept {scope} and FAILED on {len(failed)}: {names}{more} "
+            f"-- the loop is alive but is not reclaiming in those projects, so a stale hold "
+            f"there will never be released; check the service log "
+            f"(`journalctl --user -u amplifier-work-tracker`) for the per-project error"
+        )
+    return True, f"last {loop} sweep: {scope}, 0 failed, {got}"
+
+
 __all__ = [
     "DEFAULT_STALE_MULTIPLE",
     "HEARTBEAT_FILENAME",
@@ -277,6 +376,7 @@ __all__ = [
     "NOTIFY",
     "REAP",
     "evaluate_freshness",
+    "evaluate_reclaiming",
     "heartbeat_path",
     "now_iso",
     "pid_alive",
