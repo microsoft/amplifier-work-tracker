@@ -1,0 +1,80 @@
+FFFFFFFFFFFF.FFFFFFFFFF                                                  [100%]
+=================================== FAILURES ===================================
+E   AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_norm_resolution'
+---------------------------- Captured stdout setup -----------------------------
+Starting server with Config HP="127.0.0.1:55389"|T="28800000"|R="false"|L="info"
+---------------------------- Captured stderr setup -----------------------------
+time="2026-09-02T19:55:42-07:00" level=info msg="Creating root@localhost superuser"
+time="2026-09-02T19:55:42-07:00" level=info msg="Server ready. Accepting connections."
+time="2026-09-02T19:55:42-07:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-09-02T19:55:42-07:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-09-02T19:55:42-07:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-09-02T19:55:42-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-09-02T19:55:42-07:00" level=info msg=ConnectionClosed connectionID=1
+/tmp/f5c-before/tests/unit/test_resolve_text_compare.py:36: AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_norm_resolution'
+E   AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_resolution_landed'
+/tmp/f5c-before/tests/unit/test_resolve_text_compare.py:45: AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_resolution_landed'
+E   AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_resolution_landed'
+/tmp/f5c-before/tests/unit/test_resolve_text_compare.py:51: AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_resolution_landed'
+E   AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_echo_resolution'
+/tmp/f5c-before/tests/unit/test_resolve_text_compare.py:58: AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_echo_resolution'
+E   AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_divergent_resolution_error'
+/tmp/f5c-before/tests/unit/test_resolve_text_compare.py:66: AttributeError: module 'amplifier_work_tracker.adapter' has no attribute '_divergent_resolution_error'
+E   AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+/tmp/f5c-before/tests/unit/test_resolve_text_compare.py:143: AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+E   AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+/tmp/f5c-before/tests/unit/test_resolve_text_compare.py:159: AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+E   AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+/tmp/f5c-before/tests/unit/test_resolve_text_compare.py:171: AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+E   AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+/tmp/f5c-before/tests/unit/test_resolve_text_compare.py:189: AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+E   AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+/tmp/f5c-before/tests/unit/test_resolve_text_compare.py:204: AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+E   AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+/tmp/f5c-before/tests/unit/test_resolve_text_compare.py:222: AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+E   AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+/tmp/f5c-before/tests/unit/test_resolve_text_compare.py:239: AttributeError: 'Beads' object has no attribute 'resolve_outcome'
+E   AttributeError: 'Beads' object has no attribute 'reopen'
+/tmp/f5c-before/tests/unit/test_reopen_preconditions.py:64: AttributeError: 'Beads' object has no attribute 'reopen'
+E   AttributeError: 'Beads' object has no attribute 'reopen'
+/tmp/f5c-before/tests/unit/test_reopen_preconditions.py:64: AttributeError: 'Beads' object has no attribute 'reopen'
+E   AttributeError: 'Beads' object has no attribute 'reopen'
+/tmp/f5c-before/tests/unit/test_reopen_preconditions.py:64: AttributeError: 'Beads' object has no attribute 'reopen'
+E   AttributeError: 'Beads' object has no attribute 'reopen'
+/tmp/f5c-before/tests/unit/test_reopen_preconditions.py:64: AttributeError: 'Beads' object has no attribute 'reopen'
+E   AttributeError: 'Beads' object has no attribute 'reopen'
+/tmp/f5c-before/tests/unit/test_reopen_preconditions.py:74: AttributeError: 'Beads' object has no attribute 'reopen'
+E   AttributeError: 'Beads' object has no attribute 'reopen'
+/tmp/f5c-before/tests/unit/test_reopen_preconditions.py:74: AttributeError: 'Beads' object has no attribute 'reopen'
+E   AttributeError: 'Beads' object has no attribute 'reopen'
+/tmp/f5c-before/tests/unit/test_reopen_preconditions.py:74: AttributeError: 'Beads' object has no attribute 'reopen'
+E   AttributeError: 'Beads' object has no attribute 'reopen'
+/tmp/f5c-before/tests/unit/test_reopen_preconditions.py:84: AttributeError: 'Beads' object has no attribute 'reopen'
+E   AttributeError: 'Beads' object has no attribute 'reopen'
+/tmp/f5c-before/tests/unit/test_reopen_preconditions.py:105: AttributeError: 'Beads' object has no attribute 'reopen'
+E   AttributeError: 'Beads' object has no attribute 'reopen'
+/tmp/f5c-before/tests/unit/test_reopen_preconditions.py:113: AttributeError: 'Beads' object has no attribute 'reopen'
+=========================== short test summary info ============================
+FAILED tests/unit/test_resolve_text_compare.py::test_norm_resolution_unifies_line_endings_and_strips_outer_whitespace
+FAILED tests/unit/test_resolve_text_compare.py::test_norm_resolution_keeps_case_and_internal_whitespace_significant
+FAILED tests/unit/test_resolve_text_compare.py::test_resolution_landed_is_true_only_for_the_same_text
+FAILED tests/unit/test_resolve_text_compare.py::test_echo_resolution_truncates_loudly_never_silently
+FAILED tests/unit/test_resolve_text_compare.py::test_divergent_error_message_carries_everything_a_caller_needs
+FAILED tests/unit/test_resolve_text_compare.py::test_divergent_text_on_a_closed_item_refuses_and_writes_nothing
+FAILED tests/unit/test_resolve_text_compare.py::test_identical_text_on_a_closed_item_is_an_idempotent_success_with_no_write
+FAILED tests/unit/test_resolve_text_compare.py::test_resolving_an_open_item_is_unchanged
+FAILED tests/unit/test_resolve_text_compare.py::test_post_write_readback_refuses_when_the_stored_text_is_not_ours
+FAILED tests/unit/test_resolve_text_compare.py::test_contended_path_reports_success_only_when_our_own_text_landed
+FAILED tests/unit/test_resolve_text_compare.py::test_contended_path_raises_when_the_readback_text_is_not_ours
+FAILED tests/unit/test_resolve_text_compare.py::test_contended_path_still_reraises_when_the_item_never_closed
+FAILED tests/unit/test_reopen_preconditions.py::test_reopen_refuses_anything_that_is_not_resolved[open]
+FAILED tests/unit/test_reopen_preconditions.py::test_reopen_refuses_anything_that_is_not_resolved[held]
+FAILED tests/unit/test_reopen_preconditions.py::test_reopen_refuses_anything_that_is_not_resolved[blocked]
+FAILED tests/unit/test_reopen_preconditions.py::test_reopen_refuses_anything_that_is_not_resolved[deferred]
+FAILED tests/unit/test_reopen_preconditions.py::test_reopen_refuses_an_empty_reason_before_reading_anything[]
+FAILED tests/unit/test_reopen_preconditions.py::test_reopen_refuses_an_empty_reason_before_reading_anything[   ]
+FAILED tests/unit/test_reopen_preconditions.py::test_reopen_refuses_an_empty_reason_before_reading_anything[\n\t ]
+FAILED tests/unit/test_reopen_preconditions.py::test_reopen_archives_the_verbatim_previous_record_before_transitioning
+FAILED tests/unit/test_reopen_preconditions.py::test_reopen_refuses_to_report_success_if_the_item_is_still_resolved
+FAILED tests/unit/test_reopen_preconditions.py::test_reopen_archives_a_blank_previous_resolution_explicitly
+22 failed, 1 passed in 0.23s
