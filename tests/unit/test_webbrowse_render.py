@@ -76,6 +76,16 @@ def test_item_row_holder_absent_for_resolved_item_with_leftover_holder():
     assert 'class="status-chip st-resolved">RESOLVED</span>' in row
 
 
+def test_item_row_shows_a_corrected_badge_when_the_item_carries_an_erratum():
+    row = B._item_row_html("proj", _item("proj-a", status="resolved", corrected=True))
+    assert "corrected" in row
+
+
+def test_item_row_omits_the_corrected_badge_when_the_item_has_no_erratum():
+    row = B._item_row_html("proj", _item("proj-a", status="resolved", corrected=False))
+    assert "corrected" not in row
+
+
 # --------------------------------------------------------------------- status tabs
 
 

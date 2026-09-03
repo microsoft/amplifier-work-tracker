@@ -622,6 +622,83 @@ def test_reopen_still_raises_when_readback_shows_the_reopen_genuinely_did_not_la
     shared_bd.reopen(item_id, "correcting for real", actor=actor)
 
 
+# --------------------------------------------------------------- CCV1-015 erratum
+#
+# `erratum` (work_item_pipeline-03c) joins this list on arrival, same as
+# `reopen` did: routed through `_verified_write` from day one, never a
+# bespoke inline shape. Its verify predicate is COUNT-based, like
+# `comment()`'s own -- see `Beads.erratum`'s docstring for why "an erratum
+# matching this actor+text now exists" is the right predicate (two errata
+# with identical text from the SAME actor is a real, legitimate case).
+
+
+def test_erratum_verifies_by_readback_when_the_wrapper_reports_conflict(
+    shared_bd, unique_lane, monkeypatch
+):
+    """The same conflict-after-landed shape every other verb here proves:
+    `bd comment` really lands against the isolated dolt server, then
+    `Beads._run` raises its own exhausted-retries `BeadsError` anyway.
+    `erratum` must notice the comment landed and report SUCCESS.
+    """
+    actor = f"erratum-conflict-{unique_lane}"
+    item_id = shared_bd.create(f"erratum conflict {unique_lane}", tags=[unique_lane])
+    shared_bd.claim_item(item_id, actor=actor)
+    shared_bd.resolve(item_id, "first pass", actor=actor)
+
+    calls = _conflict_after_real_write(monkeypatch, lambda a: bool(a) and a[0] == "comment")
+
+    outcome = shared_bd.erratum(item_id, actor=actor, text="the reason given was wrong")
+
+    assert len(calls) == 1, "the erratum path must have been exercised exactly once"
+    assert outcome.already_recorded is False
+    assert any(e.text == "the reason given was wrong" for e in outcome.item.errata)
+    monkeypatch.undo()
+    back = shared_bd.get_readonly(item_id)
+    assert any(e.text == "the reason given was wrong" for e in back.errata)
+    assert back.status == "resolved"  # never touched by the erratum
+
+
+def test_erratum_still_raises_when_readback_shows_the_write_genuinely_did_not_land(
+    shared_bd, unique_lane, monkeypatch
+):
+    """Contrast case: a conflict whose write never happened still raises --
+    verify-by-read-back is a safety net for a landed write, never a way to
+    silently swallow a real failure."""
+    actor = f"erratum-genuine-{unique_lane}"
+    item_id = shared_bd.create(f"erratum genuine fail {unique_lane}", tags=[unique_lane])
+    shared_bd.claim_item(item_id, actor=actor)
+    shared_bd.resolve(item_id, "first pass", actor=actor)
+
+    _conflict_without_write(monkeypatch, lambda a: bool(a) and a[0] == "comment")
+
+    with pytest.raises(A.BeadsError, match="still conflicting"):
+        shared_bd.erratum(item_id, actor=actor, text="should not land")
+
+    monkeypatch.undo()
+    assert not shared_bd.get_readonly(item_id).errata
+    shared_bd.erratum(item_id, actor=actor, text="correcting for real")
+
+
+def test_erratum_raises_when_bd_reports_success_but_no_erratum_comment_landed(
+    shared_bd, unique_lane, monkeypatch
+):
+    """Phantom success: `bd comment` exits 0 having written nothing at all.
+    `erratum` must notice no matching comment landed and RAISE -- "exit code
+    is not proof" applies to this verb's success path too."""
+    actor = f"erratum-phantom-{unique_lane}"
+    item_id = shared_bd.create(f"erratum phantom {unique_lane}", tags=[unique_lane])
+    shared_bd.claim_item(item_id, actor=actor)
+    shared_bd.resolve(item_id, "first pass", actor=actor)
+
+    _phantom_success(monkeypatch, lambda a: bool(a) and a[0] == "comment")
+
+    with pytest.raises(A.BeadsError, match="did not land"):
+        shared_bd.erratum(item_id, actor=actor, text="never actually written")
+
+    monkeypatch.undo()
+    assert not shared_bd.get_readonly(item_id).errata
+
+
 # ------------------------------------------------------------------ move
 #
 # `move_item` is the one verb in this list that never touches `bd` or

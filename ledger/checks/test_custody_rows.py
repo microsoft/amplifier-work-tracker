@@ -442,6 +442,7 @@ _VERIFIED_WRITE_VERBS = (
     "add_dependency",
     "take_custody",
     "renew_custody",
+    "erratum",  # added work_item_pipeline-03c -- append-only correction, verify-by-readback too
 )
 
 

@@ -173,11 +173,20 @@ def _item_row_html(name: str, item: A.Item) -> str:
     )
     age_label = _compound_duration((now - basis).total_seconds()) if basis else "\u2014"
     href = f"/projects/{quote(name)}/items/{quote(item.id)}"
+    # A resolved item whose record carries at least one erratum (see
+    # `Beads.erratum`) -- the resolution stands, but a reader must know
+    # not to take it at pure face value without checking the detail page.
+    corrected_chip = (
+        '<span class="chip" title="resolution corrected via erratum -- see detail">corrected</span>'
+        if item.corrected
+        else ""
+    )
     return (
         f'<a href="{_esc(href)}" class="item-row">'
         f'<span class="status-chip {status_cls}">{_esc(status_label)}</span>'
         f"{priority_chip}"
-        f'<span class="name"><span class="id">{_esc(short_id)}</span>{_esc(item.title)}</span>'
+        f'<span class="name"><span class="id">{_esc(short_id)}</span>{_esc(item.title)}'
+        f"{corrected_chip}</span>"
         f'<span class="holder">{holder_html}</span>'
         f'<span class="age">{_esc(age_label)}</span>'
         '<span class="icon sm chev"><svg><use href="#i-chevron"/></svg></span>'
@@ -627,11 +636,36 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
 
         resolution_html = ""
         if item.status == "resolved" and item.resolution:
+            # `item.corrected`/`item.errata` come from `bd.get(with_links=True)`
+            # above (see `Beads.get`'s own errata-enrichment note) -- the
+            # resolution TEXT is rendered completely unchanged; a correction
+            # is an ADDITIONAL, clearly-marked block below it, never a
+            # rewrite of what was actually published.
+            corrected_badge = (
+                '<span class="chip" style="margin-left:8px" '
+                'title="the resolution below has been corrected -- see Errata">'
+                "corrected</span>"
+                if item.corrected
+                else ""
+            )
+            errata_html = ""
+            if item.errata:
+                rows = "".join(
+                    f'<div style="margin-top:6px"><span class="v mono">{_esc(e.at)}'
+                    f' \u00b7 {_esc(e.by)}</span><div class="blink">{_esc(e.text)}</div></div>'
+                    for e in item.errata
+                )
+                errata_html = (
+                    '<div style="margin-top:var(--space-3)">'
+                    '<div class="btitle">Errata</div>'
+                    f"{rows}</div>"
+                )
             resolution_html = (
                 '<div class="blocker-banner resolved">'
                 '<span class="icon"><svg><use href="#i-check-circle"/></svg></span>'
-                f'<div><div class="btitle">Resolution</div>'
-                f'<div class="blink">{_esc(item.resolution)}</div></div></div>'
+                f'<div><div class="btitle">Resolution{corrected_badge}</div>'
+                f'<div class="blink">{_esc(item.resolution)}</div>'
+                f"{errata_html}</div></div>"
             )
 
         links_html = _dependency_sections_html(name, item.links)

@@ -41,6 +41,14 @@ but re-reading first is always the safe move. See `context/awareness.md` for
 the same contract in agent-facing form, work_tracker item pipeline-bug for
 the contention-hardening work this documents, and model_performance-uma for
 the silent-discard defect the text comparison closes.
+
+TWO SANCTIONED CORRECTIONS to a RESOLVED item, and how to pick between them:
+use `erratum` when the RECORD is wrong but the work itself stands -- it
+APPENDS a correction (never rewrites `resolution`), never touches
+status/closed_at/holder, and needs no claim at all. Use `reopen` when the
+WORK must be redone -- it returns the item to the queue, clearing
+`closed_at` (so throughput moves by one item), and is the only way to
+change what `resolution` itself says.
 """
 
 from __future__ import annotations
@@ -801,7 +809,10 @@ def _print_item_full(a, item: A.Item) -> None:
     if row.get("closed_at"):
         print(f"CLOSED:   {row['closed_at']}")
     if row.get("resolution"):
-        print(f"\nRESOLUTION:\n{row['resolution']}")
+        resolution_header = "RESOLUTION: [corrected]" if row.get("corrected") else "RESOLUTION:"
+        print(f"\n{resolution_header}\n{row['resolution']}")
+        for erratum in row.get("errata") or []:
+            print(f"  ERRATUM {erratum['at']} {erratum['by']}: {erratum['text']}")
     if row.get("acceptance"):
         print(f"\nACCEPTANCE:\n{row['acceptance']}")
     if row.get("description"):
@@ -861,7 +872,13 @@ def cmd_list(a):
     width_id = max(len(r["id"]) for r in rows)
     print(f"{'ID':<{width_id}}  {'STATUS':<10} {'HOLDER':<20} TITLE")
     for r in rows:
-        print(f"{r['id']:<{width_id}}  {r['status']:<10} {(r['holder'] or ''):<20} {r['title']}")
+        # One-token marker on an item corrected via `erratum` -- its
+        # resolution stands, but a reader must know not to take it at
+        # pure face value. See `list --id` for the full erratum detail.
+        status_shown = r["status"] + ("*" if r.get("corrected") else "")
+        print(f"{r['id']:<{width_id}}  {status_shown:<10} {(r['holder'] or ''):<20} {r['title']}")
+    if any(r.get("corrected") for r in rows):
+        print("\n(* = resolution corrected via erratum -- pass --id to see the full record)")
     if result.truncated:
         print(
             f"\n(showing {result.returned_count} of {result.total_count} matching items -- "
@@ -1099,6 +1116,35 @@ def cmd_reopen(a):
             "the item is back in the ready queue -- claim it before correcting it, "
             "or another agent may claim it first"
         )
+    print(json.dumps(payload, indent=2))
+
+
+def cmd_erratum(a):
+    """Append an ERRATUM to a RESOLVED item's own record: the record is
+    wrong, but the work itself stands. For the opposite case -- the WORK
+    must be redone -- use `reopen` instead. Never touches status/
+    closed_at/resolution/holder, and needs no claim: any actor, at any
+    time. Refuses (nothing written) on an item that is not resolved --
+    naming `edit` as the remedy for an OPEN item's wrong content. See
+    `adapter.Beads.erratum`.
+    """
+    _guard()
+    bd = _ws(a).project(a.project)
+    try:
+        outcome = bd.erratum(a.id, actor=a.actor, text=a.text)
+    except A.BeadsError as e:
+        die(str(e))
+    payload = {
+        "id": outcome.item.id,
+        "corrected": outcome.item.corrected,
+        "errata": [{"at": e.at, "by": e.by, "text": e.text} for e in outcome.item.errata],
+    }
+    if outcome.already_recorded:
+        # Deliberately present ONLY on the idempotent path, same
+        # convention `resolve`'s own `idempotent` key uses -- a caller
+        # reconciling a contended run needs to tell "already recorded"
+        # from "recorded just now".
+        payload["already_recorded"] = True
     print(json.dumps(payload, indent=2))
 
 
@@ -1862,6 +1908,20 @@ def main():
         ),
     )
     p.set_defaults(fn=cmd_reopen)
+
+    p = sub.add_parser(
+        "erratum",
+        help=(
+            "append a correction to a RESOLVED item's record -- the record is wrong, "
+            "but the work stands (use `reopen` instead if the work must be redone)"
+        ),
+        parents=[root_parent],
+    )
+    p.add_argument("--project", required=True)
+    p.add_argument("--id", required=True)
+    p.add_argument("--actor", required=True)
+    p.add_argument("text", help="what's actually wrong about the stored resolution")
+    p.set_defaults(fn=cmd_erratum)
 
     p = sub.add_parser(
         "unclaim",
