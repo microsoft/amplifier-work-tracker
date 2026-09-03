@@ -356,49 +356,64 @@
     with_custody_takeover_mismatch_while_held (measured 2026-09-01).
 
 - id: CCV1-012
-  title: release() reports success off the exit code, with no read-back
+  title: release() confirms the hold actually cleared before reporting success
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 10
     quote: |
       an operation like `release()` must confirm the item status changed before returning
       success.
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-1f2
   assertion:
     kind: probe
     ref: test_row_ccv1_012
   notes: >
-    NARROWED BY TRUE-UP. PR #63 gave release() a pre-write status check and
-    a read-back on the CONFLICT path; the SUCCESS path was untouched and
-    still returns straight off `p.returncode == 0`. Every sibling write
-    verifies itself (take_custody, renew_custody, resolve, defer/block,
-    supersede, add_dependency, CLI unclaim). release does not -- and it is
-    what BOTH work_release AND every reap reclaim call, so a `bd update`
-    that silently did not land leaves a "reclaimed" item still held while
-    the sweep reports it reclaimed. Evidence brief sec.D-4.
+    FIXED. `release` now routes its `bd update --status open --assignee ""`
+    through the shared `_verified_write` helper, whose verify demands a
+    contention-free read-back showing the item is no longer `held` -- on
+    the SUCCESS path as well as the conflict path PR #63 already gave it.
+    The pre-write `already_closed` branch is untouched, and the returned
+    `ReleaseOutcome` is now derived from that same read-back rather than
+    asserted from the exit code. This matters because `release` is what
+    BOTH work_release AND every reap reclaim call: a `bd update` that
+    exited 0 without clearing the hold used to leave the item HELD while
+    the sweep reported it reclaimed. Measured 2026-09-02, discriminating
+    both ways, in tests/integration/test_write_readback.py::
+    test_release_raises_when_bd_reports_success_but_the_hold_did_not_clear
+    (phantom success -> raises; the item really is still held) and
+    ::test_release_success_path_returns_only_after_the_readback_shows_no_hold
+    (a real release still succeeds). The conflict half stays covered by
+    tests/integration/test_phantom_conflict_recovery.py (CCV1-014).
 
 - id: CCV1-013
-  title: neither claim path verifies its own write by read-back
+  title: both claim paths verify their own write by read-back
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 10
     quote: |
       Every write that changes custody state must read the item back and verify the change
       landed before reporting success.
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-1gz
   assertion:
     kind: probe
     ref: test_row_ccv1_013
   notes: >
-    Both `claim_item` and `claim_next` return an Item parsed from the
-    WRITING process's own stdout, with no independent read through the
-    contention-free path and no conflict-path read-back. PR #63 named this
-    residual in its own resolution text on work_item_pipeline-yym:
-    "claim/claim_next are covered by the source-level returncode gate but
-    lack the verify-by-read-back second layer." Ratified Call 4 (option B)
-    puts it in Core, contract-then-fix.
+    FIXED. `claim_item` and `claim_next` both route through
+    `_verified_write` and both now RETURN the contention-free read-back
+    rather than an Item parsed from the writing process's own stdout --
+    bd must show this actor holding the item, or the claim raises. The two
+    differ only in their conflict-path key: `claim_item` knows the id, so
+    it is a plain keyed read; `claim_next` does not (bd chooses, and the
+    conflict destroys its stdout), so it uses the id-set difference over
+    items assigned to this actor, snapshotted before the write, with
+    "more than one new hold" treated as ambiguous and re-raised rather
+    than guessed. An empty queue stays a normal `None`, never a failed
+    write. Measured 2026-09-02 in tests/integration/test_write_readback.py
+    -- six cases covering, for each path, conflict-after-landed (reports
+    success), conflict-with-no-write (still raises), and phantom success
+    (raises), plus ::test_claim_next_on_an_empty_queue_is_still_a_normal_none.
 
 - id: CCV1-014
   title: a landed write is never reported as a failure (resolve / release)
@@ -432,27 +447,42 @@
     NOT covered: see CCV1-015.
 
 - id: CCV1-015
-  title: only resolve and release verify a conflicted write
+  title: every item-level write verb verifies a conflicted write
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 11
     quote: |
       If a write is reported as failed (exception raised, error returned), the item state must
       not have changed as if the write succeeded.
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-2x3
   assertion:
     kind: probe
     ref: test_row_ccv1_015
   notes: >
-    `_read_back_or_none` has exactly two call sites. Every other write verb
-    -- take_custody, renew_custody, claim_item, defer/block, supersede,
-    update/edit, add_dependency, comment -- still propagates an
-    exhausted-retry BeadsError directly, and exhaustion does not prove the
-    write did not land. The two that matter most for custody are
-    take_custody (a false failure produces exactly the CCV1-003
-    held-without-custody state) and renew_custody (a false failure ends
-    renewal one-strike and dooms a live hold).
+    FIXED. One shared helper, `Beads._verified_write`, now carries the
+    discipline for every item-level write verb: on a conflict-family
+    failure (the wrapper's exhausted-retry raise, or a non-zero exit whose
+    output names a serialization/connection failure) it decides the real
+    outcome by a contention-free read-back instead of trusting the
+    wrapper, and on a reported SUCCESS it verifies anyway. A genuine
+    domain refusal is never verified away, and a write that truly did not
+    land still raises. Routed: create, update, comment, edit_item (both
+    halves), supersede, claim_item, claim_next, release, defer/undefer,
+    block/unblock, add_dependency, take_custody, renew_custody (the write
+    behind the tool's `declare`). `resolve` keeps its own PR #63 shape
+    verbatim -- the region is pinned by CCV1-009 and owned by another
+    change; the behaviour is identical. `move_item` is deliberately NOT
+    routed: it never touches bd or `Beads._run` (direct dolt SQL), so the
+    retry hazard cannot reach it, and it already verifies by real row
+    counts in dst plus a residue check in src, with a compensating cleanup
+    on failure. Measured 2026-09-02 in
+    tests/integration/test_write_readback.py -- a conflict-after-landed
+    case per verb, phantom-success negatives for release/claim x2/create/
+    comment/defer/dep/renew_custody, genuine-failure negatives for
+    claim x2/create, and ::
+    test_move_refuses_when_the_copy_reports_success_but_the_rows_are_not_there
+    for move's own mechanism.
 
 - id: CCV1-016
   title: prose states a reported conflict as UNKNOWN, and scopes the read-back guarantee

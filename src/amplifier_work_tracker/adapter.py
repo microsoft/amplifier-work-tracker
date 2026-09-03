@@ -26,6 +26,7 @@ import signal
 import subprocess
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -945,6 +946,45 @@ def _get_item_via_sql(db: str, item_id: str) -> Item | None:
     """
     rows = _list_rows_via_sql(db, where_sql=f"`issues`.`id` = '{_sql_literal(item_id)}'", limit=1)
     return rows[0] if rows else None
+
+
+def _ids_via_sql(db: str, where_sql: str) -> set[str]:
+    """The set of item ids in `db` matching `where_sql`, over a READ-ONLY
+    SQL SELECT -- the contention-free path (see `_get_item_via_sql`), so
+    this can never itself lose a serialization conflict.
+
+    Exists for the ONE verification shape a plain read-back-by-id cannot
+    serve: a write whose own output names the item it touched, when that
+    output was LOST because the wrapper reported a conflict-family failure.
+    `create` (the new id is printed on stdout) and `claim_next` (bd chooses
+    which item to claim) are exactly those two. Snapshotting the matching
+    id set BEFORE the write and re-reading it after turns "did it land?"
+    into a set difference, with an honest three-way answer:
+
+      - exactly one new id  -> the write landed; that is the item.
+      - no new id           -> the write genuinely did not land.
+      - more than one new id -> AMBIGUOUS (a concurrent writer produced an
+        indistinguishable row in the same window). Callers treat this as
+        "not verified" and re-raise the original failure, never as success
+        -- guessing which of two rows was ours is exactly the silent
+        mis-attribution this whole discipline exists to prevent.
+
+    Only the `id` column is projected, so the CSV path (`_dolt_sql`) is
+    safe here: ids are short scalar primary keys that cannot contain a
+    comma or newline -- the same reason `_list_rows_via_sql` keeps its
+    labels projection on CSV while sending free text through JSON.
+
+    `db` has already passed `NAME_RE` at every call site (it is a project
+    name); `where_sql` is composed by the caller from `_sql_literal`-
+    escaped values, the same discipline `Beads.list()` already uses.
+    """
+    p = _dolt_sql(f"SELECT `id` FROM `{db}`.`issues` WHERE {where_sql}")
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not read item ids of database {db!r} over SQL: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    return {ln.strip() for ln in (p.stdout or "").splitlines()[1:] if ln.strip()}  # drop CSV header
 
 
 def copy_database(src: str, dst: str) -> None:
@@ -2418,6 +2458,86 @@ class Beads:
             raise BeadsError(f"`bd {' '.join(args[:2])}`: {data['error']}")
         return data
 
+    # ------------------------------------------------- verified write (one home)
+
+    @staticmethod
+    def _landed(verify: Callable[[], bool]) -> bool:
+        """`verify()`, but never raising and never True-by-accident.
+
+        Used ONLY on a write's FAILURE path, where the question is "did the
+        write land anyway?". A verification that cannot itself run (the
+        read errored, the item vanished, dolt hiccuped) answers "no
+        evidence it landed" -- which re-raises the ORIGINAL error rather
+        than masking it behind a second, unrelated one. Deliberately NOT
+        used on the success path: there, a verification that cannot run is
+        a real failure to prove the write, and must surface as such.
+        """
+        try:
+            return bool(verify())
+        except Exception:
+            return False
+
+    def _verified_write(
+        self,
+        run: Callable[[], subprocess.CompletedProcess],
+        verify: Callable[[], bool],
+        *,
+        what: str,
+    ) -> subprocess.CompletedProcess | None:
+        """Perform ONE `bd` write and PROVE it landed by reading the item
+        back through the contention-free path. The single home for the
+        "exit code is not proof" discipline every item-level write verb in
+        this class shares -- generalized from the shape PR #63 gave a
+        conflicted `resolve`/`release`, so no verb has to reinvent (or
+        forget) it.
+
+        `run` performs the write and returns its `CompletedProcess` (it may
+        also stash whatever it parsed off stdout for `verify` to use -- see
+        `create`/`claim_next`). `verify` answers ONE question against a
+        fresh, contention-free read: is the intended state actually there?
+        `what` names the operation for error text (e.g. `"release wt-3"`).
+
+        Three paths, none of which trusts an exit code on its own:
+
+          - `run` RAISES `BeadsError` -- `_run`'s serialization-retry
+            budget is exhausted. Exhaustion does NOT prove the write never
+            landed: the measured incident (work_tracker item pipeline-yym,
+            2026-09-01) was a close that HAD landed on an earlier attempt
+            while the wrapper still raised, quoting its own success
+            confirmation. Verify; if the state is there, report success
+            (returning `None`, since bd's own output for that attempt is
+            gone). Otherwise re-raise the original, untouched.
+          - `run` RETURNS a non-zero exit whose output names a
+            conflict/connection-transport failure -- same reasoning, same
+            treatment. A genuine domain error (bd refused, item not found,
+            already closed) is NOT verified away: it raises with bd's own
+            message, exactly as before.
+          - `run` RETURNS success -- verify anyway. A `bd` write that exits
+            0 without changing anything is indistinguishable from one that
+            did, until something reads it back. A phantom success raises.
+
+        Returns the `CompletedProcess` when the write itself reported
+        success (callers that need its stdout use it), or `None` when the
+        write reported failure but the read-back proved it landed.
+        """
+        try:
+            p = run()
+        except BeadsError:
+            if self._landed(verify):
+                return None
+            raise
+        if p.returncode != 0:
+            blob = (p.stdout or "") + (p.stderr or "")
+            if (_retryable(blob) or _connection_retryable(blob)) and self._landed(verify):
+                return None
+            raise BeadsError(f"{what}: {_clean_bd_error(p.stderr or p.stdout)}")
+        if not verify():
+            raise BeadsError(
+                f"{what} reported success but the write did not land -- exit code is "
+                f"not proof (checked by contention-free read-back)."
+            )
+        return p
+
     # ---------------------------------------------------------------- domain ops
 
     def create(
@@ -2448,6 +2568,24 @@ class Beads:
         bd's own `--deps` flag alongside `discovered_from`, so both land in
         the SAME atomic `bd create` call -- no separate, unverified
         follow-up write.
+
+        Verified by read-back on BOTH paths (`_verified_write`), which for
+        a create needs two different keys because the obvious one is not
+        always available:
+
+          - SUCCESS path: bd prints the new id on stdout; the item is read
+            back BY THAT ID through the contention-free SQL path and its
+            title checked. A `bd create` that exits 0 having written
+            nothing therefore raises instead of returning a dangling id.
+          - CONFLICT path: the wrapper raised, so bd's stdout -- and with
+            it the only stable key -- is gone. Falls back to the id-set
+            difference over this exact title (`_ids_via_sql`, snapshotted
+            BEFORE the write): exactly one new row means the create landed
+            and names it; none means it genuinely did not; more than one
+            is ambiguous and re-raises rather than guessing which row was
+            ours. This is the only verb here whose conflict-path proof is
+            weaker than a keyed read-back, and the ambiguity is resolved
+            conservatively -- never by picking a row.
         """
         args = ["create", title, "-t", kind, "-p", str(priority)]
         if tags:
@@ -2475,11 +2613,33 @@ class Beads:
         if deps:
             args += ["--deps", ",".join(deps)]
         args += ["--silent"]
-        p = self._run(args, actor=actor)
-        new_id = (p.stdout or "").strip().splitlines()[-1].strip() if p.stdout else ""
-        if p.returncode != 0 or not new_id:
-            raise BeadsError(f"create failed: {_clean_bd_error(p.stderr or p.stdout)}")
-        return new_id
+        title_where = f"`title` = '{_sql_literal(title)}'"
+        before = _ids_via_sql(self.project_name, title_where)
+        created: list[str] = []
+
+        def _do_create() -> subprocess.CompletedProcess:
+            p = self._run(args, actor=actor)
+            out = (p.stdout or "").strip()
+            if p.returncode == 0 and out:
+                new_id = out.splitlines()[-1].strip()
+                if new_id:
+                    created.append(new_id)
+            return p
+
+        def _verify() -> bool:
+            if created:  # bd named the id -- confirm it independently
+                back = _get_item_via_sql(self.project_name, created[0])
+                return back is not None and back.title == title
+            new = _ids_via_sql(self.project_name, title_where) - before
+            if len(new) != 1:  # zero == did not land; >1 == ambiguous, never guess
+                return False
+            created.append(next(iter(new)))
+            return True
+
+        self._verified_write(_do_create, _verify, what=f"create {title!r}")
+        if not created:  # unreachable via _verified_write, guarded rather than assumed
+            raise BeadsError(f"create {title!r}: reported success but no id could be resolved")
+        return created[0]
 
     def update(
         self,
@@ -2509,7 +2669,10 @@ class Beads:
         Verifies the write landed by reading the item back, the same
         discipline `resolve` applies ("exit code is not proof") -- a
         successful `bd update` exit with a title that didn't actually
-        change would otherwise look identical to a silent no-op.
+        change would otherwise look identical to a silent no-op. Routed
+        through `_verified_write`, so the SAME read-back also decides a
+        conflict-family failure: a wrapper that gave up on an update that
+        had already landed reports success, not a false failure.
         """
         args = ["update", item_id]
         if title is not None:
@@ -2522,21 +2685,24 @@ class Beads:
             args += ["--design", design]
         if len(args) == 2:  # nothing to change -- avoid a no-op `bd update` call/verify
             return self.get(item_id)
-        p = self._run(args, actor=actor)
-        if p.returncode != 0:
-            raise BeadsError(f"update {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
-        back = self.get(item_id)
-        if (
-            (title is not None and back.title != title)
-            or (description is not None and back.description != description)
-            or (acceptance is not None and back.acceptance != acceptance)
-            or (design is not None and back.design != design)
-        ):
-            raise BeadsError(
-                f"update {item_id} reported success but the change did not land -- "
-                f"exit code is not proof; see this method's docstring."
-            )
-        return back
+        seen: list[Item] = []
+
+        def _verify() -> bool:
+            back = self.get(item_id)
+            if (
+                (title is not None and back.title != title)
+                or (description is not None and back.description != description)
+                or (acceptance is not None and back.acceptance != acceptance)
+                or (design is not None and back.design != design)
+            ):
+                return False
+            seen.append(back)
+            return True
+
+        self._verified_write(
+            lambda: self._run(args, actor=actor), _verify, what=f"update {item_id}"
+        )
+        return seen[-1]
 
     def comment(self, item_id: str, text: str, *, actor: str | None = None) -> None:
         """Append a comment to an item -- bd's own audit-trail mechanism
@@ -2547,10 +2713,26 @@ class Beads:
         Used by `edit_item` to record who changed what on a content edit,
         and available standalone for any other audit-trail note a caller
         wants attached to an item without touching its own fields.
+
+        Verified by read-back like every other write here, but by COUNT
+        rather than presence: an item may legitimately already carry a
+        comment with this exact text (two identical edits), so "a matching
+        comment exists" would report success for a write that never
+        happened. The count of exactly-matching comments taken before the
+        write must have increased.
         """
-        p = self._run(["comment", item_id, text], actor=actor)
-        if p.returncode != 0:
-            raise BeadsError(f"comment {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
+
+        def _matching() -> int:
+            got = self._json(["comments", item_id])
+            rows = got if isinstance(got, list) else []
+            return sum(1 for c in rows if isinstance(c, dict) and c.get("text") == text)
+
+        before = _matching()
+        self._verified_write(
+            lambda: self._run(["comment", item_id, text], actor=actor),
+            lambda: _matching() > before,
+            what=f"comment {item_id}",
+        )
 
     def edit_item(
         self,
@@ -2639,27 +2821,26 @@ class Beads:
         `Beads.get`'s docstring for why `with_links=True` deliberately
         stays on bd).
         """
-        p = self._run(["supersede", item_id, "--with", replacement_id], actor=actor)
-        if p.returncode != 0:
-            raise BeadsError(
-                f"supersede {item_id} with {replacement_id}: "
-                f"{_clean_bd_error(p.stderr or p.stdout)}"
-            )
-        back = self.get(item_id, with_links=True)
-        if back.status != "resolved":
-            raise BeadsError(
-                f"supersede {item_id} reported success but readback shows status="
-                f"{back.status!r} -- refusing to report success"
-            )
-        if not any(
-            link.get("id") == replacement_id and link.get("direction") == "from"
-            for link in back.links
-        ):
-            raise BeadsError(
-                f"supersede {item_id} with {replacement_id} reported success but readback "
-                f"shows no structural reference to the replacement -- refusing to report success"
-            )
-        return back
+        seen: list[Item] = []
+
+        def _verify() -> bool:
+            back = self.get(item_id, with_links=True)
+            if back.status != "resolved":
+                return False
+            if not any(
+                link.get("id") == replacement_id and link.get("direction") == "from"
+                for link in back.links
+            ):
+                return False
+            seen.append(back)
+            return True
+
+        self._verified_write(
+            lambda: self._run(["supersede", item_id, "--with", replacement_id], actor=actor),
+            _verify,
+            what=f"supersede {item_id} with {replacement_id}",
+        )
+        return seen[-1]
 
     def claim_next(self, *, lane: str = LANE_WORK, actor: str) -> Item | None:
         """THE claim. Single atomic operation, never read-then-write.
@@ -2667,11 +2848,62 @@ class Beads:
         ASSUMPTION claim.atomic / claim.subcommand / claim.actor_env.
         Identity travels in BEADS_ACTOR because this subcommand rejects an
         explicit assignee flag.
+
+        VERIFIED BY READ-BACK (`_verified_write`), and the returned `Item`
+        is the READ-BACK, never the claiming process's own stdout -- a
+        claim is the highest-stakes custody write here (its caller
+        immediately starts custody on the strength of it), so "bd said so"
+        is not enough. Three outcomes, kept distinct:
+
+          - bd claimed an item: it is read back through the contention-free
+            SQL path and must show THIS actor holding it.
+          - bd found nothing ready: an empty queue is a normal terminal
+            outcome, not a failed write -- `None`, no verification needed.
+          - the wrapper reported a conflict-family failure: bd's stdout is
+            gone, so which item (if any) it claimed is unknown. Decided by
+            the id-set difference over items assigned to this actor,
+            snapshotted BEFORE the write (`_ids_via_sql`): exactly one new
+            hold means the claim landed and names it; none means it did
+            not; more than one is ambiguous and re-raises rather than
+            guessing.
         """
-        data = self._json(["ready", "--label", lane, "--claim"], actor=actor)
-        items = data if isinstance(data, list) else ([data] if data else [])
-        items = [i for i in items if isinstance(i, dict) and i.get("id")]
-        return Item.from_beads(items[0]) if items else None
+        held_where = f"`assignee` = '{_sql_literal(actor)}'"
+        held_before = _ids_via_sql(self.project_name, held_where)
+        claimed: list[str] = []
+        nothing_ready: list[bool] = []
+
+        def _do_claim() -> subprocess.CompletedProcess:
+            p = self._run(["ready", "--label", lane, "--claim", "--json"], actor=actor)
+            if p.returncode != 0:
+                return p
+            out = (p.stdout or "").strip()
+            try:
+                data = json.loads(out) if out else None
+            except json.JSONDecodeError as e:
+                raise BeadsError(f"`bd ready --claim` returned non-JSON: {out[:200]}") from e
+            if isinstance(data, dict) and data.get("error"):
+                raise BeadsError(f"`bd ready --claim`: {data['error']}")
+            items = data if isinstance(data, list) else ([data] if data else [])
+            ids = [i["id"] for i in items if isinstance(i, dict) and i.get("id")]
+            if ids:
+                claimed.append(str(ids[0]))
+            else:
+                nothing_ready.append(True)
+            return p
+
+        def _verify() -> bool:
+            if nothing_ready:  # empty queue -- nothing was written, nothing to verify
+                return True
+            if not claimed:
+                new = _ids_via_sql(self.project_name, held_where) - held_before
+                if len(new) != 1:  # zero == did not land; >1 == ambiguous, never guess
+                    return False
+                claimed.append(next(iter(new)))
+            back = _get_item_via_sql(self.project_name, claimed[0])
+            return back is not None and back.status == "held" and back.holder == actor
+
+        self._verified_write(_do_claim, _verify, what=f"claim next {lane!r} as {actor!r}")
+        return self.get(claimed[0]) if claimed else None
 
     def claim_item(self, item_id: str, *, actor: str) -> Item:
         """Directed claim: atomically claim a SPECIFIC item by id.
@@ -2708,6 +2940,15 @@ class Beads:
         the previous `bd show`-backed check: a directed claim's own
         refusal-check read can no longer itself lose a serialization
         conflict either.
+
+        VERIFIED BY READ-BACK (`_verified_write`) on both paths, and the
+        returned `Item` is the read-back rather than the claiming process's
+        own stdout: bd must show THIS actor holding the item afterward, or
+        this raises. A conflict-family failure is decided the same way --
+        the item id is known here (unlike `claim_next`), so the proof is a
+        plain keyed read, with no set-difference fallback needed. A DOMAIN
+        refusal (bd says someone else holds it, or it does not exist) is
+        NOT verified away: it raises with bd's own wording, unchanged.
         """
         try:
             self.get(item_id)  # existence check only -- raises if missing
@@ -2723,20 +2964,25 @@ class Beads:
                 f"claim again -- directed claims never bypass blockers."
             )
 
-        p = self._run(["update", item_id, "--claim", "--json"], actor=actor)
-        if p.returncode != 0:
-            msg = (p.stderr or p.stdout or "").strip()
-            raise BeadsError(f"claim {item_id} as {actor!r} failed: {msg[:300]}")
-        out = (p.stdout or "").strip()
-        try:
-            data = json.loads(out) if out else None
-        except json.JSONDecodeError as e:
-            raise BeadsError(f"claim {item_id}: bd returned non-JSON: {out[:200]}") from e
-        items = data if isinstance(data, list) else ([data] if data else [])
-        items = [i for i in items if isinstance(i, dict) and i.get("id")]
-        if not items:
-            raise BeadsError(f"claim {item_id}: bd reported success but returned no item")
-        return Item.from_beads(items[0])
+        def _do_claim() -> subprocess.CompletedProcess:
+            p = self._run(["update", item_id, "--claim", "--json"], actor=actor)
+            if p.returncode != 0:
+                blob = (p.stdout or "") + (p.stderr or "")
+                if _retryable(blob) or _connection_retryable(blob):
+                    return p  # let `_verified_write` decide it by read-back
+                # A DOMAIN refusal (already held by someone else, not found)
+                # -- surfaced with bd's own wording, unverified and
+                # unchanged, exactly as before.
+                msg = (p.stderr or p.stdout or "").strip()
+                raise BeadsError(f"claim {item_id} as {actor!r} failed: {msg[:300]}")
+            return p
+
+        def _verify() -> bool:
+            back = _get_item_via_sql(self.project_name, item_id)
+            return back is not None and back.status == "held" and back.holder == actor
+
+        self._verified_write(_do_claim, _verify, what=f"claim {item_id} as {actor!r}")
+        return self.get(item_id)
 
     def get(self, item_id: str, *, with_links: bool = False) -> Item:
         """Read one item, with its FORWARD dependency graph always attached
@@ -3233,25 +3479,35 @@ class Beads:
         status-mutating write is what makes reopening a closed item
         structurally impossible from this path, not merely unlikely.
 
-        Also applies the same verify-on-conflict discipline `resolve` does:
-        if the write itself raises (wrapper retry budget exhausted), a
-        fresh read-back decides the real outcome rather than trusting the
-        wrapper's failure at face value.
+        VERIFIED BY READ-BACK on BOTH paths (`_verified_write`). PR #63 gave
+        this method a read-back on the CONFLICT path only; the SUCCESS path
+        still returned straight off `p.returncode == 0`, which is the one
+        thing this module says everywhere else is not proof. It matters
+        more here than almost anywhere: `release` is what BOTH `work_release`
+        AND every reap reclaim call, so a `bd update` that exited 0 without
+        actually clearing the hold left an item still HELD while the sweep
+        reported it reclaimed -- a hold nobody is renewing and nobody can
+        claim. The read-back now demands the item is genuinely no longer
+        `held` before this returns at all (ledger row CCV1-012).
         """
         current = self.get(item_id)
         if current.status == "resolved":
             return ReleaseOutcome(item_id=item_id, already_closed=True)
-        try:
-            p = self._run(["update", item_id, "--status", "open", "--assignee", ""])
-        except BeadsError:
+        seen: list[Item] = []
+
+        def _verify() -> bool:
             back = self._read_back_or_none(item_id)
-            if back is not None and back.status != "held":
-                return ReleaseOutcome(item_id=item_id, already_closed=(back.status == "resolved"))
-            raise
-        if p.returncode != 0:
-            detail = _clean_bd_error(p.stderr or p.stdout, limit=200)
-            raise BeadsError(f"release {item_id}: {detail}")
-        return ReleaseOutcome(item_id=item_id, already_closed=False)
+            if back is None or back.status == "held":
+                return False
+            seen.append(back)
+            return True
+
+        self._verified_write(
+            lambda: self._run(["update", item_id, "--status", "open", "--assignee", ""]),
+            _verify,
+            what=f"release {item_id}",
+        )
+        return ReleaseOutcome(item_id=item_id, already_closed=(seen[-1].status == "resolved"))
 
     # -------------------------------------------------------- defer / block
     #
@@ -3282,26 +3538,29 @@ class Beads:
     ) -> Item:
         if not reason or not reason.strip():
             raise BeadsError(f"{status} {item_id}: a reason is required")
-        p = self._run(
-            [
-                "update",
-                item_id,
-                "--status",
-                status,
-                "--metadata",
-                json.dumps({reason_key: reason}),
-            ],
-            actor=actor,
+        args = [
+            "update",
+            item_id,
+            "--status",
+            status,
+            "--metadata",
+            json.dumps({reason_key: reason}),
+        ]
+        seen: list[Item] = []
+
+        def _verify() -> bool:
+            back = self.get(item_id)
+            if back.status != _map_status(status):
+                return False
+            if back.meta.get(reason_key) != reason:
+                return False
+            seen.append(back)
+            return True
+
+        self._verified_write(
+            lambda: self._run(args, actor=actor), _verify, what=f"{status} {item_id}"
         )
-        if p.returncode != 0:
-            raise BeadsError(f"{status} {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
-        back = self.get(item_id)
-        if back.status != _map_status(status):
-            raise BeadsError(
-                f"{status} {item_id} reported success but readback shows status="
-                f"{back.status!r} -- refusing to report success"
-            )
-        return back
+        return seen[-1]
 
     def _clear_status_with_reason(
         self, item_id: str, *, from_status: str, reason_key: str, actor: str | None
@@ -3312,26 +3571,27 @@ class Beads:
                 f"cannot un-{from_status} {item_id}: it is {current.status!r}, not "
                 f"{_map_status(from_status)!r}"
             )
-        p = self._run(
-            [
-                "update",
-                item_id,
-                "--status",
-                "open",
-                "--unset-metadata",
-                reason_key,
-            ],
-            actor=actor,
+        args = [
+            "update",
+            item_id,
+            "--status",
+            "open",
+            "--unset-metadata",
+            reason_key,
+        ]
+        seen: list[Item] = []
+
+        def _verify() -> bool:
+            back = self.get(item_id)
+            if back.status != "open" or reason_key in back.meta:
+                return False
+            seen.append(back)
+            return True
+
+        self._verified_write(
+            lambda: self._run(args, actor=actor), _verify, what=f"un-{from_status} {item_id}"
         )
-        if p.returncode != 0:
-            raise BeadsError(f"un-{from_status} {item_id}: {_clean_bd_error(p.stderr or p.stdout)}")
-        back = self.get(item_id)
-        if back.status != "open":
-            raise BeadsError(
-                f"un-{from_status} {item_id} reported success but readback shows status="
-                f"{back.status!r} -- refusing to report success"
-            )
-        return back
+        return seen[-1]
 
     def defer(self, item_id: str, reason: str, *, actor: str | None = None) -> Item:
         """Defer an open item with a reason -- it leaves `bd ready`/
@@ -3410,24 +3670,19 @@ class Beads:
         readback: `get(item_id, with_links=True)` must show the new edge,
         never merely a non-erroring exit.
         """
-        p = self._run(
-            ["dep", "add", item_id, depends_on_id, "-t", dep_type],
-            actor=actor,
+
+        def _verify() -> bool:
+            back = self.get(item_id, with_links=True)
+            return any(
+                link.get("id") == depends_on_id and link.get("direction") == "from"
+                for link in back.links
+            )
+
+        self._verified_write(
+            lambda: self._run(["dep", "add", item_id, depends_on_id, "-t", dep_type], actor=actor),
+            _verify,
+            what=f"dep add {item_id} -> {depends_on_id} ({dep_type})",
         )
-        if p.returncode != 0:
-            raise BeadsError(
-                f"dep add {item_id} -> {depends_on_id} ({dep_type}): "
-                f"{_clean_bd_error(p.stderr or p.stdout)}"
-            )
-        back = self.get(item_id, with_links=True)
-        if not any(
-            link.get("id") == depends_on_id and link.get("direction") == "from"
-            for link in back.links
-        ):
-            raise BeadsError(
-                f"dep add {item_id} -> {depends_on_id} reported success but readback shows "
-                f"no such edge -- refusing to report success"
-            )
 
     # ------------------------------------------------------------------ custody
     #
@@ -3462,6 +3717,13 @@ class Beads:
 
         FENCED: refuses unless `holder` is currently bd's own assignee for
         this item -- you cannot take custody of work you do not actually hold.
+
+        Verified by read-back on BOTH paths (`_verified_write`): the stored
+        custody record must equal the one written. A FALSE failure here is
+        not cosmetic -- it produces exactly the held-without-custody state
+        (an item assigned to a holder that nothing is renewing), which is
+        why an exhausted-retry raise is decided by reading the record back
+        rather than believed.
         """
         it = self.get(item_id)
         if it.holder != holder:
@@ -3483,19 +3745,14 @@ class Beads:
             "declared_since": now,
             "generation": gen,
         }
-        p = self._run(
-            ["update", item_id, "--metadata", json.dumps({C.CUSTODY_KEY: record})],
-            actor=holder,
+        self._verified_write(
+            lambda: self._run(
+                ["update", item_id, "--metadata", json.dumps({C.CUSTODY_KEY: record})],
+                actor=holder,
+            ),
+            lambda: self.get_custody(item_id) == record,
+            what=f"take_custody {item_id}",
         )
-        if p.returncode != 0:
-            detail = _clean_bd_error(p.stderr or p.stdout, limit=200)
-            raise BeadsError(f"take_custody {item_id}: {detail}")
-        back = self.get_custody(item_id)
-        if back != record:
-            raise BeadsError(
-                f"take_custody {item_id} reported success but readback shows "
-                f"{back!r} -- refusing to report success"
-            )
         return record
 
     def renew_custody(
@@ -3513,6 +3770,14 @@ class Beads:
         assignee too. A claim that was taken over while you were away must
         not be renewable by you; without this, a zombie's renewal would keep
         an item that no longer belongs to it looking alive forever.
+
+        Verified by read-back on BOTH paths (`_verified_write`). Renewal is
+        ONE-STRIKE by design (the caller stops renewing for good on any
+        failure), so a false failure here dooms a live, healthy hold -- the
+        conflict path must be settled by reading the record back, never by
+        the wrapper's verdict. This is also the write behind the tool's
+        `declare`: a phantom success would report a `declared_state` no
+        reader ever sees.
         """
         it = self.get(item_id)
         current = it.meta.get(C.CUSTODY_KEY)
@@ -3539,19 +3804,14 @@ class Beads:
         if declared_state and declared_state != current.get("declared_state"):
             updated["declared_state"] = declared_state
             updated["declared_since"] = updated["last_seen"]
-        p = self._run(
-            ["update", item_id, "--metadata", json.dumps({C.CUSTODY_KEY: updated})],
-            actor=holder,
+        self._verified_write(
+            lambda: self._run(
+                ["update", item_id, "--metadata", json.dumps({C.CUSTODY_KEY: updated})],
+                actor=holder,
+            ),
+            lambda: self.get_custody(item_id) == updated,
+            what=f"renew_custody {item_id}",
         )
-        if p.returncode != 0:
-            detail = _clean_bd_error(p.stderr or p.stdout, limit=200)
-            raise BeadsError(f"renew_custody {item_id}: {detail}")
-        back = self.get_custody(item_id)
-        if back != updated:
-            raise BeadsError(
-                f"renew_custody {item_id} reported success but readback shows "
-                f"{back!r} -- refusing to report success"
-            )
         return updated
 
 

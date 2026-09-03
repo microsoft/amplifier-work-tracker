@@ -25,6 +25,7 @@ behavior IS measured cite real tests instead (`assertion.kind: indexed`).
 
 from __future__ import annotations
 
+import ast
 import re
 
 from ._support import (
@@ -36,6 +37,7 @@ from ._support import (
     MAKEFILE,
     REPO_ROOT,
     TOOL_MODULE,
+    collapse,
     contains,
     count,
     function_names,
@@ -48,6 +50,28 @@ from ._support import (
 # operator reads at `--help`, and the CLI-side twin of `context/awareness.md`'s
 # contention contract. Kept local to this module (only CCV1-016 pins it).
 CLI = REPO_ROOT / "src" / "amplifier_work_tracker" / "cli.py"
+
+def _beads_method(name: str) -> str:
+    """The whitespace-collapsed source of exactly ONE `Beads` method.
+
+    Sliced by AST line span rather than by string search, so a probe about
+    (say) `release` can never accidentally match a sibling method that
+    happens to contain a similar line -- the failure mode a whole-file
+    `contains()` has whenever the same shape appears in more than one verb,
+    which is precisely the situation once every write verb shares one
+    helper. Collapsed for the same reason `contains` collapses: survives
+    reformatting, never survives a real change of wording.
+    """
+    src = read(ADAPTER)
+    lines = src.splitlines(keepends=True)
+    for node in ast.parse(src).body:
+        if not (isinstance(node, ast.ClassDef) and node.name == "Beads"):
+            continue
+        for member in node.body:
+            if isinstance(member, ast.FunctionDef) and member.name == name:
+                return collapse("".join(lines[member.lineno - 1 : member.end_lineno]))
+    raise AssertionError(f"Beads.{name} not found in {ADAPTER} -- the probe is out of date")
+
 
 # --------------------------------------------------------------- CCV1-000
 
@@ -321,23 +345,31 @@ def test_row_ccv1_011() -> None:
 
 
 def test_row_ccv1_012() -> None:
-    """Core 10 VIOLATION pin: `release()` returns success straight off the
-    subprocess exit code -- no read-back that the status actually became
-    `open`. Every sibling write verifies itself; this one, which both
-    `work_release` and every reap reclaim call, does not.
+    """Core 10 CONFORMS: `release()` confirms the hold actually cleared
+    before returning -- on the SUCCESS path, not only the conflict path.
+    The outcome it reports is derived from that read-back, never asserted
+    from a zero exit code.
     """
-    assert contains(
-        ADAPTER,
+    body = _beads_method("release")
+    assert "self._verified_write(" in body, "CCV1-012: release no longer routes through the helper"
+    assert (
+        collapse(
+            """
+        def _verify() -> bool:
+            back = self._read_back_or_none(item_id)
+            if back is None or back.status == "held":
+                return False
         """
-        if p.returncode != 0:
-            detail = _clean_bd_error(p.stderr or p.stdout, limit=200)
-            raise BeadsError(f"release {item_id}: {detail}")
-        return ReleaseOutcome(item_id=item_id, already_closed=False)
-        """,
-    ), (
-        "CCV1-012 (Core 10, VIOLATION) pin no longer matches. If release() gained its "
-        "read-back, this is the expected failure: flip the row to CONFORMS and resolve "
-        "work_item_pipeline-1f2."
+        )
+        in body
+    ), "CCV1-012: release's verify no longer demands the item is out of `held`"
+    assert (
+        collapse("return ReleaseOutcome(item_id=item_id, already_closed=(seen[-1].status ==")
+        in body
+    ), "CCV1-012: the reported outcome is no longer derived from the read-back"
+    assert "already_closed=False)" not in body, (
+        "CCV1-012 (Core 10) regression: release reports an outcome it did not read back. "
+        "The exit-code-only success return is exactly the shape this row exists to forbid."
     )
 
 
@@ -345,50 +377,112 @@ def test_row_ccv1_012() -> None:
 
 
 def test_row_ccv1_013() -> None:
-    """Core 10 GAP pin: neither claim path verifies itself by read-back. Both
-    return an item parsed from the WRITING process's own stdout -- the
-    "exit code is not proof" shape, on the highest-stakes custody write.
+    """Core 10 CONFORMS: both claim paths verify by read-back, and both
+    RETURN the read-back rather than an Item parsed from the writing
+    process's own stdout. A claim is the highest-stakes custody write here
+    -- its caller starts custody on the strength of it -- so "bd said so"
+    is never the answer.
     """
-    assert contains(
-        ADAPTER,
-        """
-        if not items:
-            raise BeadsError(f"claim {item_id}: bd reported success but returned no item")
-        return Item.from_beads(items[0])
-        """,
-    ), "CCV1-013 pin (claim_item) no longer matches"
-    assert contains(
-        ADAPTER,
-        """
-        data = self._json(["ready", "--label", lane, "--claim"], actor=actor)
-        items = data if isinstance(data, list) else ([data] if data else [])
-        items = [i for i in items if isinstance(i, dict) and i.get("id")]
-        return Item.from_beads(items[0]) if items else None
-        """,
-    ), (
-        "CCV1-013 (Core 10, GAP) pin (claim_next) no longer matches. If the claim path "
-        "gained verify-by-read-back, flip the row to CONFORMS and resolve "
-        "work_item_pipeline-1gz."
+    directed = _beads_method("claim_item")
+    queued = _beads_method("claim_next")
+    for verb, body in (("claim_item", directed), ("claim_next", queued)):
+        assert "self._verified_write(" in body, (
+            f"CCV1-013 (Core 10) regression: {verb} no longer routes through the "
+            f"verified-write helper."
+        )
+        assert "Item.from_beads(" not in body, (
+            f"CCV1-013 (Core 10) regression: {verb} builds its returned Item from the "
+            f"writing process's own stdout again. The returned item must be the read-back."
+        )
+        assert 'back.status == "held" and back.holder == actor' in body, (
+            f"CCV1-013: {verb}'s verify no longer demands THIS actor holds the item"
+        )
+    assert "return self.get(item_id)" in directed, "CCV1-013: claim_item returns a non-read-back"
+    assert "return self.get(claimed[0]) if claimed else None" in queued, (
+        "CCV1-013: claim_next returns a non-read-back, or lost its empty-queue None"
     )
+    # The conflict path has no id to read back by -- it is decided by the
+    # id-set difference, and an ambiguous result must never be guessed.
+    assert (
+        collapse(
+            """
+                new = _ids_via_sql(self.project_name, held_where) - held_before
+                if len(new) != 1:
+        """
+        )
+        in queued
+    ), "CCV1-013: claim_next's conflict-path set difference changed shape"
 
 
 # --------------------------------------------------------------- CCV1-015
 
 
+#: Every item-level write verb on `Beads`. The closed list this row is
+#: about: each one must route its `bd` write through `_verified_write`, so
+#: a conflict-family failure is decided by read-back rather than by the
+#: wrapper's verdict. `resolve` is deliberately absent -- it keeps PR #63's
+#: own inline shape, pinned by CCV1-009 (see that row).
+_VERIFIED_WRITE_VERBS = (
+    "create",
+    "update",
+    "comment",
+    "supersede",
+    "claim_next",
+    "claim_item",
+    "release",
+    "_set_status_with_reason",  # defer / block
+    "_clear_status_with_reason",  # undefer / unblock
+    "add_dependency",
+    "take_custody",
+    "renew_custody",
+)
+
+
 def test_row_ccv1_015() -> None:
-    """Core 11 GAP pin: the conflicted-write read-back helper has exactly
-    three occurrences -- its definition and two call sites (`resolve`,
-    `release`). Every other write verb still propagates an exhausted-retry
-    exception directly, so a landed write can still surface as a reported
-    failure there.
+    """Core 11 CONFORMS: one shared helper carries verify-on-conflict for
+    EVERY item-level write verb, not just `resolve`/`release`. Exhaustion
+    of the retry budget does not prove a write did not land, so a reported
+    failure is decided by a contention-free read-back before it is
+    believed -- and a reported success is verified too.
     """
-    occurrences = count(ADAPTER, "_read_back_or_none")
-    assert occurrences == 3, (
-        f"CCV1-015 (Core 11, GAP) pin: expected 3 occurrences of `_read_back_or_none` "
-        f"(1 definition + 2 call sites: resolve, release), found {occurrences}. If a "
-        f"third write verb adopted verify-on-conflict, update the row's coverage list "
-        f"(and resolve work_item_pipeline-2x3 when the custody-relevant writes -- "
-        f"take_custody, renew_custody -- are covered)."
+    helper = _beads_method("_verified_write")
+    assert "except BeadsError:" in helper and "if self._landed(verify):" in helper, (
+        "CCV1-015: the helper no longer verifies on the wrapper's exhausted-retry raise"
+    )
+    assert "if (_retryable(blob) or _connection_retryable(blob)) and self._landed(verify):" in (
+        helper
+    ), "CCV1-015: the helper no longer verifies a conflict-family non-zero exit"
+    assert "if not verify():" in helper, (
+        "CCV1-015: the helper stopped verifying the SUCCESS path -- exit code is not proof"
+    )
+    assert "return False" in _beads_method("_landed"), (
+        "CCV1-015: `_landed` must swallow a failed verification into False, never mask "
+        "the original error with a second one"
+    )
+
+    missing = [v for v in _VERIFIED_WRITE_VERBS if "self._verified_write(" not in _beads_method(v)]
+    assert not missing, (
+        f"CCV1-015 (Core 11) regression: these write verbs no longer route through "
+        f"`_verified_write`, so a landed write there can still surface as a reported "
+        f"failure: {missing}"
+    )
+
+    edit = _beads_method("edit_item")
+    assert "self.update(" in edit and "self.comment(" in edit, (
+        "CCV1-015: `edit` must delegate BOTH halves (field write + audit comment) to "
+        "verbs that verify themselves"
+    )
+    # `move_item` is a module-level function over direct dolt SQL -- it never
+    # touches `Beads._run`, so the helper cannot apply. It carries its own,
+    # equivalent proof: real row counts in dst, and a compensating cleanup so
+    # a reported failure never leaves state as if the write succeeded.
+    assert contains(ADAPTER, "left an incomplete copy in"), (
+        "CCV1-015: move_item's own row-count verification is gone"
+    )
+    assert count(ADAPTER, "_read_back_or_none") == 3, (
+        "CCV1-015: `_read_back_or_none`'s call sites moved (expected 1 definition + "
+        "resolve's conflict branch + release's verify). Re-check that every verb still "
+        "verifies before adjusting this count."
     )
 
 
