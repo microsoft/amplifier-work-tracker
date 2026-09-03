@@ -1,0 +1,1 @@
+project 'contract1788424171165atomic': healing an abandoned creation attempt (lock /tmp/awtcontract_vnsevrfc/projects/contract1788424171165atomic/.create.lock named a dead pid) before retrying

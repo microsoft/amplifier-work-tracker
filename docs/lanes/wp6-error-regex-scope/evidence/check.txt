@@ -1,0 +1,7 @@
+=== make check (lint + types) ===
+.venv/bin/ruff check .
+All checks passed!
+.venv/bin/ruff format --check .
+149 files already formatted
+.venv/bin/pyright src tests
+0 errors, 0 warnings, 0 informations

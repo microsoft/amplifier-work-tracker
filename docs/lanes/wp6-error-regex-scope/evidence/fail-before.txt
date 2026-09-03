@@ -1,0 +1,350 @@
+=== FAIL-BEFORE: new tier-1 regression file run against the PARENT commit's tests/_util.py ===
+parent commit: ea233a76a00f087e1096f7251b60323bd65b84ea (== origin/main at branch time)
+tests/_util.py: restored to parent (bare r'\berror\b')
+test file:     tests/unit/test_error_announcement_detection.py (from this fix)
+command:       .venv/bin/python -m pytest tests/unit/test_error_announcement_detection.py -q
+
+--- parent tests/_util.py predicate ---
+_ERROR_WORD_RE = re.compile(r"\berror\b", re.IGNORECASE)
+
+
+def looks_like_error_text(text: str) -> bool:
+    return bool(_ERROR_WORD_RE.search(text or ""))
+
+FF.F.FFFF........FF...F                                                  [100%]
+=================================== FAILURES ===================================
+______________ test_pr70_description_is_prose_not_an_announcement ______________
+
+    def test_pr70_description_is_prose_not_an_announcement():
+        """The sentence that actually blocked a PR."""
+>       assert _util.looks_like_error_text(PR70_DETAIL) is False
+E       assert True is False
+E        +  where True = <function looks_like_error_text at 0xe11e58baf380>("an infrastructure read failure raises BeadsUnavailableError with its cause intact on read/claim and reports UNAVAILABLE (not ERROR) per project, while genuine absence on a healthy database still reports plain 'not found'")
+E        +    where <function looks_like_error_text at 0xe11e58baf380> = _util.looks_like_error_text
+
+tests/unit/test_error_announcement_detection.py:75: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Starting server with Config HP="127.0.0.1:55083"|T="28800000"|R="false"|L="info"
+---------------------------- Captured stderr setup -----------------------------
+time="2026-09-03T01:14:25-07:00" level=info msg="Creating root@localhost superuser"
+time="2026-09-03T01:14:25-07:00" level=info msg="Server ready. Accepting connections."
+time="2026-09-03T01:14:25-07:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-09-03T01:14:25-07:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-09-03T01:14:25-07:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-09-03T01:14:25-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-09-03T01:14:25-07:00" level=info msg=ConnectionClosed connectionID=1
+__ test_healthy_doctor_run_carrying_pr70s_description_is_not_a_silent_failure __
+
+    def test_healthy_doctor_run_carrying_pr70s_description_is_not_a_silent_failure():
+        """The end-to-end shape: a `doctor --quick` run that passes every
+        assumption, including PR #70's, and exits 0."""
+        stdout = (
+            _doctor_line("version", "bd 1.1.2")
+            + "\n"
+            + _doctor_line(
+                "conflict.retryable",
+                "Write conflicts surface as retryable serialization errors",
+            )
+            + "\n"
+            + _doctor_line("read.unavailable_not_absent", PR70_DETAIL)
+            + "\n"
+            + HEALTHY_DOCTOR_TAIL
+        )
+        result = subprocess.CompletedProcess(
+            args=["doctor", "--quick"], returncode=0, stdout=stdout, stderr=""
+        )
+>       _util.assert_no_silent_failure(result)  # must not raise
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/unit/test_error_announcement_detection.py:96: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+result = CompletedProcess(args=['doctor', '--quick'], returncode=0, stdout="  [PASS] version                                   ...ealthy database still reports plain 'not found'\n\nAll 35 assumptions hold. Safe to run parallel agents.\n", stderr='')
+
+    def assert_no_silent_failure(result: subprocess.CompletedProcess) -> None:
+        """The invariant this whole tier exists to enforce: a command that
+        prints error-looking text must never also report success (exit 0).
+    
+        This is precisely the shape of the two shipped bugs this suite is
+        named to prevent from recurring: `amplifier-work-tracker reap` printed
+        `Error: unknown command "reclaim"` to stderr and still exited 0.
+        """
+        combined = (result.stdout or "") + (result.stderr or "")
+        if looks_like_error_text(combined):
+>           assert result.returncode != 0, (
+                   ^^^^^^^^^^^^^^^^^^^^^^
+                "command printed error-looking text but exited 0 (this is "
+                "exactly the silent-failure shape amplifier-work-tracker shipped before): "
+                f"{combined[:500]!r}"
+            )
+E           AssertionError: command printed error-looking text but exited 0 (this is exactly the silent-failure shape amplifier-work-tracker shipped before): "  [PASS] version                                    bd 1.1.2\n  [PASS] conflict.retryable                         Write conflicts surface as retryable serialization errors\n  [PASS] read.unavailable_not_absent                an infrastructure read failure raises BeadsUnavailableError with its cause intact on read/claim and reports UNAVAILABLE (not ERROR) per project, while genuine absence on a healthy database still reports plain 'not found'\n\nAll 35 assumptions hold. Safe to run parallel agents.\n"
+
+tests/_util.py:28: AssertionError
+_ test_mentioning_errors_is_not_announcing_one[reports UNAVAILABLE (not ERROR) per project] _
+
+text = 'reports UNAVAILABLE (not ERROR) per project'
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # A real assumption description from src/amplifier_work_tracker/adapter.py.
+            "Write conflicts surface as retryable serialization errors",
+            # The shape of the sentence that blocked #70, isolated.
+            "reports UNAVAILABLE (not ERROR) per project",
+            # Prose about the guard itself.
+            "an infrastructure read failure raises BeadsUnavailableError",
+            "this command never reports an error it did not observe",
+            "ERROR and UNAVAILABLE are different readings of the same field",
+            # A JSON field explicitly saying there was NO error.
+            '{"ok": true, "error": null}',
+            '{"ok": true, "error": ""}',
+        ],
+    )
+    def test_mentioning_errors_is_not_announcing_one(text):
+>       assert _util.looks_like_error_text(text) is False, (
+            f"{text!r} was classified as an error announcement -- the check is back to "
+            f"failing commands for talking about errors while succeeding"
+        )
+E       AssertionError: 'reports UNAVAILABLE (not ERROR) per project' was classified as an error announcement -- the check is back to failing commands for talking about errors while succeeding
+E       assert True is False
+E        +  where True = <function looks_like_error_text at 0xe11e58baf380>('reports UNAVAILABLE (not ERROR) per project')
+E        +    where <function looks_like_error_text at 0xe11e58baf380> = _util.looks_like_error_text
+
+tests/unit/test_error_announcement_detection.py:116: AssertionError
+_ test_mentioning_errors_is_not_announcing_one[this command never reports an error it did not observe] _
+
+text = 'this command never reports an error it did not observe'
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # A real assumption description from src/amplifier_work_tracker/adapter.py.
+            "Write conflicts surface as retryable serialization errors",
+            # The shape of the sentence that blocked #70, isolated.
+            "reports UNAVAILABLE (not ERROR) per project",
+            # Prose about the guard itself.
+            "an infrastructure read failure raises BeadsUnavailableError",
+            "this command never reports an error it did not observe",
+            "ERROR and UNAVAILABLE are different readings of the same field",
+            # A JSON field explicitly saying there was NO error.
+            '{"ok": true, "error": null}',
+            '{"ok": true, "error": ""}',
+        ],
+    )
+    def test_mentioning_errors_is_not_announcing_one(text):
+>       assert _util.looks_like_error_text(text) is False, (
+            f"{text!r} was classified as an error announcement -- the check is back to "
+            f"failing commands for talking about errors while succeeding"
+        )
+E       AssertionError: 'this command never reports an error it did not observe' was classified as an error announcement -- the check is back to failing commands for talking about errors while succeeding
+E       assert True is False
+E        +  where True = <function looks_like_error_text at 0xe11e58baf380>('this command never reports an error it did not observe')
+E        +    where <function looks_like_error_text at 0xe11e58baf380> = _util.looks_like_error_text
+
+tests/unit/test_error_announcement_detection.py:116: AssertionError
+_ test_mentioning_errors_is_not_announcing_one[ERROR and UNAVAILABLE are different readings of the same field] _
+
+text = 'ERROR and UNAVAILABLE are different readings of the same field'
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # A real assumption description from src/amplifier_work_tracker/adapter.py.
+            "Write conflicts surface as retryable serialization errors",
+            # The shape of the sentence that blocked #70, isolated.
+            "reports UNAVAILABLE (not ERROR) per project",
+            # Prose about the guard itself.
+            "an infrastructure read failure raises BeadsUnavailableError",
+            "this command never reports an error it did not observe",
+            "ERROR and UNAVAILABLE are different readings of the same field",
+            # A JSON field explicitly saying there was NO error.
+            '{"ok": true, "error": null}',
+            '{"ok": true, "error": ""}',
+        ],
+    )
+    def test_mentioning_errors_is_not_announcing_one(text):
+>       assert _util.looks_like_error_text(text) is False, (
+            f"{text!r} was classified as an error announcement -- the check is back to "
+            f"failing commands for talking about errors while succeeding"
+        )
+E       AssertionError: 'ERROR and UNAVAILABLE are different readings of the same field' was classified as an error announcement -- the check is back to failing commands for talking about errors while succeeding
+E       assert True is False
+E        +  where True = <function looks_like_error_text at 0xe11e58baf380>('ERROR and UNAVAILABLE are different readings of the same field')
+E        +    where <function looks_like_error_text at 0xe11e58baf380> = _util.looks_like_error_text
+
+tests/unit/test_error_announcement_detection.py:116: AssertionError
+__ test_mentioning_errors_is_not_announcing_one[{"ok": true, "error": null}] ___
+
+text = '{"ok": true, "error": null}'
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # A real assumption description from src/amplifier_work_tracker/adapter.py.
+            "Write conflicts surface as retryable serialization errors",
+            # The shape of the sentence that blocked #70, isolated.
+            "reports UNAVAILABLE (not ERROR) per project",
+            # Prose about the guard itself.
+            "an infrastructure read failure raises BeadsUnavailableError",
+            "this command never reports an error it did not observe",
+            "ERROR and UNAVAILABLE are different readings of the same field",
+            # A JSON field explicitly saying there was NO error.
+            '{"ok": true, "error": null}',
+            '{"ok": true, "error": ""}',
+        ],
+    )
+    def test_mentioning_errors_is_not_announcing_one(text):
+>       assert _util.looks_like_error_text(text) is False, (
+            f"{text!r} was classified as an error announcement -- the check is back to "
+            f"failing commands for talking about errors while succeeding"
+        )
+E       AssertionError: '{"ok": true, "error": null}' was classified as an error announcement -- the check is back to failing commands for talking about errors while succeeding
+E       assert True is False
+E        +  where True = <function looks_like_error_text at 0xe11e58baf380>('{"ok": true, "error": null}')
+E        +    where <function looks_like_error_text at 0xe11e58baf380> = _util.looks_like_error_text
+
+tests/unit/test_error_announcement_detection.py:116: AssertionError
+___ test_mentioning_errors_is_not_announcing_one[{"ok": true, "error": ""}] ____
+
+text = '{"ok": true, "error": ""}'
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # A real assumption description from src/amplifier_work_tracker/adapter.py.
+            "Write conflicts surface as retryable serialization errors",
+            # The shape of the sentence that blocked #70, isolated.
+            "reports UNAVAILABLE (not ERROR) per project",
+            # Prose about the guard itself.
+            "an infrastructure read failure raises BeadsUnavailableError",
+            "this command never reports an error it did not observe",
+            "ERROR and UNAVAILABLE are different readings of the same field",
+            # A JSON field explicitly saying there was NO error.
+            '{"ok": true, "error": null}',
+            '{"ok": true, "error": ""}',
+        ],
+    )
+    def test_mentioning_errors_is_not_announcing_one(text):
+>       assert _util.looks_like_error_text(text) is False, (
+            f"{text!r} was classified as an error announcement -- the check is back to "
+            f"failing commands for talking about errors while succeeding"
+        )
+E       AssertionError: '{"ok": true, "error": ""}' was classified as an error announcement -- the check is back to failing commands for talking about errors while succeeding
+E       assert True is False
+E        +  where True = <function looks_like_error_text at 0xe11e58baf380>('{"ok": true, "error": ""}')
+E        +    where <function looks_like_error_text at 0xe11e58baf380> = _util.looks_like_error_text
+
+tests/unit/test_error_announcement_detection.py:116: AssertionError
+_ test_real_error_announcements_are_still_caught[unknown command "reclaim" for "bd"] _
+
+text = 'unknown command "reclaim" for "bd"'
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # THE bug. `amplifier-work-tracker reap` printed this to stderr and
+            # exited 0. If this row ever stops failing, the guard is gone.
+            'Error: unknown command "reclaim"',
+            # ...preceded by other output, which is how it actually appeared.
+            'reaping stale holds...\nError: unknown command "reclaim"\n',
+            # adapter.py's own status for a project whose database cannot be read,
+            # as `instances` renders it -- indented, in a table column.
+            "  brokenqueue  TOTAL - READY - HELD -  ERROR: database unreachable",
+            # gateway.py.
+            "ERROR: tokens file not found: /etc/awt/tokens.json",
+            # argparse / cobra.
+            "amplifier-work-tracker: error: unrecognized arguments: --nope",
+            "internal error: connection reset by peer",
+            # supervisor.py writes {"error": str(e)} into printed payloads.
+            '{"custody": {"error": "dolt: connection refused"}}',
+            "error running bd list --json",
+            # The two rows below are NEW coverage: neither contains the word
+            # "error" at all, so the parent commit's `\berror\b` predicate missed
+            # both. A Go CLI that renames its announcement prefix, and a Python
+            # crash, are the same silent failure wearing different clothes.
+            'unknown command "reclaim" for "bd"',
+            'Traceback (most recent call last):\n  File "cli.py", line 1\n',
+        ],
+    )
+    def test_real_error_announcements_are_still_caught(text):
+>       assert _util.looks_like_error_text(text) is True, (
+            f"{text!r} is a real error announcement and was NOT detected -- the "
+            f"silent-failure guarantee has been retired, not repaired"
+        )
+E       AssertionError: 'unknown command "reclaim" for "bd"' is a real error announcement and was NOT detected -- the silent-failure guarantee has been retired, not repaired
+E       assert False is True
+E        +  where False = <function looks_like_error_text at 0xe11e58baf380>('unknown command "reclaim" for "bd"')
+E        +    where <function looks_like_error_text at 0xe11e58baf380> = _util.looks_like_error_text
+
+tests/unit/test_error_announcement_detection.py:153: AssertionError
+_ test_real_error_announcements_are_still_caught[Traceback (most recent call last):\n  File "cli.py", line 1\n] _
+
+text = 'Traceback (most recent call last):\n  File "cli.py", line 1\n'
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # THE bug. `amplifier-work-tracker reap` printed this to stderr and
+            # exited 0. If this row ever stops failing, the guard is gone.
+            'Error: unknown command "reclaim"',
+            # ...preceded by other output, which is how it actually appeared.
+            'reaping stale holds...\nError: unknown command "reclaim"\n',
+            # adapter.py's own status for a project whose database cannot be read,
+            # as `instances` renders it -- indented, in a table column.
+            "  brokenqueue  TOTAL - READY - HELD -  ERROR: database unreachable",
+            # gateway.py.
+            "ERROR: tokens file not found: /etc/awt/tokens.json",
+            # argparse / cobra.
+            "amplifier-work-tracker: error: unrecognized arguments: --nope",
+            "internal error: connection reset by peer",
+            # supervisor.py writes {"error": str(e)} into printed payloads.
+            '{"custody": {"error": "dolt: connection refused"}}',
+            "error running bd list --json",
+            # The two rows below are NEW coverage: neither contains the word
+            # "error" at all, so the parent commit's `\berror\b` predicate missed
+            # both. A Go CLI that renames its announcement prefix, and a Python
+            # crash, are the same silent failure wearing different clothes.
+            'unknown command "reclaim" for "bd"',
+            'Traceback (most recent call last):\n  File "cli.py", line 1\n',
+        ],
+    )
+    def test_real_error_announcements_are_still_caught(text):
+>       assert _util.looks_like_error_text(text) is True, (
+            f"{text!r} is a real error announcement and was NOT detected -- the "
+            f"silent-failure guarantee has been retired, not repaired"
+        )
+E       AssertionError: 'Traceback (most recent call last):\n  File "cli.py", line 1\n' is a real error announcement and was NOT detected -- the silent-failure guarantee has been retired, not repaired
+E       assert False is True
+E        +  where False = <function looks_like_error_text at 0xe11e58baf380>('Traceback (most recent call last):\n  File "cli.py", line 1\n')
+E        +    where <function looks_like_error_text at 0xe11e58baf380> = _util.looks_like_error_text
+
+tests/unit/test_error_announcement_detection.py:153: AssertionError
+_______________ test_the_failure_message_names_which_shape_fired _______________
+
+    def test_the_failure_message_names_which_shape_fired():
+        """A CI reader must be able to tell a real announcement from a false
+        positive without re-deriving the regex. `error_announcement` returns the
+        shape name and the matched text; `assert_no_silent_failure` puts both in
+        the assertion message."""
+>       assert _util.error_announcement(PR70_DETAIL) is None
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'tests._util' has no attribute 'error_announcement'
+
+tests/unit/test_error_announcement_detection.py:202: AttributeError
+--------------------------- Captured stderr teardown ---------------------------
+time="2026-09-03T01:14:25-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-09-03T01:14:25-07:00" level=info msg=ConnectionClosed connectionID=2
+time="2026-09-03T01:14:25-07:00" level=info msg="Server closing listener. No longer accepting connections."
+time="2026-09-03T01:14:25-07:00" level=info msg="stats stopped: context canceled"
+=========================== short test summary info ============================
+FAILED tests/unit/test_error_announcement_detection.py::test_pr70_description_is_prose_not_an_announcement
+FAILED tests/unit/test_error_announcement_detection.py::test_healthy_doctor_run_carrying_pr70s_description_is_not_a_silent_failure
+FAILED tests/unit/test_error_announcement_detection.py::test_mentioning_errors_is_not_announcing_one[reports UNAVAILABLE (not ERROR) per project]
+FAILED tests/unit/test_error_announcement_detection.py::test_mentioning_errors_is_not_announcing_one[this command never reports an error it did not observe]
+FAILED tests/unit/test_error_announcement_detection.py::test_mentioning_errors_is_not_announcing_one[ERROR and UNAVAILABLE are different readings of the same field]
+FAILED tests/unit/test_error_announcement_detection.py::test_mentioning_errors_is_not_announcing_one[{"ok": true, "error": null}]
+FAILED tests/unit/test_error_announcement_detection.py::test_mentioning_errors_is_not_announcing_one[{"ok": true, "error": ""}]
+FAILED tests/unit/test_error_announcement_detection.py::test_real_error_announcements_are_still_caught[unknown command "reclaim" for "bd"]
+FAILED tests/unit/test_error_announcement_detection.py::test_real_error_announcements_are_still_caught[Traceback (most recent call last):\n  File "cli.py", line 1\n]
+FAILED tests/unit/test_error_announcement_detection.py::test_the_failure_message_names_which_shape_fired
+10 failed, 13 passed in 0.24s
