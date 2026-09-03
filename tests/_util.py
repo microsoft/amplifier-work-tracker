@@ -106,3 +106,74 @@ def assert_no_silent_failure(result: subprocess.CompletedProcess) -> None:
             "exactly the silent-failure shape amplifier-work-tracker shipped before): "
             f"shape={shape} matched={matched!r} in {combined[:500]!r}"
         )
+
+
+# --------------------------------------------------------------------------
+# Reporting EVERY problem a `doctor` run has, not just the first one.
+#
+# `test_doctor_quick_succeeds_against_the_real_installed_bd` used to be three
+# sequential asserts with `assert result.returncode == 0` first. Any exit-1
+# -- including a purely environmental one the fixture itself creates -- took
+# the test down before the two assertions after it ever ran. That is not a
+# style nit; it MASKED real defects, twice measurably:
+#
+#   - `model_performance-wp6`: the `\berror\b` collision in the announcement
+#     predicate lived AFTER the returncode assertion, so it was invisible on
+#     every developer machine and only ever appeared in CI. It blocked PR #70
+#     for days.
+#   - `model_performance-kxk`: same test, same masking, different defect.
+#
+# The environmental FAIL is fixed at the source (`model_performance-jyg` --
+# `sweeps.alive` no longer fails against a root the service does not serve),
+# but the masking is a SEPARATE defect: the next environmental exit-1, from
+# any cause, would hide the next real one exactly the same way. So the checks
+# are collected independently and reported together, and the collection is a
+# named function so it can be unit-tested directly -- see
+# tests/unit/test_doctor_surface_failures.py.
+#
+# This ADDS a report; it removes no guarantee. `assert_no_silent_failure` and
+# its announcement predicate are called unchanged.
+# --------------------------------------------------------------------------
+
+
+def doctor_surface_failures(result: subprocess.CompletedProcess) -> list[str]:
+    """Every independent way a `doctor` run can be wrong, as a list.
+
+    Empty list means a healthy run. Each entry is one self-contained
+    problem, phrased so a CI reader knows which property broke without
+    re-running anything.
+    """
+    failures: list[str] = []
+    if result.returncode != 0:
+        failures.append(
+            f"exit code: expected 0, got {result.returncode} -- doctor reports a violated "
+            f"assumption (see the [FAIL] line(s) in its output below)"
+        )
+    if "All" not in (result.stdout or ""):
+        failures.append(
+            "summary line: expected doctor to print `All N assumptions hold`, which it only "
+            "prints when every assumption passed"
+        )
+    try:
+        assert_no_silent_failure(result)
+    except AssertionError as e:
+        failures.append(f"silent-failure guard: {e}")
+    return failures
+
+
+def assert_doctor_run_is_clean(result: subprocess.CompletedProcess) -> None:
+    """Assert a `doctor` run had NO problems, naming every one it did have.
+
+    One assert, many reported problems -- deliberately not a chain of
+    asserts, so the first failure can never hide the ones after it.
+    """
+    failures = doctor_surface_failures(result)
+    if not failures:
+        return
+    numbered = "\n".join(f"  {i}. {f}" for i, f in enumerate(failures, 1))
+    raise AssertionError(
+        f"`doctor --quick` failed {len(failures)} independent check(s) "
+        f"(all of them reported, none masked by the first):\n"
+        f"{numbered}\n\n--- doctor stdout ---\n{result.stdout}"
+        f"\n--- doctor stderr ---\n{result.stderr}"
+    )
