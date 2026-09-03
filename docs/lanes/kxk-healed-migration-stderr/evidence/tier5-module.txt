@@ -1,0 +1,32 @@
+### TIER 5 -- make test-module (modules/tool-work-tracker/tests, NOT in testpaths)
+2026-09-03T11:31:48Z
+modules/tool-work-tracker/tests/test_work_status.py::test_status_reports_success_when_there_is_nothing_to_report PASSED [ 87%]
+modules/tool-work-tracker/tests/test_work_status.py::test_status_reports_failure_when_a_project_cannot_be_listed PASSED [ 88%]
+modules/tool-work-tracker/tests/test_work_status.py::test_status_still_reports_every_healthy_project_alongside_a_broken_one PASSED [ 89%]
+modules/tool-work-tracker/tests/test_work_status.py::test_status_row_carries_the_full_per_status_breakdown PASSED [ 90%]
+modules/tool-work-tracker/tests/test_work_status.py::test_claim_on_an_empty_queue_still_reports_success_with_claimed_null PASSED [ 91%]
+modules/tool-work-tracker/tests/test_work_subscribe.py::test_subscribe_is_idempotent_and_validates_project PASSED [ 92%]
+modules/tool-work-tracker/tests/test_work_subscribe.py::test_subscribe_refuses_unknown_project PASSED [ 93%]
+modules/tool-work-tracker/tests/test_work_subscribe.py::test_unsubscribe_is_idempotent PASSED [ 93%]
+modules/tool-work-tracker/tests/test_work_subscribe.py::test_subscriptions_lists_current_state PASSED [ 94%]
+modules/tool-work-tracker/tests/test_work_subscribe.py::test_claim_auto_subscribes_to_its_project PASSED [ 95%]
+modules/tool-work-tracker/tests/test_work_subscribe.py::test_reminder_snapshot_reports_subscribed_project_counts PASSED [ 96%]
+modules/tool-work-tracker/tests/test_work_subscribe.py::test_reminder_snapshot_empty_when_no_subscriptions PASSED [ 97%]
+modules/tool-work-tracker/tests/test_work_subscribe.py::test_reminder_snapshot_reports_holding_and_fresh_custody PASSED [ 98%]
+modules/tool-work-tracker/tests/test_work_subscribe.py::test_reminder_snapshot_reports_custody_stale_true_past_ttl PASSED [ 99%]
+modules/tool-work-tracker/tests/test_work_subscribe.py::test_reminder_snapshot_never_mutates_or_touches_custody PASSED [100%]
+
+=============================== warnings summary ===============================
+modules/tool-work-tracker/tests/test_conformance_fixtures.py::test_fixture2_bad_half_stale_holders_resolve_is_refused_after_a_real_reap
+modules/tool-work-tracker/tests/test_conformance_fixtures.py::test_fixture2_good_half_integrator_close_of_a_reclaimed_item_still_succeeds
+modules/tool-work-tracker/tests/test_conformance_fixtures.py::test_fixture3_a_fenced_reclaim_clears_the_latch_with_no_manual_step
+modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim
+modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_declare_refusal_after_reap_clears_held_and_allows_new_claim
+modules/tool-work-tracker/tests/test_reap_recovery.py::test_background_renew_loop_detects_reap_and_clears_held_state
+  /home/bkrabach/dev/hw-model-performance/lanes/kxk-healed-migration-stderr/amplifier-work-tracker/.venv/lib/python3.12/site-packages/_pytest/stash.py:108: RuntimeWarning: coroutine 'alarm_for_reclaimed_item' was never awaited
+    del self._storage[key]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================= 115 passed, 6 warnings in 391.23s (0:06:31) ==================

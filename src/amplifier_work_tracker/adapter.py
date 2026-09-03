@@ -1298,11 +1298,15 @@ def _delete_item_rows_best_effort(
         env=_bd_env(),  # non-interactive: see `_bd_env`'s docstring
     )
     if p.returncode != 0:
+        # Same reasoning as the dirty-schema heal in `Workspace.create`: the
+        # caller's operation continues, so this warning must describe the
+        # failed cleanup rather than republish dolt's announcement onto a
+        # stderr that will accompany exit 0.
         logger.warning(
             "best-effort cleanup of partially-moved item %r in %r failed: %s",
             item_id,
             db,
-            (p.stderr or p.stdout or "").strip()[:300],
+            _quote_handled_output(p.stderr or p.stdout),
         )
 
 
@@ -2241,6 +2245,88 @@ def _clean_bd_error(blob: str | None, *, limit: int = STATUS_ERROR_MAX) -> str:
             "escalate with that output attached"
         )
     return truncate_status(raw, limit)
+
+
+# --------------------------------------------------------------------------
+# Quoting foreign output on a HANDLED path.
+#
+# `logger.warning` and above reach a plain CLI invocation's stderr with no
+# handler configured at all -- Python's "handler of last resort", the same
+# mechanism `_clean_bd_error` documents above. So a warning that interpolates
+# a subprocess's stderr verbatim republishes THAT program's error
+# ANNOUNCEMENT as if it were this command's own.
+#
+# Measured, `model_performance-kxk`: `doctor --quick` detected a dirty schema
+# migration, dropped, retried, succeeded, printed `All 35 assumptions hold`
+# and exited 0 -- with this on stderr:
+#
+#   project 'contract...': bd init hit a dirty schema migration -- dropping
+#     and retrying once: [mysql] ... busy buffer
+#   Error: failed to open Dolt store: failed to initialize schema: ...
+#
+# That second line is NOT bd's stderr escaping around us. It is inside our
+# own warning: `blob.strip()[:300]` is a MULTI-LINE blob, and the quoted text
+# in the recorded evidence is exactly 300 characters long -- it stops
+# mid-sentence at "run 'bd dolt commit' to", the slice boundary. We printed
+# it, on a path where nothing ultimately failed.
+#
+# From outside, an error announcement alongside exit 0 is indistinguishable
+# from the silent-failure shape `tests/_util.assert_no_silent_failure` exists
+# to forbid, so a HEALED run can fail a CLI-tier test intermittently, with a
+# real-looking message. That is the worst kind of flake.
+#
+# The fix is NOT to go quiet. The recovery must stay visible and the cause is
+# worth reading. It is to quote bd's text as DESCRIPTION rather than
+# republish it as ANNOUNCEMENT -- the exact distinction `model_performance-wp6`
+# drew (802c204) when it stopped the predicate matching prose. Two narrow
+# transformations:
+#
+#   1. Flatten to one line. A multi-line quoted blob puts `Error:` at the
+#      start of a line of OUR stderr, which is precisely where it reads as
+#      ours rather than as quoted material.
+#   2. Attribute each announcement to bd instead of asserting it: `Error:`
+#      becomes `[bd Error]`. The word survives (still greppable), the detail
+#      survives (still readable); only the impersonation ends.
+#
+# The rules below deliberately cover EVERY shape in
+# `tests/_util._ERROR_ANNOUNCEMENT_RES`, not just the one observed -- a
+# handled path must not republish any of them. Product code cannot import a
+# test helper, so `tests/unit/test_handled_output_is_not_an_announcement.py`
+# closes the loop from the other side: it runs the real test-side predicate
+# over this function's output, and goes red if a shape is ever added there
+# without being defused here.
+# --------------------------------------------------------------------------
+_HANDLED_OUTPUT_DEFUSALS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # JSON error field first: `"error":` must not be reshaped by the
+    # colon-announcement rule below, which would leave the JSON key mangled.
+    (re.compile(r'("error")\s*:', re.IGNORECASE), r"\1 ="),
+    (re.compile(r"\b(error|fatal|panic)\s*:", re.IGNORECASE), r"[bd \1]"),
+    (re.compile(r"\b(error)(\s+running\b)", re.IGNORECASE), r"[bd \1]\2"),
+    (re.compile(r"\bunknown\s+command\b", re.IGNORECASE), "unknown-command"),
+    (re.compile(r"(Traceback \(most recent call last\))\s*:"), r"\1"),
+)
+
+
+def _quote_handled_output(blob: str | None, *, limit: int = STATUS_ERROR_MAX) -> str:
+    """Render another program's output for quoting inside a log line on a
+    path this module HANDLED -- see the block comment above for the measured
+    leak this exists to stop.
+
+    Distinct from `_clean_bd_error`, and the two must not be merged.
+    `_clean_bd_error` builds the text of a `BeadsError` -- a real failure,
+    on its way to a non-zero exit, which SHOULD announce loudly. This one is
+    for the opposite case: a condition that was detected and recovered from,
+    where the announcement would be a lie.
+
+    Returns one line, with every error-announcement shape attributed to its
+    source rather than asserted, truncated at a word boundary.
+    """
+    one_line = " ".join((blob or "").split())
+    if not one_line:
+        return "(bd reported no detail)"
+    for pattern, replacement in _HANDLED_OUTPUT_DEFUSALS:
+        one_line = pattern.sub(replacement, one_line)
+    return truncate_status(one_line, limit)
 
 
 @dataclass
@@ -4791,11 +4877,16 @@ class Workspace:
                     # schema migration -- never from normal item
                     # operations. Drop the residue and retry exactly once
                     # rather than permanently burning this name.
+                    # `_quote_handled_output`, never a bare slice of `blob`:
+                    # this line goes to a plain CLI's stderr, and the retry
+                    # below is expected to SUCCEED. Republishing bd's own
+                    # `Error:` here is what made a healed run look like a
+                    # silent failure (`model_performance-kxk`).
                     logger.warning(
                         "project %r: bd init hit a dirty schema migration -- dropping "
                         "and retrying once: %s",
                         name,
-                        blob.strip()[:300],
+                        _quote_handled_output(blob),
                     )
                     try:
                         drop_database(name)

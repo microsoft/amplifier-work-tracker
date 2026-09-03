@@ -1,0 +1,49 @@
+=== AFTER the fix: the new file + wp6's own file ===
+2026-09-03T11:21:54Z
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- /home/bkrabach/dev/hw-model-performance/lanes/kxk-healed-migration-stderr/amplifier-work-tracker/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/bkrabach/dev/hw-model-performance/lanes/kxk-healed-migration-stderr/amplifier-work-tracker
+configfile: pyproject.toml
+plugins: anyio-4.15.0, asyncio-1.4.0, amplifier-core-1.6.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 36 items
+
+tests/unit/test_handled_output_is_not_an_announcement.py::test_a_healed_dirty_migration_leaves_no_error_announcement PASSED [  2%]
+tests/unit/test_handled_output_is_not_an_announcement.py::test_the_healed_warning_is_a_single_line PASSED [  5%]
+tests/unit/test_handled_output_is_not_an_announcement.py::test_a_migration_that_really_fails_still_raises PASSED [  8%]
+tests/unit/test_handled_output_is_not_an_announcement.py::test_a_migration_that_really_fails_exits_non_zero_and_announces PASSED [ 11%]
+tests/unit/test_handled_output_is_not_an_announcement.py::test_every_known_announcement_shape_has_a_sample PASSED [ 13%]
+tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_defuses_every_shape[error-colon] PASSED [ 16%]
+tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_defuses_every_shape[error-running] PASSED [ 19%]
+tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_defuses_every_shape[json-error-field] PASSED [ 22%]
+tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_defuses_every_shape[python-traceback] PASSED [ 25%]
+tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_defuses_every_shape[unknown-command] PASSED [ 27%]
+tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_keeps_the_detail_readable PASSED [ 30%]
+tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_reports_emptiness_rather_than_nothing PASSED [ 33%]
+tests/unit/test_handled_output_is_not_an_announcement.py::test_quote_handled_output_truncates_at_a_word_boundary PASSED [ 36%]
+tests/unit/test_error_announcement_detection.py::test_pr70_description_is_prose_not_an_announcement PASSED [ 38%]
+tests/unit/test_error_announcement_detection.py::test_healthy_doctor_run_carrying_pr70s_description_is_not_a_silent_failure PASSED [ 41%]
+tests/unit/test_error_announcement_detection.py::test_mentioning_errors_is_not_announcing_one[Write conflicts surface as retryable serialization errors] PASSED [ 44%]
+tests/unit/test_error_announcement_detection.py::test_mentioning_errors_is_not_announcing_one[reports UNAVAILABLE (not ERROR) per project] PASSED [ 47%]
+tests/unit/test_error_announcement_detection.py::test_mentioning_errors_is_not_announcing_one[an infrastructure read failure raises BeadsUnavailableError] PASSED [ 50%]
+tests/unit/test_error_announcement_detection.py::test_mentioning_errors_is_not_announcing_one[this command never reports an error it did not observe] PASSED [ 52%]
+tests/unit/test_error_announcement_detection.py::test_mentioning_errors_is_not_announcing_one[ERROR and UNAVAILABLE are different readings of the same field] PASSED [ 55%]
+tests/unit/test_error_announcement_detection.py::test_mentioning_errors_is_not_announcing_one[{"ok": true, "error": null}] PASSED [ 58%]
+tests/unit/test_error_announcement_detection.py::test_mentioning_errors_is_not_announcing_one[{"ok": true, "error": ""}] PASSED [ 61%]
+tests/unit/test_error_announcement_detection.py::test_real_error_announcements_are_still_caught[Error: unknown command "reclaim"] PASSED [ 63%]
+tests/unit/test_error_announcement_detection.py::test_real_error_announcements_are_still_caught[reaping stale holds...\nError: unknown command "reclaim"\n] PASSED [ 66%]
+tests/unit/test_error_announcement_detection.py::test_real_error_announcements_are_still_caught[  brokenqueue  TOTAL - READY - HELD -  ERROR: database unreachable] PASSED [ 69%]
+tests/unit/test_error_announcement_detection.py::test_real_error_announcements_are_still_caught[ERROR: tokens file not found: /etc/awt/tokens.json] PASSED [ 72%]
+tests/unit/test_error_announcement_detection.py::test_real_error_announcements_are_still_caught[amplifier-work-tracker: error: unrecognized arguments: --nope] PASSED [ 75%]
+tests/unit/test_error_announcement_detection.py::test_real_error_announcements_are_still_caught[internal error: connection reset by peer] PASSED [ 77%]
+tests/unit/test_error_announcement_detection.py::test_real_error_announcements_are_still_caught[{"custody": {"error": "dolt: connection refused"}}] PASSED [ 80%]
+tests/unit/test_error_announcement_detection.py::test_real_error_announcements_are_still_caught[error running bd list --json] PASSED [ 83%]
+tests/unit/test_error_announcement_detection.py::test_real_error_announcements_are_still_caught[unknown command "reclaim" for "bd"] PASSED [ 86%]
+tests/unit/test_error_announcement_detection.py::test_real_error_announcements_are_still_caught[Traceback (most recent call last):\n  File "cli.py", line 1\n] PASSED [ 88%]
+tests/unit/test_error_announcement_detection.py::test_the_shipped_reap_bug_still_fails_the_assertion PASSED [ 91%]
+tests/unit/test_error_announcement_detection.py::test_an_announced_error_with_a_nonzero_exit_is_fine PASSED [ 94%]
+tests/unit/test_error_announcement_detection.py::test_announcements_are_found_across_the_stdout_stderr_seam PASSED [ 97%]
+tests/unit/test_error_announcement_detection.py::test_the_failure_message_names_which_shape_fired PASSED [100%]
+
+============================== 36 passed in 0.21s ==============================
