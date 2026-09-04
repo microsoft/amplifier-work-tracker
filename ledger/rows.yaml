@@ -19,12 +19,37 @@
       - file: contracts/custody-coordination.v1.md
         sha256: ec4b736f8d6dca4ee3c29b6df8397a9d7b51d2eadd76965854e898924f529e1a
       - file: docs/VISION.md
-        sha256: b7547519a2b05432652c28c5c4201e669ea8a79ce8621d8615dacadb2f55da4c
+        sha256: f5eb400c79211d90980efec7b35120852a71efa78ace6106dacd25fb448d5013
   disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_ccv1_000
   notes: >
+    REHASHED 2026-09-04: `docs/VISION.md` extended to a two-seam repo vision at
+    the operator-surface ENCODE gate (owner-ratified "lgtm." 2026-09-04);
+    custody text byte-identical; full re-review performed. What moved in the
+    vision: the Scope line now names two seams, the Governing-contract line
+    became plural and points additionally at `contracts/operator-surface.v1.md`,
+    and a new `The Operator Surface` section (Principles 8-12), four anti-goals
+    and two Changelog entries were added. What did NOT move:
+    `contracts/custody-coordination.v1.md`, re-hashed byte-for-byte at this
+    re-hash and still `ec4b736f...` -- the boundary to the new contract is a
+    one-way citation, so the custody text was never opened. VISION.md
+    `b7547519...` -> `f5eb400c...`. FULL RE-REVIEW PERFORMED (mandatory on any
+    hash change, never a silent bump): all 24 rows were walked; every
+    contract-quoting row anchors into `contracts/custody-coordination.v1.md`,
+    whose bytes did not move, and NO row quotes `docs/VISION.md` text at all --
+    so ZERO rows needed re-anchoring, checked explicitly against the two vision
+    lines that DID change (Scope, Governing contract), which no row cites.
+    Dispositions re-verified against the tree rather than assumed: this branch
+    changes documentation only (`git diff origin/main --stat` touches the two
+    docs plus `ledger/`), so every probe re-ran green (`pytest ledger/checks
+    -q`: 26 passed) and the probes' discriminating power was re-confirmed by
+    `make ledger-mutate` (15/15 mutants killed). Tally unchanged: 22 CONFORMS /
+    2 NOT-ASSERTABLE / 0 VIOLATION / 0 GAP. `contracts/operator-surface.v1.md`
+    is deliberately NOT pinned in this row: it is a different contract and gets
+    its own SYNC row when the `OSV1-###` family is seeded.
+
     REHASHED 2026-09-03: owner-ratified DRAFT amendment ("ok, yes, proceed"),
     a three-part true-up recommended by the protocol authority -- (1) struck
     all `**Current state:**` annotations from every Core/NOT-ASSERTABLE

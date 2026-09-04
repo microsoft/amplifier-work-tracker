@@ -74,6 +74,7 @@ Its hero is fleet velocity with the counts an operator acts on: in flight, block
 
 ## Changelog
 
+- **2026-09-04 — ENCODE gate:** owner reviewed the DRAFT text and ratified it (literal: "lgtm."). Status remains DRAFT.
 - **2026-09-04 — DRAFT amendment, owner-ratified at the ENCODE gate.** Extended from one seam to two: added *The Operator Surface*, Principles 8–12, four anti-goals, and the second contract pointer; the custody text is unchanged. Owner's words: *"Let's make hero the velocity, along w/ other numbers that matter, such as the active/in-flight, blocked, need attention, open, etc. Focus is on observability, etc. The rest looks good to me."* That opening sentence is the owner-ratified purpose. Alternative set aside: a hero that is the age of the oldest unclaimed item, never a count — *"a giant `0` trains a viewer to stop looking"* (`webapp.py:37-44`). One vision per repo, so no sibling UX file.
 - **2026-09-01 — DRAFT.** First draft, derived from Phase 0 evidence and ratified decisions. Awaiting owner review at ENCODE gate and Freeze Bar ratification before promotion to FROZEN.
 
