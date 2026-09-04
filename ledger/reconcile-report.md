@@ -9,6 +9,61 @@ ENCODE gate 2026-09-01)
 
 ---
 
+## Re-review 2026-09-04 (VISION.md two-seam extension)
+
+**Trigger:** `docs/VISION.md` changed, so `CCV1-000`'s pin failed. Under
+`LEDGER-FORMAT.md` sec.4 that mandates a **full ledger re-review, never a silent
+hash bump** — this section is that re-review's record.
+**Run:** 2026-09-04, branch `converge/encode-operator-surface` (branched from
+`main`), at the operator-surface ENCODE gate. Owner ratification of the DRAFT
+text, literal: *"lgtm."*
+
+**What changed.** `docs/VISION.md` was extended from a one-seam vision to the
+one repo vision covering two seams: the Scope line now names the custody seam
+**and** the operator surface, the `Governing contract:` line became
+`Governing contracts:` and points additionally at
+`contracts/operator-surface.v1.md`, and a new *The Operator Surface* section
+(Principles 8–12), four anti-goals, and Changelog entries were added.
+`contracts/operator-surface.v1.md` was added as a new DRAFT contract in the same
+change. **`contracts/custody-coordination.v1.md` was not opened** — the boundary
+between the two contracts is a one-way citation from the new contract into the
+custody one.
+
+**Hash, old → new** (`sha256`, whole-file bytes, computed exactly as
+`ledger/checks/_support.py::sha256` does):
+
+```
+docs/VISION.md                        b7547519a2b05432652c28c5c4201e669ea8a79ce8621d8615dacadb2f55da4c
+                                   -> f5eb400c79211d90980efec7b35120852a71efa78ace6106dacd25fb448d5013
+
+contracts/custody-coordination.v1.md  ec4b736f8d6dca4ee3c29b6df8397a9d7b51d2eadd76965854e898924f529e1a
+                                      (unchanged — re-verified byte-for-byte on this run, not assumed)
+```
+
+**Rows re-anchored: 0 — checked, not assumed.** All 24 rows were walked. Every
+row that quotes contract text anchors into `contracts/custody-coordination.v1.md`
+(24 `contract.file` cites), whose bytes did not move; `docs/VISION.md` appears in
+the ledger **only** as a `CCV1-000` SYNC hash entry — no row quotes vision text,
+so the two vision lines that did change (Scope, Governing contract) are cited by
+no row and nothing needed re-anchoring or a notes correction. `pytest
+ledger/checks -q` re-verifies every quote on every run: **26 passed**.
+
+**Dispositions unchanged: 22 CONFORMS / 2 NOT-ASSERTABLE / 0 VIOLATION / 0 GAP**
+— re-checked against the tree rather than assumed. This branch touches
+documentation and the ledger only (`git diff origin/main --stat`:
+`contracts/operator-surface.v1.md`, `docs/VISION.md`, `ledger/rows.yaml`,
+`ledger/reconcile-report.md`), so no row's subject code moved; every probe was
+re-run green and every probe's discriminating power re-confirmed by
+`make ledger-mutate` — **15 / 15** mutations still flip their probe red, zero
+unproven. §1's table stands as written.
+
+**Not seeded here.** `contracts/operator-surface.v1.md` carries no ledger rows
+yet and is deliberately absent from `CCV1-000`'s pin: it is a different contract
+and will be SEEDED as its own row family (`OSV1-###`), with its own SYNC row, in
+a following step.
+
+---
+
 ## 1. Rows by disposition
 
 **Re-reviewed 2026-09-03, after the DRAFT amendment** (owner-ratified,
@@ -58,6 +113,22 @@ contract clause does not back.
 ---
 
 ## 2. SYNC status
+
+**2026-09-04 rehash** (operator-surface ENCODE gate, owner-ratified *"lgtm."* —
+see the re-review section above): `CCV1-000` now pins
+
+```
+contracts/custody-coordination.v1.md  ec4b736f8d6dca4ee3c29b6df8397a9d7b51d2eadd76965854e898924f529e1a
+docs/VISION.md                        f5eb400c79211d90980efec7b35120852a71efa78ace6106dacd25fb448d5013
+```
+
+The custody contract's hash is unchanged — the vision moved under the ledger, the
+contract did not. This mismatch triggered the **mandatory full-ledger re-review**
+recorded above: 24 rows walked, zero re-anchored (no row quotes `docs/VISION.md`
+text), dispositions unchanged at 22 CONFORMS / 2 NOT-ASSERTABLE, probes green
+(26) and still discriminating (`make ledger-mutate` 15/15).
+`contracts/operator-surface.v1.md` is not pinned here — its own `OSV1-###` SYNC
+row lands when that family is seeded.
 
 **2026-09-03 rehash** (owner-ratified DRAFT amendment -- see the contract's own
 Changelog): `CCV1-000` now pins
@@ -508,6 +579,18 @@ remain in the kit, consistent with §1's current tally.
 
 ## Changelog
 
+- **2026-09-04 — VISION.md two-seam extension, mandatory full re-review.**
+  Owner-ratified (*"lgtm."*) DRAFT text at the operator-surface ENCODE gate:
+  `docs/VISION.md` became the one repo vision over two seams and
+  `contracts/operator-surface.v1.md` was added as a new DRAFT contract. SYNC
+  (`CCV1-000`) rehashed for the vision only (`b7547519...` -> `f5eb400c...`);
+  the custody contract's bytes are unchanged and were re-verified, not assumed.
+  Full re-review performed (never a silent bump): 24 rows walked, **0
+  re-anchored** — no row quotes vision text, so the changed Scope and
+  Governing-contract lines are cited by no row — dispositions unchanged (22
+  CONFORMS / 2 NOT-ASSERTABLE / 0 VIOLATION / 0 GAP), `pytest ledger/checks -q`
+  26 passed, `make ledger-mutate` 15/15. No `OSV1-###` rows created here; that
+  contract is seeded as its own row family in a following step.
 - **2026-09-03 — DRAFT amendment, mandatory full re-review.** Owner-ratified
   ("ok, yes, proceed") three-part contract true-up: struck all
   `**Current state:**` annotations (conformance status lives in the ledger

@@ -2,9 +2,9 @@
 
 **Status:** DRAFT
 
-**Scope:** This document describes the vision for the **custody and coordination seam** of amplifier-work-tracker. The seam governs how claimed items are held exclusively by one actor while that actor actively maintains its grip. Other concerns — dashboard rendering, dolt-ops internals, project semantics, and work-item filtering — are explicitly out of scope.
+**Scope:** This is the vision for amplifier-work-tracker, which governs two seams: the **custody and coordination seam** — how claimed items are held exclusively by one actor while that actor actively maintains its grip — and the **operator surface**, the human web surface one operator watches. Other concerns — dolt-ops internals, project semantics, and work-item filtering — are explicitly out of scope.
 
-**Governing contract:** `contracts/custody-coordination.v1.md` — the contract that backs this vision.
+**Governing contracts:** `contracts/custody-coordination.v1.md` (custody seam: *The Vision*, Principles 1–7); `contracts/operator-surface.v1.md` (operator surface: *The Operator Surface*, Principles 8–12). This vision points to them; it does not restate them.
 
 ---
 
@@ -32,6 +32,26 @@ The system offers a custody and coordination seam for shared work items in a dis
 
 ---
 
+## The Operator Surface
+
+For the one operator supervising a fleet of coding agents, this is the ambient second-monitor surface that shows what the fleet is doing — velocity, what is in flight, what is blocked, what needs a human — so nothing is stuck and nothing is missed. Calm is reported, never celebrated; the alarm is what the surface exists to make unmissable.
+
+Its hero is fleet velocity with the counts an operator acts on: in flight, blocked, needs attention, open.
+
+### Operating Principles
+
+8. **Observability leads.** Velocity and the counts that decide whether to step in come first.
+
+9. **Calm is reported, never celebrated.** A calm screen paints no alarm colour; an empty widget keeps its slot.
+
+10. **State is never colour-only.** Colour is redundant encoding; the word is the encoding.
+
+11. **One source of visual truth.** Colour, font, and size come from the token set.
+
+12. **Measured, not eyeballed.** Contrast, targets, and layout are numbers a machine takes from the rendered page. A look ratifies; it never certifies.
+
+---
+
 ## What This Repo Deliberately Resists
 
 - **Self-enforcing TTLs:** The TTL is enforced by a required, scheduled, observable sweep. Without the sweep running, the TTL is aspirational. A dead agent's hold persists indefinitely until the sweep runs.
@@ -42,9 +62,19 @@ The system offers a custody and coordination seam for shared work items in a dis
 
 - **Prose-only assertions of custody behavior:** Every major invariant is backed by machine-checkable code. If a behavior is enforced, the code enforces it. Prose-only claims enter the contract as `NOT-ASSERTABLE` and are reviewed at cadence.
 
+- **A front-end framework, template engine, build step, or plugin loader:** the operator surface is server-rendered HTML.
+
+- **Kanban drag-boards, and client-side state that dies on refresh:** dragging a card to change state fights machine-owned custody.
+
+- **Agents as dashboard users:** they work through the `work_*` tool seam; a machine-readable web surface is an amendment, never a drift.
+
+- **Notifying on calm:** push carries one event class — a custody-TTL breach.
+
 ---
 
 ## Changelog
 
+- **2026-09-04 — ENCODE gate:** owner reviewed the DRAFT text and ratified it (literal: "lgtm."). Status remains DRAFT.
+- **2026-09-04 — DRAFT amendment, owner-ratified at the ENCODE gate.** Extended from one seam to two: added *The Operator Surface*, Principles 8–12, four anti-goals, and the second contract pointer; the custody text is unchanged. Owner's words: *"Let's make hero the velocity, along w/ other numbers that matter, such as the active/in-flight, blocked, need attention, open, etc. Focus is on observability, etc. The rest looks good to me."* That opening sentence is the owner-ratified purpose. Alternative set aside: a hero that is the age of the oldest unclaimed item, never a count — *"a giant `0` trains a viewer to stop looking"* (`webapp.py:37-44`). One vision per repo, so no sibling UX file.
 - **2026-09-01 — DRAFT.** First draft, derived from Phase 0 evidence and ratified decisions. Awaiting owner review at ENCODE gate and Freeze Bar ratification before promotion to FROZEN.
 
