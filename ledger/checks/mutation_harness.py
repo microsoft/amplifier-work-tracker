@@ -54,15 +54,25 @@ from pathlib import Path
 
 from . import _support
 from . import test_custody_rows as probes
+from . import test_operator_rows as op_probes
 from ._support import (
     ADAPTER,
     AWARENESS,
+    CHARTSVG,
     CI_WORKFLOW,
     CLAIM_SKILL,
     CONTRACT_PATH,
     FLIP_VIOLATION_MOVEMENT,
     MAKEFILE,
+    OPERATOR_CONTRACT_PATH,
+    PYPROJECT,
+    ROWS_PATH,
     TOOL_MODULE,
+    WEBAPP,
+    WEBBROWSE,
+    WEBPWA,
+    WEBTHEME,
+    WIDGETS,
     collapse,
     expected_flip_direction,
     is_pinning,
@@ -70,6 +80,12 @@ from ._support import (
 )
 
 CLI = probes.CLI
+
+#: Every module that owns `test_row_*` probes. Readers are patched in ALL of
+#: them, so a mutation is seen the same way whichever family's probe runs --
+#: the alternative (patching only the family under test) would let a probe that
+#: happens to read through a sibling module silently see UNMUTATED source.
+PROBE_MODULES = (probes, op_probes)
 
 
 class HarnessOutOfDate(Exception):
@@ -128,6 +144,21 @@ class World:
         assert self.repo_root is not None
         return self.repo_root
 
+    def touch(self, rel: str) -> Path:
+        """Make a repo-relative path EXIST in the throwaway root.
+
+        The counterfactual most of the operator family's GAP rows need: those
+        probes pin the ABSENCE of a conformance-kit file, so the fixed world is
+        simply one where the file is there. Deliberately writes a stub with no
+        assertions in it -- the point is that a probe pinning "this path does
+        not exist" must go red the instant it does, BEFORE anyone has proved
+        the kit inside it discriminates.
+        """
+        path = self.fake_root() / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# stub created by the ledger mutation harness\n", encoding="utf-8")
+        return path
+
     def close(self) -> None:
         if self._tmp is not None:
             self._tmp.cleanup()
@@ -178,17 +209,29 @@ def applied(world: World) -> Iterator[None]:
     }
     saved: list[tuple[object, str, object]] = []
     try:
-        for module, names in ((_support, _PATCHED_IN_SUPPORT), (probes, _PATCHED_IN_PROBES)):
+        targets: list[tuple[object, tuple[str, ...]]] = [(_support, _PATCHED_IN_SUPPORT)]
+        targets += [(m, _PATCHED_IN_PROBES) for m in PROBE_MODULES]
+        for module, names in targets:
             for name in names:
+                if not hasattr(module, name):
+                    continue  # a probe module need not import every reader
                 saved.append((module, name, getattr(module, name)))
                 setattr(module, name, replacements[name])
         if world.repo_root is not None:
-            saved.append((probes, "REPO_ROOT", probes.REPO_ROOT))
-            probes.REPO_ROOT = world.repo_root
+            for module in PROBE_MODULES:
+                if hasattr(module, "REPO_ROOT"):
+                    saved.append((module, "REPO_ROOT", module.REPO_ROOT))
+                    module.REPO_ROOT = world.repo_root
+        # `rows()` memoises the PARSED ledger, so a mutation of rows.yaml would
+        # otherwise be invisible to the one probe that reads the ledger itself
+        # (OSV1-031). Cleared on the way in AND on the way out, so the mutated
+        # parse can never leak into a later probe.
+        _support.rows.cache_clear()
         yield
     finally:
         for module, name, original in reversed(saved):
             setattr(module, name, original)
+        _support.rows.cache_clear()
 
 
 # ----------------------------------------------------------------- mutations
@@ -312,6 +355,247 @@ def _m023_test_location_regresses(w: World) -> None:
     )
 
 
+# =============================================================================
+# OSV1 -- contracts/operator-surface.v1.md
+#
+# Twenty of that family's rows are red, so most counterfactuals below are the
+# FIXED world (direction VIOLATION-MOVEMENT): the probe pins the current wrong
+# shape and must go red the moment the shape is right. The seven green rows get
+# the known-wrong shape they forbid instead (direction REGRESSION).
+#
+# Eleven rows pin the absence of a conformance-kit file, and their
+# counterfactual is `world.touch(...)` -- the file simply existing. That is a
+# WEAKER mutation than the source-shape ones, deliberately and visibly: the
+# thing being proven is only that the pin notices the path appearing, which is
+# exactly what those rows claim and no more. Four of them carry a SECOND
+# mutation against their substantive half, so the weak half is never the only
+# evidence.
+# =============================================================================
+
+TIER_A_KIT = op_probes.TIER_A_KIT
+TIER_B_KIT = op_probes.TIER_B_KIT
+
+
+def _mo000_operator_contract_moved(w: World) -> None:
+    w.append(OPERATOR_CONTRACT_PATH, "\n<!-- a governed clause moved under the ledger -->\n")
+
+
+def _mo001_hero_gains_the_missing_count(w: World) -> None:
+    """FIXED: the needs-attention count Core 1 names joins the strip."""
+    w.replace(
+        WEBAPP,
+        'WD.KpiCard(key="ready", label="Ready", value=ready_total, href="#fleet"),',
+        'WD.KpiCard(key="attention", label="Needs attention", value=0, href="#x"),\n'
+        "                    "
+        'WD.KpiCard(key="ready", label="Ready", value=ready_total, href="#fleet"),',
+    )
+
+
+def _mo002_alias_becomes_a_bespoke_hue(w: World) -> None:
+    """REGRESSION: `--amber` stops resolving into the set and becomes a fourth hue."""
+    w.replace(WEBTHEME, "--amber:var(--alarm);", "--amber:#D9A253;")
+
+
+def _mo003_retired_palette_removed(w: World) -> None:
+    """FIXED: the specimen a calm pixel sweep would catch is tokenised."""
+    w.replace(
+        WEBPWA,
+        "background:#0D0D0C;color:#F2EEE6;",
+        "background:var(--color-ground);color:var(--ink-primary);",
+    )
+
+
+def _mo004_a_status_loses_its_word(w: World) -> None:
+    """REGRESSION-shaped: a chip carries only its class. This is the defect Core
+    3 forbids, and the row is GAP only because no RENDERED check exists -- the
+    vocabulary itself must still be watched.
+    """
+    w.replace(WEBBROWSE, '"open": "READY",', '"open": "",')
+
+
+def _mo005_the_worst_literal_site_is_migrated(w: World) -> None:
+    """FIXED (partially): the retired-palette inline body is tokenised, so the
+    census drops from 66 to 65 and the named specimen leaves the bucket.
+
+    BOTH halves of that one site must go: it carries a literal COLOUR pair AND
+    a literal `font:16px`/`padding:32px`. Replacing only the palette left the
+    site in the LITERAL bucket and the count unchanged at 66 -- the harness
+    caught that as a non-discriminating mutation, which is what it is for.
+    """
+    w.replace(
+        WEBPWA,
+        "background:#0D0D0C;color:#F2EEE6;",
+        "background:var(--color-ground);color:var(--ink-primary);",
+    )
+    w.replace(WEBPWA, "font:16px -apple-system,sans-serif;padding:32px;", "")
+
+
+_UNREGISTERED_SITE = "\n_LEDGER_MUTATION = f'<div style=\"height:{0}px\"></div>'\n"
+
+
+def _mo006_an_unregistered_computed_site_appears(w: World) -> None:
+    """REGRESSION: a new inline computed-geometry site that nobody registered.
+    This is the direction that matters -- the register may shrink freely.
+    """
+    w.append(WIDGETS, _UNREGISTERED_SITE)
+
+
+def _mo007_a_get_handler_reaches_a_write(w: World) -> None:
+    """REGRESSION: the L1 GET view acquires a mutating adapter call."""
+    w.replace(
+        WEBBROWSE,
+        "all_matching = bd.list(status=status_filter, include_resolved=True, limit=0)",
+        "all_matching = bd.list(status=status_filter, include_resolved=True, limit=0)\n"
+        "            bd.update(name)",
+    )
+
+
+def _mo008_swap_restores_the_pause_flag(w: World) -> None:
+    """FIXED: `restoreState` starts touching the pause control."""
+    w.replace(
+        WEBTHEME,
+        "window.scrollTo(0, state.scrollY);",
+        "window.scrollTo(0, state.scrollY);\n    window.__wtRefreshPaused;",
+    )
+
+
+def _mo009_the_below_floor_token_stops_painting_copy(w: World) -> None:
+    """FIXED: the empty-state caption moves off the below-floor token."""
+    w.replace(
+        CHARTSVG,
+        'style="fill:var(--ink-quiet)">',
+        'style="fill:var(--ink-tertiary)">',
+    )
+
+
+def _mo010_a_browser_driver_appears(w: World) -> None:
+    """FIXED: something in the repo starts driving a browser."""
+    w.append(PYPROJECT, '\n# test-only: "playwright>=1.40"\n')
+
+
+def _mo011_a_second_motion_block_appears(w: World) -> None:
+    """REGRESSION: reduced motion becomes per-widget opt-in."""
+    w.append(
+        WEBTHEME,
+        "\n_LEDGER_MUTATION_CSS = '@media (prefers-reduced-motion: reduce)"
+        "{ .widget{animation:none} }'\n",
+    )
+
+
+def _mo012_the_empty_sentence_becomes_a_zero(w: World) -> None:
+    """REGRESSION: the calm queue is celebrated as a numeral instead of said."""
+    w.replace(WEBAPP, "Nothing is waiting to be claimed in this queue right now.", "0")
+
+
+def _mo013_a_template_engine_is_declared(w: World) -> None:
+    """REGRESSION: the manifest acquires a template engine."""
+    w.replace(PYPROJECT, '"pyyaml>=6.0",', '"pyyaml>=6.0",\n    "jinja2>=3.1",')
+
+
+def _mo014_a_chart_library_is_declared(w: World) -> None:
+    """REGRESSION: the manifest acquires a charting library."""
+    w.replace(PYPROJECT, '"itsdangerous>=2.1",', '"itsdangerous>=2.1",\n    "plotly>=5.20",')
+
+
+def _mo015_the_unbounded_query_is_bounded(w: World) -> None:
+    """FIXED: the L1 view stops asking for everything."""
+    w.replace(WEBBROWSE, "include_resolved=True, limit=0)", "include_resolved=True, limit=200)")
+
+
+def _mo016_the_theme_starts_persisting(w: World) -> None:
+    """FIXED: a chosen theme survives a refresh."""
+    w.replace(
+        WEBAPP,
+        "document.documentElement.setAttribute('data-theme', t);",
+        "document.documentElement.setAttribute('data-theme', t);\n"
+        "  localStorage.setItem('wt-theme', t);",
+    )
+
+
+def _mo017_a_second_push_call_site_appears(w: World) -> None:
+    """REGRESSION: the push channel acquires a second event class (Backlogged 5
+    without the owner ratifying it).
+    """
+    w.append(WEBAPP, "\ndef _ledger_mutation():\n    WP.fire_reclaim_alarm(1, 2, 3)\n")
+
+
+def _mo_tier_a_kit_appears(w: World) -> None:
+    w.touch(TIER_A_KIT)
+
+
+def _mo_tier_b_kit_appears(w: World) -> None:
+    w.touch(TIER_B_KIT)
+
+
+def _mo022_the_swap_mechanism_changes(w: World) -> None:
+    """The substantive half of Conformance 3's pin: the whole-body innerHTML
+    replacement IS the mechanism the bad fixture describes.
+    """
+    w.replace(
+        WEBTHEME,
+        "document.body.innerHTML = doc.body.innerHTML;",
+        "document.body.replaceChildren(...doc.body.children);",
+    )
+
+
+def _mo023_a_swept_breakpoint_disappears(w: World) -> None:
+    """The substantive half of Conformance 4's pin: a viewport the stylesheet
+    no longer knows about is a different test.
+
+    Targets 1280px specifically because it is the only one of the three swept
+    widths declared exactly once -- 430px appears in two separate `@media`
+    blocks, so moving one would leave the probe's containment check satisfied
+    and prove nothing.
+    """
+    w.replace(WEBTHEME, "@media (max-width:1280px){", "@media (max-width:1281px){")
+
+
+def _mo027_the_makefile_wires_the_kit(w: World) -> None:
+    """The wiring half of Freeze 1: existing is not the same as running."""
+    w.append(MAKEFILE, "\ntest-conformance:\n\t$(PYTEST) tests/conformance -v\n")
+
+
+def _mo029_an_artifact_directory_appears(w: World) -> None:
+    """The substantive half of Freeze 3: artifacts start being emitted."""
+    w.touch("tests/conformance/operator_surface/browser/artifacts/.keep")
+
+
+def _mo031_a_red_core_row_goes_green(w: World) -> None:
+    """FIXED: one of the ten red Core-carrying rows flips, so the gate's tally
+    moves. Reaches the ledger through the patched reader plus the cache clear
+    `applied()` performs -- `rows()` memoises the parse.
+    """
+    w.replace(
+        ROWS_PATH,
+        "  disposition: VIOLATION\n  work: work_item_pipeline-ujy",
+        "  disposition: CONFORMS\n  work: work_item_pipeline-ujy",
+    )
+
+
+def _mo032_the_register_grows(w: World) -> None:
+    """Freeze 6's enumerated half moves. NOTE, honestly: the OTHER half (zero
+    literal sites remaining) is not simulable in memory -- it would mean
+    rewriting 66 real sites -- so this mutation proves the enumerated half
+    only. OSV1-005's own mutation is what proves the LITERAL bucket
+    discriminates.
+    """
+    w.append(WIDGETS, _UNREGISTERED_SITE)
+
+
+def _mo033_the_contract_quote_is_corrected(w: World) -> None:
+    """FIXED: the amendment strikes the markdown emphasis that broke Freeze 7."""
+    w.replace(OPERATOR_CONTRACT_PATH, "**never a count**", "never a count")
+
+
+def _mo034_the_changelog_records_a_look(w: World) -> None:
+    """FIXED: a Changelog entry records the owner's rendered-page look."""
+    w.append(
+        OPERATOR_CONTRACT_PATH,
+        "\n- **2026-09-05 — owner looked at the rendered L0, L1 and L2 at 430, 900 and "
+        "1280px in both themes.**\n",
+    )
+
+
 #: One entry per counterfactual. Rows with several separable halves get one
 #: mutation per half, so a probe that would notice only ONE of them is caught
 #: rather than credited for the whole row.
@@ -385,6 +669,141 @@ MUTATIONS: tuple[Mutation, ...] = (
         "the contract's corrected Fixture 1 Test-location line regresses to the stale path",
         _m023_test_location_regresses,
     ),
+    # ------------------------------------------------------------------ OSV1
+    Mutation(
+        "OSV1-000",
+        "a governed contract moved under the pinned hash",
+        _mo000_operator_contract_moved,
+    ),
+    Mutation(
+        "OSV1-001",
+        "the missing needs-attention count joins the L0 strip",
+        _mo001_hero_gains_the_missing_count,
+    ),
+    Mutation(
+        "OSV1-002",
+        "the --amber alias acquires its own literal value (a bespoke fourth status hue)",
+        _mo002_alias_becomes_a_bespoke_hue,
+    ),
+    Mutation(
+        "OSV1-003",
+        "the retired palette a calm sweep would catch is tokenised away",
+        _mo003_retired_palette_removed,
+    ),
+    Mutation(
+        "OSV1-004",
+        "a status chip loses its word and carries only a class",
+        _mo004_a_status_loses_its_word,
+    ),
+    Mutation(
+        "OSV1-005",
+        "the worst literal site is migrated (census 66 -> 65)",
+        _mo005_the_worst_literal_site_is_migrated,
+    ),
+    Mutation(
+        "OSV1-006",
+        "an inline computed-geometry site appears that nobody registered",
+        _mo006_an_unregistered_computed_site_appears,
+    ),
+    Mutation(
+        "OSV1-007",
+        "the L1 GET view acquires a mutating adapter call",
+        _mo007_a_get_handler_reaches_a_write,
+    ),
+    Mutation(
+        "OSV1-008",
+        "the body-swap starts restoring the pause flag",
+        _mo008_swap_restores_the_pause_flag,
+    ),
+    Mutation(
+        "OSV1-009",
+        "the below-floor token stops painting the empty-state caption",
+        _mo009_the_below_floor_token_stops_painting_copy,
+    ),
+    Mutation("OSV1-010", "a browser driver appears in the repo", _mo010_a_browser_driver_appears),
+    Mutation(
+        "OSV1-011",
+        "reduced motion becomes per-widget opt-in (a second @media block)",
+        _mo011_a_second_motion_block_appears,
+    ),
+    Mutation(
+        "OSV1-012",
+        "the calm queue's empty sentence becomes a bare zero",
+        _mo012_the_empty_sentence_becomes_a_zero,
+    ),
+    Mutation(
+        "OSV1-013", "the manifest declares a template engine", _mo013_a_template_engine_is_declared
+    ),
+    Mutation(
+        "OSV1-014", "the manifest declares a charting library", _mo014_a_chart_library_is_declared
+    ),
+    Mutation(
+        "OSV1-015",
+        "the L1 view's unbounded query acquires a real bound",
+        _mo015_the_unbounded_query_is_bounded,
+    ),
+    Mutation(
+        "OSV1-016",
+        "the theme choice starts surviving a refresh",
+        _mo016_the_theme_starts_persisting,
+    ),
+    Mutation(
+        "OSV1-017",
+        "the push channel acquires a second call site",
+        _mo017_a_second_push_call_site_appears,
+    ),
+    Mutation("OSV1-020", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
+    Mutation("OSV1-021", "the Tier-A kit file appears", _mo_tier_a_kit_appears),
+    Mutation("OSV1-022", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
+    Mutation(
+        "OSV1-022",
+        "the whole-body innerHTML swap (the bad fixture's own premise) changes shape",
+        _mo022_the_swap_mechanism_changes,
+    ),
+    Mutation("OSV1-023", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
+    Mutation(
+        "OSV1-023",
+        "a swept breakpoint disappears from the stylesheet",
+        _mo023_a_swept_breakpoint_disappears,
+    ),
+    Mutation("OSV1-024", "the Tier-A kit file appears", _mo_tier_a_kit_appears),
+    Mutation("OSV1-025", "the Tier-A kit file appears", _mo_tier_a_kit_appears),
+    Mutation("OSV1-026", "the Tier-A kit file appears", _mo_tier_a_kit_appears),
+    Mutation("OSV1-027", "the Tier-A kit file appears", _mo_tier_a_kit_appears),
+    Mutation(
+        "OSV1-027",
+        "the Makefile wires a conformance target (the 'runs in a gate' half)",
+        _mo027_the_makefile_wires_the_kit,
+    ),
+    Mutation("OSV1-028", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
+    Mutation("OSV1-029", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
+    Mutation(
+        "OSV1-029",
+        "a Tier-B artifact directory appears",
+        _mo029_an_artifact_directory_appears,
+    ),
+    Mutation("OSV1-030", "the Tier-A kit file appears", _mo_tier_a_kit_appears),
+    Mutation(
+        "OSV1-031",
+        "one of the ten red Core-carrying rows flips to CONFORMS",
+        _mo031_a_red_core_row_goes_green,
+    ),
+    Mutation(
+        "OSV1-032",
+        "the exemption register grows (the zero-literal half is not in-memory simulable "
+        "-- OSV1-005's mutation is what proves the LITERAL bucket discriminates)",
+        _mo032_the_register_grows,
+    ),
+    Mutation(
+        "OSV1-033",
+        "an amendment strikes the markdown emphasis that broke the quote",
+        _mo033_the_contract_quote_is_corrected,
+    ),
+    Mutation(
+        "OSV1-034",
+        "a Changelog entry records the owner's rendered-page look",
+        _mo034_the_changelog_records_a_look,
+    ),
 )
 
 
@@ -405,6 +824,23 @@ class Result:
 
 def _probe_for(row_id: str) -> str:
     return f"test_row_{row_id.lower().replace('-', '_')}"
+
+
+def _resolve_probe(ref: str) -> Callable[[], None]:
+    """The probe function named `ref`, from whichever family's module owns it.
+
+    Raises rather than returning None: a mutation naming a probe nobody
+    defines is a harness that proves less than it claims, and that must be
+    loud (`test_ledger_integrity` separately enforces that a probe lives in
+    its own family's module).
+    """
+    found = [getattr(m, ref) for m in PROBE_MODULES if hasattr(m, ref)]
+    if len(found) != 1:
+        raise HarnessOutOfDate(
+            f"probe {ref!r} resolves in {len(found)} probe modules (expected exactly 1) "
+            f"across {[m.__name__ for m in PROBE_MODULES]}"
+        )
+    return found[0]
 
 
 def declared_row_ids() -> frozenset[str]:
@@ -443,7 +879,7 @@ def run_all() -> list[Result]:
                 )
             )
             continue
-        probe = getattr(probes, row["assertion"]["ref"])
+        probe = _resolve_probe(row["assertion"]["ref"])
         world = World()
         proven, reason = False, ""
         try:

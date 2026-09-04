@@ -3,48 +3,99 @@
 These are `LEDGER-FORMAT.md` sec.6's three tripwires plus the structural
 invariants of sec.2-4:
 
-  1. every Core clause of the contract is cited by >= 1 row
-  2. every row's quote verifies against the contract's actual bytes
+  1. every Core clause of every governed contract is cited by >= 1 row
+  2. every row's quote verifies against ITS OWN contract's actual bytes
   3. every assertion ref resolves, and every GAP/VIOLATION row carries a
      live work ref
 
+plus two this repo added, because a probe nobody has ever seen FAIL might be
+asserting nothing:
+
+  4. every probe has a declared mutation
+  5. the mutation harness is RUN here, and every mutation flips its probe red
+
 They exist because the expensive failure is not a red row -- it is a ledger
 that has quietly stopped describing the contract it claims to describe.
+
+## Two families, one file
+
+`rows.yaml` carries two row families against two contracts (`CCV1-###` for
+custody-coordination.v1, `OSV1-###` for operator-surface.v1). Every tripwire
+below resolves per-family through `_support.FAMILIES` rather than against a
+single hardcoded contract -- so a row can never be checked against the wrong
+contract's bytes, and a family cannot be added without the tripwires reaching
+it.
 """
 
 from __future__ import annotations
 
-import re
+import importlib
 from pathlib import Path
 
 from ._support import (
     ASSERTION_KINDS,
-    CONTRACT_PATH,
     DISPOSITIONS,
+    FAMILIES,
     REPO_ROOT,
     collapse,
+    family_of,
     function_names,
-    read,
     read_collapsed,
+    required_clause_ids,
     rows,
 )
+from ._support import (
+    clause_ids as contract_clause_ids,
+)
 
-PROBE_MODULE = Path(__file__).with_name("test_custody_rows.py")
-ROW_ID = re.compile(r"^CCV1-\d{3}$")
+
+def _probe_module_path(module: str) -> Path:
+    return Path(__file__).with_name(f"{module}.py")
 
 
-def test_rows_parse_as_a_top_level_list_with_the_sync_row_first() -> None:
+def probe_names() -> dict[str, str]:
+    """Every `test_row_*` probe in every family's module -> its module name.
+
+    Collected across families so the probe<->row pairing is checked over the
+    WHOLE probe population; a per-family check would let a probe in the wrong
+    module pass both halves.
+    """
+    found: dict[str, str] = {}
+    for fam in FAMILIES:
+        for name in function_names(_probe_module_path(fam.probe_module)):
+            if name.startswith("test_row_"):
+                assert name not in found, (
+                    f"probe {name!r} is defined in BOTH {found[name]} and "
+                    f"{fam.probe_module}. A duplicated probe name means one row's "
+                    f"assertion silently shadows another's."
+                )
+                found[name] = fam.probe_module
+    return found
+
+
+def test_rows_parse_as_a_top_level_list_with_each_family_sync_row_first() -> None:
     data = rows()
     assert isinstance(data, list) and data, "rows.yaml must be a non-empty top-level list"
-    first = data[0]
-    assert first["id"] == "CCV1-000", "the SYNC row is `<PREFIX>-000` and comes first"
-    assert "files" in first["contract"], "the SYNC row pins contract file(s) by path + hash"
+    for fam in FAMILIES:
+        fam_rows = [r for r in data if r["id"].startswith(f"{fam.prefix}-")]
+        assert fam_rows, f"no rows for declared family {fam.prefix}"
+        first = fam_rows[0]
+        assert first["id"] == f"{fam.prefix}-000", (
+            f"{fam.prefix}: the SYNC row is `<PREFIX>-000` and comes first within its "
+            f"family (LEDGER-FORMAT.md sec.2/sec.4); observed {first['id']}"
+        )
+        assert "files" in first["contract"], (
+            f"{first['id']}: the SYNC row pins contract file(s) by path + hash"
+        )
 
 
 def test_row_ids_are_well_formed_unique_and_ordered() -> None:
     ids = [r["id"] for r in rows()]
     for row_id in ids:
-        assert ROW_ID.match(row_id), f"malformed row id {row_id!r}"
+        fam = family_of(row_id)  # raises, naming the id, if it belongs to no family
+        assert len(row_id) == len(fam.prefix) + 4 and row_id[len(fam.prefix) + 1 :].isdigit(), (
+            f"malformed row id {row_id!r} (expected {fam.prefix}-NNN)"
+        )
     assert len(set(ids)) == len(ids), "row ids are stable forever and never reused"
     assert ids == sorted(ids), "rows are kept in id order for reviewability"
 
@@ -65,61 +116,60 @@ def test_every_row_has_a_legal_disposition_and_its_required_fields() -> None:
             assert r.get("justification"), f"{rid}: {disp} requires a justification"
 
 
-def test_every_row_quote_verifies_against_the_contract_bytes() -> None:
-    contract = read_collapsed(CONTRACT_PATH)
+def test_every_row_quote_verifies_against_its_own_contract_bytes() -> None:
+    """Tripwire 2, resolved per family -- a row is verified against the contract
+    it names, never against whichever contract happens to be first.
+    """
     for r in rows():
-        if r["id"] == "CCV1-000":
+        rid = r["id"]
+        if rid.endswith("-000"):
             continue  # the SYNC row anchors on hashes, not a quote
+        fam = family_of(rid)
         c = r["contract"]
-        assert c["file"] == "contracts/custody-coordination.v1.md"
-        assert "quote" in c, f"{r['id']}: the quote must live nested under `contract:`"
+        assert c["file"] == fam.contract_rel, (
+            f"{rid}: family {fam.prefix} governs {fam.contract_rel}, but this row cites "
+            f"{c['file']}. A row quoting one contract while filed under another's family "
+            f"is verified against the wrong bytes."
+        )
+        assert "quote" in c, f"{rid}: the quote must live nested under `contract:`"
         quote = collapse(c["quote"])
-        assert quote in contract, (
-            f"{r['id']}: quote does not verify against {c['file']}\n  quote: {quote[:120]}..."
+        assert quote in read_collapsed(fam.contract), (
+            f"{rid}: quote does not verify against {c['file']}\n  quote: {quote[:120]}..."
         )
 
 
 def test_every_clause_id_is_a_bare_identifier_the_contract_actually_names() -> None:
-    contract = read(CONTRACT_PATH)
-    headings = set(re.findall(r"^### ([^\n:]+):", contract, flags=re.MULTILINE))
-    # Sections the contract does not number get a section-name clause id --
-    # a deliberate, reported deviation from the format's "bare numbered
-    # identifier" rule, because the contract itself offers no number there.
-    # "Freeze Bar" was in this set until the 2026-09-03 DRAFT amendment gave
-    # the Freeze Bar its own `Freeze 1`..`Freeze 9` bare ids (CCV1-022 and
-    # CCV1-023 were retargeted to them); `Conformance: Checks` remains
-    # unnumbered -- the amendment only numbered the four Conformance
-    # fixtures, not the separate `Checks` subsection, and that was out of
-    # this amendment's scope (CCV1-021 was left as is).
-    unnumbered = {"Conformance: Checks"}
     for r in rows():
-        if r["id"] == "CCV1-000":
+        rid = r["id"]
+        if rid.endswith("-000"):
             continue
+        fam = family_of(rid)
         clause = r["contract"]["clause"]
-        assert clause in headings or clause in unnumbered, (
-            f"{r['id']}: clause {clause!r} is not a clause the contract names "
+        legal = contract_clause_ids(fam.contract) | fam.unnumbered
+        assert clause in legal, (
+            f"{rid}: clause {clause!r} is not a clause {fam.contract_rel} names "
             f"(and clause ids are never paraphrased or parenthetical-decorated)"
         )
 
 
-def test_every_core_clause_is_cited_by_at_least_one_row() -> None:
+def test_every_core_clause_of_every_contract_is_cited_by_at_least_one_row() -> None:
     """Tripwire 1: coverage. A clause nobody ledgered is a clause nobody is
-    watching.
+    watching -- and with two contracts, a clause of the NEWER one is exactly
+    what a single-contract tripwire would have missed.
     """
-    contract = read(CONTRACT_PATH)
-    clauses = {
-        c
-        for c in re.findall(r"^### ([^\n:]+):", contract, flags=re.MULTILINE)
-        if c.startswith(("Core ", "NOT-ASSERTABLE "))
-    }
-    cited = {r["contract"]["clause"] for r in rows() if r["id"] != "CCV1-000"}
-    missing = clauses - cited
-    assert not missing, f"contract clauses with no ledger row: {sorted(missing)}"
+    for fam in FAMILIES:
+        cited = {
+            r["contract"]["clause"]
+            for r in rows()
+            if r["id"].startswith(f"{fam.prefix}-") and not r["id"].endswith("-000")
+        }
+        missing = required_clause_ids(fam.contract) - cited
+        assert not missing, f"{fam.contract_rel}: clauses with no ledger row: {sorted(missing)}"
 
 
 def test_every_assertion_ref_resolves() -> None:
     """Tripwire 3a: an assertion that cannot be found is not an assertion."""
-    probe_names = function_names(PROBE_MODULE)
+    known_probes = probe_names()
     for r in rows():
         a = r["assertion"]
         kind = a["kind"]
@@ -130,7 +180,14 @@ def test_every_assertion_ref_resolves() -> None:
             )
             continue
         if kind in {"probe", "absence"}:
-            assert a["ref"] in probe_names, f"{r['id']}: probe {a['ref']!r} not found"
+            ref = a["ref"]
+            assert ref in known_probes, f"{r['id']}: probe {ref!r} not found"
+            fam = family_of(r["id"])
+            assert known_probes[ref] == fam.probe_module, (
+                f"{r['id']}: probe {ref!r} lives in {known_probes[ref]}, but family "
+                f"{fam.prefix} owns {fam.probe_module}. A row's probe must live in its "
+                f"own family's module, or the mutation harness patches the wrong one."
+            )
             continue
         for cite in a["refs"]:  # indexed
             path = REPO_ROOT / cite["file"]
@@ -147,11 +204,24 @@ def test_every_probe_belongs_to_a_row() -> None:
     declared = {
         r["assertion"]["ref"] for r in rows() if r["assertion"]["kind"] in {"probe", "absence"}
     }
-    found = {n for n in function_names(PROBE_MODULE) if n.startswith("test_row_")}
+    found = set(probe_names())
     assert found == declared, (
         f"probe/row mismatch\n  probes with no row: {sorted(found - declared)}\n"
         f"  rows with no probe: {sorted(declared - found)}"
     )
+
+
+def test_every_probe_module_declared_by_a_family_exists_and_is_importable() -> None:
+    """A family whose probe module is missing would make every other tripwire
+    quietly weaker (an empty probe set trivially satisfies set equality on one
+    side), so it is asserted directly rather than inferred.
+    """
+    for fam in FAMILIES:
+        path = _probe_module_path(fam.probe_module)
+        assert path.exists(), f"{fam.prefix}: probe module {path.name} does not exist"
+        module = importlib.import_module(f".{fam.probe_module}", package=__package__)
+        probes_here = [n for n in dir(module) if n.startswith("test_row_")]
+        assert probes_here, f"{fam.prefix}: {path.name} declares no probes"
 
 
 def test_every_probe_has_a_declared_mutation() -> None:
@@ -164,7 +234,7 @@ def test_every_probe_has_a_declared_mutation() -> None:
     from .mutation_harness import declared_probe_names
 
     declared = declared_probe_names()
-    found = {n for n in function_names(PROBE_MODULE) if n.startswith("test_row_")}
+    found = set(probe_names())
     assert found == declared, (
         f"mutation-harness coverage gap\n  probes with no mutation: {sorted(found - declared)}\n"
         f"  mutations with no probe: {sorted(declared - found)}"
