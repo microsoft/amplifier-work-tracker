@@ -224,8 +224,9 @@ def test_verdict_line_alarm_requires_reasons() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_all_nine_observatory_widgets_are_registered() -> None:
+def test_all_ten_observatory_widgets_are_registered() -> None:
     assert set(WD.observatory_widget_ids()) == {
+        "velocity-hero",
         "verdict-hero",
         "kpi-strip",
         "attention-queue",
@@ -348,6 +349,188 @@ def test_render_verdict_hero_idle() -> None:
     _firewall_clean(html)
     assert "is-idle" in html
     assert "#i-clock" in html
+
+
+# ---------------------------------------------------------------------------
+# render_velocity_hero -- operator-surface.v1 Core 1
+# ---------------------------------------------------------------------------
+#
+# Core 1: "The L0 hero region carries throughput over a stated window,
+# presented together with the counts an operator acts on: in flight (held),
+# blocked, needs attention, and open/ready."
+#
+# The four labels the clause names, asserted by NAME rather than by position
+# so a reshuffle of the strip does not silently drop one.
+_CORE1_COUNT_LABELS = ("In flight (held)", "Blocked", "Needs attention", "Open / ready")
+
+
+def _hero_counts(*, held: int, blocked: int, attention: int, ready: int) -> list[WD.KpiCard]:
+    """The four Core 1 counts, exactly as `webapp`'s L0 route builds them."""
+    return [
+        WD.KpiCard(key="held", label="In flight (held)", value=held, href="#agents-now"),
+        WD.KpiCard(
+            key="blocked",
+            label="Blocked",
+            value=blocked,
+            href="#attention-queue",
+            icon="i-octagon-x",
+            icon_color_var="--blocked",
+            is_blocked=True,
+        ),
+        WD.KpiCard(
+            key="needs_attention",
+            label="Needs attention",
+            value=attention,
+            href="#attention-queue",
+            icon="i-alert-triangle",
+        ),
+        WD.KpiCard(key="ready", label="Open / ready", value=ready, href="#fleet"),
+    ]
+
+
+def _populated_hero() -> str:
+    return WD.render_velocity_hero(
+        WD.VelocityHeroData(
+            state="alarm",
+            eyebrow="Environment velocity \u00b7 21 projects",
+            velocity_value=115,
+            velocity_noun="resolved",
+            velocity_window="last 24h",
+            headline="8 items need you",
+            detail_html="2 claims sitting past custody TTL. <b>20 agents</b> are moving.",
+            counts=_hero_counts(held=56, blocked=19, attention=8, ready=118),
+        )
+    )
+
+
+def _empty_hero() -> str:
+    """The all-empty fixture: nothing held, nothing blocked, nothing ready,
+    nothing resolved. Core 8 -- calm is REPORTED, never celebrated."""
+    return WD.render_velocity_hero(
+        WD.VelocityHeroData(
+            state="idle",
+            eyebrow="Environment velocity \u00b7 0 projects",
+            velocity_value=0,
+            velocity_noun="resolved",
+            velocity_window="last 24h",
+            headline="Idle",
+            detail_html="Nothing in flight. 0 items resolved in the last 24h.",
+            counts=_hero_counts(held=0, blocked=0, attention=0, ready=0),
+        )
+    )
+
+
+def test_render_velocity_hero_leads_with_the_figure_and_states_its_window() -> None:
+    """Core 1's throughput half: a velocity FIGURE, and the window it covers
+    stated in text beside it. A bare number with no window is the defect --
+    an operator reading "115" alone learns nothing."""
+    html = _populated_hero()
+    _firewall_clean(html)
+    assert '<span class="figv">115</span>' in html
+    assert '<span class="figwin">last 24h</span>' in html
+    assert "resolved" in html
+
+
+def test_render_velocity_hero_carries_all_four_named_counts_in_the_same_region() -> None:
+    """Core 1's counts half: all four sit INSIDE the hero panel, not in a
+    separate strip below it -- so the region opened by `.hero` is the region
+    that closes after the last count."""
+    html = _populated_hero()
+    _firewall_clean(html)
+    assert html.startswith('<div class="glass-panel strong rim-glow hero hero-velocity is-alarm"')
+    assert html.endswith("</div>")
+    # One panel: the counts strip is nested inside the hero div, not a sibling.
+    hero_open = html.index('class="glass-panel strong rim-glow hero hero-velocity')
+    strip_open = html.index('<div class="kpi-strip">')
+    assert hero_open < strip_open < len(html) - len("</div>")
+    for label in _CORE1_COUNT_LABELS:
+        assert f"<span>{label}</span>" in html or f"</span> {label}</span>" in html, label
+
+
+def test_render_velocity_hero_every_count_carries_a_text_label_and_a_numeral() -> None:
+    """Core 3 -- state is never colour-only. Each count is a label plus a
+    value; none is encoded by its card class alone."""
+    html = _populated_hero()
+    for label, value in zip(_CORE1_COUNT_LABELS, (56, 19, 8, 118), strict=True):
+        assert label in html
+        assert f'<div class="v">{value}</div>' in html
+
+
+def test_render_velocity_hero_empty_fixture_reports_zero_it_never_celebrates_it() -> None:
+    """Core 8 -- an all-empty fleet renders every count as `0` WITH its label,
+    at the same scale as a populated one (identical markup shape, only the
+    numerals differ), and the velocity figure reads `0` with its window still
+    stated. No slot collapses, so the page does not reflow between calm and
+    alarm."""
+    html = _empty_hero()
+    _firewall_clean(html)
+    assert '<span class="figv">0</span>' in html
+    assert '<span class="figwin">last 24h</span>' in html
+    for label in _CORE1_COUNT_LABELS:
+        assert label in html
+    assert html.count('<div class="v">0</div>') == 4
+    # Same number of cards, same classes, same nesting as the populated hero:
+    # nothing here grows, shrinks, or disappears with the value.
+    populated = _populated_hero()
+    assert html.count('class="glass-panel kpi-card') == populated.count(
+        'class="glass-panel kpi-card'
+    )
+    assert html.count('<span class="figv">') == populated.count('<span class="figv">')
+
+
+def test_render_velocity_hero_blocked_zero_goes_quiet_not_alarm_red() -> None:
+    """The `.is-zero` treatment `render_kpi_strip` already gives a healthy
+    "0 blocked" survives being composed into the hero."""
+    assert "is-blocked is-zero" in _empty_hero()
+    assert "is-zero" not in _populated_hero()
+
+
+def test_render_velocity_hero_is_a_live_region_for_the_body_swap() -> None:
+    """Core 6 -- the 20s self-poll replaces this panel in place; `role="status"`
+    is what makes that replacement announce rather than pass silently."""
+    assert 'role="status"' in _populated_hero()
+
+
+def test_render_velocity_hero_state_selects_the_icon_and_the_variant_class() -> None:
+    for state, icon in (
+        ("alarm", "#i-alert-triangle"),
+        ("calm", "#i-check-circle"),
+        ("idle", "#i-clock"),
+    ):
+        html = WD.render_velocity_hero(
+            WD.VelocityHeroData(
+                state=state,  # type: ignore[typeddict-item]
+                eyebrow="e",
+                velocity_value=3,
+                velocity_noun="resolved",
+                velocity_window="last 24h",
+                headline="h",
+                detail_html="d",
+                counts=_hero_counts(held=0, blocked=0, attention=0, ready=0),
+            )
+        )
+        assert f"hero-velocity is-{state}" in html
+        assert icon in html
+
+
+def test_render_velocity_hero_escapes_its_plain_text_fields() -> None:
+    html = WD.render_velocity_hero(
+        WD.VelocityHeroData(
+            state="calm",
+            eyebrow="<script>x</script>",
+            velocity_value=1,
+            velocity_noun="<b>resolved</b>",
+            velocity_window="<i>24h</i>",
+            headline="<em>hi</em>",
+            detail_html="<b>kept</b>",  # detail_html is deliberately unescaped
+            counts=_hero_counts(held=0, blocked=0, attention=0, ready=0),
+        )
+    )
+    assert "<script>" not in html
+    assert "&lt;b&gt;resolved&lt;/b&gt;" in html
+    assert "&lt;i&gt;24h&lt;/i&gt;" in html
+    assert "&lt;em&gt;hi&lt;/em&gt;" in html
+    assert "<b>kept</b>" in html
 
 
 # ---------------------------------------------------------------------------

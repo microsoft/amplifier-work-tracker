@@ -1,4 +1,4 @@
-.PHONY: venv test test-unit test-integration test-cli test-ledger ledger-mutate test-module check lint types doctor clean
+.PHONY: venv test test-unit test-integration test-cli test-ledger ledger-mutate test-conformance-a test-module check lint types doctor clean
 
 PYTHON  ?= python3.12
 VENV    := .venv
@@ -52,6 +52,15 @@ test-ledger:
 ledger-mutate:
 	$(PY) -m ledger.checks.mutation_harness
 
+## Tier 6 -- operator-surface conformance, Tier A: the machine checks
+## contracts/operator-surface.v1.md names for its own Tier A, each as a
+## discriminating good/bad pair (Freeze 1 requires this kit to exist AND to
+## run on every pull request; Freeze 4 requires every bad half to have been
+## demonstrated). Its static checks need nothing; its RENDERED checks stand up
+## the isolated dolt server and skip loudly without a real `bd`.
+test-conformance-a:
+	$(PYTEST) tests/conformance/operator_surface -v
+
 ## Tier 5 -- tool module: modules/tool-work-tracker's own suite, the only
 ## place the post-reclaim custody behaviour of the AGENT SEAM (work_claim /
 ## work_declare / work_resolve / work_release) is asserted mechanically.
@@ -65,7 +74,7 @@ ledger-mutate:
 test-module:
 	$(PYTEST) modules/tool-work-tracker/tests -v
 
-## All five tiers. Two pytest invocations (see `test-module` above), and
+## Every tier. Two pytest invocations (see `test-module` above), and
 ## deliberately NOT fail-fast between them: the whole point of wiring the
 ## module suite in (ledger row CCV1-022) is that it stops being silently
 ## skippable, and a pre-existing failure in the root suite must not go back
@@ -76,6 +85,11 @@ test:
 	$(PYTEST) tests ledger/checks -v || rc=$$?; \
 	$(PYTEST) modules/tool-work-tracker/tests -v || rc=$$?; \
 	exit $$rc
+
+## `test` above already COLLECTS tests/conformance (it is under `tests`), so
+## this is the named, separately-runnable entry point rather than a second
+## invocation -- running the kit twice in one `make test` would double its
+## fixture cost and prove nothing new.
 
 ## Lint + type-check.
 check: lint types

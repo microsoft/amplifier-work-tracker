@@ -526,9 +526,14 @@ def test_no_claim_affordance_anywhere_in_the_web_ui(client, project_factory, uni
 
 def test_dashboard_held_item_raises_the_custody_reading(client, project_factory, unique_actor):
     """wt-v4 Observatory: L0 has no per-row holder chip -- a held item's
-    signal is the KPI strip's own "Held" card (a real, non-fabricated
-    count -- see widgets.render_kpi_strip), not a named identity on the
-    overview."""
+    signal is a count card (a real, non-fabricated count -- see
+    widgets.render_kpi_strip), not a named identity on the overview.
+
+    That card is labelled "In flight (held)" and lives INSIDE the hero region
+    since operator-surface.v1 Core 1 (ledger row OSV1-001): the hero carries
+    the four counts an operator acts on, so the strip is no longer a separate
+    band below it. What this test guards is unchanged -- a real held count on
+    L0, never a fabricated holder identity."""
     _login(client)
     name, bd = project_factory("dashboardheldproj")
     bd.create("held for dashboard signal", tags=[A.LANE_WORK])
@@ -536,8 +541,10 @@ def test_dashboard_held_item_raises_the_custody_reading(client, project_factory,
 
     r = client.get("/")
     assert r.status_code == 200
-    # the held count (>=1) appears as the KPI strip's own "Held" card value
-    assert re.search(r"Held</span>.*?<div class=\"v\">[1-9]\d*</div>", r.text, re.DOTALL)
+    # the held count (>=1) appears as the "In flight (held)" card's value
+    assert re.search(
+        r"In flight \(held\)</span>.*?<div class=\"v\">[1-9]\d*</div>", r.text, re.DOTALL
+    )
 
 
 def test_dashboard_never_shows_a_static_health_ok_badge(client, shared_project_name):

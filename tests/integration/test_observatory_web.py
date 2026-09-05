@@ -88,6 +88,103 @@ def test_l0_renders_environment_kpis_and_fleet_from_real_data(
     assert "Mission Control" in r.text
 
 
+# operator-surface.v1 Core 1: "The L0 hero region carries throughput over a
+# stated window, presented together with the counts an operator acts on: in
+# flight (held), blocked, needs attention, and open/ready." Asserted here on
+# the REAL rendered route (the widget-level shape is in
+# tests/unit/test_observatory_widgets.py), on a populated fleet and on an
+# all-empty one.
+_CORE1_COUNT_LABELS = ("In flight (held)", "Blocked", "Needs attention", "Open / ready")
+
+
+def _hero_region(page: str) -> str:
+    """The `#verdict-hero` section's own markup, sliced out of the page so a
+    count found in some LATER region cannot be mistaken for one in the hero
+    -- which is exactly the defect Core 1 names (the counts used to live in a
+    separate strip below the hero)."""
+    start = page.index('<div id="verdict-hero"')
+    end = page.index('<div class="two-up section">', start)
+    return page[start:end]
+
+
+def test_l0_hero_leads_with_fleet_velocity_over_a_stated_window(
+    client, project_factory, unique_actor
+):
+    _login(client)
+    name, bd = project_factory("obsl0hero")
+    bd.create("ready item for the hero", tags=[A.LANE_WORK])
+    held_id = bd.create("held item for the hero", tags=[A.LANE_WORK])
+    bd.claim_item(held_id, actor=unique_actor)
+
+    r = client.get("/")
+    assert r.status_code == 200
+    hero = _hero_region(r.text)
+
+    # The throughput half: a figure, and the window it covers, in TEXT.
+    assert 'class="hero hero-velocity' in hero or "hero hero-velocity" in hero
+    assert '<span class="figv">' in hero, "no velocity figure in the L0 hero region"
+    assert '<span class="figwin">last 24h</span>' in hero, (
+        "the L0 hero shows a throughput figure without stating its window -- "
+        "a bare number an operator cannot interpret"
+    )
+    assert "resolved" in hero
+
+
+def test_l0_hero_carries_the_four_named_counts_and_no_strip_survives_below_it(
+    client, project_factory, unique_actor
+):
+    _login(client)
+    name, bd = project_factory("obsl0counts")
+    bd.create("ready item for the counts", tags=[A.LANE_WORK])
+    held_id = bd.create("held item for the counts", tags=[A.LANE_WORK])
+    bd.claim_item(held_id, actor=unique_actor)
+
+    r = client.get("/")
+    assert r.status_code == 200
+    hero = _hero_region(r.text)
+
+    for label in _CORE1_COUNT_LABELS:
+        assert label in hero, f"Core 1 count {label!r} is not in the L0 hero region"
+    # Each label is paired with a numeral, never a colour-only card (Core 3).
+    assert re.search(r'<div class="v">\d+</div>', hero)
+    assert hero.count('class="glass-panel kpi-card') == len(_CORE1_COUNT_LABELS)
+
+    # Composed INTO the hero, not left as a second strip below it: exactly one
+    # `.kpi-strip` on the page, and it is the one inside the hero region.
+    assert r.text.count('class="kpi-strip"') == 1
+    assert 'class="kpi-strip"' in hero
+
+    # The retired cards: throughput is the FIGURE now, not a card.
+    assert "Resolved 24h" not in hero
+
+
+def test_l0_hero_on_an_all_empty_fleet_reports_zero_without_celebrating_it(tmp_path, auth_config):
+    """Core 8 -- calm is reported, never celebrated. Against a workspace with
+    no projects at all, the hero keeps every slot: the velocity figure reads
+    `0` with its window still stated, and all four counts read `0` with their
+    labels, at the same scale a populated fleet renders them. Nothing
+    collapses, so the page does not reflow between calm and alarm.
+
+    Deliberately its own empty `Workspace` rather than the session-scoped one
+    every other test in this module shares -- that one accumulates real items
+    and can never be empty."""
+    empty_app = webapp.create_app(A.Workspace(tmp_path), auth_config)
+    with TestClient(empty_app, follow_redirects=False) as c:
+        _login(c)
+        r = c.get("/")
+        assert r.status_code == 200
+        hero = _hero_region(r.text)
+
+    assert '<span class="figv">0</span>' in hero
+    assert '<span class="figwin">last 24h</span>' in hero
+    for label in _CORE1_COUNT_LABELS:
+        assert label in hero, f"Core 1 count {label!r} vanished on an empty fleet"
+    assert hero.count('<div class="v">0</div>') == len(_CORE1_COUNT_LABELS)
+    assert hero.count('class="glass-panel kpi-card') == len(_CORE1_COUNT_LABELS)
+    # A healthy "0 blocked" goes quiet rather than staying alarm-red.
+    assert "is-blocked is-zero" in hero
+
+
 def test_l0_window_tabs_are_real_server_rendered_links_with_active_state(
     client, shared_project_name
 ):

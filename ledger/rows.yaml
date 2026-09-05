@@ -931,50 +931,72 @@
     different families.
 
 - id: OSV1-001
-  title: the L0 hero is a verdict line, not fleet velocity with the counts that matter
+  title: the L0 hero leads with fleet velocity and carries the four counts that matter
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 1
     quote: |
       The L0 hero region carries throughput over a stated window, presented together with the
       counts an operator acts on: in flight (held), blocked, needs attention, and open/ready.
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-ujy
   assertion:
     kind: probe
     ref: test_row_osv1_001
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED 2026-09-04 from VIOLATION (VIOLATION-MOVEMENT: the pinning probe went
+    red because the behaviour moved TOWARD the clause). The probe was retargeted
+    at the fixed shape in the same change, and its mutations rewritten to
+    reinstate each half of the closed defect. Flip direction is now REGRESSION.
 
-    MEASURED 2026-09-04 against 4aaee50, not taken from the Phase-0 brief:
-      webapp.py:4602    the hero is `WD.render_verdict_hero(VerdictHeroData(...))`
-      widgets.py:637-663  that renderer emits `<div class="glass-panel strong
-                        rim-glow hero is-{state}">` carrying an eyebrow, a
-                        verdict headline, a detail line, and an OPTIONAL
-                        `meta_row`. L0 passes no `meta_row`, so the hero
-                        carries no figure and no count at all.
-      webapp.py:4611-4641  a SEPARATE kpi-strip below the hero: five cards keyed
-                        agents / held / ready / blocked / resolved_24h.
-      webapp.py:4647    velocity is `_velocity_chart_shell_html(title=
-                        "Environment velocity", ...)` -- a CHART, two regions
-                        below the hero, not a hero figure.
-    Against the clause: throughput-in-the-hero ABSENT; held / blocked /
-    open-ready present as KPI cards but not in the hero; NEEDS ATTENTION absent
-    as a count anywhere in either region (the ranked "Needs you" section is at
-    webapp.py:4676 and its length is never surfaced as a count); and two cards
-    the clause does not name (agents active, resolved 24h) occupy the strip.
+    MEASURED 2026-09-04 against the change that closed it:
+      widgets.py:1323-1396  `render_velocity_hero(VelocityHeroData)` -- one panel,
+                        `<div class="glass-panel strong rim-glow hero hero-velocity
+                        is-{state}" role="status">`, carrying: the velocity figure
+                        (`<span class="figv">`), the window STATED beside it
+                        (`<span class="figwin">last 24h</span>`), the verdict
+                        demoted to a `.hero-caption`, and the counts strip
+                        composed INSIDE the same div (it calls `render_kpi_strip`
+                        itself rather than leaving the route to place one below).
+      webapp.py:4611-4642  L0 builds that hero, with exactly the four counts Core 1
+                        names: "In flight (held)" (held_total), "Blocked"
+                        (blocked_total), "Needs attention" (len(attention_rows_raw)
+                        -- the ranked queue's own length, which was the count
+                        ABSENT anywhere at seed), "Open / ready" (ready_total).
+      webapp.py:4741     the body no longer interpolates a separate `{kpi_html}`
+                        section: there is exactly ONE `.kpi-strip` on the page and
+                        it is inside the hero region.
+    Against the clause: throughput-in-the-hero PRESENT with its window stated;
+    all four named counts PRESENT in the same region, each with a text label
+    (Core 3) and a numeral. "Resolved 24h" is no longer a card because it is the
+    figure; the agents-active reading it displaced survives in the verdict caption
+    ("N agents are moving ...") and in the "Agents now" section.
 
-    OPEN READING, RETURNED TO THE ROOT AND NOT DECIDED BY THIS RECONCILE:
-    whether the shipped KPI strip is part of "the L0 hero region", i.e. whether
-    held/blocked/ready already satisfy the counts half in part. The disposition
-    does not turn on it -- the throughput half is unsatisfied on either
-    reading -- but the size of the remaining work does.
+    THE OPEN READING THE SEED RETURNED TO THE ROOT -- whether the shipped KPI strip
+    counted as part of "the L0 hero region" -- is now MOOT rather than decided: the
+    strip is composed into the hero panel itself, so it is part of the region on
+    either reading. The root ruling recorded on work_item_pipeline-ujy is what this
+    change followed.
+
+    Rendered evidence, both fixtures, asserted by test:
+      tests/unit/test_observatory_widgets.py
+        test_render_velocity_hero_leads_with_the_figure_and_states_its_window
+        test_render_velocity_hero_carries_all_four_named_counts_in_the_same_region
+        test_render_velocity_hero_every_count_carries_a_text_label_and_a_numeral
+        test_render_velocity_hero_empty_fixture_reports_zero_it_never_celebrates_it
+        test_render_velocity_hero_blocked_zero_goes_quiet_not_alarm_red
+        test_render_velocity_hero_is_a_live_region_for_the_body_swap
+      tests/integration/test_observatory_web.py
+        test_l0_hero_leads_with_fleet_velocity_over_a_stated_window
+        test_l0_hero_carries_the_four_named_counts_and_no_strip_survives_below_it
+        test_l0_hero_on_an_all_empty_fleet_reports_zero_without_celebrating_it
 
     Core 1 overrode a recorded in-code invariant, which the contract's own
     Changelog quotes: webapp.py:37-44 states the hero is the AGE of the oldest
     unclaimed item, never a count. The owner weighed that and chose
-    observability; the concern behind it survives as Core 8 (OSV1-012). See
+    observability; the concern behind it survives as Core 8 (OSV1-012), and this
+    composition honours it -- nothing scales with its value, so a zero is
+    reported at its siblings' scale with its label, never celebrated. See
     OSV1-033 -- one of those Changelog quotes does not verify against its
     cited source.
 
@@ -1059,43 +1081,56 @@
     presence so the sweep, when built, has a real target.
 
 - id: OSV1-004
-  title: state is never colour-only -- unmeasured on a rendered page, no kit
+  title: state is never colour-only -- measured on rendered L0/L1/L2, and it holds
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 3
     quote: |
       Every element carrying a state carries it in text as well as hue — a status chip has a
       word, not only a class.
-  disposition: GAP
-  work: work_item_pipeline-c1a
+  disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_osv1_004
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    RE-DERIVED 2026-09-05 from a REAL RENDERED MEASUREMENT -- never from the
+    fact that a kit file appeared.
+    `tests/conformance/operator_surface/test_tier_a.py` now implements Core 3's
+    `state.not_colour_only` and runs it over rendered L0, L1 and L2 pages of
+    the ALARM fixture (one item held past custody TTL, one blocked -- which is
+    Conformance 2's own scenario, so every status chip this surface can render
+    is actually on the page). Result: ZERO status-bearing elements without text
+    or an accessible name, on all three levels.
 
-    GAP, REASON "KIT NOT BUILT". Core 3's check (`state.not_colour_only`) is
-    Tier A, but the contract scopes it to "the rendered L0/L1/L2 fixtures", and
-    `tests/conformance/operator_surface/test_tier_a.py` does not exist. This
-    ledger kit is in-process only (no bd, no dolt, no subprocess), so it can
-    assert the SOURCE shape of the chip vocabulary and nothing about a page.
+    WHAT THE CHECK COUNTS AS STATUS-BEARING, so the scope of this green is
+    legible rather than implied: a class that IS a status word, or a status
+    word under one of this surface's status-class prefixes (`st-`, `is-`,
+    `sev-`, `tab-`, `status-`). The vocabulary is read out of the app's OWN
+    maps -- `webbrowse._ITEM_STATUS_CHIP_LABEL`, `widgets._HERO_ICON`, the
+    three status hue tokens -- rather than written down in the kit, so a status
+    the app grows cannot be silently unchecked. A decorative, unlabelled mark
+    INSIDE a status-bearing element that is itself named is excused: the state
+    is already carried in that ancestor's words, which is exactly the clause.
 
-    WHAT THE SOURCE SHAPE ALREADY SHOWS, measured 2026-09-04 -- encouraging,
-    and deliberately NOT treated as conformance:
-      webbrowse.py:139-152  every item status maps to BOTH a class
-                            (`_ITEM_STATUS_CHIP_CLASS`) and a WORD
-                            (`_ITEM_STATUS_CHIP_LABEL`: READY / HELD / BLOCKED
-                            / DEFERRED / RESOLVED) -- five statuses, five words.
-      webbrowse.py:849-851  the L2 chip renders `item.status.upper()`.
-      widgets.py:1162,1164  legend dots carry adjacent label text in the same
-                            `.li` span.
-    KNOWN CANDIDATES THE RENDERED CHECK MUST ADJUDICATE, which no source probe
-    can settle: `webapp.py:548` `<span class="dot on" title="...">` (an
-    attribute-only name), `webbrowse.py:119` a bare `<span class="dot"></span>`
-    prefixed to the blocked breakdown row, and `webapp.py:839`
-    `<span class="sb-dot"></span>` (in `_sidebar_html`, which measured as dead
-    chrome -- no route passes `sidebar_html`).
+    THE THREE CANDIDATES THE SEED ROW LEFT FOR THE RENDERED CHECK TO
+    ADJUDICATE, now adjudicated: `webapp.py:548`'s
+    `<span class="dot on" title="...">` carries an accessible name;
+    `webbrowse.py:119`'s bare `<span class="dot"></span>` sits inside
+    `<a class="status-tab tab-blocked">Blocked N</a>`, which carries the word;
+    `webapp.py:839`'s `<span class="sb-dot"></span>` never reaches a rendered
+    page at all (dead chrome -- no route passes `sidebar_html`).
+
+    DISCRIMINATING PAIR DEMONSTRATED (Freeze 4). The bad half is Conformance
+    2's own specimen -- `<span class="chip st-blocked"></span>` -- and the same
+    function reports it
+    (`test_state_not_colour_only_bad_half_chip_with_only_a_class`). Two further
+    bad halves keep the check from degenerating into "has text": an
+    `aria-label`-only chip PASSES, and a named ancestor excuses only its own
+    descendants, never a sibling.
+
+    WHAT THIS ROW STILL DOES NOT COVER: the HUE half of Conformance 2 (the
+    alarm region's colour is `--alarm` or `--blocked`) is Tier B and belongs to
+    OSV1-021's second half.
 
 - id: OSV1-005
   title: >-
@@ -1235,13 +1270,19 @@
       webapp.py:3376    {heading_style}                       computed heading
       webapp.py:4393    {heading_style}                       computed heading
       webapp.py:4908    {remove_heading_style}                computed heading
-      webtheme.py:4120  {style}                               computed style
-      webtheme.py:4139  left:{_grad_x(f):.1f}px               gradient stop offset
-      webtheme.py:4146  width:{px}px                          swatch width
+      webtheme.py:4131  {style}                               computed style
+      webtheme.py:4150  left:{_grad_x(f):.1f}px               gradient stop offset
+      webtheme.py:4157  width:{px}px                          swatch width
       widgets.py:704    color:var({color_var})                token chosen at runtime
       widgets.py:831    width:{pct}%                          mix-bar width
       widgets.py:834    width:{pct}%;background:var({_MIX_COLOR_VAR[key]})
       widgets.py:1110   background:var({_MIX_COLOR_VAR[key]})
+
+    The three `webtheme.py` coordinates were RE-DERIVED on 2026-09-04 by
+    work_item_pipeline-sxh (OSV1-009), which added comment lines above them:
+    4120/4139/4146 -> 4131/4150/4157. Same three sites, same code, same
+    register SET -- only the line numbers moved. A `file:line` register is
+    coordinate-fragile by construction; any edit above a site shifts it.
 
     HONEST LIMIT: several registered sites interpolate a COLOUR, not a
     geometry (webapp.py:2142/2266, chartsvg.py:268, widgets.py:704/834/1110).
@@ -1340,49 +1381,73 @@
       the Conformance 3 bad-half behaviour.
 
 - id: OSV1-009
-  title: six declared text pairs sit below the 4.5:1 floor, and the token paints real copy
+  title: every declared token pair clears its floor -- 4.5:1 text, 3:1 non-text, both themes
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 7
     quote: |
       Text contrast is at least 4.5:1 and non-text contrast at least 3:1, in both themes
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-sxh
   assertion:
     kind: probe
     ref: test_row_osv1_009
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED VIOLATION -> CONFORMS 2026-09-04 by work_item_pipeline-sxh, in the
+    same change that retargeted the probe off its pin.
 
     The Tier-A half of `perception.floors`: "token-pair relative-luminance math
     over the declared token set". The rendered half is OSV1-010; the
-    reduced-motion half is OSV1-011.
+    reduced-motion half is OSV1-011. Closing this does NOT close OSV1-010 --
+    see the honest limit at the end.
 
-    MEASURED 2026-09-04 against 4aaee50 -- WCAG relative luminance over the
-    three declared token blocks (dark `:root` webtheme.py:109,
-    `@media (prefers-color-scheme:light)` :287, `:root[data-theme="light"]`
-    :373), ink x ground, re-computed by the probe on every run:
-      54 text pairs evaluated, 48 clear 4.5:1, SIX DO NOT -- all `--ink-quiet`
-      in LIGHT mode:
-        #7c8ba0 on --color-ground          #eef2fb = 3.09:1
-        #7c8ba0 on --color-ground-elevated #e7ecf7 = 2.93:1
-        #7c8ba0 on --color-ground-sunken   #dde4f2 = 2.72:1
-      (three pairs x two light blocks, which declare identical values.)
-      The same token is fine in dark: 5.53 / 5.26 / 5.67:1.
-      9 status-hue/ground non-text pairs, worst 5.35:1 (`--blocked` on dark
-      ground). THE NON-TEXT FLOOR OF 3:1 CONFORMS; this row is only about text.
+    WHAT WAS WRONG AT SEED (4aaee50). 54 text pairs evaluated, 48 cleared
+    4.5:1, SIX DID NOT -- all `--ink-quiet` in LIGHT mode, three grounds x the
+    two duplicated light blocks, which declared identical values. The same
+    token was already fine in dark (5.53 / 5.26 / 5.67:1). It was a VIOLATION
+    and not a documented decorative exemption because the token painted real
+    reading copy: chartsvg.py:294's `<text class="chart-caption" ...
+    style="fill:var(--ink-quiet)">` renders the sentence "No activity in this
+    window", plus the `.status-chip.st-resolved` / `.priority-chip.p3,.p4` /
+    `.link-chip .none` / `.fleet-row .agents.is-zero` / actions-drawer count
+    rules inside webtheme.py itself.
 
-    WHY THIS IS A VIOLATION RATHER THAN A DOCUMENTED EXEMPTION.
-    webtheme.py:141-152 declares `--ink-quiet` "decorative/disabled-only, not
-    guaranteed >=4.5:1 in light mode", which would be a legitimate WCAG
-    exemption if it were only ever decorative. Measured, it is not:
-      chartsvg.py:294  `<text class="chart-caption" ... style="fill:var(--ink-quiet)">`
-                       renders the sentence "No activity in this window" -- reading
-                       copy, on the empty-state path Core 8 exists to protect.
-      chartsvg.py:461  the axis stub label falls back to the same token.
-      21 further `var(--ink-quiet)` uses inside webtheme.py's own rules, not
-      audited per-site here.
+    THE FIX, AND WHERE. At the TOKEN, not at the call sites -- `--ink-quiet`
+    darkened along the same hue (hsl ~215 deg) from #7c8ba0 to #596473, in BOTH
+    light blocks: `@media (prefers-color-scheme:light)` webtheme.py:338 AND
+    `:root[data-theme="light"]` :408. They are held in sync only by comment, so
+    changing one and not the other was the standing hazard; the probe now
+    asserts their parity over the measured token set directly. No call site
+    moved off the token, and no reading-copy usage was relabelled decorative.
+
+    MEASURED 2026-09-04 after the fix -- WCAG relative luminance over the three
+    declared token blocks (dark `:root` webtheme.py:109, the two light blocks
+    above), re-computed by the probe on every run, never transcribed:
+      TEXT, floor 4.5:1 -- 54 of 54 pairs clear it. The six that did not, before
+      -> after (identical in both light blocks):
+        --ink-quiet on --color-ground          #eef2fb  3.09:1 -> 5.36:1
+        --ink-quiet on --color-ground-elevated #e7ecf7  2.93:1 -> 5.08:1
+        --ink-quiet on --color-ground-sunken   #dde4f2  2.72:1 -> 4.71:1
+      Worst declared text pair overall moved 2.72:1 -> 4.71:1.
+      NON-TEXT, floor 3:1 -- 9 of 9 status-hue x ground pairs clear it, worst
+      5.35:1 (`--blocked` on the dark ground), UNCHANGED by this fix. That half
+      conformed at seed; the probe now guards it rather than assuming it.
+
+    HIERARCHY PRESERVED, deliberately. Quiet was taken to ~4.7-5.4:1, not to
+    7:1: in light it still reads clearly quieter than --ink-tertiary (7.85:1 on
+    the base ground) and --ink-secondary (9.16:1). The probe asserts the four
+    ink-ramp steps still resolve to four DISTINCT colours in every block, so a
+    future "fix" cannot buy contrast by collapsing a ramp step onto its
+    neighbour.
+
+    NOT COVERED, checked and clean: `--ink-on-solid` and `--ink-on-ground-inverse`
+    compute ~1.0-1.2:1 against the page grounds and are correctly excluded from
+    the ink set -- by definition they never sit on those grounds (they paint on
+    `--brand-gradient-solid` and on an inverted surface respectively).
+    `--brand-cyan-ink`, used as real text at chartsvg.py's value labels, clears
+    4.80:1 worst case in light and 10.59:1 in dark. Hairline and glass tokens
+    are `rgba()` over a ground, not hex, so flat pair math cannot evaluate them
+    at all -- that is squarely OSV1-010's rendered half, not a gap here.
 
     HONEST LIMIT, and why closing this does not close OSV1-010: flat token-pair
     math models a swatch on a bare ground. The real surface puts glass panels
@@ -1467,7 +1532,9 @@
     motion-preference trace in OSV1-010.
 
 - id: OSV1-012
-  title: calm is reported not celebrated, and empty widgets keep their slot -- no kit
+  title: >-
+    two empty widgets keep their slot and say nothing -- measured, not a
+    missing kit
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 8
@@ -1475,7 +1542,7 @@
       The calm state is stated plainly and never rendered as a triumphant zero. A widget with
       nothing to show keeps its slot and says so in a sentence, so the page does not reflow
       between calm and alarm.
-  disposition: GAP
+  disposition: VIOLATION
   work: work_item_pipeline-c1a
   assertion:
     kind: probe
@@ -1484,27 +1551,40 @@
     PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
     a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
 
-    GAP, REASON "KIT NOT BUILT". Core 8's check (`calm.keeps_slot`) is Tier A
-    but is defined against an ALL-EMPTY FIXTURE compared to a populated one --
-    "every widget region present on the populated fixture is present, each
-    carries its empty sentence, and no numeral renders at hero scale outside
-    the Core 1 hero". That is a two-render comparison this in-process kit
-    cannot perform; `tests/conformance/operator_surface/test_tier_a.py` does
-    not exist.
+    WAS GAP "KIT NOT BUILT"; NOW VIOLATION, MEASURED. The Tier-A kit exists and
+    performs the two-render comparison this clause defines, so the reason for
+    the red changed from "nobody has looked" to "we looked and it fails".
 
-    WHAT THE SOURCE ALREADY CARRIES, measured 2026-09-04, and NOT credited as
-    conformance -- the clause's claim is about region PRESENCE and reflow,
-    which no source probe can see:
-      widgets.py:423,433    the verdict headline is "All clear" (calm) /
-                            "Idle" -- a plain statement, not a triumphant zero.
-      webapp.py:2275        "Nothing is waiting to be claimed in this queue
-                            right now." with the figure rendered as an em-dash
-                            (`<span class="fig none sm">—</span>` plus
-                            "No ready items"), not a hero-scale `0`.
-      chartsvg.py:295       "No activity in this window".
-      webbrowse.py:498-503  "No items match this filter."
-    Unknown until rendered: whether every widget region survives the empty
-    render at all, and whether the page reflows between calm and alarm.
+    MEASURED 2026-09-05, L0 and L1 rendered against an all-empty project and
+    against the populated ALARM fixture, regions matched by section id and by
+    panel heading:
+      SLOTS SURVIVE   every widget region on the populated render is present on
+                      the empty one, on BOTH levels. That half of the clause
+                      holds and the check says so.
+      SENTENCES DO NOT  three regions keep their slot and say nothing at all:
+                      L0 "Needs you -- ranked" (`widgets.render_attention_queue`
+                      returns a bare `<div class="attn-list"></div>` when
+                      `rows` is empty), L1 "Agents on <project>"
+                      (`widgets.render_agents_panel`, the same shape), and L1
+                      "Status breakdown" (a legend of zeroes, no sentence).
+      NO HERO-SCALE NUMERAL  nothing at or above the hero's own type size
+                      (`--text-display-size`, resolved from the token block --
+                      the floor is derived from the hero, never written down)
+                      renders a numeral outside `#verdict-hero`. That limb
+                      holds.
+
+    SO THE ROW IS RED ON ONE LIMB OF THREE, and the kit records which: the
+    two `calm.keeps_slot` tests are `xfail(strict=True)` naming THIS row. When
+    the three regions gain their sentence the tests XPASS, which FAILS the run
+    -- that failure is the instruction to flip this row and delete the markers
+    in the same change.
+
+    WHAT THE SOURCE ALREADY CARRIES, and still does: `widgets.py:423,433` the
+    verdict headline is "All clear" / "Idle" -- a plain statement, never a
+    triumphant zero; `webapp.py:2275` the ready queue says "Nothing is waiting
+    to be claimed in this queue right now." with the figure as an em-dash;
+    `chartsvg.py:295` "No activity in this window"; `webbrowse.py:498-503` "No
+    items match this filter." Four widgets get this right; three do not.
 
 - id: OSV1-013
   title: no front-end framework, bundler, template engine, or build step
@@ -1788,7 +1868,9 @@
     (webpwa.py:121-122, webtrust.py:258-259); see OSV1-005.
 
 - id: OSV1-021
-  title: Conformance 2 (alarm unmissable, never colour-only) has no test file
+  title: >-
+    Conformance 2 (alarm unmissable, never colour-only) -- Tier-A half lands,
+    Tier-B hue half still has no test file
   contract:
     file: contracts/operator-surface.v1.md
     clause: Conformance 2
@@ -1801,21 +1883,25 @@
     kind: probe
     ref: test_row_osv1_021
   notes: >
-    PINNING ROW -- the probe pins both named paths' ABSENCE; a passing probe
-    here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    PINNING ROW -- one half has landed, the other has not, so the probe now
+    pins the TIER-B half's absence rather than both. A passing probe here is
+    NOT conformance. Flip direction VIOLATION-MOVEMENT.
 
     THE ONLY CONFORMANCE FIXTURE THAT SPANS BOTH TIERS, so it is owned by two
-    items: the Tier-A half (accessible name on every status-bearing element)
-    by work_item_pipeline-c1a, carried in this row's `work` ref; the Tier-B
-    half (the alarm region's hue is `--alarm` or `--blocked`) by
-    work_item_pipeline-qgo. Both must land before this row can go green; the
-    single-ref schema records the first, and this note records the second so
-    the second is not lost.
-
-    MEASURED 2026-09-04 against 4aaee50: neither path exists. GOOD = the alarm
-    region is present, its hue is `--alarm` or `--blocked`, and every
-    status-bearing element also carries a word. BAD = a fixture whose status
-    chips carry only a status class fails the accessible-name assertion.
+    items. Status 2026-09-05:
+      TIER-A HALF, LANDED (work_item_pipeline-c1a). "every status-bearing
+        element also carries a word" is implemented as `state.not_colour_only`
+        in `tests/conformance/operator_surface/test_tier_a.py`, run over
+        rendered L0/L1/L2 of the ALARM fixture, and it PASSES -- see OSV1-004,
+        which carries the measurement. Its bad half is this fixture's own named
+        specimen ("a fixture whose status chips carry only a status class") and
+        the same function reports it.
+      TIER-B HALF, NOT BUILT (work_item_pipeline-qgo). "the alarm region is
+        present, its hue is `--alarm` or `--blocked`" needs a real browser;
+        `tests/conformance/operator_surface/browser/test_tier_b.py` does not
+        exist.
+    Both must land before this row can go green; the single-ref schema records
+    the first, and this note records the second so the second is not lost.
 
 - id: OSV1-022
   title: Conformance 3 (body-swap survival) has no test file
@@ -1874,35 +1960,54 @@
     fixture has a real chance of failing on first run -- which is the point.
 
 - id: OSV1-024
-  title: Conformance 5 (hero composition) has no test file
+  title: >-
+    Conformance 5 (hero composition) -- fixture exists, discriminates, and its
+    good half passes against the rebuilt hero
   contract:
     file: contracts/operator-surface.v1.md
     clause: Conformance 5
     quote: |
       **Test location:** `tests/conformance/operator_surface/test_tier_a.py` (Core 1).
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-c1a
   assertion:
     kind: probe
     ref: test_row_osv1_024
   notes: >
-    PINNING ROW -- the probe pins the named path's ABSENCE; a passing probe
-    here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    PINNING ROW -- the fixture exists and discriminates, but its GOOD half does
+    not pass, so the probe pins that deferral. A passing probe here is NOT
+    conformance. Flip direction VIOLATION-MOVEMENT.
 
-    MEASURED 2026-09-04 against 4aaee50: `tests/conformance/` does not exist.
-    GOOD = the hero region contains a velocity figure with its window stated
-    and each of in flight, blocked, needs attention, and open/ready. BAD = a
-    hero carrying only a verdict line, or a figure without the four counts,
-    fails the assertion naming what is missing.
+    MEASURED 2026-09-05. `tests/conformance/operator_surface/test_tier_a.py`
+    implements `hero.velocity_and_counts` at the location Conformance 5 names,
+    with three bad halves and one good half:
+      BAD, DEMONSTRATED  "a hero carrying only a verdict line" -- and it needed
+        no synthetic construction, exactly as this row predicted at seed: the
+        bad fixture IS `widgets.render_verdict_hero`'s own output shape. Also
+        "a figure without the four counts" (reports all four missing, and does
+        NOT report the figure missing), and a third that keeps the check from
+        crediting a loose number and a status word in different sentences as a
+        presented count.
+      GOOD, DEFERRED  run against L0 rendered from a populated fixture, it
+        FAILS: the hero states no `blocked` count and no `needs attention`
+        count. Those live in the KPI strip OUTSIDE the hero. So the good half
+        is `xfail(strict=True)` naming OSV1-001.
 
-    THE BAD HALF IS THE SHIPPED HERO. Measured in OSV1-001: webapp.py:4602
-    renders exactly "a hero carrying only a verdict line". So this fixture's
-    bad half needs no synthetic construction -- it can be built from
-    `render_verdict_hero`'s pre-fix output, which is the strongest possible
-    demonstration that the check discriminates.
+    THIS ROW GOES GREEN WHEN OSV1-001 DOES, and not before: the fixture is the
+    fixture, but Conformance 5 is only demonstrated end-to-end once its good
+    half passes against a conforming hero. The probe therefore asserts both
+    facts -- the fixture is present with its pair, and OSV1-001 is still red --
+    so flipping either one alone fails loudly.
+    FLIPPED GAP -> CONFORMS 2026-09-05 at highway wave-1 integration (orchestrator): the hero lane closed OSV1-001
+    (L0 hero = velocity over a stated window + in-flight/blocked/needs-attention/open counts) and the kit's good half
+    `test_hero_velocity_and_counts` runs undeferred and PASSES on the real L0 (tier-a kit: 38 passed / 4 xfailed); the
+    three bad halves still fail as designed. Re-derived from the PASSING pair, not from the fixture's presence. Probe now
+    asserts the regression direction: good half stays undeferred and OSV1-001 stays CONFORMS.
 
 - id: OSV1-025
-  title: Conformance 6 (inline-style register) has no test file
+  title: >-
+    Conformance 6 (inline-style register) -- fixture exists and discriminates,
+    good half deferred against OSV1-005
   contract:
     file: contracts/operator-surface.v1.md
     clause: Conformance 6
@@ -1914,25 +2019,37 @@
     kind: probe
     ref: test_row_osv1_025
   notes: >
-    PINNING ROW -- the probe pins the named path's ABSENCE; a passing probe
-    here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    PINNING ROW -- the fixture exists and discriminates, but its GOOD half does
+    not pass, so the probe pins that deferral. A passing probe here is NOT
+    conformance. Flip direction VIOLATION-MOVEMENT.
 
-    MEASURED 2026-09-04 against 4aaee50: `tests/conformance/` does not exist.
-    GOOD = zero inline `style=` attributes carry a literal colour, font, or
-    size; every computed-geometry site is on the register. BAD = a file
-    carrying `style="color:#D9A253"` is reported as a literal-colour violation,
-    and a computed-geometry site absent from the register is reported as
-    unregistered.
+    MEASURED 2026-09-05. `tests/conformance/operator_surface/test_tier_a.py`
+    implements `visual.single_source` at the location Conformance 6 names:
+      BAD, DEMONSTRATED  the contract's own named specimen, `style="color:#D9A253"`,
+        is classified LITERAL by the census; and an injected computed-geometry
+        site is reported as unregistered -- injected over the census's OWN
+        reader, so the real engine does the classifying and nothing on disk is
+        touched.
+      GOOD, DEFERRED  66 literal inline sites and 40 `<style>`-block
+        declarations remain, so the good half is `xfail(strict=True)` naming
+        OSV1-005.
 
-    NOTE THE OVERLAP, AND KEEP IT DELIBERATE: this ledger already runs that
-    census in-process (OSV1-005 / OSV1-006) because the register lives in
-    `ledger/` by ruling. The Tier-A kit's job is not to duplicate it but to
-    read the SAME register, so there is one census and one source of the
-    number. If the kit grows its own copy, the two will disagree and the
-    disagreement will be silent.
+    THE OVERLAP IS KEPT DELIBERATE, as this row required at seed: the kit does
+    not grow its own census. It imports `ledger/checks/_support.py`'s engines
+    and the exemption register itself, which the true-up hoisted to
+    `ledger/checks/test_operator_rows.py::EXEMPTION_REGISTER` for exactly this
+    reason -- one census, one register, one number. The kit additionally
+    asserts that the imported register and the live COMPUTED census agree, so
+    the two cannot drift apart silently.
+
+    THIS ROW GOES GREEN WHEN OSV1-005 DOES. The probe asserts both facts -- the
+    fixture is present with its pair and reads the ledger's register, and
+    OSV1-005 is still red -- so flipping either one alone fails loudly.
 
 - id: OSV1-026
-  title: Conformance 7 (empty states keep their slot) has no test file
+  title: >-
+    Conformance 7 (empty states keep their slot) -- fixture exists and
+    discriminates, good half deferred against OSV1-012
   contract:
     file: contracts/operator-surface.v1.md
     clause: Conformance 7
@@ -1944,50 +2061,73 @@
     kind: probe
     ref: test_row_osv1_026
   notes: >
-    PINNING ROW -- the probe pins the named path's ABSENCE; a passing probe
-    here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    PINNING ROW -- the fixture exists and discriminates, but its GOOD half does
+    not pass, so the probe pins that deferral. A passing probe here is NOT
+    conformance. Flip direction VIOLATION-MOVEMENT.
 
-    MEASURED 2026-09-04 against 4aaee50: `tests/conformance/` does not exist.
-    GOOD = every widget region present on the populated render is present on
-    the empty render, each carrying its empty sentence. BAD = a render that
-    drops empty widgets, or renders a hero-scale `0`, fails on the missing
-    region or on the numeral.
+    MEASURED 2026-09-05. `tests/conformance/operator_surface/test_tier_a.py`
+    implements `calm.keeps_slot` at the location Conformance 7 names, and it is
+    the one fixture needing TWO renders of the same page. Both are real: an
+    all-empty project and the populated ALARM fixture, each in its own
+    workspace root so that L0 -- which aggregates every project in a workspace
+    -- shows exactly the dataset under test and nothing else. That is what
+    keeps the set difference deterministic rather than flaky, which this row
+    flagged at seed as the risk.
+      BAD, DEMONSTRATED  both halves the clause names: "a render that drops
+        empty widgets" (reports the missing region) and "or renders a
+        hero-scale `0`" (reports the numeral, with hero scale DERIVED from the
+        hero's own declared type size rather than written down). A third bad
+        half proves keeping the slot is not enough on its own.
+      GOOD, DEFERRED  three regions keep their slot and say nothing -- see
+        OSV1-012, which carries the measurement. Both the L0 and the L1 good
+        halves are `xfail(strict=True)` naming OSV1-012.
 
-    THIS IS THE ONE CONFORMANCE FIXTURE THAT NEEDS TWO RENDERS OF THE SAME
-    PAGE (populated and all-empty) and a set difference between their regions.
-    The root suite already ships an isolated fixture server
-    (`tests/conftest.py`), so the empty half is cheap; the populated half must
-    be deterministic or the set difference will flake.
+    THIS ROW GOES GREEN WHEN OSV1-012 DOES. The probe asserts both facts -- the
+    fixture is present with its pair, and OSV1-012 is still red.
 
 - id: OSV1-027
-  title: Freeze 1 -- the Tier-A kit does not exist and runs in nothing
+  title: Freeze 1 -- the Tier-A kit exists and runs on every pull request
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 1
     quote: |
       **Freeze 1:** the Tier-A kit exists at `tests/conformance/operator_surface/test_tier_a.py`
       and runs on every pull request.
-  disposition: GAP
-  work: work_item_pipeline-c1a
+  disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_osv1_027
   notes: >
-    PINNING ROW -- the probe pins BOTH halves' absence (the file, and any
-    Makefile/CI wiring for it); a passing probe here is NOT conformance. Flip
-    direction VIOLATION-MOVEMENT.
+    RE-DERIVED 2026-09-05. Freeze 1 has two halves and BOTH now hold; the row
+    is flipped on the second, never on the file alone.
+      EXISTS  `tests/conformance/operator_surface/test_tier_a.py` is present at
+              exactly the path the clause names, alongside `__init__.py` and a
+              `conftest.py` carrying the CALM / ALARM / EMPTY rendered
+              fixtures. It implements one check per Tier-A **Machine check:**
+              name the contract states -- ten of them -- each with at least one
+              bad half, and carries its own coverage tripwire that reads the
+              contract and fails if a clause grows a Tier-A check the kit does
+              not implement, or the kit keeps one the contract no longer names.
+      RUNS ON EVERY PULL REQUEST  `.github/workflows/ci.yml` gained a "Tier 6
+              -- operator-surface conformance (Tier A)" step running
+              `pytest tests/conformance/operator_surface`, and that workflow
+              triggers on `pull_request`. The Makefile gained a named
+              `test-conformance-a` target; `make test` already collects the kit
+              (it runs `pytest tests ledger/checks`, and the kit lives under
+              `tests/`), so it is deliberately NOT invoked a second time there
+              -- running it twice would double its fixture cost and prove
+              nothing new.
 
-    MEASURED 2026-09-04 against 4aaee50: `tests/conformance/operator_surface/
-    test_tier_a.py` does not exist; `tests/` holds only cli/, integration/,
-    unit/, conftest.py, _dolt_isolation.py, _util.py. The Makefile's targets
-    are test-unit / test-integration / test-cli / test-ledger / ledger-mutate /
-    test-module, and `.github/workflows/ci.yml` names tiers 1-5 -- none of them
-    a conformance tier. So every Tier-A check the contract names is asserted by
-    nothing, and would remain so even if the file appeared unwired.
+    THIS ROW IS ABOUT EXISTENCE AND WIRING, NOT ABOUT THE PRODUCT. Six of the
+    kit's good halves are `xfail(strict=True)` against open rows (OSV1-001,
+    -005, -009, -012, -015/-016) -- that is those rows' redness, recorded
+    honestly, not this one's. What Freeze 1 asks is that the Tier-A kit exist
+    and run, and both are now true and both are pinned: the probe fails if the
+    file goes, if the Makefile target goes, or if the CI step goes.
 
-    Both halves matter and the probe pins both: a kit that exists but runs in
-    no gate is the exact failure the custody family already measured and
-    closed (CCV1-022, where a whole suite's green claims had never been run).
+    WHY THE WIRING HALF IS ASSERTED SEPARATELY: a kit that exists but runs in
+    no gate is the exact failure the custody family already measured and closed
+    (CCV1-022, where a whole suite's green claims had never been run).
 
 - id: OSV1-028
   title: Freeze 2 -- the Tier-B browser kit does not exist; no browser test exists at all
@@ -2053,7 +2193,9 @@
     itself, a green Tier-B tier is a self-report.
 
 - id: OSV1-030
-  title: Freeze 4 -- no Conformance fixture has been demonstrated to discriminate
+  title: >-
+    Freeze 4 -- the four Tier-A fixtures discriminate; the three Tier-B ones
+    have no kit to demonstrate
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 4
@@ -2066,14 +2208,28 @@
     kind: probe
     ref: test_row_osv1_030
   notes: >
-    PINNING ROW -- the probe pins that neither kit file exists, so no fixture
-    can have been demonstrated; a passing probe here is NOT conformance. Flip
+    PINNING ROW -- the probe now pins the TIER-B kit's absence only, the
+    Tier-A half having landed; a passing probe here is NOT conformance. Flip
     direction VIOLATION-MOVEMENT.
 
     SPANS BOTH KITS: Conformance 1-4 belong to the Tier-B item
     (work_item_pipeline-qgo, this row's `work` ref) and Conformance 5-7 to the
     Tier-A item (work_item_pipeline-c1a). The single-ref schema records the
     first; this note records the second so it is not lost.
+
+    RE-DERIVED 2026-09-05, TIER-A HALF DEMONSTRATED. Every bad half in
+    `tests/conformance/operator_surface/test_tier_a.py` is a test that RUNS and
+    PASSES by observing the check report the defect the contract names -- ten
+    checks, twenty-two bad halves, executed on every pull request. Conformance
+    5's is `render_verdict_hero`'s own pre-fix output; Conformance 6's is the
+    contract's own `style="color:#D9A253"` specimen plus an injected
+    unregistered geometry site; Conformance 7's is a dropped region and a
+    hero-scale `0`; Conformance 2's Tier-A half is a chip carrying only a
+    status class. The kit also carries a tripwire asserting every check ships a
+    bad half at all, so the demonstration cannot quietly narrow.
+
+    STILL RED ON THE TIER-B HALF: Conformance 1, 3 and 4 (and Conformance 2's
+    hue half) need a real browser, and no browser kit exists.
 
     "DEMONSTRATED BY RUNNING IT" IS THE WHOLE CLAUSE. A bad half that has never
     been executed is a claim, and PROTOCOL.md pillar 4 exists because prose
@@ -2084,7 +2240,7 @@
     failure.
 
 - id: OSV1-031
-  title: Freeze 5 -- 10 of the 19 Core-carrying rows read VIOLATION or GAP
+  title: Freeze 5 -- 7 of the 19 Core-carrying rows read VIOLATION or GAP
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 5
@@ -2112,13 +2268,44 @@
                         condition's second limb
       VIOLATION 5       OSV1-001, -005, -009, -015, -016
       GAP 5             OSV1-003, -004, -008, -010, -012
-    Ten red. Freeze 5 is met when all ten are green and the two NOT-ASSERTABLE
-    rows still name their cadence.
+    Ten red at seed. Freeze 5 is met when all of them are green and the two
+    NOT-ASSERTABLE rows still name their cadence.
+
+    MOVEMENT SINCE SEED, one line per flip -- this tally is a pin, so it is
+    updated only in the SAME change that flips the row it counts:
+      2026-09-04  OSV1-009 VIOLATION -> CONFORMS (work_item_pipeline-sxh):
+                  every declared token pair now clears its floor in both
+                  themes, re-derived from the live luminance math, not from a
+                  file appearing. Red 10 -> 9 (VIOLATION 4, GAP 5).
+
+    RE-MEASURED 2026-09-05, NINE RED. The Tier-A conformance kit landed
+    (OSV1-027) and two Core rows moved as a result, in opposite directions:
+      OSV1-004 GAP -> CONFORMS  Core 3's `state.not_colour_only` is now
+                        MEASURED over rendered L0/L1/L2 and passes.
+      OSV1-012 GAP -> VIOLATION  Core 8's `calm.keeps_slot` is now measured
+                        too, and fails: three regions keep their slot and say
+                        nothing. Same colour, better reason -- "we looked and
+                        it fails" rather than "nobody has looked".
+    The tally is therefore CONFORMS 8 / NOT-ASSERTABLE 2 / VIOLATION 6 / GAP 3,
+    nine red.
+
+    TALLY MOVED 2026-09-04: OSV1-001 (Core 1) flipped VIOLATION -> CONFORMS
+    when the L0 hero was rebuilt to lead with fleet velocity and carry the four
+    counts. Nine red now -- OSV1-003, -004, -005, -008, -009, -010, -012, -015,
+    -016 -- and the probe's pinned count moved 10 -> 9 with it. This is the
+    tally this gate exists to track, not a re-derivation of any other row: no
+    other disposition changed, and OSV1-001 was re-derived from real
+    measurement (see its own notes and the tests named there), not flipped
+    because a file appeared.
 
     THE FAILURE MODE THIS ROW EXISTS TO CATCH: a GAP row whose only defect is
     "the kit is not built" being flipped to CONFORMS because a file now exists,
-    rather than re-derived from the kit's real results. All five GAP rows are
-    GAP precisely because they ARE assertable and simply are not asserted yet.
+    rather than re-derived from the kit's real results. OSV1-004 was flipped
+    only after the rendered check ran and passed, and its own row records the
+    measurement; OSV1-012, whose kit also landed, went RED-der rather than
+    green. The three remaining GAP rows are GAP precisely because they ARE
+    assertable and simply are not asserted yet -- all three need a browser.
+    RE-PINNED 2026-09-05 at highway wave-1 integration (orchestrator): the contrast lane flipped OSV1-009, the hero lane flipped OSV1-001, and the tier-a-kit lane flipped OSV1-004 in the same wave, each re-deriving its row from a real measurement; both the hero and tier-a-kit lanes had independently re-pinned this count to 9 against their own base, so the union is 7. Remaining red: 003, 005, 008, 010, 012, 015, 016. core10 (015/016) and the browser kit (003/008/010) are in flight.
 
 - id: OSV1-032
   title: >-
