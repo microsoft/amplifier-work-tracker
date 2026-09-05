@@ -21,13 +21,12 @@ returning one string per violation. Two tests wrap each one:
 
 ## `xfail(strict=True)` is a ledger row, never a skip
 
-Four clauses do not hold on today's code, and each has an open `ledger/` row
+Three clauses do not hold on today's code, and each has an open `ledger/` row
 saying so. Their good halves are `pytest.mark.xfail(strict=True)` with the row
 id in the reason -- never `skip`, never deleted:
 
     hero.velocity_and_counts  OSV1-001  the L0 hero is a verdict line
     visual.single_source      OSV1-005  66 literal inline sites + 40 in blocks
-    perception.floors         OSV1-009  six declared text pairs below 4.5:1
     calm.keeps_slot           OSV1-012  an empty widget keeps its slot but
                                         says nothing
     antigoals.enforced        OSV1-015  the L1 view queries with `limit=0`
@@ -1278,12 +1277,6 @@ def test_perception_floors_bad_half_the_engine_really_computes_the_ratio() -> No
     assert S.contrast_ratio("#ffffff", "#ffffff") == pytest.approx(1.0, abs=0.01)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="OSV1-009 (Core 7): six declared text pairs sit below the 4.5:1 floor "
-    "(worst 2.72:1, all --ink-quiet in light mode) and that token paints real "
-    "reading copy. Flip the row and delete this marker in the same change.",
-)
 def test_perception_floors() -> None:
     problems = check_perception_floors(S.text_pairs(), S.non_text_pairs())
     assert not problems, "Core 7 (`perception.floors`, token half):\n  " + "\n  ".join(problems)
