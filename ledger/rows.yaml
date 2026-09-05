@@ -1268,11 +1268,11 @@
       webapp.py:2266    color:{accent}                        computed accent
       webapp.py:2572    {style}                               computed style
       webapp.py:3376    {heading_style}                       computed heading
-      webapp.py:4393    {heading_style}                       computed heading
-      webapp.py:4908    {remove_heading_style}                computed heading
-      webtheme.py:4131  {style}                               computed style
-      webtheme.py:4150  left:{_grad_x(f):.1f}px               gradient stop offset
-      webtheme.py:4157  width:{px}px                          swatch width
+      webapp.py:4421    {heading_style}                       computed heading
+      webapp.py:4936    {remove_heading_style}                computed heading
+      webtheme.py:4185  {style}                               computed style
+      webtheme.py:4204  left:{_grad_x(f):.1f}px               gradient stop offset
+      webtheme.py:4211  width:{px}px                          swatch width
       widgets.py:704    color:var({color_var})                token chosen at runtime
       widgets.py:831    width:{pct}%                          mix-bar width
       widgets.py:834    width:{pct}%;background:var({_MIX_COLOR_VAR[key]})

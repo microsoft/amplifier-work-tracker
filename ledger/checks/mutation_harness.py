@@ -639,8 +639,8 @@ def _mo031_a_red_core_row_goes_green(w: World) -> None:
     """
     w.replace(
         ROWS_PATH,
-        "  disposition: VIOLATION\n  work: work_item_pipeline-8vv",
-        "  disposition: CONFORMS\n  work: work_item_pipeline-8vv",
+        "  disposition: VIOLATION\n  work: work_item_pipeline-c1a",
+        "  disposition: CONFORMS\n  work: work_item_pipeline-c1a",
     )
 
 
