@@ -45,6 +45,7 @@ import re
 
 from ._support import (
     CHARTSVG,
+    GROUND_TOKENS,
     LITERAL,
     OPERATOR_CONTRACT_PATH,
     PYPROJECT,
@@ -391,9 +392,9 @@ def test_row_osv1_006() -> None:
         "webapp.py:3376",
         "webapp.py:4393",
         "webapp.py:4908",
-        "webtheme.py:4120",
-        "webtheme.py:4139",
-        "webtheme.py:4146",
+        "webtheme.py:4131",
+        "webtheme.py:4150",
+        "webtheme.py:4157",
         "widgets.py:704",
         "widgets.py:831",
         "widgets.py:834",
@@ -484,47 +485,91 @@ def test_row_osv1_008() -> None:
 # --------------------------------------------------------------- OSV1-009
 
 
-def test_row_osv1_009() -> None:
-    """Core 7 VIOLATION pin: the token-pair luminance math, RE-RUN here.
+#: The ink ramp's four canonical steps, brightest-to-quietest in dark mode and
+#: darkest-to-lightest in light. `--dim`/`--ink` are deliberately excluded: they
+#: are ALIASES onto two of these four, so including them would make the
+#: distinctness check below trivially false.
+_INK_RAMP = ("--ink-primary", "--ink-secondary", "--ink-tertiary", "--ink-quiet")
 
-    Two halves, both pinned: the six below-floor pairs are all --ink-quiet in
-    light mode, AND that token is used for real reading copy. Fixing either
-    half alone is progress the row must record, so neither is folded into the
-    other.
+
+def test_row_osv1_009() -> None:
+    """Core 7 CONFORMS: every declared token pair clears its floor, both themes.
+
+    RETARGETED from the seed pin (work_item_pipeline-sxh, 2026-09-04). The pin
+    froze six below-floor pairs -- all `--ink-quiet` in light mode, three
+    grounds x the two duplicated light blocks -- plus the call site that made
+    that token READING COPY rather than a decorative exemption. Both halves are
+    closed by one token change (`--ink-quiet` #7c8ba0 -> #596473 in BOTH light
+    blocks), so the reading-copy half needs no separate assert: the token is now
+    above the text floor wherever it is used.
+
+    Every number below is COMPUTED from the live token blocks in webtheme.py on
+    each run -- nothing here is a transcribed ratio. The three guarded shapes:
+
+      1. no declared ink x ground pair below 4.5:1, in any of the three blocks;
+      2. no declared status x ground pair below 3:1 (the half that CONFORMED at
+         seed and must not silently regress while the text half is worked on);
+      3. the fix was made at the TOKEN and in BOTH light blocks, and did not
+         buy contrast by collapsing the ink ramp.
+
+    Honest limit, unchanged from the seed row and the reason OSV1-010 stays
+    open: flat token-pair math models a swatch on a bare ground. The real
+    surface puts `backdrop-filter` glass over an ambient radial gradient, which
+    lifts perceived background luminance. Necessary, never sufficient.
     """
-    below = sorted(
-        (round(r, 2), ink, ground, block) for block, ink, ground, r in text_pairs() if r < 4.5
+    pairs = text_pairs()
+    assert len(pairs) >= 54, (
+        f"OSV1-009 (Core 7): the declared ink x ground surface SHRANK to {len(pairs)} "
+        f"pairs (54 at seed). A floor check over fewer pairs passes by measuring "
+        f"less -- re-derive this row from what the token blocks actually declare."
     )
-    assert len(below) == 6, (
-        f"OSV1-009 (Core 7) LUMINANCE MOVED: pinned six declared text pairs below the "
-        f"4.5:1 floor, observed {len(below)}.\n"
-        f"  If FEWER: the tokens are being fixed -- update the pin (or flip the row to "
-        f"CONFORMS at zero) and retarget this probe IN THE SAME CHANGE "
-        f"(work_item_pipeline-sxh). A passing pin is not conformance.\n"
-        f"  If MORE: a token regressed below a frozen floor.\n"
-        f"  observed: {below}"
+    below_text = sorted(
+        (round(r, 2), ink, ground, block) for block, ink, ground, r in pairs if r < 4.5
     )
-    assert {b[1] for b in below} == {"--ink-quiet"}, (
-        f"OSV1-009 (Core 7): a token OTHER than --ink-quiet is now below the text "
-        f"floor: {sorted({b[1] for b in below})}. --ink-quiet is at least documented "
-        f"as decorative; anything else below 4.5:1 is a plain regression."
+    assert not below_text, (
+        f"OSV1-009 (Core 7) REGRESSION: {len(below_text)} declared text pair(s) fell "
+        f"below the 4.5:1 floor. Fix the TOKEN, in BOTH light blocks -- they are held "
+        f"in sync only by comment.\n  (ratio, ink, ground, block): {below_text}"
     )
-    assert min(b[0] for b in below) == 2.72, (
-        f"OSV1-009 (Core 7): the worst declared text pair moved from 2.72:1 to "
-        f"{min(b[0] for b in below)}:1."
+
+    non_text = non_text_pairs()
+    assert len(non_text) >= 9, (
+        f"OSV1-009 (Core 7): the declared status x ground surface SHRANK to "
+        f"{len(non_text)} pairs (9 at seed) -- re-derive this row."
     )
-    assert contains(CHARTSVG, 'style="fill:var(--ink-quiet)">'), (
-        "OSV1-009 (Core 7) PIN BROKE THE RIGHT WAY: chartsvg.py no longer paints its "
-        "empty-state caption with --ink-quiet. That call site is what makes the "
-        "below-floor token READING COPY rather than a documented decorative "
-        "exemption -- re-derive the row (work_item_pipeline-sxh)."
+    below_non_text = sorted(
+        (round(r, 2), hue, ground, block) for block, hue, ground, r in non_text if r < 3.0
     )
-    worst_non_text = min(r for *_rest, r in non_text_pairs())
-    assert worst_non_text >= 3.0, (
-        f"OSV1-009 (Core 7) REGRESSION: a status hue fell below the 3:1 NON-TEXT "
-        f"floor ({worst_non_text:.2f}:1). That half CONFORMED at seed and this row "
-        f"does not cover it -- it is a separate, new violation."
+    assert not below_non_text, (
+        f"OSV1-009 (Core 7) REGRESSION: {len(below_non_text)} declared non-text pair(s) "
+        f"fell below the 3:1 floor.\n  (ratio, hue, ground, block): {below_non_text}"
     )
+
+    blocks = token_blocks()
+    assert set(blocks) == {"dark", "light-media", "light-attr"}, (
+        f"OSV1-009 (Core 7): a declared token block appeared or vanished "
+        f"({sorted(blocks)}). 'both themes' is measured over these three."
+    )
+    light = {
+        name: {t: resolve_token(t, blocks[name]) for t in (*_INK_RAMP, *GROUND_TOKENS)}
+        for name in ("light-media", "light-attr")
+    }
+    assert light["light-media"] == light["light-attr"], (
+        f"OSV1-009 (Core 7): the two light token blocks DRIFTED on the tokens this "
+        f"clause measures. webtheme.py's own comment says they are kept in sync only "
+        f"by comment; a colour fixed in one and not the other is the exact hazard the "
+        f"seed row's six pairs (three grounds x two blocks) recorded.\n"
+        f"  @media (prefers-color-scheme:light): {light['light-media']}\n"
+        f'  :root[data-theme="light"]:          {light["light-attr"]}'
+    )
+    for name, table in blocks.items():
+        ramp = [resolve_token(t, table) for t in _INK_RAMP]
+        assert len(set(ramp)) == len(_INK_RAMP), (
+            f"OSV1-009 (Core 7): the ink ramp COLLAPSED in the {name!r} block -- two "
+            f"of {list(_INK_RAMP)} now resolve to the same colour ({ramp}). Clearing "
+            f"the floor by deleting a ramp step is not conformance; --ink-quiet must "
+            f"stay quieter than --ink-tertiary while clearing 4.5:1."
+        )
 
 
 # --------------------------------------------------------------- OSV1-010
@@ -1002,10 +1047,11 @@ def test_row_osv1_031() -> None:
         "to CONFORMS and retarget this probe to assert no Core row is red "
         "(work_item_pipeline-umm)."
     )
-    assert len(red) == 10, (
-        f"OSV1-031 (Freeze 5): pinned 10 red Core-carrying rows, observed {len(red)}: "
+    assert len(red) == 9, (
+        f"OSV1-031 (Freeze 5): pinned 9 red Core-carrying rows, observed {len(red)}: "
         f"{red}. Movement in either direction means this gate's tally changed -- update "
-        f"the pin and the row's notes in the same change."
+        f"the pin and the row's notes in the same change. (Was 10 at seed; OSV1-009 "
+        f"went green 2026-09-04, work_item_pipeline-sxh.)"
     )
     assert {r["id"] for r in core_rows if r["disposition"] == "NOT-ASSERTABLE"} == {
         "OSV1-018",

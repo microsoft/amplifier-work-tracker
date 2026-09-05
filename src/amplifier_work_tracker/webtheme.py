@@ -245,10 +245,12 @@ CSS = r"""
                                   4.90:1) -- see DESIGN-SYSTEM.md sec 5. The
                                   system's own --ink-quiet is NOT used here:
                                   it is documented decorative/disabled-only,
-                                  not guaranteed >=4.5:1 in light mode, and
-                                  every --dim call site in this file renders
-                                  real, required-legible small print (ids,
-                                  holders, counts, timestamps). */
+                                  and every --dim call site in this file
+                                  renders real, required-legible small print
+                                  (ids, holders, counts, timestamps), so --dim
+                                  stays a full ramp step brighter. (--ink-quiet
+                                  itself now DOES clear 4.5:1 in both schemes
+                                  -- OSV1-009 -- but this step is deliberate.) */
 
   --amber:var(--alarm);
   --crimson:var(--blocked);
@@ -316,7 +318,16 @@ CSS = r"""
        (this media query, `:root[data-theme="light"]`, and their dark
        counterparts) in sync. */
     --ink-tertiary:#3d4b63;
-    --ink-quiet:#7c8ba0;
+    /* --ink-quiet darkened from #7c8ba0 (OSV1-009, Core 7 floors). The ported
+       system calls this token decorative-only, but THIS app paints real reading
+       copy with it (chartsvg.py's empty-state caption, the resolved/priority
+       chips, `.link-chip .none`, `.fleet-row .agents.is-zero`) -- so it must
+       clear 4.5:1, and at 3.09/2.93/2.72:1 on the three light grounds it did
+       not. Darkened along the SAME hue to 5.36/5.08/4.71:1. NOT taken to 7:1:
+       quiet must stay visibly quieter than --ink-tertiary (7.85:1). Dark mode
+       already cleared (5.53/5.26/5.67:1), unchanged. Keep in sync with
+       `:root[data-theme="light"]` below. */
+    --ink-quiet:#596473;
     --ink-on-ground-inverse:#f8fafc;
     /* reserved status hues re-tuned darker so text/icons still clear 4.5:1 on a light ground */
     --alarm:#92400e;
@@ -386,7 +397,7 @@ CSS = r"""
   --ink-primary:#0b1220;
   --ink-secondary:#33415a;
   --ink-tertiary:#3d4b63;  /* keep in sync with the light-mode media block above */
-  --ink-quiet:#7c8ba0;
+  --ink-quiet:#596473;     /* likewise -- OSV1-009: 2.72:1 -> 4.71:1 worst case */
   --ink-on-ground-inverse:#f8fafc;
   --alarm:#92400e;
   --alarm-surface:rgba(245,158,11,.08);
