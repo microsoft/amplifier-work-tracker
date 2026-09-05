@@ -41,14 +41,17 @@ required to sit on a cadence. It is never a place to put work.
 
 from __future__ import annotations
 
+import ast
 import re
 
 from ._support import (
+    ADAPTER,
     CHARTSVG,
     LITERAL,
     OPERATOR_CONTRACT_PATH,
     PYPROJECT,
     REPO_ROOT,
+    ROUTE_MODULES,
     SUPERVISOR,
     WEBAPP,
     WEBBROWSE,
@@ -57,6 +60,8 @@ from ._support import (
     WEBTHEME,
     WEBTRUST,
     WIDGETS,
+    _called_names,
+    _route_methods,
     collapse,
     contains,
     count,
@@ -310,8 +315,8 @@ def test_row_osv1_005() -> None:
         "OSV1-005 (Core 4): webpwa.py:121's retired-palette inline body is no longer "
         "counted as a literal site -- the worst specimen in the census. Re-derive."
     )
-    assert "webbrowse.py:741" in literal, (
-        "OSV1-005 (Core 4): webbrowse.py:741's textarea (literal font-size, max-width "
+    assert "webbrowse.py:814" in literal, (
+        "OSV1-005 (Core 4): webbrowse.py:814's textarea (literal font-size, max-width "
         "and padding) is no longer counted. Re-derive."
     )
     total = len(inline_style_sites())
@@ -389,11 +394,11 @@ def test_row_osv1_006() -> None:
         "webapp.py:2266",
         "webapp.py:2572",
         "webapp.py:3376",
-        "webapp.py:4393",
-        "webapp.py:4908",
-        "webtheme.py:4120",
-        "webtheme.py:4139",
-        "webtheme.py:4146",
+        "webapp.py:4421",
+        "webapp.py:4936",
+        "webtheme.py:4174",
+        "webtheme.py:4193",
+        "webtheme.py:4200",
         "widgets.py:704",
         "widgets.py:831",
         "widgets.py:834",
@@ -697,26 +702,175 @@ def test_row_osv1_014() -> None:
 # --------------------------------------------------------------- OSV1-015
 
 
-def test_row_osv1_015() -> None:
-    """Core 10 VIOLATION pin: the L1 view's unbounded query, and the dead
-    uncapped helper beside it.
+#: Every adapter read that ACCEPTS a `limit` -- the calls Core 10's "every
+#: adapter call reached from a view passes an explicit limit" is about. A
+#: scalar read has nothing to bound, so it is not listed.
+_BOUNDED_READS = frozenset(
+    {
+        "list",
+        "list_bounded",
+        "activity",
+        "attention_items",
+        "attention_items_from_rows",
+        "recent_activity_feed",
+    }
+)
+
+#: A helper that makes an unbounded listing call but is reached by NO route.
+#: Dead code is not "reached from a view", so the clause as written does not
+#: condemn it -- but the exemption is re-earned every run below, by proving it
+#: is still dead.
+_UNREACHED_UNCAPPED = ("_oldest_ready_item", WEBAPP)
+
+
+def _module_int_constants(path) -> dict[str, int]:  # type: ignore[no-untyped-def]
+    """Module-level `NAME = <int>` assignments, plus one alias hop through the
+    adapter (`NAME = A.LIST_MAX_LIMIT`), read by PARSING -- never importing.
+    Static reading is what lets this kit measure source it does not execute.
     """
-    assert contains(WEBBROWSE, "bd.list(status=status_filter, include_resolved=True, limit=0)"), (
-        "OSV1-015 (Core 10) PIN BROKE THE RIGHT WAY: webbrowse.py's `limit=0` call is "
-        "gone. If the L1 view now passes a bound that actually bounds (e.g. via "
-        "`adapter.list_bounded`), flip OSV1-015 to CONFORMS and retarget this probe IN "
-        "THE SAME CHANGE (work_item_pipeline-8vv). A passing pin is not conformance."
+    adapter_consts: dict[str, int] = {}
+    for node in ast.parse(read(ADAPTER)).body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, int)
+        ):
+            adapter_consts[node.targets[0].id] = node.value.value
+    out: dict[str, int] = {}
+    for node in ast.parse(read(path)).body:
+        if not (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            continue
+        name = node.targets[0].id
+        value = node.value
+        if isinstance(value, ast.Constant) and isinstance(value.value, int):
+            out[name] = value.value
+        elif isinstance(value, ast.Attribute) and value.attr in adapter_consts:
+            out[name] = adapter_consts[value.attr]
+    return out
+
+
+def _limit_passed(call: ast.Call, consts: dict[str, int]) -> object:
+    """The `limit=` this call passes: an int where it resolves, `None` when no
+    `limit` keyword is present at all, `"?"` when one IS passed from an
+    expression this static reading cannot evaluate.
+
+    `"?"` is not a failure: the clause asks for an EXPLICIT limit at the call
+    site, and a value computed from a parameter is explicit there. `None` is
+    the failure -- an inherited default is a bound nobody at the call site
+    can see.
+    """
+
+    def evaluate(node: ast.expr) -> object:
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            return consts.get(node.id, "?")
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add | ast.Sub | ast.Mult):
+            left, right = evaluate(node.left), evaluate(node.right)
+            if isinstance(left, int) and isinstance(right, int):
+                if isinstance(node.op, ast.Add):
+                    return left + right
+                return left - right if isinstance(node.op, ast.Sub) else left * right
+        return "?"
+
+    for kw in call.keywords:
+        if kw.arg == "limit":
+            return evaluate(kw.value)
+    return None
+
+
+def view_listing_calls() -> list[tuple[str, int, str, object]]:
+    """`(module, line, handler, limit)` for every listing call a read-only
+    route reaches -- the same module-local, depth-4 name-following the route
+    audit above already uses, and the same honest bound: a call reached
+    through a callable handed in from another module is invisible to it.
+    """
+    found: list[tuple[str, int, str, object]] = []
+    for path in ROUTE_MODULES:
+        tree = ast.parse(read(path))
+        funcs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                funcs.setdefault(node.name, node)
+        consts = _module_int_constants(path)
+        for handler in funcs.values():
+            methods: list[str] = []
+            for dec in handler.decorator_list:
+                methods += _route_methods(dec) or []
+            if not any(m in {"GET", "HEAD"} for m in methods):
+                continue
+            reached = [handler]
+            seen: set[str] = set()
+            frontier = _called_names(handler)
+            for _ in range(4):
+                nxt: set[str] = set()
+                for name in frontier - seen:
+                    seen.add(name)
+                    helper = funcs.get(name)
+                    if helper is not None and helper is not handler:
+                        reached.append(helper)
+                        nxt |= _called_names(helper)
+                frontier = nxt - seen
+                if not frontier:
+                    break
+            for fn in reached:
+                for node in ast.walk(fn):
+                    if (
+                        isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in _BOUNDED_READS
+                    ):
+                        found.append(
+                            (path.name, node.lineno, handler.name, _limit_passed(node, consts))
+                        )
+    return found
+
+
+def test_row_osv1_015() -> None:
+    """Core 10 CONFORMS: every adapter listing call a read-only route reaches
+    passes an explicit, finite limit -- MEASURED here, not asserted from a
+    remembered line number.
+
+    Retargeted from the pin on `webbrowse.py`'s `limit=0` when
+    work_item_pipeline-8vv landed. The pin named ONE call; this audits the
+    population, so the next unbounded view query fails here too rather than
+    slipping in beside a fixed one.
+
+    `limit=0` is bd's own "unlimited" (`adapter.Beads.list`'s docstring says
+    so outright) and an omitted `limit` leaves bd's default in place
+    implicitly -- the clause asks for an EXPLICIT bound, so both are failures.
+    """
+    calls = view_listing_calls()
+    assert any(m == "webbrowse.py" and h == "project_view" for m, _, h, _ in calls), (
+        f"OSV1-015 (Core 10): the traversal no longer reaches `project_view`'s item "
+        f"listing -- an audit that matches nothing passes forever while proving "
+        f"nothing. Re-derive this row. Found: {calls}"
     )
-    app = read(WEBAPP)
-    assert app.count("_oldest_ready_item") == 1, (
-        f"OSV1-015 (Core 10): `_oldest_ready_item` now has "
-        f"{app.count('_oldest_ready_item') - 1} caller(s). It calls `bd.list(...)` with "
-        f"NO limit at all -- dead code was the only reason it did not violate this "
-        f"clause. Give it a bound or delete it."
+    offenders = [c for c in calls if c[3] is None or (isinstance(c[3], int) and c[3] <= 0)]
+    assert not offenders, (
+        "OSV1-015 (Core 10) REGRESSION -- a view-reached adapter read no longer "
+        "passes an explicit, finite limit (`None` = no `limit=` at all, so the call "
+        "silently inherits the seam's default; `0` = bd's own \"unlimited\"):\n  "
+        + "\n  ".join(f"{m}:{ln} in {h}() -> limit={lim!r}" for m, ln, h, lim in offenders)
+        + "\n This surface re-renders every 20 seconds; an unbounded read here runs "
+        "three times a minute per open tab."
+    )
+    name, module = _UNREACHED_UNCAPPED
+    app = read(module)
+    assert app.count(name) == 1, (
+        f"OSV1-015 (Core 10): `{name}` now has {app.count(name) - 1} caller(s). It "
+        f"calls `bd.list(...)` with NO limit at all -- being reached by nothing was "
+        f"the only reason it did not violate this clause. Give it a bound or delete it."
     )
     assert contains(WEBAPP, 'items = bd.list(lane=A.LANE_WORK, status="open")'), (
         "OSV1-015 (Core 10): the uncapped `bd.list` in `_oldest_ready_item` is gone -- "
-        "welcome, and the row's second pinned fact just changed. Re-derive."
+        "welcome, and the row's exemption just changed. Re-derive."
     )
 
 
@@ -724,51 +878,98 @@ def test_row_osv1_015() -> None:
 
 
 def test_row_osv1_016() -> None:
-    """Core 10 VIOLATION pin: the theme choice persists nowhere.
+    """Core 10 CONFORMS: a chosen theme survives a refresh -- and so does the
+    other preference on this surface.
 
-    Pinned narrowly, on theme only. At seed the density preference raised a
-    genuine reading question (localStorage survives a refresh but IS 'only in
-    the browser') that the reconcile returned to the root rather than deciding,
-    so this probe deliberately said nothing about it.
+    Retargeted from the pin on `wtSetTheme` persisting NOTHING, when
+    work_item_pipeline-dg3 landed. Three facts hold it up, and all three are
+    load-bearing:
 
-    SETTLED 2026-09-04 by the owner-ratified DRAFT true-up #1: the machine
-    check now reads "no view holds state that does not survive a refresh
-    (state persisted in `localStorage` or on the server survives; ...)". Under
-    that wording density is CONFORMANT and theme is still a violation, so the
-    probe now asserts BOTH -- the pin on theme, and the persistence that makes
-    density conformant, since a row whose notes rule on density must notice if
-    density stops persisting.
+      * the choice is WRITTEN (`wtSetTheme` -> `localStorage`);
+      * it is READ BACK AT FIRST PAINT, from `<head>`, before `<body>` is
+        parsed -- a body-end read applies it one paint too late, which is a
+        flash, not a fix;
+      * writer and reader name the SAME key, taken from ONE declaration. Two
+        spellings would fail silently and look exactly like "the toggle does
+        nothing".
+
+    The server's `data-theme="dark"` default is asserted UNCHANGED: the
+    resolver only ever replaces that attribute, never removes it, so PR #55's
+    fix (a light-OS browser silently winning the token cascade because
+    `<html>` carried no `data-theme` at all) stays fixed.
+
+    Density is checked alongside, unchanged in meaning from the pin: under
+    the 2026-09-04 aligned wording its `localStorage` persistence is exactly
+    why it is conformant, and a row whose notes rule on density must notice
+    if density stops persisting.
     """
     app = read(WEBAPP)
-    setter = app[app.index("function wtSetTheme(t){") :][:340]
-    assert "setAttribute('data-theme', t)" in setter, (
-        "OSV1-016 (Core 10): `wtSetTheme` no longer sets the theme attribute -- the "
-        "mechanism this row measures moved."
-    )
-    for persistence in ("localStorage", "sessionStorage", "document.cookie", "fetch("):
-        assert persistence not in setter, (
-            f"OSV1-016 (Core 10) PIN BROKE THE RIGHT WAY: `wtSetTheme` now uses "
-            f"{persistence!r}. If the theme choice survives a refresh, flip OSV1-016 to "
-            f"CONFORMS and retarget this probe IN THE SAME CHANGE "
-            f"(work_item_pipeline-dg3). A passing pin is not conformance."
-        )
-    assert contains(WEBTHEME, '<html lang="en" data-theme="dark">'), (
-        'OSV1-016 (Core 10): the server no longer hardcodes `data-theme="dark"` on '
-        "every page. That hardcoding is the other half of why a chosen theme dies on "
-        "refresh -- re-derive the row."
-    )
-    # The OTHER preference on this surface, and the one the true-up's aligned
-    # wording rules CONFORMANT: density persists, so it survives a refresh. Not
-    # a pin -- a live check on the fact this row's notes rule on.
     theme_src = read(WEBTHEME)
-    assert theme_src.count("wt-density") == 2 and contains(
+
+    key_decl = 'THEME_STORAGE_KEY = "wt-theme"'
+    assert key_decl in theme_src, (
+        "OSV1-016 (Core 10): `webtheme.THEME_STORAGE_KEY` is gone or renamed. It is "
+        "the ONE declaration the writer and the first-paint reader both take their "
+        "key from -- re-derive this row before letting them drift apart."
+    )
+
+    assert "function wtSetTheme(t){" in app, (
+        "OSV1-016 (Core 10): `wtSetTheme` is gone or renamed -- the mechanism this row "
+        "measures moved. Re-derive."
+    )
+    setter = app[app.index("function wtSetTheme(t){") :][:200]
+    assert "localStorage.setItem(" in setter, (
+        "OSV1-016 (Core 10) REGRESSION: `wtSetTheme` no longer persists the choice. "
+        "A theme held only in page memory dies on the next load -- that is this "
+        "clause's anti-goal in its own words (work_item_pipeline-dg3)."
+    )
+
+    assert "def theme_boot_js()" in theme_src, (
+        "OSV1-016 (Core 10) REGRESSION: `webtheme.theme_boot_js` is gone. Without a "
+        "first-paint resolver a stored theme is written and never read back."
+    )
+    boot = theme_src[theme_src.index("def theme_boot_js()") :]
+    boot = boot[: boot.index("\ndef ")]
+    assert "localStorage.getItem(" in boot and "setAttribute('data-theme'" in boot, (
+        "OSV1-016 (Core 10) REGRESSION: the first-paint resolver no longer reads the "
+        "stored theme and applies it. Written-but-never-read is not persistence."
+    )
+    assert "removeAttribute" not in boot, (
+        "OSV1-016 (Core 10): the resolver now REMOVES `data-theme` rather than only "
+        "replacing it -- that is how a light-OS browser silently wins the token "
+        "cascade again (PR #55). Re-derive."
+    )
+
+    page_src = theme_src[theme_src.index("def page(") :]
+    page_src = page_src[: page_src.index("\n# ---")]
+    assert "<script>{theme_boot_js()}</script>" in page_src, (
+        "OSV1-016 (Core 10) REGRESSION: `page()` no longer inlines the first-paint "
+        "resolver at all, so a stored theme is never applied on load."
+    )
+    head_at = page_src.index('<html lang="en" data-theme="dark"><head>')
+    script_at = page_src.index("<script>{theme_boot_js()}</script>")
+    body_at = page_src.index("</style></head><body")
+    assert head_at < script_at < body_at, (
+        "OSV1-016 (Core 10) REGRESSION: the first-paint resolver is no longer inlined "
+        "in `<head>` ahead of the body. Applying a stored theme after the body is "
+        "parsed is a flash of the wrong theme on every single load."
+    )
+    assert contains(WEBTHEME, '<html lang="en" data-theme="dark">'), (
+        'OSV1-016 (Core 10): the server no longer renders `data-theme="dark"` as the '
+        "first-paint default. That attribute is what the resolver REPLACES; without "
+        "it a light-OS browser wins the cascade before any script runs (PR #55)."
+    )
+
+    # The OTHER preference on this surface, and the one the true-up's aligned
+    # wording rules CONFORMANT: density persists, so it survives a refresh.
+    assert "var KEY='wt-density';" in theme_src and contains(
         WEBTHEME, "localStorage.setItem(KEY, next ? 'compact' : 'comfortable')"
     ), (
         "OSV1-016 (Core 10): the density preference no longer persists in "
         "`localStorage`. Under the 2026-09-04 aligned wording that persistence is "
-        "exactly why density is CONFORMANT while theme is not -- if it stopped, "
-        "density became a second violation of this clause and this row's ruling note "
-        "is stale. Re-derive."
+        "exactly why density is CONFORMANT alongside theme -- if it stopped, density "
+        "became a violation of this clause and this row's ruling note is stale. "
+        "Re-derive."
     )
 
 
@@ -1002,8 +1203,8 @@ def test_row_osv1_031() -> None:
         "to CONFORMS and retarget this probe to assert no Core row is red "
         "(work_item_pipeline-umm)."
     )
-    assert len(red) == 10, (
-        f"OSV1-031 (Freeze 5): pinned 10 red Core-carrying rows, observed {len(red)}: "
+    assert len(red) == 8, (
+        f"OSV1-031 (Freeze 5): pinned 8 red Core-carrying rows, observed {len(red)}: "
         f"{red}. Movement in either direction means this gate's tally changed -- update "
         f"the pin and the row's notes in the same change."
     )

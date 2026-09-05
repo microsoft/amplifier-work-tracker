@@ -3496,15 +3496,34 @@ _OBSERVATORY_RANKING_DT_DD = (
 )
 
 #: `wtSetTheme`/`wtToggleRefresh` -- the SAME minimal inline JS every mockup
-#: ships (lifted verbatim); the only client-side JS a wt-v4 Observatory page
-#: needs beyond the shared `T.auto_refresh_js`/`T.search_js`/
-#: `T.list_controls_js` this app already has.
+#: ships; the only client-side JS a wt-v4 Observatory page needs beyond the
+#: shared `T.auto_refresh_js`/`T.search_js`/`T.list_controls_js` this app
+#: already has.
+#:
+#: APPLYING a theme and REMEMBERING one are deliberately two functions.
+#: `wtSetTheme` is the visitor's own choice, so it persists; `wtApplyTheme`
+#: is every other caller, and must NOT -- in particular the sync call at the
+#: bottom, which would otherwise freeze whatever the OS preference happened
+#: to be on the first visit into a stored choice nobody made.
+#:
+#: The sync call is what keeps the toggle honest across the 20s body swap.
+#: `data-theme` lives on `<html>`, which the swap never touches
+#: (`T.auto_refresh_js` replaces `document.body.innerHTML`), but the toggle
+#: BUTTONS come back server-rendered with Dark pressed every tick. The swap
+#: re-executes every script in the fresh body, so this line re-runs and
+#: re-derives `aria-pressed` from the live attribute -- without it a Light
+#: page would show "Dark" as the pressed button 20 seconds after loading,
+#: which is the same class of silent disagreement PR #55 fixed.
 _OBSERVATORY_THEME_JS = """
-function wtSetTheme(t){
+function wtApplyTheme(t){
   document.documentElement.setAttribute('data-theme', t);
   document.querySelectorAll('.theme-toggle button').forEach(function(b){
     b.setAttribute('aria-pressed', String(b.dataset.theme === t));
   });
+}
+function wtSetTheme(t){
+  wtApplyTheme(t);
+  try{ localStorage.setItem(WT_THEME_KEY, t); }catch(e){}
 }
 function wtToggleRefresh(){
   var btn = document.getElementById('refreshToggle');
@@ -3518,7 +3537,16 @@ function wtToggleRefresh(){
   btn.title = paused ? 'Pause auto-refresh' : 'Resume auto-refresh (paused)';
   if (label) label.textContent = paused ? 'Refreshes 20s' : 'Paused';
 }
-"""
+wtApplyTheme(document.documentElement.getAttribute('data-theme') || 'dark');
+""".replace(
+    # ONE declaration of the storage key -- `webtheme.THEME_STORAGE_KEY` --
+    # so this WRITER and `webtheme.theme_boot_js`'s first-paint READER can
+    # never drift onto two different names. That drift fails silently and
+    # looks exactly like "the toggle does nothing". Substituted rather than
+    # f-string-interpolated because this JS is full of `{`.
+    "WT_THEME_KEY",
+    f"'{T.THEME_STORAGE_KEY}'",
+)
 
 
 def _observatory_nav_extras_html(*, reconcile_html: str = "", extra_dt_dd: str = "") -> str:

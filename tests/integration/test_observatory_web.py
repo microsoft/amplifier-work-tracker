@@ -113,18 +113,31 @@ def test_l0_unknown_window_param_falls_back_to_7d_not_a_500(client, shared_proje
     assert r.status_code == 200
 
 
-def test_l0_page_declares_dark_theme_by_default(client, shared_project_name):
+def test_l0_page_declares_dark_theme_when_nothing_is_stored(client, shared_project_name):
     """Regression: `<html>` must carry `data-theme="dark"` from first render
     -- without it, a browser/OS whose own `prefers-color-scheme` is light
     silently wins the CSS token cascade (see `:root[data-theme="dark"]`'s
     docstring in webtheme.py), producing the live-dashboard defect where
     the verdict hero read as a light surface with dark text even though
-    the page's own theme toggle showed "Dark" as active."""
+    the page's own theme toggle showed "Dark" as active.
+
+    Dark is the default the SERVER can render, not the last word: the
+    first-paint resolver inlined in `<head>` replaces this attribute when
+    the visitor has a stored choice or a light OS preference (Core 10 --
+    a chosen theme must survive a refresh). It only ever REPLACES it, which
+    is why the defect above cannot return. Asserted here as well, because
+    the two facts only make sense together.
+    """
     _login(client)
     r = client.get("/")
     assert r.status_code == 200
     assert '<html lang="en" data-theme="dark">' in r.text
     assert '<button data-theme="dark" aria-pressed="true"' in r.text
+    head = r.text[: r.text.index("<body")]
+    assert "localStorage.getItem('wt-theme')" in head, (
+        "the first-paint theme resolver is not in <head> -- a stored Light choice "
+        "would flash dark on every load"
+    )
 
 
 def test_l0_new_project_nav_action_is_a_quiet_icon_button(client, shared_project_name):

@@ -461,11 +461,15 @@ def _mo006_an_unregistered_computed_site_appears(w: World) -> None:
 
 def _mo007_a_get_handler_reaches_a_write(w: World) -> None:
     """REGRESSION: the L1 GET view acquires a mutating adapter call."""
+    # Re-anchored 2026-09-04: this used to hang off the L1 view's `limit=0`
+    # call, which OSV1-015's fix (work_item_pipeline-8vv) removed. The anchor
+    # is incidental to what this mutation proves -- it needs ANY line inside
+    # the L1 GET handler to hang a write off -- so it moved to the bounded
+    # call that replaced it rather than the row being re-derived.
     w.replace(
         WEBBROWSE,
-        "all_matching = bd.list(status=status_filter, include_resolved=True, limit=0)",
-        "all_matching = bd.list(status=status_filter, include_resolved=True, limit=0)\n"
-        "            bd.update(name)",
+        "query_capped = len(fetched) > _L1_ITEM_QUERY_LIMIT",
+        "query_capped = len(fetched) > _L1_ITEM_QUERY_LIMIT\n            bd.update(name)",
     )
 
 
@@ -516,19 +520,26 @@ def _mo014_a_chart_library_is_declared(w: World) -> None:
     w.replace(PYPROJECT, '"itsdangerous>=2.1",', '"itsdangerous>=2.1",\n    "plotly>=5.20",')
 
 
-def _mo015_the_unbounded_query_is_bounded(w: World) -> None:
-    """FIXED: the L1 view stops asking for everything."""
-    w.replace(WEBBROWSE, "include_resolved=True, limit=0)", "include_resolved=True, limit=200)")
+def _mo015_the_bounded_query_goes_unbounded_again(w: World) -> None:
+    """REGRESSION: the L1 view goes back to asking for everything -- literally
+    the shape this row closed (`limit=0` is bd's own "unlimited").
+    """
+    w.replace(WEBBROWSE, "limit=_L1_ITEM_QUERY_LIMIT + 1,", "limit=0,")
 
 
-def _mo016_the_theme_starts_persisting(w: World) -> None:
-    """FIXED: a chosen theme survives a refresh."""
-    w.replace(
-        WEBAPP,
-        "document.documentElement.setAttribute('data-theme', t);",
-        "document.documentElement.setAttribute('data-theme', t);\n"
-        "  localStorage.setItem('wt-theme', t);",
-    )
+def _mo016_the_theme_stops_persisting(w: World) -> None:
+    """REGRESSION: the chosen theme goes back to dying on refresh -- the setter
+    applies it and remembers nothing, exactly as before dg3.
+    """
+    w.replace(WEBAPP, "  try{ localStorage.setItem(WT_THEME_KEY, t); }catch(e){}\n", "")
+
+
+def _mo016_the_first_paint_resolver_moves_out_of_head(w: World) -> None:
+    """REGRESSION, the OTHER half: the choice is still stored, but nothing
+    reads it before the body paints -- persistence written and never applied
+    is not persistence.
+    """
+    w.replace(WEBTHEME, '        f"<script>{theme_boot_js()}</script>"\n', "")
 
 
 def _mo017_a_second_push_call_site_appears(w: World) -> None:
@@ -776,13 +787,18 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-015",
-        "the L1 view's unbounded query acquires a real bound",
-        _mo015_the_unbounded_query_is_bounded,
+        "the L1 view's bounded query goes unbounded again",
+        _mo015_the_bounded_query_goes_unbounded_again,
     ),
     Mutation(
         "OSV1-016",
-        "the theme choice starts surviving a refresh",
-        _mo016_the_theme_starts_persisting,
+        "the theme choice stops surviving a refresh",
+        _mo016_the_theme_stops_persisting,
+    ),
+    Mutation(
+        "OSV1-016",
+        "the first-paint resolver leaves <head>, so the stored theme is never applied",
+        _mo016_the_first_paint_resolver_moves_out_of_head,
     ),
     Mutation(
         "OSV1-017",

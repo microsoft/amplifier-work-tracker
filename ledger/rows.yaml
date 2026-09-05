@@ -1567,115 +1567,166 @@
     OSV1-016 (no view stores state only in the browser).
 
 - id: OSV1-015
-  title: the L1 project view runs an unbounded item query on every 20s poll
+  title: every adapter listing call reached from a view passes an explicit, finite limit
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 10
     quote: |
       every adapter call reached from a view passes an explicit limit
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-8vv
   assertion:
     kind: probe
     ref: test_row_osv1_015
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED VIOLATION -> CONFORMS 2026-09-04 (work_item_pipeline-8vv). The pin
+    this row carried at SEED asserted the known-wrong shape on purpose; it
+    broke the right way when the fix landed, and probe + row were retargeted
+    in the SAME change, per the VIOLATION-MOVEMENT rule.
 
-    MEASURED 2026-09-04 against 4aaee50:
-      webbrowse.py:339   inside `project_view`, the L1 Project Observatory GET
-                         handler: `bd.list(status=status_filter,
-                         include_resolved=True, limit=0)`.
-      adapter.py:3958-3963  defines the semantics without ambiguity -- "`limit`,
-                         when given, behaves like bd's own `--limit`/`-n` (0
-                         means unlimited)". The parameter is explicit; its VALUE
-                         is unbounded. Every L1 render materialises the entire
-                         item set, resolved included, then filters and paginates
-                         in Python.
-      webbrowse.py:605   L1 is on the 20s whole-body self-poll, so that
-                         unbounded read runs three times a minute per open tab.
-    The cost is documented in this repo's own code: `adapter.list()`'s docstring
-    cites cortex at 465 items as the size where materialising the full set
-    reliably loses a dolt serialization conflict.
+    WHAT WAS WRONG (seed, measured against 4aaee50): webbrowse.py:339, inside
+    `project_view` -- the L1 Project Observatory GET handler -- called
+    `bd.list(status=status_filter, include_resolved=True, limit=0)`, and
+    adapter.py:3958-3963 defines that value without ambiguity: "`limit`, when
+    given, behaves like bd's own `--limit`/`-n` (0 means unlimited)". The
+    parameter was explicit; its VALUE was unbounded. L1 sits on the 20s
+    whole-body self-poll, so every open tab re-materialised the entire item
+    set -- resolved included -- three times a minute, then filtered and
+    paginated it in Python.
 
-    THE OTHER UNBOUNDED CALL, AND WHY IT IS NOT SCORED HERE: webapp.py:909,
+    WHAT IS TRUE NOW (measured 2026-09-04):
+      webbrowse.py:91       `_L1_ITEM_QUERY_LIMIT = A.LIST_MAX_LIMIT` (500) --
+                            not a number invented for this view: it is the
+                            ceiling the CLI's own `list --limit` clamps to,
+                            and exactly ten pages of this view's own
+                            `LIST_DEFAULT_LIMIT` page size, so paging reaches
+                            every row the query returns.
+      webbrowse.py:403-409  `bd.list(..., limit=_L1_ITEM_QUERY_LIMIT + 1)`.
+                            The `+ 1` is the one-past-the-window probe: it
+                            establishes whether more rows exist beyond the
+                            ceiling as a FACT, without a second query, so a
+                            project holding exactly 500 matching items is
+                            never mislabelled as truncated.
+      webbrowse.py:227-252  `_truncation_note_html` -- the view says what it
+                            is NOT showing. Uncapped: "Showing 50 of 137
+                            items". Capped: "Showing 50 of 500+ items - read
+                            capped at 500 ...". A bounded window is never
+                            rendered as a measured total.
+
+    THE COST THIS BOUND PAYS, recorded rather than buried: the SQL orders by
+    `priority ASC, created_at DESC, id ASC` (`adapter._list_rows_via_sql`) and
+    the view re-sorts by `updated_at DESC`. On a project with MORE than 500
+    matching items the table therefore shows the most-recently-updated of the
+    first 500 BY PRIORITY, not of all of them. No project on the shared server
+    is near that ceiling today -- `adapter.Beads.list`'s own docstring cites
+    the largest, cortex, at 465 items -- and the footer confesses the cap
+    whenever it binds. Making it exact would need an offset/count-aware
+    listing on the adapter seam, which is out of this row's scope; filed as a
+    residual, not silently accepted.
+
+    HOW IT IS ASSERTED: the probe no longer names one call site. It walks
+    every GET/HEAD handler in webapp.py/webbrowse.py/webtrust.py, follows
+    module-local helpers four deep (the same traversal and the same honest
+    bound as the route audit OSV1-007 uses), and requires every reached
+    `list`/`list_bounded` call to pass a limit that resolves to a positive
+    int. `limit=0` and an omitted `limit` both fail. Product-side, the same
+    audit gates a merge in `tests/unit/test_view_query_bounds.py`, which also
+    covers the truncation note; both were confirmed to go red against
+    `limit=0` and against a removed `limit=` before this row was flipped.
+
+    THE OTHER UNCAPPED CALL, AND WHY IT IS STILL NOT SCORED: webapp.py:909,
     inside `_oldest_ready_item`, calls `bd.list(lane=A.LANE_WORK,
-    status="open")` with no `limit` at all -- but the function has ZERO callers
-    (the only occurrence of the name in `src/` is its own definition at
-    webapp.py:902). Dead code is not "reached from a view", so the check as
-    written does not condemn it. The probe pins BOTH facts, so wiring it up
-    without a limit fails just as loudly as the L1 call being fixed.
-
-    RE-READ 2026-09-04 against the DRAFT true-up #1's Core 10 wording. NO
-    CHANGE, and the reason is that the true-up touched a DIFFERENT conjunct of
-    the same machine check: this row quotes "every adapter call reached from a
-    view passes an explicit limit", which is byte-identical before and after
-    (only the client-side-state conjunct, OSV1-016's, was reworded). Quote
-    re-verified against the new bytes rather than assumed; disposition stays
-    VIOLATION; probe untouched.
+    status="open")` with no `limit` at all -- but the function has ZERO
+    callers (the only occurrence of the name in `src/` is its own definition).
+    Dead code is not "reached from a view", so the check as written does not
+    condemn it. Unchanged from seed, and the probe still re-earns that
+    exemption every run by proving the function is still uncalled -- the
+    instant it gains a caller, this row goes red.
 
 - id: OSV1-016
-  title: the theme choice is client-side state that dies on refresh
+  title: the theme choice is persisted in localStorage and applied at first paint
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 10
     quote: |
       no view holds state that does not survive a refresh
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-dg3
   assertion:
     kind: probe
     ref: test_row_osv1_016
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED VIOLATION -> CONFORMS 2026-09-04 (work_item_pipeline-dg3), probe
+    retargeted in the SAME change per the VIOLATION-MOVEMENT rule.
 
-    MEASURED 2026-09-04 against 4aaee50:
-      webapp.py:3503-3508  `wtSetTheme(t)` sets `data-theme` on
-                           `document.documentElement` and updates the toggle
-                           buttons' `aria-pressed`. THAT IS ALL. No cookie, no
-                           localStorage, no server round-trip -- the repo's only
-                           four `localStorage` occurrences are the density
-                           toggle's (webtheme.py:3866, :3873) and its two
-                           docstring mentions.
-      webtheme.py:3423     every page is server-rendered
-                           `<html lang="en" data-theme="dark">`.
-    So a visitor who chooses Light gets Dark back on the next refresh and on
-    every navigation. That is client-side state, and it dies -- which is Core
-    10's anti-goal in its own words. It is NOT a body-swap defect: the
-    attribute sits on `<html>` and the swap replaces `<body>`, so it survives
-    the poll and dies on reload.
+    WHAT WAS WRONG (seed, measured against 4aaee50): webapp.py:3503-3508,
+    `wtSetTheme(t)` set `data-theme` on `document.documentElement` and updated
+    the toggle's `aria-pressed`. THAT WAS ALL -- no cookie, no localStorage,
+    no server round-trip -- while webtheme.py:3423 server-rendered every page
+    as `<html lang="en" data-theme="dark">`. So a visitor who chose Light got
+    Dark back on the next refresh and on every navigation: state held only in
+    page memory, which is this clause's anti-goal in its own words.
 
-    THE OPEN READING THIS ROW RETURNED TO THE ROOT AT SEED IS NOW SETTLED, and
-    settled the way this row hoped. The seed note read: the density toggle
-    persists `wt-density` in `localStorage`, which SATISFIES Core 10's prose
-    ("no client-side state that dies on refresh" -- it survives) while being,
-    literally, state "stored only in the browser" -- the machine check's words
-    as they then stood, and this row's former quote. `density_toggle_html`'s
-    own docstring states the consequence: the server "has no way to know a
-    visitor's stored preference (no cookie is involved, only `localStorage`)".
+    WHAT IS TRUE NOW (measured 2026-09-04):
+      webtheme.py:3403      `THEME_STORAGE_KEY = "wt-theme"` -- ONE
+                            declaration, so the writer and the first-paint
+                            reader cannot drift onto two names (a drift that
+                            fails silently and looks exactly like "the toggle
+                            does nothing"). webapp substitutes it into its own
+                            JS rather than re-spelling it.
+      webapp.py:3524-3527   `wtSetTheme` applies AND persists
+                            (`localStorage.setItem`, wrapped -- a browser with
+                            storage disabled throws, and a theme preference is
+                            never worth breaking a page over).
+      webtheme.py:3406-3440 `theme_boot_js()` -- the first-paint resolver:
+                            stored choice first, else `prefers-color-scheme:
+                            light`, else nothing at all.
+      webtheme.py:3478      it is inlined in `<head>`, immediately after the
+                            two required metas and AHEAD of the stylesheet. A
+                            body-end read would apply the stored theme one
+                            full paint too late, which is a flash, not a fix.
+      webapp.py:3518-3523,  apply and persist are two functions on purpose:
+      webapp.py:3540        `wtApplyTheme` never writes, so the sync call at
+                            the bottom cannot freeze a first visit's ambient
+                            OS preference into a stored "choice" nobody made.
+                            That sync call is also what keeps the toggle
+                            honest across the 20s body swap: `data-theme`
+                            lives on `<html>`, which the swap never touches,
+                            but the BUTTONS come back server-rendered with
+                            Dark pressed every tick, and the swap re-executes
+                            body scripts, so it re-derives `aria-pressed` from
+                            the live attribute (verified, not assumed --
+                            `auto_refresh_js` replaces
+                            `document.body.innerHTML` and re-creates every
+                            script in the fresh body).
 
-    RULING, owner-ratified 2026-09-04 in DRAFT true-up #1 ("yep, do it all."):
-    the machine check's wording was ALIGNED TO ITS OWN CLAUSE -- "no view holds
-    state that does not survive a refresh (state persisted in `localStorage` or
-    on the server survives; state held only in page memory does not)". Quote
-    RE-ANCHORED to that new sentence, same clause, same conjunct.
+    PR #55 NOT REGRESSED: the server still renders `data-theme="dark"` as the
+    first-paint default (webtheme.py:3472) and the resolver only ever REPLACES
+    that attribute, never removes it -- so the DOM-measured defect where a
+    light-OS browser silently won the token cascade because `<html>` carried
+    no `data-theme` at all cannot return through this path. The probe asserts
+    both halves.
 
-    WHAT THE ALIGNED WORDING DECIDES:
-      DENSITY  CONFORMANT. `wt-density` is persisted in `localStorage`
-               (webtheme.py:3859 declares the key, :3866 reads it, :3873
-               writes it), so the preference survives a refresh. Under the old
-               phrasing it was a literal-but-unintended violation; under the
-               aligned phrasing it is simply conformant, and the row's probe
-               asserts that persistence so a regression re-opens the question
-               rather than passing silently.
-      THEME    STILL A VIOLATION, unchanged. `wtSetTheme` (webapp.py:3503-3508)
-               persists NOTHING -- no cookie, no localStorage, no server
-               round-trip -- so a chosen theme is held only in page memory and
-               dies on the next load. That is the disposition this row carries,
-               and the fact its pin is filed on (work_item_pipeline-dg3).
-    The probe was already pinned narrowly on theme, deliberately, so the
-    ruling arrived to a row that had not pre-empted it.
+    HOW IT IS ASSERTED, AND THE HONEST LIMIT: the ledger probe is a
+    source-shape assertion (this kit runs no browser and no JS). The real
+    round trip is asserted product-side in
+    `tests/unit/test_theme_persistence.py`, which EXECUTES the emitted
+    scripts under `node` against a small fake DOM and does the actual
+    sequence the clause is about -- load, click Light, reload, assert Light
+    came back -- plus the harder direction (a stored choice beating a
+    CONTRADICTING OS preference) and the cases that must NOT persist (an OS
+    preference is not a chosen theme). Those tests were confirmed to go red
+    against the removal of the `setItem` line and against the removal of the
+    head script before this row was flipped. `node` is preinstalled on the CI
+    runner; where it is absent those tests skip and the structural half still
+    runs.
+
+    DENSITY, unchanged from the true-up's ruling: `wt-density` is persisted in
+    `localStorage` (webtheme.py:3913 declares the key, :3927 writes it), so it
+    survives a refresh and is CONFORMANT under the aligned wording. The probe
+    still asserts that persistence, so a regression re-opens the question
+    rather than passing silently. Theme now joins it rather than sitting
+    beside it as the exception.
 
 - id: OSV1-017
   title: exactly one call site fires the push channel, and it is the reclaim path
@@ -2084,7 +2135,7 @@
     failure.
 
 - id: OSV1-031
-  title: Freeze 5 -- 10 of the 19 Core-carrying rows read VIOLATION or GAP
+  title: Freeze 5 -- 8 of the 19 Core-carrying rows read VIOLATION or GAP
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 5
@@ -2119,6 +2170,17 @@
     "the kit is not built" being flipped to CONFORMS because a file now exists,
     rather than re-derived from the kit's real results. All five GAP rows are
     GAP precisely because they ARE assertable and simply are not asserted yet.
+
+    RE-MEASURED 2026-09-04 after work_item_pipeline-8vv and -dg3 landed: OSV1-015
+    and OSV1-016 (both Core 10) flipped VIOLATION -> CONFORMS, each re-derived
+    from real measurement and each with its probe retargeted in the same change.
+    The tally is now:
+      CONFORMS 9        OSV1-002, -006, -007, -011, -013, -014, -015, -016, -017
+      NOT-ASSERTABLE 2  OSV1-018 (Core 12), OSV1-019 (Core 13) -- unchanged
+      VIOLATION 3       OSV1-001, -005, -009
+      GAP 5             OSV1-003, -004, -008, -010, -012
+    Eight red. Freeze 5 is met when all eight are green and the two
+    NOT-ASSERTABLE rows still name their cadence.
 
 - id: OSV1-032
   title: >-
