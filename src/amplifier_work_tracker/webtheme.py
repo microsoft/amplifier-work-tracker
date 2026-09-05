@@ -4506,6 +4506,43 @@ CSS = CSS + "\n" + SINGLE_SOURCE_CSS
 
 
 # ---------------------------------------------------------------------------
+# EMPTY WIDGET SLOTS -- operator-surface.v1 Core 8 ("a widget with nothing to
+# show keeps its slot and says so in a sentence, so the page does not reflow
+# between calm and alarm"; ledger rows OSV1-012 / OSV1-026).
+#
+# ONE rule, because there is one shape: `widgets._empty_note` is the only
+# thing that emits `.empty-note`, and the three observatory widgets that used
+# to render an empty container (L0's attention queue, L1's agents panel, L1's
+# status-breakdown legend) all go through it. Three bespoke empty states would
+# drift into three registers; this is the register, once.
+#
+# `min-height` is the load-bearing declaration, not the border: it is what
+# stops a slot COLLAPSING when its data goes away. It is set to one
+# `.attn-row`/`.agent-row`'s own height -- those rows are
+# `padding:var(--space-3)` (12px) top and bottom around a ~20px line box --
+# so an empty list occupies exactly the space one row would, rather than zero.
+#
+# Tone is deliberately QUIET: tertiary ink on the same `--glass-fill` the rows
+# use, a DASHED hairline so the box reads as a placeholder rather than as a
+# row you could click. No status hue (Core 2 -- alarm/blocked/watch are for
+# things that are wrong; an empty queue is not wrong), no accent, no numeral.
+# ---------------------------------------------------------------------------
+
+EMPTY_STATE_CSS = r"""
+/* ---------- empty widget slots (Core 8) ---------- */
+.empty-note{
+  display:flex;align-items:center;justify-content:center;text-align:center;
+  min-height:44px;margin:0;padding:var(--space-3) var(--space-4);
+  border:1px dashed var(--glass-hairline-soft);border-radius:var(--radius-md);
+  background:var(--glass-fill);color:var(--ink-tertiary);
+  font-family:var(--font-sans);font-size:.8125rem;line-height:1.5;
+}
+"""
+
+CSS = CSS + "\n" + EMPTY_STATE_CSS
+
+
+# ---------------------------------------------------------------------------
 # TRUST-PAGE STYLESHEET -- the plain-HTTP trust-bootstrap page's own sheet.
 #
 # It lives HERE, in the token module, rather than in `webtrust.py`, and that is

@@ -1363,10 +1363,18 @@
       webtheme.py:4197  {style}                   axis ruler numeral offset
       webtheme.py:4216  left:{_grad_x(f):.1f}px   graduation tick offset
       webtheme.py:4223  width:{px}px              age bar length
-      widgets.py:837    width:{pct}%              status-mix segment (hatched)
-      widgets.py:839    width:{pct}%              status-mix segment
+      widgets.py:866    width:{pct}%              status-mix segment (hatched)
+      widgets.py:868    width:{pct}%              status-mix segment
     Every one is "a bar width, a chart offset" -- the clause's own gloss of what
     this exemption is FOR.
+
+    LINE NUMBERS ONLY, 2026-09-05 (work_item_pipeline-aad): the two widgets.py
+    entries moved 837/839 -> 866/868. The SITES did not change -- same two
+    declarations, same file, same purpose, register still 8. They shifted
+    because that lane added `widgets._empty_note` above them (Core 8). Recorded
+    rather than silently corrected, because this register is pinned by
+    `file:line` and a line-shift is indistinguishable from a new site unless
+    someone says which it was.
 
     THE ROOT'S TRIAGE RULING WAS APPLIED, and it is what removed 15 sites. Two
     kinds were on the register that should not have been:
@@ -1757,8 +1765,8 @@
 
 - id: OSV1-012
   title: >-
-    two empty widgets keep their slot and say nothing -- measured, not a
-    missing kit
+    every empty widget keeps its slot AND says so in a calm sentence --
+    measured on the rendered empty fixture
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 8
@@ -1766,49 +1774,76 @@
       The calm state is stated plainly and never rendered as a triumphant zero. A widget with
       nothing to show keeps its slot and says so in a sentence, so the page does not reflow
       between calm and alarm.
-  disposition: VIOLATION
-  work: work_item_pipeline-c1a
+  disposition: CONFORMS
+  work: work_item_pipeline-aad
   assertion:
     kind: probe
     ref: test_row_osv1_012
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED 2026-09-05 VIOLATION -> CONFORMS (work_item_pipeline-aad), flip
+    direction VIOLATION-MOVEMENT. The probe is retargeted in the same change:
+    it no longer pins the silent slots, it forbids their return.
 
-    WAS GAP "KIT NOT BUILT"; NOW VIOLATION, MEASURED. The Tier-A kit exists and
-    performs the two-render comparison this clause defines, so the reason for
-    the red changed from "nobody has looked" to "we looked and it fails".
+    RE-DERIVED FROM THE PASSING GOOD HALVES, never from a source edit
+    appearing. The kit's two `calm.keeps_slot` tests render L0 and L1 against
+    an all-empty project and against the populated ALARM fixture and compare
+    them region by region. Before / after on this tree, same kit, same two
+    fixtures:
+      BEFORE  L0: 1 problem -- region 'Needs you -- ranked' keeps its slot but
+                  says nothing.
+              L1: 2 problems -- 'Agents on <project>' and 'Status breakdown',
+                  same defect.
+              Both halves `xfail(strict=True)` against this row.
+      AFTER   L0: 0 problems. L1: 0 problems. Both markers deleted; the kit
+              runs 0 failed / 0 XPASS.
 
-    MEASURED 2026-09-05, L0 and L1 rendered against an all-empty project and
-    against the populated ALARM fixture, regions matched by section id and by
-    panel heading:
+    THE THREE SENTENCES, as rendered (captured from the empty fixture):
+      L0  <div class="attn-list"><p class="empty-note">No item needs you right
+          now.</p></div>
+      L1  <div class="agents-list"><p class="empty-note">No agent has held an
+          item in this project yet.</p></div>
+      L1  <div class="status-breakdown-wrap"><div class="donut-wrap">...<div
+          class="donut-center"><span class="n">0</span><span class="l">total
+          items</span></div></div><p class="empty-note">No items to break down
+          yet.</p></div>
+    All three come from ONE helper, `widgets._empty_note`, so the register
+    cannot drift into three voices. The register is the house's own, not
+    invented for this row: `webapp.py`'s "Nothing is waiting to be claimed in
+    this queue right now.", `chartsvg.py`'s "No activity in this window",
+    `webbrowse.py`'s "No items match this filter."
+
+    THE CLAUSE HAS THREE LIMBS AND ALL THREE NOW HOLD:
       SLOTS SURVIVE   every widget region on the populated render is present on
-                      the empty one, on BOTH levels. That half of the clause
-                      holds and the check says so.
-      SENTENCES DO NOT  three regions keep their slot and say nothing at all:
-                      L0 "Needs you -- ranked" (`widgets.render_attention_queue`
-                      returns a bare `<div class="attn-list"></div>` when
-                      `rows` is empty), L1 "Agents on <project>"
-                      (`widgets.render_agents_panel`, the same shape), and L1
-                      "Status breakdown" (a legend of zeroes, no sentence).
+                      the empty one, on BOTH levels. This limb always held.
+      SENTENCES       all three formerly-silent regions now say so. This is the
+                      limb that moved.
       NO HERO-SCALE NUMERAL  nothing at or above the hero's own type size
-                      (`--text-display-size`, resolved from the token block --
-                      the floor is derived from the hero, never written down)
-                      renders a numeral outside `#verdict-hero`. That limb
-                      holds.
+                      (derived from the hero's own declared size, never written
+                      down) renders a numeral outside `#verdict-hero`. Still
+                      holds: `.empty-note` is .8125rem and carries no numeral
+                      at all, and the donut centre's `0` is 1.5rem -- reported
+                      at its siblings' scale WITH its `total items` label,
+                      which is the shape OSV1-001 already recorded as stated
+                      rather than celebrated.
 
-    SO THE ROW IS RED ON ONE LIMB OF THREE, and the kit records which: the
-    two `calm.keeps_slot` tests are `xfail(strict=True)` naming THIS row. When
-    the three regions gain their sentence the tests XPASS, which FAILS the run
-    -- that failure is the instruction to flip this row and delete the markers
-    in the same change.
+    NO REFLOW, AND THE HONEST LIMIT ON THAT PHRASE. `.empty-note` carries a
+    `min-height` of one row's own height, so a slot cannot COLLAPSE when its
+    data goes away -- that is what "keeps its slot" is enforceable as. It does
+    NOT mean an empty 1-row list occupies the same pixels as a populated
+    8-row one; nothing could make that true without rendering 7 blank rows,
+    which is the reflow-avoidance cure being worse than the disease. Two
+    structural facts carry the rest: L0's queue shares a `.two-up` grid row
+    with the velocity chart, whose height dominates; and L1's status-breakdown
+    keeps its donut on BOTH renders (`status_donut` draws its empty background
+    track at `total == 0`), so that card's dominant 150px box is identical
+    either way. Rendered PIXEL stability is Tier B and is not claimed here.
 
-    WHAT THE SOURCE ALREADY CARRIES, and still does: `widgets.py:423,433` the
-    verdict headline is "All clear" / "Idle" -- a plain statement, never a
-    triumphant zero; `webapp.py:2275` the ready queue says "Nothing is waiting
-    to be claimed in this queue right now." with the figure as an em-dash;
-    `chartsvg.py:295` "No activity in this window"; `webbrowse.py:498-503` "No
-    items match this filter." Four widgets get this right; three do not.
+    WHAT THE SOURCE ALREADY CARRIED, and still does: `widgets.py` the verdict
+    headline is "All clear" / "Idle" -- a plain statement, never a triumphant
+    zero; `webapp.py` the ready queue says "Nothing is waiting to be claimed in
+    this queue right now." with the figure as an em-dash; `chartsvg.py` "No
+    activity in this window"; `webbrowse.py` "No items match this filter."
+    Four widgets got this right; the three that did not now do.
 
 - id: OSV1-013
   title: no front-end framework, bundler, template engine, or build step
@@ -2408,22 +2443,29 @@
 
 - id: OSV1-026
   title: >-
-    Conformance 7 (empty states keep their slot) -- fixture exists and
-    discriminates, good half deferred against OSV1-012
+    Conformance 7 (empty states keep their slot) -- the two-render fixture
+    discriminates AND both its good halves pass
   contract:
     file: contracts/operator-surface.v1.md
     clause: Conformance 7
     quote: |
       **Test location:** `tests/conformance/operator_surface/test_tier_a.py` (Core 8).
-  disposition: GAP
-  work: work_item_pipeline-c1a
+  disposition: CONFORMS
+  work: work_item_pipeline-aad
   assertion:
     kind: probe
     ref: test_row_osv1_026
   notes: >
-    PINNING ROW -- the fixture exists and discriminates, but its GOOD half does
-    not pass, so the probe pins that deferral. A passing probe here is NOT
-    conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED 2026-09-05 GAP -> CONFORMS (work_item_pipeline-aad), flip direction
+    VIOLATION-MOVEMENT, and the probe is retargeted in the same change from
+    "the good half is deferred" to "the good half PASSES".
+
+    RE-DERIVED FROM THE PASSING PAIR, NEVER FROM THE FIXTURE'S PRESENCE. That
+    distinction is this row's whole subject and the failure mode it exists to
+    catch: a Conformance row is about a DISCRIMINATING fixture, and a fixture
+    whose good half has never been observed to pass is half a fixture. The
+    fixture existed at seed and this row still read GAP for exactly that
+    reason.
 
     MEASURED 2026-09-05. `tests/conformance/operator_surface/test_tier_a.py`
     implements `calm.keeps_slot` at the location Conformance 7 names, and it is
@@ -2437,13 +2479,21 @@
         empty widgets" (reports the missing region) and "or renders a
         hero-scale `0`" (reports the numeral, with hero scale DERIVED from the
         hero's own declared type size rather than written down). A third bad
-        half proves keeping the slot is not enough on its own.
-      GOOD, DEFERRED  three regions keep their slot and say nothing -- see
-        OSV1-012, which carries the measurement. Both the L0 and the L1 good
-        halves are `xfail(strict=True)` naming OSV1-012.
+        half proves keeping the slot is not enough on its own. All three still
+        run and still catch their defect -- flipping this row did not spend
+        them.
+      GOOD, NOW PASSING  `test_calm_keeps_slot` (L0) and
+        `test_calm_keeps_slot_l1` (L1) each report 0 problems against the empty
+        fixture, where they reported 1 and 2 respectively before
+        work_item_pipeline-aad. Both `xfail(strict=True)` markers are deleted;
+        the kit runs 0 failed / 0 XPASS. The measurement itself is carried by
+        OSV1-012.
 
-    THIS ROW GOES GREEN WHEN OSV1-012 DOES. The probe asserts both facts -- the
-    fixture is present with its pair, and OSV1-012 is still red.
+    WHY THE PAIR STAYED SPLIT L0/L1 rather than folding into one good half:
+    "fixing one and not the other is progress this kit must be able to show",
+    and this change proves the point in the other direction -- three regions
+    across two levels were fixed together and the two halves flipped together,
+    each still able to fail alone.
 
 - id: OSV1-027
   title: Freeze 1 -- the Tier-A kit exists and runs on every pull request
@@ -2686,7 +2736,7 @@
     matching bad half go red while every good half stayed green.
 - id: OSV1-031
   title: >-
-    Freeze 5 -- 4 of the 19 Core-carrying rows are still red, and all four are
+    Freeze 5 -- 3 of the 19 Core-carrying rows are still red, and all three are
     now MEASURED VIOLATIONs (no Core row is an unasserted GAP any more)
   contract:
     file: contracts/operator-surface.v1.md
@@ -2810,6 +2860,23 @@
       GAP 0             every Core clause is still ASSERTED
     Four red, every one of them a MEASURED failure. Freeze 5 is met when all
     four are green and the two NOT-ASSERTABLE rows still name their cadence.
+
+    RE-PINNED 2026-09-05 by the empty-states lane (work_item_pipeline-aad),
+    THREE RED. The count is what the probe MEASURES on this lane's tree, not a
+    number carried over: 19 Core-carrying rows, red = OSV1-003, -008, -010.
+    ONE flip moves it: OSV1-012 (Core 8) VIOLATION -> CONFORMS, re-derived from
+    the Tier-A kit's two `calm.keeps_slot` good halves going from 1 and 2
+    reported problems to 0 and 0 against the same empty fixture -- not from a
+    source edit appearing. The tally is now:
+      CONFORMS 14       OSV1-001, -002, -004, -005, -006, -007, -009, -011,
+                        -012, -013, -014, -015, -016, -017
+      NOT-ASSERTABLE 2  OSV1-018 (Core 12), OSV1-019 (Core 13) -- unchanged
+      VIOLATION 3       OSV1-003, -008, -010
+      GAP 0             every Core clause is still ASSERTED
+    Three red, and all three are the browser-tier halves (Core 2's calm-pixel
+    sweep, Core 6, Core 7's rendered half) owned by other lanes. THIS LANE
+    COUNTED ON ITS OWN BASE, base main @065da04; the orchestrator re-counts on
+    the union and that count supersedes this one if the union differs.
 
 - id: OSV1-032
   title: >-

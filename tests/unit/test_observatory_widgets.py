@@ -670,6 +670,23 @@ def test_render_attention_queue_no_truncation_note_when_not_capped() -> None:
     assert "truncation-note" not in html
 
 
+def test_render_attention_queue_empty_keeps_its_slot_and_says_so() -> None:
+    """Core 8 (OSV1-012): zero rows used to emit a bare `.attn-list`.
+
+    The container -- the SLOT -- still renders, and now carries a sentence
+    rather than nothing. Asserted on both limbs, because keeping the slot
+    without the sentence is exactly the half-fix the clause names.
+    """
+    html = WD.render_attention_queue(WD.AttentionQueueData(rows=[], total=0))
+    _firewall_clean(html)
+    assert (
+        html
+        == '<div class="attn-list"><p class="empty-note">No item needs you right now.</p></div>'
+    )
+    assert "attn-row" not in html
+    assert "truncation-note" not in html
+
+
 # ---------------------------------------------------------------------------
 # render_fleet_table
 # ---------------------------------------------------------------------------
@@ -866,12 +883,38 @@ def test_render_status_breakdown_full_legend() -> None:
     assert "85.6%" in html  # 398/465 rounded to 1dp
 
 
-def test_render_status_breakdown_zero_total_has_zero_percent() -> None:
+def test_render_status_breakdown_a_zero_status_still_reads_zero_percent() -> None:
+    """A zero WITHIN a populated mix is a real fact and keeps its legend row.
+
+    Only an all-empty project swaps the legend for a sentence -- a project
+    with 3 ready items and no blocked ones has something to break down, and
+    "Blocked 0 0.0%" is the honest way to say it.
+    """
+    counts = C.StatusCounts(resolved=0, ready=3, held=0, intake=0, deferred=0, blocked=0)
+    data = WD.StatusBreakdownData(counts=counts, total=3, aria_label="three ready")
+    html = WD.render_status_breakdown(data)
+    _firewall_clean(html)
+    assert html.count('class="li">') == 6
+    assert "0.0%" in html and "100.0%" in html
+    assert "empty-note" not in html
+
+
+def test_render_status_breakdown_zero_total_says_so_instead_of_a_legend_of_zeroes() -> None:
+    """Core 8 (OSV1-012): six legend rows reading `0` / `0.0%` keep the slot
+    and say nothing. On an empty project the legend is the sentence.
+
+    The DONUT stays either way -- `status_donut` draws its empty background
+    track at `total == 0` -- so the wrap's dominant box does not reflow.
+    """
     counts = C.StatusCounts(resolved=0, ready=0, held=0, intake=0, deferred=0, blocked=0)
     data = WD.StatusBreakdownData(counts=counts, total=0, aria_label="empty")
     html = WD.render_status_breakdown(data)
     _firewall_clean(html)
-    assert "0.0%" in html or "0%" in html
+    assert '<p class="empty-note">No items to break down yet.</p>' in html
+    assert "mix-legend-full" not in html
+    assert "0.0%" not in html
+    assert '<div class="donut-wrap">' in html
+    assert '<div class="donut-center"><span class="n">0</span>' in html
 
 
 # ---------------------------------------------------------------------------
@@ -947,3 +990,18 @@ def test_render_agents_panel_stale_and_fresh_rows() -> None:
     assert "agent-row has-stale" in html
     assert "stalest: " in html and "latest: " in html
     assert '<span class="held-n">4 held</span>' in html
+
+
+def test_render_agents_panel_empty_keeps_its_slot_and_says_so() -> None:
+    """Core 8 (OSV1-012), the L1 twin of the attention queue's defect: a
+    project no agent has ever held keeps the panel and states that plainly.
+    """
+    data = WD.AgentsPanelData(rows=[], active_count=0, held_count=0)
+    html = WD.render_agents_panel(data)
+    _firewall_clean(html)
+    assert html == (
+        '<div class="agents-list">'
+        '<p class="empty-note">No agent has held an item in this project yet.</p>'
+        "</div>"
+    )
+    assert "agent-row" not in html

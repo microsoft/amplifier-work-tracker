@@ -528,20 +528,33 @@ def _mo011_a_second_motion_block_appears(w: World) -> None:
     )
 
 
-def _mo012_the_empty_slot_gains_its_sentence(w: World) -> None:
-    """FIXED: `render_attention_queue` grows the empty branch Core 8 asks for,
-    so the L0 region that keeps its slot finally says so."""
+def _mo012_the_empty_slot_goes_silent_again(w: World) -> None:
+    """REGRESSION: `render_attention_queue` loses its empty branch, so the L0
+    region goes back to keeping its slot and saying nothing.
+
+    TURNED ROUND 2026-09-05 (work_item_pipeline-aad). While the row was
+    VIOLATION this mutation was the FIXED world (the empty branch APPEARING);
+    now the row is CONFORMS the direction reverses and the defect it closed --
+    a bare `<div class="attn-list"></div>` -- is the counterfactual.
+    """
     w.replace(
         WIDGETS,
-        "    rows_html: list[str] = []\n"
-        '    for r in data["rows"]:\n'
-        '        priority_label = _esc(r["priority"].upper())',
         '    if not data["rows"]:\n'
-        "        return '<div class=\"attn-list\">Nothing needs you right now.</div>'\n"
-        "    rows_html: list[str] = []\n"
-        '    for r in data["rows"]:\n'
-        '        priority_label = _esc(r["priority"].upper())',
+        '        return f\'<div class="attn-list">'
+        '{_empty_note("No item needs you right now.")}</div>\'\n',
+        '    if not data["rows"]:\n        return \'<div class="attn-list"></div>\'\n',
     )
+
+
+def _mo012_the_slot_loses_its_min_height(w: World) -> None:
+    """REGRESSION, the OTHER limb: the sentence survives but `.empty-note`
+    stops holding a box, so the slot collapses when its data goes away.
+
+    Core 8 has two halves -- "keeps its slot" AND "says so in a sentence" -- and
+    a probe that only read the words would credit a collapsing widget with
+    conformance. One mutation per half, for that reason.
+    """
+    w.replace(WEBTHEME, "  min-height:44px;margin:0;", "  margin:0;")
 
 
 def _mo013_a_template_engine_is_declared(w: World) -> None:
@@ -848,14 +861,22 @@ def _mo029_the_kit_stops_reading_its_artifacts_back(w: World) -> None:
 
 
 def _mo031_a_red_core_row_goes_green(w: World) -> None:
-    """FIXED: one of the ten red Core-carrying rows flips, so the gate's tally
+    """FIXED: one of the red Core-carrying rows flips, so the gate's tally
     moves. Reaches the ledger through the patched reader plus the cache clear
     `applied()` performs -- `rows()` memoises the parse.
+
+    RE-ANCHORED 2026-09-05 (work_item_pipeline-aad): this used to move OSV1-012,
+    which is now green and can no longer be the counterfactual. Anchored on the
+    row's own probe ref rather than on its `work:` id, because
+    `work_item_pipeline-qgo` names three still-red Core rows and a bare
+    disposition/work pair is no longer unique.
     """
     w.replace(
         ROWS_PATH,
-        "  disposition: VIOLATION\n  work: work_item_pipeline-c1a",
-        "  disposition: CONFORMS\n  work: work_item_pipeline-c1a",
+        "  disposition: VIOLATION\n  work: work_item_pipeline-qgo\n"
+        "  assertion:\n    kind: probe\n    ref: test_row_osv1_003",
+        "  disposition: CONFORMS\n  work: work_item_pipeline-qgo\n"
+        "  assertion:\n    kind: probe\n    ref: test_row_osv1_003",
     )
 
 
@@ -896,13 +917,33 @@ def _mo025_the_literal_style_row_goes_red_again(w: World) -> None:
     )
 
 
-def _mo026_the_empty_slot_row_goes_green(w: World) -> None:
-    """FIXED: OSV1-012 closes, so Conformance 7's deferred good halves should
-    now pass."""
+def _mo026_the_l1_good_half_is_deferred_again(w: World) -> None:
+    """REGRESSION: Conformance 7's L1 good half goes back behind an xfail while
+    this row still reads CONFORMS -- a green Conformance row whose fixture no
+    longer runs is the claim-without-check Freeze 4 forbids.
+
+    TURNED ROUND 2026-09-05 (work_item_pipeline-aad): while the row was GAP the
+    counterfactual was OSV1-012 CLOSING; now that both are green it is the
+    deferral returning. Aimed at the L1 half specifically, because Conformance
+    7 names L0 AND L1 and a probe that only watched L0 would miss half of it.
+    """
+    w.replace(
+        _support.REPO_ROOT / TIER_A_KIT,
+        "def test_calm_keeps_slot_l1(alarm_dataset, empty_dataset) -> None:",
+        '@pytest.mark.xfail(strict=True, reason="OSV1-012 regressed")\n'
+        "def test_calm_keeps_slot_l1(alarm_dataset, empty_dataset) -> None:",
+    )
+
+
+def _mo026_the_empty_slot_row_goes_red_again(w: World) -> None:
+    """REGRESSION: OSV1-012 reopens, so Conformance 7 is no longer demonstrated
+    end-to-end. The two move together by construction."""
     w.replace(
         ROWS_PATH,
-        "  disposition: VIOLATION\n  work: work_item_pipeline-c1a",
-        "  disposition: CONFORMS\n  work: work_item_pipeline-c1a",
+        "  disposition: CONFORMS\n  work: work_item_pipeline-aad\n"
+        "  assertion:\n    kind: probe\n    ref: test_row_osv1_012",
+        "  disposition: VIOLATION\n  work: work_item_pipeline-aad\n"
+        "  assertion:\n    kind: probe\n    ref: test_row_osv1_012",
     )
 
 
@@ -1125,8 +1166,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-012",
-        "the empty attention queue grows the sentence Core 8 asks for",
-        _mo012_the_empty_slot_gains_its_sentence,
+        "the empty attention queue goes back to a bare container -- slot, no sentence",
+        _mo012_the_empty_slot_goes_silent_again,
+    ),
+    Mutation(
+        "OSV1-012",
+        "the sentence survives but `.empty-note` stops holding a box, so the slot collapses",
+        _mo012_the_slot_loses_its_min_height,
     ),
     Mutation(
         "OSV1-013", "the manifest declares a template engine", _mo013_a_template_engine_is_declared
@@ -1210,8 +1256,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-026",
-        "OSV1-012 closes, so Conformance 7's deferred good halves should now pass",
-        _mo026_the_empty_slot_row_goes_green,
+        "Conformance 7's L1 good half is deferred again behind an xfail naming OSV1-012",
+        _mo026_the_l1_good_half_is_deferred_again,
+    ),
+    Mutation(
+        "OSV1-026",
+        "OSV1-012 reopens, so Conformance 7 is no longer demonstrated end-to-end",
+        _mo026_the_empty_slot_row_goes_red_again,
     ),
     Mutation(
         "OSV1-027",
@@ -1247,7 +1298,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-031",
-        "one of the five red Core-carrying rows flips to CONFORMS",
+        "one of the three red Core-carrying rows flips to CONFORMS",
         _mo031_a_red_core_row_goes_green,
     ),
     Mutation(

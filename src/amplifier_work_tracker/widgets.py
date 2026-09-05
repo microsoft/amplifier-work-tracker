@@ -583,6 +583,28 @@ def _title_attr(raw: str) -> str:
     return f' title="{_esc(raw)}"' if raw else ""
 
 
+def _empty_note(sentence: str) -> str:
+    """The one shape an empty widget takes: it keeps its slot and says so.
+
+    operator-surface.v1 Core 8 -- "A widget with nothing to show keeps its
+    slot and says so in a sentence" -- and the CALM half of the same clause:
+    the sentence REPORTS the absence, it never celebrates it. No numeral, no
+    exclamation, no triumphant zero.
+
+    The register is the house's own, not invented here: `webapp.py`'s
+    "Nothing is waiting to be claimed in this queue right now.",
+    `chartsvg.py`'s "No activity in this window", `webbrowse.py`'s "No items
+    match this filter." One helper so the three observatory widgets that
+    needed one cannot drift into three different voices.
+
+    The BOX lives in `webtheme.py`'s `.empty-note` rule (Core 4 -- zero
+    literal colour/font/size outside the token module), which carries a
+    `min-height` so the slot stays a real, stable box rather than collapsing
+    to nothing the moment its data does.
+    """
+    return f'<p class="empty-note">{_esc(sentence)}</p>'
+
+
 # ---------------------------------------------------------------------------
 # 1. verdict-hero
 # ---------------------------------------------------------------------------
@@ -760,7 +782,14 @@ def render_attention_queue(data: AttentionQueueData) -> str:
     ellipsis` in the shared CSS -- the ellipsis fix GAUNTLET-SYNTHESIS.md
     item 7 calls for -- so no wrapping/overflow work is needed here beyond
     emitting the same `<span class="title">`/`<span class="reason">`
-    structure the CSS targets."""
+    structure the CSS targets.
+
+    With ZERO rows the `.attn-list` still renders -- Core 8's slot -- and
+    carries `_empty_note`'s sentence instead of being an empty container.
+    A bare `<div class="attn-list"></div>` is what this used to emit, and it
+    is the exact shape OSV1-012 pinned as a violation."""
+    if not data["rows"]:
+        return f'<div class="attn-list">{_empty_note("No item needs you right now.")}</div>'
     rows_html: list[str] = []
     for r in data["rows"]:
         priority_label = _esc(r["priority"].upper())
@@ -1100,29 +1129,45 @@ class StatusBreakdownData(TypedDict):
 def render_status_breakdown(data: StatusBreakdownData) -> str:
     """Render the `.status-breakdown-wrap`: `chartsvg.status_donut` plus a
     `.donut-center` total and a full `.mix-legend-full` (name/count/pct per
-    status, `deferred`'s swatch using `.pat-hatch`)."""
+    status, `deferred`'s swatch using `.pat-hatch`).
+
+    On an EMPTY project the legend is replaced by `_empty_note`'s sentence
+    (Core 8). Six rows reading `0` / `0.0%` keep the slot but say nothing --
+    that is what OSV1-012 measured on L1, and `check_calm_keeps_slot`
+    deliberately refuses to read a decimal like `0.0%` as the end of a
+    sentence for exactly this reason.
+
+    The DONUT stays, on both renders: `status_donut` draws its empty
+    background track at `total == 0`, so the wrap's dominant box (a 150px
+    ring) is identical either way and the card does not reflow between calm
+    and alarm. The `.donut-center` keeps reporting `0` with its `total items`
+    label -- a zero at its siblings' scale, stated, never celebrated."""
     counts = data["counts"]
     total = data["total"]
     donut = C.status_donut(counts, aria_label=data["aria_label"])
-    legend_rows: list[str] = []
-    for key in _MIX_ORDER:
-        count = counts[key]  # type: ignore[literal-required]
-        pct = round(count * 100 / total, 1) if total > 0 else 0.0
-        swatch = (
-            '<span class="sw pat-hatch"></span>'
-            if key == "deferred"
-            else f'<span class="sw mix-{key}"></span>'
-        )
-        legend_rows.append(
-            f'<div class="li">{swatch}<span class="name">{_MIX_NAME[key]}</span>'
-            f'<span class="cnt">{count}</span><span class="pct">{pct}%</span></div>'
-        )
+    if total > 0:
+        legend_rows: list[str] = []
+        for key in _MIX_ORDER:
+            count = counts[key]  # type: ignore[literal-required]
+            pct = round(count * 100 / total, 1)
+            swatch = (
+                '<span class="sw pat-hatch"></span>'
+                if key == "deferred"
+                else f'<span class="sw mix-{key}"></span>'
+            )
+            legend_rows.append(
+                f'<div class="li">{swatch}<span class="name">{_MIX_NAME[key]}</span>'
+                f'<span class="cnt">{count}</span><span class="pct">{pct}%</span></div>'
+            )
+        legend_html = f'<div class="mix-legend-full">{"".join(legend_rows)}</div>'
+    else:
+        legend_html = _empty_note("No items to break down yet.")
     return (
         '<div class="status-breakdown-wrap">'
         f'<div class="donut-wrap">{donut}'
         f'<div class="donut-center"><span class="n">{total}</span>'
         '<span class="l">total items</span></div></div>'
-        f'<div class="mix-legend-full">{"".join(legend_rows)}</div>'
+        f"{legend_html}"
         "</div>"
     )
 
@@ -1201,7 +1246,14 @@ def render_agents_panel(data: AgentsPanelData) -> str:
     """Render the L1 "Agents on {project}" panel: `.agents-list` of
     `.agent-row` links. `.agent-row .name` is `white-space:nowrap` +
     ellipsis in the shared CSS (GAUNTLET-SYNTHESIS.md's nowrap fix) --
-    satisfied by emitting the same `<span class="name">` structure."""
+    satisfied by emitting the same `<span class="name">` structure.
+
+    With ZERO rows the `.agents-list` keeps its slot and says so, exactly as
+    `render_attention_queue` does -- the same Core 8 defect appeared here in
+    the same shape (OSV1-012), and it is fixed the same way."""
+    if not data["rows"]:
+        sentence = _empty_note("No agent has held an item in this project yet.")
+        return f'<div class="agents-list">{sentence}</div>'
     rows_html: list[str] = []
     for r in data["rows"]:
         cls = "agent-row has-stale" if r["is_stale"] else "agent-row"
