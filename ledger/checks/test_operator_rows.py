@@ -69,6 +69,8 @@ from ._support import (
     rows,
     sha256,
     src_modules,
+    style_block_literal_sites,
+    style_blocks_outside_token_module,
     style_sites_in,
     text_pairs,
     token_blocks,
@@ -280,12 +282,18 @@ def test_row_osv1_004() -> None:
 
 
 def test_row_osv1_005() -> None:
-    """Core 4 VIOLATION pin: the literal-inline-style census, RE-RUN here.
+    """Core 4 VIOLATION pin: the literal-style census, RE-RUN here.
 
     The count is computed, never transcribed, so this pin cannot drift away
     from the tree. Two named specimens are asserted individually as well, so
     that migrating the 44 easy `margin-top` sites while leaving the retired
     palette in place does not look like progress the row did not make.
+
+    TWO HALVES since the 2026-09-04 DRAFT true-up widened Core 4: the inline
+    `style=` attribute census, and the `<style>`-BLOCK census the widening
+    made reachable. They are pinned separately so that fixing one while
+    leaving the other is progress the row records rather than a flip it did
+    not earn.
     """
     literal = style_sites_in(LITERAL)
     assert len(literal) == 66, (
@@ -311,6 +319,47 @@ def test_row_osv1_005() -> None:
         f"OSV1-005 (Core 4): the total inline `style=` population moved from 137 to "
         f"{total}. Neither direction is neutral -- re-run the census and re-derive "
         f"both OSV1-005 and OSV1-006."
+    )
+
+    # --- the `<style>`-block half, reachable since the 2026-09-04 true-up ---
+    blocks = [(f, ln) for f, ln, _css in style_blocks_outside_token_module()]
+    assert blocks == [("webtrust.py", 256)], (
+        f"OSV1-005 (Core 4): the population of `<style>` blocks OUTSIDE the token "
+        f"module moved -- pinned exactly one, `webtrust.py:256` (the `_CSS` constant "
+        f"embedded at webtrust.py:374), observed {blocks}.\n"
+        f"  If GONE: webtrust.py now imports the token CSS -- that is the fix landing "
+        f"(work_item_pipeline-np3). Flip the block half of this row and retarget IN "
+        f"THE SAME CHANGE.\n"
+        f"  If MORE: a second module started shipping its own stylesheet, which is "
+        f"the defect Core 4 was widened to reach."
+    )
+    block_literals = style_block_literal_sites()
+    assert len(block_literals) == 40, (
+        f"OSV1-005 (Core 4) `<style>`-BLOCK CENSUS MOVED: pinned 40 literal "
+        f"colour/font/size declarations inside a `<style>` block outside the token "
+        f"module; observed {len(block_literals)}.\n"
+        f"  If FEWER: the migration is under way -- update the pinned count (or flip "
+        f"the row to CONFORMS at zero on BOTH halves) and retarget this probe IN THE "
+        f"SAME CHANGE (work_item_pipeline-np3). A passing pin is not conformance.\n"
+        f"  If MORE: a new literal declaration landed in a page-local stylesheet.\n"
+        f"  observed: {[f'{f}:{n} {d}' for f, n, d, _r in block_literals]}"
+    )
+    palette = sorted(d for f, n, d, _r in block_literals if n in (258, 259))
+    assert palette == [
+        "--amber:#D9A253",
+        "--ground:#0D0D0C",
+        "--ink:#F2EEE6",
+        "--mid:#A6A199",
+        "--quiet:#9C978F",
+        "--raise:#151513",
+        "--rule-hi:#333330",
+        "--rule:#1F1F1D",
+    ], (
+        f"OSV1-005 (Core 4): the retired palette webtrust.py:258-259 hardcodes is no "
+        f"longer counted as literal -- observed {palette}. That block is the specimen "
+        f"the true-up widened Core 4 to reach, and the one Conformance 1's bad half "
+        f"reinstates. If it was tokenised, that is the fix landing: re-derive this row "
+        f"and OSV1-003 (work_item_pipeline-np3)."
     )
 
 
@@ -677,11 +726,18 @@ def test_row_osv1_015() -> None:
 def test_row_osv1_016() -> None:
     """Core 10 VIOLATION pin: the theme choice persists nowhere.
 
-    Pinned narrowly, on theme only. The density preference raises a genuine
-    reading question (localStorage survives a refresh but IS 'only in the
-    browser') that this reconcile returned to the root rather than deciding --
-    so a density decision taken later must not arrive to find this probe
-    already red about it.
+    Pinned narrowly, on theme only. At seed the density preference raised a
+    genuine reading question (localStorage survives a refresh but IS 'only in
+    the browser') that the reconcile returned to the root rather than deciding,
+    so this probe deliberately said nothing about it.
+
+    SETTLED 2026-09-04 by the owner-ratified DRAFT true-up #1: the machine
+    check now reads "no view holds state that does not survive a refresh
+    (state persisted in `localStorage` or on the server survives; ...)". Under
+    that wording density is CONFORMANT and theme is still a violation, so the
+    probe now asserts BOTH -- the pin on theme, and the persistence that makes
+    density conformant, since a row whose notes rule on density must notice if
+    density stops persisting.
     """
     app = read(WEBAPP)
     setter = app[app.index("function wtSetTheme(t){") :][:340]
@@ -700,6 +756,19 @@ def test_row_osv1_016() -> None:
         'OSV1-016 (Core 10): the server no longer hardcodes `data-theme="dark"` on '
         "every page. That hardcoding is the other half of why a chosen theme dies on "
         "refresh -- re-derive the row."
+    )
+    # The OTHER preference on this surface, and the one the true-up's aligned
+    # wording rules CONFORMANT: density persists, so it survives a refresh. Not
+    # a pin -- a live check on the fact this row's notes rule on.
+    theme_src = read(WEBTHEME)
+    assert theme_src.count("wt-density") == 2 and contains(
+        WEBTHEME, "localStorage.setItem(KEY, next ? 'compact' : 'comfortable')"
+    ), (
+        "OSV1-016 (Core 10): the density preference no longer persists in "
+        "`localStorage`. Under the 2026-09-04 aligned wording that persistence is "
+        "exactly why density is CONFORMANT while theme is not -- if it stopped, "
+        "density became a second violation of this clause and this row's ruling note "
+        "is stale. Re-derive."
     )
 
 
@@ -949,14 +1018,30 @@ def test_row_osv1_031() -> None:
 
 
 def test_row_osv1_032() -> None:
-    """Freeze 6 pin: the register is enumerated, but literal sites remain."""
+    """Freeze 6 pin: the register is enumerated, but literal sites remain.
+
+    Freeze 6's "no literal colour, font, or size site remaining" reads through
+    Core 4, so the 2026-09-04 true-up widened what "site" means here too: an
+    inline `style=` attribute OR a declaration in a `<style>` block outside the
+    token module. Both halves are pinned separately -- migrating all 66 inline
+    sites while leaving webtrust.py's page-local stylesheet in place must NOT
+    read as this gate closing.
+    """
     literal = style_sites_in(LITERAL)
     assert literal, (
-        "OSV1-032 (Freeze 6) PIN BROKE THE RIGHT WAY: zero literal colour/font/size "
-        "inline sites remain. Both of Freeze 6's conjuncts now hold -- flip OSV1-032 "
-        "(and OSV1-005) to CONFORMS and retarget both probes IN THE SAME CHANGE "
+        "OSV1-032 (Freeze 6) PIN BROKE THE RIGHT WAY (inline half): zero literal "
+        "colour/font/size INLINE sites remain. If the `<style>`-block half below is "
+        "also at zero, both of Freeze 6's conjuncts now hold -- flip OSV1-032 (and "
+        "OSV1-005) to CONFORMS and retarget both probes IN THE SAME CHANGE "
         "(work_item_pipeline-np3). Note that a register at zero also fires Backlogged "
         "2's promotion trigger."
+    )
+    assert style_block_literal_sites(), (
+        "OSV1-032 (Freeze 6) PIN BROKE THE RIGHT WAY (`<style>`-block half): zero "
+        "literal colour/font/size declarations remain in any `<style>` block outside "
+        "the token module. That is webtrust.py's retired palette closing -- the half "
+        "Core 4's frozen text could not reach until the 2026-09-04 true-up. Re-derive "
+        "this row and OSV1-005 in the same change (work_item_pipeline-np3)."
     )
     assert len(style_sites_in("COMPUTED")) == 23, (
         "OSV1-032 (Freeze 6): the enumerated half moved -- see OSV1-006, which owns "
@@ -964,39 +1049,93 @@ def test_row_osv1_032() -> None:
     )
 
 
-def test_row_osv1_033() -> None:
-    """Freeze 7 pin: the `**never a count**` Changelog quote does not verify.
+#: A quotation the contract ATTRIBUTES -- its own `*"..."*` convention, used
+#: for exactly the three attributed quotations in the Changelog and nowhere
+#: else. A new one appearing that this probe cannot classify goes red.
+_ATTRIBUTED_QUOTE = re.compile(r'\*"(.+?)"\*', re.DOTALL)
+#: An in-repo source citation: `file.py:LINE` or `file.py:LINE-LINE`.
+_SOURCE_CITE = re.compile(r"`([A-Za-z_][A-Za-z_0-9]*\.py):(\d+(?:-\d+)?)`")
+#: The attribution that marks a quotation as a PERSON's words rather than a
+#: file's. Such a quote cites no file, so Freeze 7's substring rule cannot
+#: reach it -- it is REPORTED as unverifiable, never silently passed.
+_SPEAKER_MARKER = "literal:"
 
-    Both halves are asserted: the decorated form FAILS and the undecorated
-    form PASSES. Together they prove the failure is the added markdown
-    emphasis and nothing else -- so a fix that changed webapp.py instead of
-    the contract would be caught too.
+#: The two spans the Changelog attributes to `webapp.py:37-44`, enumerated so
+#: that deleting one is caught rather than trivially satisfying the loop below.
+_CHANGELOG_SOURCE_QUOTES = (
+    "the dashboard's hero is the AGE of the oldest unclaimed item, never a count",
+    "a giant `0` trains a viewer to stop looking. An age reads as neglect",
+)
+
+
+def test_row_osv1_033() -> None:
+    """Freeze 7 CONFORMS: every quotation the contract attributes to an in-repo
+    file verifies verbatim against that file.
+
+    RETARGETED 2026-09-04 by the owner-ratified DRAFT true-up #1. At seed this
+    row was a GAP and this probe PINNED the failure: the Changelog's
+    `**never a count**` carried markdown emphasis the cited source does not,
+    and markup is part of the exact match. The true-up struck the emphasis, the
+    pin went red the way a pin is meant to, and this is the real check that
+    replaced it IN THE SAME CHANGE.
+
+    WHAT IT PROVES, AND WHAT IT DOES NOT. It proves that every attributed
+    quotation is either verbatim in the file it cites, or is a speaker's words
+    citing no file at all. It CANNOT verify the contract's quotations of Brief
+    A and Brief B (Backlogged 2 quotes one): those documents live outside this
+    repository, so an in-repo check must report them as out-of-repo rather than
+    silently pass them -- see the row's notes.
     """
+    contract = read(OPERATOR_CONTRACT_PATH)
     source = collapse(read(WEBAPP))
-    decorated = collapse(
-        "the dashboard's hero is the AGE of the oldest unclaimed item, **never a count**"
+    changelog = contract[contract.index("## Changelog") :]
+
+    cited = {m.group(1) for m in _SOURCE_CITE.finditer(changelog)}
+    assert cited == {"webapp.py"}, (
+        f"OSV1-033 (Freeze 7): the Changelog's in-repo source citations moved -- this "
+        f"probe verifies against `webapp.py` because that was the only file cited; "
+        f"observed {sorted(cited)}. Extend this probe to the new file rather than "
+        f"leaving it silently narrow."
     )
-    plain = collapse("the dashboard's hero is the AGE of the oldest unclaimed item, never a count")
-    assert plain in source, (
-        "OSV1-033 (Freeze 7): the invariant sentence at webapp.py:37-44 moved. The "
-        "contract's Changelog quotes it; if the SOURCE changed, the quote's failure "
-        "means something different now. Re-review the row."
+
+    for m in _ATTRIBUTED_QUOTE.finditer(contract):
+        quote = collapse(m.group(1))
+        if collapse(quote) in source:
+            continue
+        window = contract[max(0, m.start() - 40) : m.start()]
+        assert _SPEAKER_MARKER in window, (
+            f"OSV1-033 (Freeze 7) REGRESSION: an attributed quotation neither verifies "
+            f"against `webapp.py` nor is marked as a speaker's words "
+            f"({_SPEAKER_MARKER!r} in the 40 characters before it):\n"
+            f"  {quote[:160]}\n"
+            f"Freeze 7 requires every quote to be a contiguous, whitespace-collapsed "
+            f"substring of the file it cites -- markdown markup included. Either make "
+            f"it byte-exact, or attribute it to its speaker."
+        )
+
+    for quote in _CHANGELOG_SOURCE_QUOTES:
+        assert collapse(quote) in collapse(changelog), (
+            f"OSV1-033 (Freeze 7): the Changelog no longer carries the quotation "
+            f"{quote[:60]!r}... This probe verifies the quotations that ARE there; "
+            f"deleting one must not be how this row stays green. Re-review."
+        )
+        assert collapse(quote) in source, (
+            f"OSV1-033 (Freeze 7) REGRESSION: the Changelog quotation {quote[:60]!r}... "
+            f"no longer verifies against webapp.py. Either the contract's quote "
+            f"drifted, or webapp.py:37-44's prose moved under it -- both are Freeze 7 "
+            f"failures and both need the quote re-derived from the source."
+        )
+
+    assert "**never a count**" not in contract, (
+        "OSV1-033 (Freeze 7) REGRESSION: the `**`-emphasised form of the "
+        "`webapp.py:38-39` quotation is back in the contract. That is the exact defect "
+        "the 2026-09-04 true-up corrected -- markup is part of the exact match, so an "
+        "emphasised quote is not a substring of the plain source sentence."
     )
-    assert decorated not in source, (
-        "OSV1-033 (Freeze 7): webapp.py now carries the markdown-emphasised form. "
-        "That would fix the quote from the wrong end -- source prose should not "
-        "acquire markup to satisfy a contract quote. Re-derive."
-    )
-    assert contains(OPERATOR_CONTRACT_PATH, "**never a count**"), (
-        "OSV1-033 (Freeze 7) PIN BROKE THE RIGHT WAY: the contract no longer carries "
-        "the `**`-decorated quote. If an owner-ratified amendment corrected it, flip "
-        "OSV1-033 to CONFORMS and retarget this probe IN THE SAME CHANGE "
-        "(work_item_pipeline-5r1) -- and remember the contract's bytes moved, so "
-        "OSV1-000 demands a full-family re-review, never a silent hash bump."
-    )
-    assert contains(WEBAPP, "a giant `0` trains a viewer to stop looking"), (
-        "OSV1-033 (Freeze 7): the contract's OTHER cited quote no longer verifies "
-        "against webapp.py. That one passed at seed -- this is a new failure."
+    assert "**never a count**" not in source, (
+        "OSV1-033 (Freeze 7): webapp.py now carries the markdown-emphasised form. That "
+        "would satisfy the quote from the wrong end -- source prose should not acquire "
+        "markup to make a contract quotation verify. Re-derive."
     )
 
 

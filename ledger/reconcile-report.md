@@ -599,7 +599,239 @@ this run confirmed it, that is said, and where it did not, that is said too.
 
 ---
 
+## Re-review 2026-09-04 (operator-surface true-up #1)
+
+**Trigger:** `contracts/operator-surface.v1.md` changed, so `OSV1-000`'s pin
+failed. Under `LEDGER-FORMAT.md` sec.4 that mandates a **full ledger re-review,
+never a silent hash bump** — this section is that re-review's record.
+**Run:** 2026-09-04, branch `amend/operator-surface-trueup-1` (branched from
+`main` @ `65f0e91`). Owner ratification of the amendment, literal:
+*"yep, do it all."* Status stays **DRAFT** — nothing here stamps FROZEN.
+
+### What changed in the contract — three parts, all owner-ratified
+
+1. **Core 4's reach.** The clause was scoped to *"an inline `style=` attribute"*
+   and now also reads *"or in a `<style>` block outside the token module
+   (`webtheme.py`'s token block)"*; the `visual.single_source` machine check
+   gained *"and zero literal colour/font/size declarations in any `<style>`
+   block outside the token module"*. **Why:** `webtrust.py:256-302` hardcodes
+   the retired palette (`--ground:#0D0D0C; --ink:#F2EEE6; --amber:#D9A253`)
+   inside a `<style>` block that deliberately does not import the token CSS
+   (`webtrust.py:249-253` says so in its own comment) — the exact defect the
+   clause exists to prevent, and one the SEED reconcile could only
+   **record-not-score** because the frozen text could not reach it (§6d, and
+   `OSV1-005`'s seed notes, which returned the reading to the root).
+2. **Core 10's machine check.** *"no view stores state only in the browser"*
+   was **stricter than its own clause** (*"No client-side state that dies on
+   refresh"*) and would have falsely condemned the density preference, which
+   survives a refresh. Reworded to *"no view holds state that does not survive
+   a refresh (state persisted in `localStorage` or on the server survives;
+   state held only in page memory does not)"*. The clause body did not move.
+3. **Freeze 7's self-failure.** The Changelog's quotation of `webapp.py:38-39`
+   carried added `**` emphasis, so the contract failed **its own**
+   contiguous-substring rule. The emphasis is struck; the quoted span is now
+   byte-exact and is still a quotation (the `*"…"*` attribution markers sit
+   outside the span). **`webapp.py` was not touched** — fixing a quote by
+   editing the prose it cites is the wrong end, and the retargeted probe now
+   asserts the source did not acquire the emphasis either.
+
+Plus a dated Changelog entry recording all three.
+
+### Hash, old → new
+
+`sha256`, whole-file bytes, computed exactly as `ledger/checks/_support.py::sha256`
+does:
+
+```
+contracts/operator-surface.v1.md      7566c75c0b013e6d11946cc7c6a3781b6d70a9a92f945ea988aac238c73103ab
+                                   -> f40987524fb47351023700fbad97c9c43d9ddd46aeb2cefd0d3ec08cd71c3edb
+
+contracts/custody-coordination.v1.md  ec4b736f8d6dca4ee3c29b6df8397a9d7b51d2eadd76965854e898924f529e1a
+                                      (unchanged — re-verified byte-for-byte on this run, not assumed)
+```
+
+The custody contract was never opened: the boundary between the two contracts is
+a one-way citation, and this amendment touched neither of the two clauses cited
+across it.
+
+### Rows re-anchored: 2 — checked, not assumed
+
+Every one of the 35 quote-carrying `OSV1` rows was tested against **both** the
+old text (`git show origin/main:contracts/operator-surface.v1.md`) and the new
+one, whitespace-collapsed. Exactly two rows quoted text that moved; the other 33
+verify byte-identically in both.
+
+| Row | Clause | Old anchor | New anchor | Same clause? |
+|---|---|---|---|---|
+| `OSV1-005` | Core 4 | *"Literal colour, font, or size in an inline `style=` attribute is a violation; zero are tolerated."* | the widened first sentence, *"…, or in a `<style>` block outside the token module (`webtheme.py`'s token block), is a violation; zero are tolerated."* | yes — same sentence, widened |
+| `OSV1-016` | Core 10 | *"no view stores state only in the browser"* | *"no view holds state that does not survive a refresh"* | yes — same machine check, same conjunct |
+
+`OSV1-015` also cites Core 10 and was re-read explicitly: its quote (*"every
+adapter call reached from a view passes an explicit limit"*) is a **different
+conjunct** of the same check and is byte-identical before and after. No change.
+
+### Disposition changed: 1
+
+`OSV1-033` (Freeze 7) **GAP → CONFORMS**, direction `VIOLATION-MOVEMENT`. This is
+the worked example of the flip direction this repo defines locally (§11.1): the
+seed probe *pinned* the failing quote, part 3 above corrected it, the pin went
+red — and the row moved and the pin was replaced by a real check **in the same
+change**. A passing pin would not have been conformance; only the retargeted
+probe is.
+
+The retargeted `test_row_osv1_033` asserts, every run: (1) every `*"…"*`
+attributed quotation anywhere in the contract either verifies verbatim against
+`webapp.py` or is marked as a **speaker's** words by a `literal:` attribution
+within the 40 characters before it; (2) the two `webapp.py:37-44` quotations are
+still **present** and still verify — enumerated by name, so deleting one cannot
+be how the row stays green; (3) `webapp.py` is the only in-repo file the
+Changelog cites, so a new `file.py:LINE` citation fails loudly rather than
+leaving the probe silently narrow; (4) the `**`-emphasised form is absent from
+**both** the contract and `webapp.py`.
+
+**Honest limit, unchanged by the flip:** the contract also quotes Brief A and
+Brief B, which live outside this repo (Backlogged 2 quotes *"137 `style=`
+occurrences, 134 of them outside `webtheme.py`"*). An in-repo check cannot
+verify those and **reports** them as out-of-repo rather than silently passing
+them. `CONFORMS` here means *every quotation citing an in-repo file verifies*,
+not *every string in this contract has been checked*.
+
+**Work item:** `work_item_pipeline-5r1` was filed at seed for exactly this
+correction and is discharged by this change. It is **not** resolved from this
+branch — the branch may not write to the live tracker — so it needs closing by
+hand.
+
+### The `<style>`-block census — new measurement engine
+
+Part 1 made a defect scoreable, so the ledger had to acquire the instrument that
+scores it. `_support.style_blocks_outside_token_module()` finds every `<style>`
+block a `src/` module other than **the token module** embeds — resolving CSS
+written straight into the tag *and* CSS interpolated from a module-level string
+constant, by parsing (never importing). A block it cannot resolve **raises**
+rather than being skipped: a census that silently loses a block would understate
+the violation, which is the one direction a census must never fail in — the same
+rule `inline_style_sites()` already carries.
+
+`style_block_literal_sites()` then classifies each declaration with
+**`classify_style` — the same function the inline census uses**, on purpose, so
+the two halves of Core 4 are measured identically and one cannot quietly become
+stricter than the other.
+
+**Measured on this branch:** exactly **one** `<style>` block outside the token
+module — `webtrust.py:256-302` (the `_CSS` constant, embedded at
+`webtrust.py:374`) — carrying **40** literal colour/font/size declarations:
+
+```
+webtrust.py:258   --ground:#0D0D0C  --raise:#151513  --ink:#F2EEE6  --mid:#A6A199
+webtrust.py:259   --quiet:#9C978F   --amber:#D9A253  --rule:#1F1F1D  --rule-hi:#333330
+   ...the 8 retired-palette declarations the seed recorded but could not score
+webtrust.py:263-300   32 further literal fonts and sizes in the same sheet
+   (Georgia / 'Helvetica Neue' stacks, font-size:32px, padding:52px 24px 80px, …)
+```
+
+**Honest limit, shared with the inline census:** `classify_style` skips a size
+declaration whose value mentions `var(`, so `border:1px solid var(--rule-hi)` is
+**not** counted. That under-counts rather than over-counts — the safe direction
+for a pin — and the rule is shared between both halves deliberately.
+
+Two rows now measure both halves, **pinned separately** so fixing one is progress
+recorded rather than a flip unearned:
+
+* `OSV1-005` (Core 4, **VIOLATION**, unchanged) — 66 inline literal sites **and**
+  40 `<style>`-block declarations, with the 8 retired-palette declarations
+  asserted by name.
+* `OSV1-032` (Freeze 6, **GAP**, unchanged) — Freeze 6's own text did not move
+  and its quote still verifies, but the word *"site"* in its second half reads
+  through Core 4. The probe now pins both halves, because the plausible failure
+  is exactly: migrate all 66 inline sites, see a green inline census, and stamp
+  a Freeze gate while a whole page-local stylesheet still hardcodes the retired
+  palette.
+
+**The palette itself was not fixed here** — that is `work_item_pipeline-np3`,
+and this branch amends the contract and `ledger/` only.
+
+### The density ruling — an open need closed
+
+`OSV1-016`'s seed notes returned a reading to the root: the density toggle
+persists `wt-density` in `localStorage`, which **satisfies** Core 10's prose
+(*"no client-side state that dies on refresh"* — it survives) while being,
+literally, state *"stored only in the browser"* — the machine check's words as
+they then stood. Part 2 settles it by aligning the check to its own clause:
+
+| Preference | Under the aligned wording | Evidence |
+|---|---|---|
+| **density** | **CONFORMANT** | `wt-density` persisted in `localStorage` — `webtheme.py:3859` declares the key, `:3866` reads it, `:3873` writes it. It survives a refresh |
+| **theme** | **still a VIOLATION** | `wtSetTheme` (`webapp.py:3503-3508`) persists nothing — no cookie, no `localStorage`, no server round-trip — so it is held only in page memory and dies on the next load |
+
+`OSV1-016` stays **VIOLATION**, pinned on theme only — exactly as the seed probe
+was written, *deliberately*, so that a density decision taken later would not
+arrive to find the probe already red about it. It now **also** asserts that
+density still persists: a row whose notes rule on density must notice if density
+stops persisting, rather than leaving a stale ruling in its notes.
+
+### Tallies, before → after
+
+| | Before (SEED) | After (this re-review) |
+|---|---:|---:|
+| `CONFORMS` | 8 | **9** |
+| `VIOLATION` | 5 | 5 |
+| `GAP` | 20 | **19** |
+| `NOT-ASSERTABLE` | 3 | 3 |
+| **Total rows** | 36 | 36 |
+| Red rows carrying a work item | 25 | **24** |
+
+**Core-clause sub-tally is unchanged: ten of nineteen Core-carrying rows are
+still red** — `OSV1-033` carries Freeze 7, not a Core clause, so Freeze 5's gate
+(`OSV1-031`, which asserts exactly 19 Core rows and exactly 10 red) did not move.
+
+### Every other disposition re-verified — checked, not assumed
+
+This branch touches the contract and `ledger/` only (`git diff origin/main
+--stat`: `contracts/operator-surface.v1.md`, `ledger/rows.yaml`,
+`ledger/reconcile-report.md`, `ledger/checks/_support.py`,
+`ledger/checks/test_operator_rows.py`, `ledger/checks/mutation_harness.py`), so
+**no row's subject code moved**. Both families' probes were re-run and both
+halves of the ledger's honesty re-established:
+
+```
+pytest ledger/checks -q      60 passed
+make ledger-mutate           proven 53 / 53   (pinning 29/29 · pinning probes covered 24/24 · conformance 24/24)
+```
+
+**The mutation denominator moved honestly, 52 → 53, and is not a rounding:**
+`OSV1-005` gained a **second** mutation (webtrust.py's page-local `<style>`
+block stops declaring its own retired palette — block census 40 → 32), because
+the existing one proves the *inline* bucket discriminates and says nothing about
+a block; and `OSV1-033`'s mutation was **replaced**, not deleted — the row left
+the pinning group, so its `FIXED`-direction counterfactual (*strike the
+emphasis*) became meaningless and a `REGRESSION`-direction one (*the emphasis
+comes back*) took its place. Pinning-probe coverage therefore falls 25 → 24 and
+conformance mutations rise 23 → 24, which is the same row moving between groups.
+
+### Files written by this re-review
+
+| File | Change |
+|---|---|
+| `contracts/operator-surface.v1.md` | the three owner-ratified parts + a Changelog entry. **Status stays DRAFT** |
+| `ledger/rows.yaml` | `OSV1-000` rehashed + re-review notes; `OSV1-005`/`-016` re-anchored; `OSV1-033` flipped GAP → CONFORMS and its `work` ref dropped; notes updated on `-003`, `-005`, `-015`, `-016`, `-032`, `-033` |
+| `ledger/checks/_support.py` | the `<style>`-block census engine (block resolution + per-declaration classification), `_CSS_COMMENT` hoisted to be shared |
+| `ledger/checks/test_operator_rows.py` | `OSV1-005`/`-032` extended to the block half; `OSV1-016` asserts density persistence; `OSV1-033` retargeted from a pin to a real check |
+| `ledger/checks/mutation_harness.py` | one mutation added (`OSV1-005` block half), one replaced (`OSV1-033`, pin → regression direction) |
+| `ledger/reconcile-report.md` | this section |
+
+**Not touched, by instruction and by protocol:** `src/`,
+`contracts/custody-coordination.v1.md`, `docs/VISION.md`. No PR opened, nothing
+merged, and the live service was never contacted.
+
+---
+
 ## 1. Rows by disposition
+
+> **SEED snapshot, 2026-09-04 @ `4aaee50`.** Superseded in one cell by the
+> re-review above: `OSV1-033` is now `CONFORMS`, so the live tally is 9 CONFORMS
+> / 5 VIOLATION / 19 GAP / 3 NOT-ASSERTABLE. Everything else below still stands
+> as measured. Kept as written rather than rewritten — it is the record of what
+> the seed actually found.
 
 36 rows: one SYNC, 19 carrying Core 1–13, 7 carrying Conformance 1–7, 8
 carrying Freeze 1–8, one carrying Reserved 1.
@@ -861,6 +1093,10 @@ inline `style=` at all") fires — a named contract event, never a silent win.
    Core 4 violation — the clause's frozen text is scoped to inline `style=`.
    It is the same defect wearing a different tag, and it is the specimen
    Conformance 1's bad half reinstates. **Returned to the root** (§9, need 2).
+   **SETTLED 2026-09-04** by the owner-ratified DRAFT true-up #1: Core 4 was
+   widened to reach it, and the block is now COUNTED — 40 literal declarations
+   in `webtrust.py:256-302`, of which these are 8. See the re-review section
+   above.
 
 ---
 
@@ -953,6 +1189,11 @@ how much work a row implies, or whether a row should exist.
    (webtrust.py:249-253). This run did **not** score it, and says so in
    OSV1-005's notes. If it should be scored, the census needs a second bucket
    and `np3` grows.
+   **SETTLED 2026-09-04 — YES, it reaches.** Owner-ratified DRAFT true-up #1
+   widened the clause to *"or in a `<style>` block outside the token module
+   (`webtheme.py`'s token block)"*. The census did acquire the second engine,
+   and `np3` did grow: 40 literal declarations in `webtrust.py:256-302` now
+   count. See the re-review section above.
 
 3. **Does a computed *colour* belong on a computed-*geometry* register?**
    (Core 4 / OSV1-006.) Six of the 23 registered sites interpolate a colour, not
@@ -964,6 +1205,11 @@ how much work a row implies, or whether a row should exist.
    survives a refresh) while being, literally, the thing the machine check's
    wording forbids. This run pinned **theme only** — red under both readings —
    precisely so a later density ruling is not pre-empted by an already-red probe.
+   **SETTLED 2026-09-04 — NO, density CONFORMS.** Owner-ratified DRAFT true-up
+   #1 aligned the machine check to its own clause (*"does not survive a
+   refresh"*), so persistence in `localStorage` is conformance. Theme is still a
+   violation and `OSV1-016` still pins it; the probe now also asserts density
+   still persists. See the re-review section above.
 
 5. **Do Freeze 9 and Freeze 10 want ledger rows?** This run rowed Freeze 1–8
    (each has an in-repo byte check) and rowed **no** row for Freeze 9 (external
@@ -1107,6 +1353,28 @@ their substantive half, so the weak one is never the only evidence.
 `src/`. No PR opened, nothing merged, and the live service was never contacted.
 
 ## Changelog
+- **2026-09-04 — operator-surface DRAFT true-up #1, mandatory full re-review.**
+  Owner-ratified (*"yep, do it all."*) three-part amendment: Core 4 widened to
+  reach `<style>` blocks outside the token module (evidence: `webtrust.py`'s
+  hardcoded retired palette, which the seed could only record-not-score), Core
+  10's machine check aligned to its own clause (*"does not survive a refresh"*),
+  and the Changelog's `webapp.py:38-39` quotation made byte-exact — the contract
+  had been failing its own Freeze 7. SYNC (`OSV1-000`) rehashed for the operator
+  contract only (`7566c75c…` -> `f4098752…`); the custody contract's bytes are
+  unchanged and were re-verified, not assumed. Full re-review performed (never a
+  silent bump): 36 rows walked, **2 re-anchored** (`OSV1-005`, `OSV1-016`, both
+  within the same clause), **1 disposition changed** — `OSV1-033` GAP →
+  **CONFORMS** by `VIOLATION-MOVEMENT`, its pin replaced by a real check in the
+  same change. Tally 8/5/20/3 -> **9 CONFORMS / 5 VIOLATION / 19 GAP / 3
+  NOT-ASSERTABLE**; Freeze 5's Core sub-tally unmoved (10 of 19 still red). New
+  `<style>`-block census engine in `_support.py` (one block, 40 literal
+  declarations, `webtrust.py:256-302`), pinned separately from the inline half
+  in `OSV1-005` and `OSV1-032`. Two of §9's five open needs closed (need 2:
+  yes, Core 4 reaches; need 4: no, density conforms). `pytest ledger/checks -q`
+  60 passed; `make ledger-mutate` **53/53** (52 -> 53: one mutation added, one
+  replaced when `OSV1-033` changed groups). Status stays DRAFT; no `src/` byte,
+  no custody-contract byte and no `docs/VISION.md` byte was touched.
+
 - **2026-09-04 — SEED, `contracts/operator-surface.v1.md` (`OSV1-###`).** First
   population of the second row family: 36 rows (8 CONFORMS / 5 VIOLATION / 20
   GAP / 3 NOT-ASSERTABLE) covering Core 1–13, Conformance 1–7, Freeze 1–8 and

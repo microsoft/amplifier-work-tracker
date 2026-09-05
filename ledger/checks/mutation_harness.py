@@ -72,6 +72,7 @@ from ._support import (
     WEBBROWSE,
     WEBPWA,
     WEBTHEME,
+    WEBTRUST,
     WIDGETS,
     collapse,
     expected_flip_direction,
@@ -430,6 +431,24 @@ def _mo005_the_worst_literal_site_is_migrated(w: World) -> None:
     w.replace(WEBPWA, "font:16px -apple-system,sans-serif;padding:32px;", "")
 
 
+def _mo005b_the_page_local_palette_goes(w: World) -> None:
+    """FIXED (the OTHER half): webtrust.py's page-local `<style>` block stops
+    declaring its own retired palette -- the eight literal colour declarations
+    at webtrust.py:258-259 go, as they would if the module imported the token
+    CSS instead of copying it.
+
+    This is the half Core 4's frozen text could not reach until the 2026-09-04
+    DRAFT true-up widened it, so it gets its OWN mutation: `_mo005_...` proves
+    the INLINE bucket discriminates and says nothing about a `<style>` block.
+    """
+    w.replace(
+        WEBTRUST,
+        "  --ground:#0D0D0C; --raise:#151513; --ink:#F2EEE6; --mid:#A6A199;\n"
+        "  --quiet:#9C978F; --amber:#D9A253; --rule:#1F1F1D; --rule-hi:#333330;\n",
+        "",
+    )
+
+
 _UNREGISTERED_SITE = "\n_LEDGER_MUTATION = f'<div style=\"height:{0}px\"></div>'\n"
 
 
@@ -582,9 +601,20 @@ def _mo032_the_register_grows(w: World) -> None:
     w.append(WIDGETS, _UNREGISTERED_SITE)
 
 
-def _mo033_the_contract_quote_is_corrected(w: World) -> None:
-    """FIXED: the amendment strikes the markdown emphasis that broke Freeze 7."""
-    w.replace(OPERATOR_CONTRACT_PATH, "**never a count**", "never a count")
+def _mo033_the_emphasis_comes_back(w: World) -> None:
+    """REGRESSION (2026-09-04 true-up #1 retargeted this row's probe from a pin
+    to a genuine conformance check -- the seed pin `_mo033_the_contract_quote_
+    is_corrected` it replaced asserted the OPPOSITE direction, git-blame).
+
+    The corrected Changelog quotation re-acquires the markdown emphasis that
+    broke Freeze 7 at seed: markup is part of the exact match, so an emphasised
+    quote stops being a substring of the plain source sentence it cites.
+    """
+    w.replace(
+        OPERATOR_CONTRACT_PATH,
+        "unclaimed item, never a count",
+        "unclaimed item, **never a count**",
+    )
 
 
 def _mo034_the_changelog_records_a_look(w: World) -> None:
@@ -697,8 +727,15 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-005",
-        "the worst literal site is migrated (census 66 -> 65)",
+        "the worst literal INLINE site is migrated (census 66 -> 65)",
         _mo005_the_worst_literal_site_is_migrated,
+    ),
+    Mutation(
+        "OSV1-005",
+        "webtrust.py's page-local `<style>` block stops declaring its own retired "
+        "palette (block census 40 -> 32) -- the half Core 4 could not reach before "
+        "the 2026-09-04 true-up",
+        _mo005b_the_page_local_palette_goes,
     ),
     Mutation(
         "OSV1-006",
@@ -796,8 +833,9 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-033",
-        "an amendment strikes the markdown emphasis that broke the quote",
-        _mo033_the_contract_quote_is_corrected,
+        "the corrected Changelog quotation re-acquires the markdown emphasis that "
+        "broke Freeze 7 at seed",
+        _mo033_the_emphasis_comes_back,
     ),
     Mutation(
         "OSV1-034",
