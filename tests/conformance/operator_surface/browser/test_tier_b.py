@@ -96,33 +96,14 @@ def known_violation(row: str, what: str):
     return pytest.mark.xfail(strict=True, reason=f"{row}: {what}")
 
 
-#: Levels whose rendered text contrast is below the floor today (OSV1-010).
-#: L0 passes in both themes and is NOT marked -- a blanket marker would hide
-#: a future L0 regression behind an expected failure.
-_CONTRAST_LEVELS = [
-    pytest.param("L0"),
-    pytest.param(
-        "L1",
-        marks=known_violation(
-            "OSV1-010",
-            "L1's `.status-chip.st-resolved` reads 3.13:1 in dark and 3.92:1 in "
-            "light against its own chip surface (3 occurrences each); light also "
-            "drops `.status-chip.st-held` to 3.99:1. Re-measured 2026-09-05 on the "
-            "merged tree: light was 5 failures at 2.26:1/2.83:1 before the contrast "
-            "lane moved `--ink-quiet` (OSV1-009), and is 4 now",
-        ),
-    ),
-    pytest.param(
-        "L2",
-        marks=known_violation(
-            "OSV1-010",
-            "L2's `.actions-drawer summary .count` reads 3.77:1 in dark and 4.26:1 "
-            "in light, and light also drops `.drawer-section label.eyebrow` to "
-            "4.35:1 -- the `--ink-quiet` reading-copy pair OSV1-009 recorded, "
-            "measured here in the render (re-measured 2026-09-05)",
-        ),
-    ),
-]
+#: Every level, unmarked. WAS the kit's one per-level xfail list: L1 and L2
+#: carried `known_violation("OSV1-010", ...)` for text pairs that measured
+#: 3.13-4.35:1 against their own composited chip/drawer surfaces. Both markers
+#: went with the fix (`--ink-quiet` #7c8798 -> #a1a8b5 dark / #596473 ->
+#: #4e5764 light, `--brand-cyan-ink` #0b6b80 -> #0a5e71 light), and the list is
+#: kept as a list rather than folded back into `LEVELS` so the next level that
+#: needs a marker has an obvious place to put one.
+_CONTRAST_LEVELS = [pytest.param(level) for level in LEVELS]
 
 #: The calm pixel sweep: L0 and L1 are both clean in both themes.
 #: L1 CARRIED A MARKER UNTIL 2026-09-05 (OSV1-003): it painted 97 `--blocked`
@@ -970,6 +951,11 @@ def perception(calm_app, context_factory, artifacts, browser_info):
                 "controls_below_44px": len(_probe.undersized_controls({"targets": targets})),
                 "non_text_measured": len(non_text["measured"]),
                 "non_text_below_floor": len(_probe.below_non_text_floor(non_text)),
+                # The size of the ONE enumerated exemption, per render. Recorded
+                # beside the number it is subtracted from so the allowance can
+                # never grow unseen -- see `_probe.NON_TEXT_EXEMPT_CLASSES` and
+                # `test_the_non_text_exemption_stays_narrow`.
+                "non_text_exempt_below_floor": len(_probe.exempt_below_non_text_floor(non_text)),
                 "running_animations_under_reduced_motion": len(_probe.running_animations(motion)),
             },
         )
@@ -1046,13 +1032,6 @@ def test_text_contrast_floor(perception, level, width, theme):
     )
 
 
-@known_violation(
-    "OSV1-010",
-    "26 of 34 interactive controls on L0 (22 of 41 on L1, 11 of 20 on L2) measure "
-    "under 44px on their smaller side -- among them the pause control itself at "
-    "26x26, every window-selector link at 28px tall, and the footer links at 11.5px "
-    "(L0 was 35 controls before the hero rebuild; re-measured 2026-09-05)",
-)
 @pytest.mark.parametrize("level", LEVELS)
 @pytest.mark.parametrize("width", VIEWPORTS)
 def test_interactive_targets_meet_the_floor(perception, level, width):
@@ -1102,14 +1081,6 @@ def test_reduced_motion_stops_every_animation(perception, level, width):
     )
 
 
-@known_violation(
-    "OSV1-010",
-    "16 of 79 interactive-control borders and icon strokes on L0 are below 3:1 in "
-    "dark (16 of 79 in light); L1 23/73 in both themes; L2 11/33 in both. The "
-    "icon-button border is #303238 on #1e2027 -- 1.27:1. Re-measured 2026-09-05 on "
-    "the merged tree: the light-mode counts fell (was 29/82 on L0, 44/73 on L1, "
-    "13/33 on L2) where the contrast lane moved `--ink-quiet`",
-)
 @pytest.mark.parametrize("level", LEVELS)
 @pytest.mark.parametrize("theme", THEMES)
 def test_non_text_contrast_floor(perception, level, theme):
@@ -1119,6 +1090,13 @@ def test_non_text_contrast_floor(perception, level, theme):
     background. A decorative gradient edge or an icon painted as a background
     image is not reachable this way, and the artifact records how many
     elements had to be skipped for exactly that reason.
+
+    ONE enumerated exemption is subtracted here -- the status-mix donut's
+    backing ring, `_probe.NON_TEXT_EXEMPT_CLASSES`, with the measurement that
+    justifies it. It is not softening the floor and it is not invisible: the
+    exempted entries stay in the artifact, their count is recorded beside the
+    failure count in every render's headline, and their shape is pinned by
+    `test_the_non_text_exemption_stays_narrow` below.
     """
     m = perception(level, 1280, theme)["measurement"]["non_text_contrast"]
     assert m["measured"], f"no non-text surface was scored on {level}/{theme} -- vacuous pass"
@@ -1130,6 +1108,48 @@ def test_non_text_contrast_floor(perception, level, theme):
         f"({m['unresolved_backgrounds']} elements skipped -- background not a "
         f"single colour). Worst:\n"
         + _probe.summarise(bad, ("ratio", "kind", "colour", "background_hex", "path"))
+    )
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_the_non_text_exemption_stays_narrow(perception, theme):
+    """The exemption above is pinned, not merely declared.
+
+    `below_non_text_floor` excuses exactly the classes in
+    `_probe.NON_TEXT_EXEMPT_CLASSES`. An allowance nobody counts is how a
+    floor quietly stops being a floor, so this asserts the shape of what it
+    actually excused on the one level that has a donut at all: ONE element,
+    the status-mix track, at the ratio recorded in the probe's own note. A
+    second exempted element -- or a first one on L0/L2, which draw no donut --
+    fails here rather than disappearing into a green non-text arm.
+    """
+    exempt = {
+        level: _probe.exempt_below_non_text_floor(
+            perception(level, 1280, theme)["measurement"]["non_text_contrast"]
+        )
+        for level in LEVELS
+    }
+    assert not exempt["L0"] and not exempt["L2"], (
+        f"perception.floors: the non-text exemption fired on a level that draws no "
+        f"donut -- L0 {len(exempt['L0'])}, L2 {len(exempt['L2'])} entries. The "
+        f"allowance is for the status-mix chart's backing ring and nothing else:\n"
+        + _probe.summarise(exempt["L0"] + exempt["L2"], ("class_name", "ratio", "colour", "path"))
+    )
+    assert len(exempt["L1"]) == 1, (
+        f"perception.floors: the non-text exemption excused {len(exempt['L1'])} "
+        f"elements on L1 in {theme}, pinned at 1 (the donut track). Growth here is "
+        f"the floor being widened by the allowance rather than met:\n"
+        + _probe.summarise(exempt["L1"], ("class_name", "ratio", "colour", "path"))
+    )
+    only = exempt["L1"][0]
+    assert only["class_name"].split()[0] in _probe.NON_TEXT_EXEMPT_CLASSES, (
+        f"perception.floors: the exempted element is {only['class_name']!r}, not one "
+        f"of {sorted(_probe.NON_TEXT_EXEMPT_CLASSES)}."
+    )
+    assert float(only["ratio"]) < _probe.NON_TEXT_CONTRAST_FLOOR, (
+        f"perception.floors: the donut track now measures {only['ratio']}:1, at or "
+        f"above the {_probe.NON_TEXT_CONTRAST_FLOOR}:1 floor -- it no longer needs "
+        f"exempting. Delete the exemption and re-derive OSV1-010."
     )
 
 

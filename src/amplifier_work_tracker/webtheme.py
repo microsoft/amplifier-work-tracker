@@ -130,6 +130,26 @@ TOKENS_CSS = r"""
   --glass-blur-strong:40px;
   --glass-hairline:rgba(255,255,255,.14);
   --glass-hairline-soft:rgba(255,255,255,.08);
+  /* --control-edge (OSV1-010, Core 7 non-text floor): the visual BOUNDARY of
+     an INTERACTIVE control -- WCAG 1.4.11's own scope -- as distinct from a
+     decorative panel hairline, which the guideline exempts and which
+     --glass-hairline/-soft keep painting unchanged.
+
+     MEASURED, and the reason a second token exists rather than a bumped
+     hairline: at .08-.14 alpha every control border on this surface computed
+     1.24-1.60:1 against its own resolved background (icon-btn #303238 on
+     #1e2027 = 1.27:1; item/fleet/agent rows #27292f on #14161d = 1.24:1),
+     i.e. under half the 3:1 floor. Raising --glass-hairline itself to clear
+     that floor would drag every non-interactive panel edge along with it and
+     turn a glass rim into a hard stroke.
+
+     .40 white is the lowest step that clears 3:1 on EVERY dark ground this
+     surface composites a control onto -- #05070f 3.46:1, #14161d 3.59:1,
+     #1e2027 3.53:1, #22242b 3.47:1, #2c2d34 3.35:1 -- margin for chromium's
+     own rounding, no more weight than the floor requires. Neutral by
+     construction (a white/ink alpha, no hue), so Core 2's status-hue
+     firewall is untouched. Keep in sync with the two light blocks below. */
+  --control-edge:rgba(255,255,255,.40);
   --glass-shadow:0 8px 32px rgba(2,6,15,.45),inset 0 1px 0 rgba(255,255,255,.06);
   --glass-shadow-float:0 24px 64px rgba(2,6,15,.55),inset 0 1px 0 rgba(255,255,255,.08);
 
@@ -157,7 +177,22 @@ TOKENS_CSS = r"""
      symmetric darker bump). Keep this value in sync with the two other
      dark-mode blocks below (base :root here and :root[data-theme="dark"]). */
   --ink-tertiary:#c8d0de;
-  --ink-quiet:#7c8798;
+  /* --ink-quiet brightened from #7c8798 (OSV1-010, Core 7's RENDERED half --
+     the honest limit OSV1-009 recorded and could not close by flat token
+     math). Measured in chromium against the real composited surfaces this
+     ink actually paints on, not against a bare ground: 3.13:1 on L1's
+     `.status-chip.st-resolved` (chip glass over row glass over panel glass
+     = #383a40) and 3.77:1 on L2's `.actions-drawer summary .count`
+     (#2c2d34). Both cleared 4.5:1 as a flat swatch pair; neither did in the
+     render, which is exactly the glass-over-gradient lift the token block's
+     --ink-tertiary comment above already documents.
+
+     #a1a8b5 takes the worst rendered pair to 4.75:1 along the same slate
+     hue. NOT taken further: --ink-tertiary reads 7.33:1 on that same chip
+     surface, so quiet stays visibly the quieter of the two -- the ink ramp
+     is not bought flat, which OSV1-009's own distinctness assert forbids.
+     Keep in sync with `:root[data-theme="dark"]` below. */
+  --ink-quiet:#a1a8b5;
   --ink-on-solid:#f8fafc;
   --ink-on-ground-inverse:#05070f;
 
@@ -314,6 +349,16 @@ TOKENS_CSS = r"""
        hairline-bordered surface in one place rather than per-component. */
     --glass-hairline:rgba(11,18,32,.22);
     --glass-hairline-soft:rgba(11,18,32,.16);
+    /* --control-edge, light half (OSV1-010). Same job as the dark block's:
+       an INTERACTIVE control's boundary, never a decorative panel hairline.
+       .52 ink is the lowest step clearing 3:1 on every light ground a
+       control composites onto -- #eef2fb 3.55:1, #e4e8f2 3.47:1, #dee2ec
+       3.43:1, #dbdfe9 3.42:1, #d5d9e3 3.32:1. Higher than the dark block's
+       .40 because an ink alpha over a light ground washes out faster than a
+       white alpha over near-black -- the same asymmetry --glass-hairline
+       already records above. Keep in sync with `:root[data-theme="light"]`
+       below; they are held together only by comment. */
+    --control-edge:rgba(11,18,32,.52);
     --glass-shadow:0 8px 32px rgba(15,23,42,.10),inset 0 1px 0 rgba(255,255,255,.6);
     --glass-shadow-float:0 24px 64px rgba(15,23,42,.16),inset 0 1px 0 rgba(255,255,255,.7);
     --ink-primary:#0b1220;
@@ -333,8 +378,17 @@ TOKENS_CSS = r"""
        not. Darkened along the SAME hue to 5.36/5.08/4.71:1. NOT taken to 7:1:
        quiet must stay visibly quieter than --ink-tertiary (7.85:1). Dark mode
        already cleared (5.53/5.26/5.67:1), unchanged. Keep in sync with
-       `:root[data-theme="light"]` below. */
-    --ink-quiet:#596473;
+       `:root[data-theme="light"]` below.
+
+       DARKENED AGAIN to #4e5764 (OSV1-010, Core 7's RENDERED half). #596473
+       cleared 4.71:1 as a flat swatch on the darkest declared ground, and
+       still measured 3.92:1 in chromium on L1's `.status-chip.st-resolved`
+       (#ccd1db, chip glass over row glass over panel glass) and 4.26:1 on
+       L2's drawer count (#d5d9e3) -- the glass-over-gradient lift this file
+       documents at --ink-tertiary, now measured in the render rather than
+       modelled. #4e5764 takes the worst rendered pair to 4.78:1 on the same
+       hue. Still NOT taken to --ink-tertiary, which reads 5.75:1 there. */
+    --ink-quiet:#4e5764;
     --ink-on-ground-inverse:#f8fafc;
     /* reserved status hues re-tuned darker so text/icons still clear 4.5:1 on a light ground */
     --alarm:#92400e;
@@ -361,7 +415,15 @@ TOKENS_CSS = r"""
     --watch:#3a4468;
     --watch-surface:rgba(154,168,204,.16);
     --watch-ink-on-surface:#232c4a;
-    --brand-cyan-ink:#0b6b80;
+    /* --brand-cyan-ink darkened from #0b6b80 (OSV1-010, Core 7's rendered
+       half). It clears 4.80:1 as a flat pair on the base light ground, and
+       measured 3.99:1 in chromium on L1's `.status-chip.st-held` (#ccd1db)
+       and 4.35:1 on L2's `.drawer-section label.eyebrow` (#d5d9e3) -- both
+       real reading copy, not chrome. #0a5e71 is the same hue one step
+       darker: 4.81:1 on the worst of those. Dark mode's #22d3ee already
+       reads 6.29:1 on the same chip surface and is unchanged. Keep in sync
+       with `:root[data-theme="light"]` below. */
+    --brand-cyan-ink:#0a5e71;
     --brand-purple-ink:#7e22ce;
   }
   /* -- light-mode COMPONENT overrides (not pure token re-tuning) ---------
@@ -399,12 +461,13 @@ TOKENS_CSS = r"""
   --glass-fill-row-selected:rgba(8,145,178,.10);
   --glass-hairline:rgba(11,18,32,.22);
   --glass-hairline-soft:rgba(11,18,32,.16);
+  --control-edge:rgba(11,18,32,.52);  /* keep in sync with the light media block above */
   --glass-shadow:0 8px 32px rgba(15,23,42,.10),inset 0 1px 0 rgba(255,255,255,.6);
   --glass-shadow-float:0 24px 64px rgba(15,23,42,.16),inset 0 1px 0 rgba(255,255,255,.7);
   --ink-primary:#0b1220;
   --ink-secondary:#33415a;
   --ink-tertiary:#3d4b63;  /* keep in sync with the light-mode media block above */
-  --ink-quiet:#596473;     /* likewise -- OSV1-009: 2.72:1 -> 4.71:1 worst case */
+  --ink-quiet:#4e5764;     /* likewise -- OSV1-010: 3.92:1 -> 4.78:1 rendered worst case */
   --ink-on-ground-inverse:#f8fafc;
   --alarm:#92400e;
   --alarm-surface:rgba(245,158,11,.08);
@@ -415,7 +478,7 @@ TOKENS_CSS = r"""
   --watch:#3a4468;
   --watch-surface:rgba(154,168,204,.16);
   --watch-ink-on-surface:#232c4a;
-  --brand-cyan-ink:#0b6b80;
+  --brand-cyan-ink:#0a5e71;  /* likewise -- OSV1-010: 3.99:1 -> 4.81:1 rendered worst case */
   --brand-purple-ink:#7e22ce;
 }
 
@@ -455,12 +518,13 @@ TOKENS_CSS = r"""
   --glass-fill-row-selected:rgba(34,211,238,.10);
   --glass-hairline:rgba(255,255,255,.14);
   --glass-hairline-soft:rgba(255,255,255,.08);
+  --control-edge:rgba(255,255,255,.40);  /* keep in sync with the base :root above */
   --glass-shadow:0 8px 32px rgba(2,6,15,.45),inset 0 1px 0 rgba(255,255,255,.06);
   --glass-shadow-float:0 24px 64px rgba(2,6,15,.55),inset 0 1px 0 rgba(255,255,255,.08);
   --ink-primary:#f8fafc;
   --ink-secondary:#d6dee8;
   --ink-tertiary:#c8d0de;  /* keep in sync with the base :root block above */
-  --ink-quiet:#7c8798;
+  --ink-quiet:#a1a8b5;     /* likewise -- OSV1-010: 3.13:1 -> 4.75:1 rendered worst case */
   --ink-on-ground-inverse:#05070f;
   --alarm:#f59e0b;
   --alarm-surface:rgba(245,158,11,.14);
@@ -572,7 +636,7 @@ a{color:inherit}
    independently-rounded ones. */
 .top .brand{font-family:var(--sans);font-size:19px;font-weight:700;
   letter-spacing:-.01em;color:var(--ink);text-decoration:none;line-height:1;
-  display:flex;align-items:center;gap:9px}
+  display:flex;align-items:center;gap:9px;min-height:var(--u)}
 /* the brand mark -- a small squircle carrying the rim gradient, the ONE
    place besides the wordmark this gradient is allowed near identity chrome. */
 .top .brand .bm{width:9px;height:9px;border-radius:3px;
@@ -602,7 +666,13 @@ a{color:inherit}
 .top .identity{font-family:var(--sans);font-size:11.5px;color:var(--dim);
   letter-spacing:.02em;display:flex;align-items:center;gap:9px;white-space:nowrap;
   line-height:1}
-.top .identity a{color:var(--mid);text-decoration:none}
+/* Core 7 target floor (OSV1-010): these read 31.2x11.5 and 36.56x11.5 --
+   an 11px glyph box with no padding at all. The HIT AREA grows to --u in
+   both axes; the type keeps its size and the header keeps its 62px height,
+   so this is padding, not a bigger-looking control. */
+.top .identity a{color:var(--mid);text-decoration:none;
+  display:inline-flex;align-items:center;justify-content:center;
+  min-height:var(--u);min-width:var(--u)}
 .top .identity a:hover{color:var(--brand-cyan-ink)}
 .dot{width:6px;height:6px;border-radius:50%;flex:0 0 6px;display:inline-block}
 /* the live/"healthy" pulse is GOOD NEWS -> neutral (--live), never the accent.
@@ -1634,7 +1704,7 @@ label{display:block;margin:0.7rem 0 0.3rem;font-size:11px;font-weight:600;
 input[type=text],input[type=password],textarea,select{
   display:block;width:100%;max-width:480px;padding:0.55rem 0.7rem;box-sizing:border-box;
   font-family:var(--sans);font-size:13.5px;min-height:var(--u);
-  border:1px solid var(--rule);border-radius:var(--radius-sm);background:var(--raise);
+  border:1px solid var(--control-edge);border-radius:var(--radius-sm);background:var(--raise);
   color:var(--ink);
 }
 input[type=text]:focus,input[type=password]:focus,textarea:focus,select:focus{
@@ -2360,8 +2430,9 @@ border:1px solid var(--glass-hairline);
 color:var(--ink-tertiary);
 }
 .wt-observatory .icon-btn{
-  width:34px;height:34px;border-radius:var(--radius-sm);display:inline-flex;align-items:center;
-  justify-content:center;background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  width:var(--u);height:var(--u);border-radius:var(--radius-sm);display:inline-flex;
+  align-items:center;
+  justify-content:center;background:var(--glass-fill);border:1px solid var(--control-edge);
   color:var(--ink-tertiary);cursor:pointer;flex-shrink:0;text-decoration:none;
   /* `padding:0` + `font:inherit` (visual-polish punchlist item 5): the nav's
      search action is a real `<button>` (bell/+new are `<a>`) -- a bare
@@ -2399,9 +2470,9 @@ color:var(--ink-tertiary);
    margin-top:.7rem}` leak `.refresh-toggle` documents above; these two
    buttons are real `<button>` elements too and need the identical reset. */
 .wt-observatory .theme-toggle button{
-  width:34px;height:34px;min-height:0;margin-top:0;border-radius:var(--radius-sm);
+  width:var(--u);height:var(--u);min-height:0;margin-top:0;border-radius:var(--radius-sm);
   display:inline-flex;align-items:center;
-  justify-content:center;background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  justify-content:center;background:var(--glass-fill);border:1px solid var(--control-edge);
   color:var(--ink-tertiary);cursor:pointer;flex-shrink:0;padding:0;font:inherit;line-height:1;
 }
 .wt-observatory .theme-toggle button svg{width:16px;height:16px;flex-shrink:0}
@@ -2409,7 +2480,7 @@ color:var(--ink-tertiary);
   color:var(--ink-primary);background:var(--glass-fill-row-hover);
 }
 .wt-observatory .theme-toggle button[aria-pressed="true"]{
-  background:var(--glass-fill-strong);color:var(--ink-primary);border-color:var(--glass-hairline);
+  background:var(--glass-fill-strong);color:var(--ink-primary);border-color:var(--control-edge);
 }
 
 /* Header polish item 4 (right-cluster grouping): a quiet 1px divider
@@ -2469,9 +2540,9 @@ white-space:nowrap;line-height:1;
    zeroes here are the same reset `.nav-actions .icon-btn` already
    applies for the identical reason. */
 .wt-observatory .refresh-toggle{
-  width:26px;height:26px;min-height:0;margin-top:0;border-radius:var(--radius-pill);
+  width:var(--u);height:var(--u);min-height:0;margin-top:0;border-radius:var(--radius-pill);
   display:inline-flex;align-items:center;
-  justify-content:center;background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);
+  justify-content:center;background:var(--glass-fill);border:1px solid var(--control-edge);
   color:var(--ink-tertiary);cursor:pointer;flex-shrink:0;padding:0;font:inherit;line-height:1;
 }
 .wt-observatory .refresh-toggle:hover{color:var(--ink-primary);
@@ -2549,7 +2620,12 @@ flex-shrink:0;
   display:flex;align-items:center;gap:6px;font-size:.8125rem;color:var(--ink-tertiary);
   margin-bottom:var(--space-3);flex-wrap:wrap;
 }
-.wt-observatory .breadcrumb a{color:var(--ink-tertiary);text-decoration:none}
+/* Core 7 target floor (OSV1-010): 19.5px-tall crumb links. Same padding-
+   not-size treatment as `.top .identity a`; `.breadcrumb` is already a
+   centred flex row, so the taller boxes do not move the text. */
+.wt-observatory .breadcrumb a{color:var(--ink-tertiary);text-decoration:none;
+  display:inline-flex;align-items:center;justify-content:center;
+  min-height:var(--u);min-width:var(--u)}
 .wt-observatory .breadcrumb a:hover{color:var(--ink-primary)}
 .wt-observatory .breadcrumb .sep{opacity:.5;width:.75em;height:.75em}
 .wt-observatory .breadcrumb .current{color:var(--ink-primary);font-weight:600}
@@ -2621,6 +2697,7 @@ margin-bottom:var(--space-5);
 }
 .wt-observatory .kpi-card{
   display:flex;flex-direction:column;gap:4px;padding:var(--space-5);text-decoration:none;
+  border-color:var(--control-edge);
   transition:background var(--duration-fast) var(--ease-standard);
 }
 .wt-observatory .kpi-card:hover{background:var(--glass-fill-row-hover)}
@@ -2702,10 +2779,12 @@ margin:0}
   padding:var(--space-1) var(--space-3);border-radius:var(--radius-pill);font-size:.75rem;
 font-weight:600;
   color:var(--ink-tertiary);text-decoration:none;border:1px solid transparent;
+  display:inline-flex;align-items:center;justify-content:center;
+  min-height:var(--u);min-width:var(--u);
 }
 .wt-observatory .window-tab.is-active{
   background:var(--glass-fill-strong);color:var(--ink-primary);
-border-color:var(--glass-hairline);
+border-color:var(--control-edge);
 }
 .wt-observatory .svg-chart{width:100%;height:auto;display:block}
 .wt-observatory .svg-chart .bar{fill:var(--ink-secondary)}
@@ -2797,7 +2876,8 @@ text-transform:uppercase;
 .wt-observatory .fleet-row{
   display:grid;grid-template-columns:1.5fr 1.5fr 110px 74px 96px 16px;align-items:center;
   gap:var(--space-3);padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
-  background:var(--glass-fill);border:1px solid var(--glass-hairline-soft);text-decoration:none;
+  min-height:var(--u);
+  background:var(--glass-fill);border:1px solid var(--control-edge);text-decoration:none;
   transition:background var(--duration-fast) var(--ease-standard);
 }
 .wt-observatory .fleet-row:hover{background:var(--glass-fill-row-hover)}
@@ -2838,9 +2918,9 @@ text-transform:uppercase;
 .wt-observatory .agents-now-row{
   display:grid;grid-template-columns:24px 1fr 110px 1.6fr 130px;align-items:center;
 gap:var(--space-3);
-  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
+  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);min-height:var(--u);
 background:var(--glass-fill);
-  border:1px solid var(--glass-hairline-soft);text-decoration:none;
+  border:1px solid var(--control-edge);text-decoration:none;
   transition:background var(--duration-fast) var(--ease-standard);
 }
 .wt-observatory .agents-now-row:hover{background:var(--glass-fill-row-hover)}
@@ -2872,9 +2952,9 @@ padding:3px 8px;
 .wt-observatory .dormant-details{margin-top:var(--space-4)}
 .wt-observatory .dormant-details summary{
   cursor:pointer;list-style:none;display:flex;align-items:center;gap:var(--space-2);
-  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
+  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);min-height:var(--u);
 background:var(--glass-fill);
-  border:1px dashed var(--glass-hairline);color:var(--ink-tertiary);font-size:.8125rem;
+  border:1px dashed var(--control-edge);color:var(--ink-tertiary);font-size:.8125rem;
 font-weight:600;
 }
 .wt-observatory .dormant-details summary::-webkit-details-marker{display:none}
@@ -2901,6 +2981,7 @@ letter-spacing:.06em;
 .wt-observatory .feed-item{
   display:grid;grid-template-columns:18px 1fr auto;gap:var(--space-3);padding:var(--space-2) 0;
   border-bottom:1px solid var(--glass-hairline-soft);align-items:baseline;text-decoration:none;
+  min-height:var(--u);align-content:center;
 }
 .wt-observatory .feed-item:last-child{border-bottom:none}
 .wt-observatory .feed-item .dot{
@@ -2968,9 +3049,9 @@ text-align:right;
 .wt-observatory .agents-list{display:flex;flex-direction:column;gap:var(--space-2)}
 .wt-observatory .agent-row{
   display:grid;grid-template-columns:24px 1fr auto auto;align-items:center;gap:var(--space-3);
-  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
+  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);min-height:var(--u);
 background:var(--glass-fill);
-  border:1px solid var(--glass-hairline-soft);text-decoration:none;
+  border:1px solid var(--control-edge);text-decoration:none;
   transition:background var(--duration-fast) var(--ease-standard);
 }
 .wt-observatory .agent-row:hover{background:var(--glass-fill-row-hover)}
@@ -3010,10 +3091,11 @@ padding:3px 8px;
   display:flex;align-items:center;gap:6px;padding:var(--space-1) var(--space-3);
   border-radius:var(--radius-pill);font-size:.75rem;font-weight:600;color:var(--ink-tertiary);
   cursor:pointer;white-space:nowrap;text-decoration:none;border:1px solid transparent;
+  justify-content:center;min-height:var(--u);min-width:var(--u);
 }
 .wt-observatory .status-tab.is-active{
   background:var(--glass-fill-strong);color:var(--ink-primary);
-border-color:var(--glass-hairline);
+border-color:var(--control-edge);
 }
 .wt-observatory .status-tab .dot{width:6px;height:6px;border-radius:999px;background:currentColor}
 .wt-observatory .status-tab.tab-blocked .dot{background:var(--blocked)}
@@ -3033,9 +3115,9 @@ text-transform:uppercase;
 .wt-observatory .item-row{
   display:grid;grid-template-columns:96px 32px 1fr 150px 90px 16px;align-items:center;
 gap:var(--space-3);
-  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
+  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);min-height:var(--u);
 background:var(--glass-fill);
-  border:1px solid var(--glass-hairline-soft);text-decoration:none;margin-bottom:var(--space-2);
+  border:1px solid var(--control-edge);text-decoration:none;margin-bottom:var(--space-2);
 }
 .wt-observatory .item-row:hover{background:var(--glass-fill-row-hover)}
 .wt-observatory .status-chip{
@@ -3230,8 +3312,8 @@ margin:0 0 var(--space-2);
 }
 .wt-observatory .action-btn{
   display:flex;align-items:center;gap:8px;padding:var(--space-3) var(--space-4);
-border-radius:var(--radius-md);
-  background:var(--glass-fill-strong);border:1px solid var(--glass-hairline);
+border-radius:var(--radius-md);min-height:var(--u);
+  background:var(--glass-fill-strong);border:1px solid var(--control-edge);
 color:var(--ink-primary);
   font-size:.8125rem;font-weight:600;cursor:pointer;text-decoration:none;
 }
@@ -4547,9 +4629,19 @@ tr.attn-row.is-blocked{background:var(--blocked-surface);
 /* ---------- browse app (webbrowse) ---------- */
 .empty-state.centered{padding:2rem 0;text-align:center;color:var(--ink-tertiary)}
 .search-input.compact{min-width:180px;max-width:220px}
+/* Core 7 target floor (OSV1-010): this form's own `<input type=search>` is
+   the only field on the surface the base `input[type=text]` rule never
+   reached, and it measured 181x19. `--u` here, not on `.search-input`, so
+   the decorative nav variant of the same class is untouched.
+
+   Only `min-height` moves: touching this input's BORDER would drop it out of
+   the non-text population the same check measures (it is an interactive
+   control with a border today), and buying a target-size pass by shrinking
+   the neighbouring measurement is not a fix. */
+.search-input input[type=search]{min-height:var(--u)}
 .field-textarea{width:100%;max-width:900px;font-family:var(--font-sans);
   font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
-  border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
+  border:1px solid var(--control-edge);border-radius:var(--radius-sm);
   padding:.75rem 1rem}
 .field-textarea.title{font-size:1rem;padding:.5rem .75rem}
 .prose .field-hint{color:var(--ink-tertiary);font-size:.8125rem}

@@ -506,14 +506,14 @@ def _mo009a_the_media_light_block_regresses(w: World) -> None:
     first would credit a half-reverted colour as conformance -- which is exactly
     the shape the seed pin recorded (three grounds x TWO blocks = six pairs).
     """
-    w.replace(WEBTHEME, "    --ink-quiet:#596473;", "    --ink-quiet:#7c8ba0;")
+    w.replace(WEBTHEME, "    --ink-quiet:#4e5764;", "    --ink-quiet:#7c8ba0;")
 
 
 def _mo009b_the_attr_light_block_regresses(w: World) -> None:
     """REGRESSION: the same fallback in the manual-toggle light block."""
     w.replace(
         WEBTHEME,
-        "  --ink-quiet:#596473;     /* likewise",
+        "  --ink-quiet:#4e5764;     /* likewise",
         "  --ink-quiet:#7c8ba0;     /* likewise",
     )
 
@@ -758,14 +758,40 @@ def _mo008_l1_loses_its_live_region(w: World) -> None:
     )
 
 
-def _mo010_the_target_floor_is_met(w: World) -> None:
-    """FIXED: every interactive control on L0 reaches 44px."""
+def _mo010_a_control_falls_back_under_the_target_floor(w: World) -> None:
+    """REGRESSION: the browser measures a control back under 44px on L0.
+
+    RETARGETED 2026-09-05 with the row (work_item_pipeline-96f). This used to
+    inject the FIX -- `controls_below_44px` 26 -> 0 -- because OSV1-010 was a
+    pin. The row now reads CONFORMS and asserts the floors are MET, so the
+    counterfactual that has to go red is the shape it forbids: one control
+    slipping back under the floor on ONE render of eighteen. The probe sweeps
+    every render for exactly this reason.
+    """
     w.replace(
         TIER_B_SUMMARY,
         '"calm/L0/1280/dark": {\n        "client_width": 1280,\n        "controls": 34,\n'
-        '        "controls_below_44px": 26,',
-        '"calm/L0/1280/dark": {\n        "client_width": 1280,\n        "controls": 34,\n'
         '        "controls_below_44px": 0,',
+        '"calm/L0/1280/dark": {\n        "client_width": 1280,\n        "controls": 34,\n'
+        '        "controls_below_44px": 1,',
+    )
+
+
+def _mo010_the_donut_exemption_grows(w: World) -> None:
+    """REGRESSION: the ONE enumerated non-text exemption widens.
+
+    The failure mode an exemption invites: the non-text arm stays green not
+    because the borders were fixed but because the allowance grew to cover
+    them. A second exempted element on L1 must go red here, and does.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L1/1280/dark": {\n        "client_width": 1280,\n        "controls": 41,\n'
+        '        "controls_below_44px": 0,\n        "elements_beyond_viewport": 0,\n'
+        '        "non_text_below_floor": 0,\n        "non_text_exempt_below_floor": 1,',
+        '"calm/L1/1280/dark": {\n        "client_width": 1280,\n        "controls": 41,\n'
+        '        "controls_below_44px": 0,\n        "elements_beyond_viewport": 0,\n'
+        '        "non_text_below_floor": 0,\n        "non_text_exempt_below_floor": 4,',
     )
 
 
@@ -781,13 +807,15 @@ def _mo011_an_animation_runs_under_the_preference(w: World) -> None:
     w.replace(
         TIER_B_SUMMARY,
         '"calm/L0/430/dark": {\n        "client_width": 430,\n        "controls": 34,\n'
-        '        "controls_below_44px": 16,\n        "elements_beyond_viewport": 0,\n'
-        '        "non_text_below_floor": 16,\n        "non_text_measured": 77,\n'
+        '        "controls_below_44px": 0,\n        "elements_beyond_viewport": 0,\n'
+        '        "non_text_below_floor": 0,\n        "non_text_exempt_below_floor": 0,\n'
+        '        "non_text_measured": 77,\n'
         '        "overflow_x_style": "clip",\n'
         '        "running_animations_under_reduced_motion": 0,',
         '"calm/L0/430/dark": {\n        "client_width": 430,\n        "controls": 34,\n'
-        '        "controls_below_44px": 16,\n        "elements_beyond_viewport": 0,\n'
-        '        "non_text_below_floor": 16,\n        "non_text_measured": 77,\n'
+        '        "controls_below_44px": 0,\n        "elements_beyond_viewport": 0,\n'
+        '        "non_text_below_floor": 0,\n        "non_text_exempt_below_floor": 0,\n'
+        '        "non_text_measured": 77,\n'
         '        "overflow_x_style": "clip",\n'
         '        "running_animations_under_reduced_motion": 6,',
     )
@@ -1238,8 +1266,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-010",
-        "the browser measures every interactive control on L0 reaching 44px (the fix)",
-        _mo010_the_target_floor_is_met,
+        "the browser measures one interactive control back under 44px on a swept render",
+        _mo010_a_control_falls_back_under_the_target_floor,
+    ),
+    Mutation(
+        "OSV1-010",
+        "the one enumerated non-text exemption grows to cover more than the donut track",
+        _mo010_the_donut_exemption_grows,
     ),
     Mutation(
         "OSV1-011",

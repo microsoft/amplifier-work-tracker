@@ -51,7 +51,10 @@ What each probe measures, and the honest limits of each
     contrast", not all of it: a decorative gradient edge or an icon drawn as
     a background image is not reachable this way. The subset measured is
     recorded in the artifact so nobody reads the number as a stronger claim
-    than it is.
+    than it is. Each record also carries `class_name`, read with
+    `getAttribute` because an SVG element's `className` is not a string --
+    which is what makes the one enumerated exemption below expressible as a
+    class rather than a guessed path.
 
 `SWAP_*`
     The Core 6 body-swap instrumentation. See `test_tier_b.py`'s
@@ -383,12 +386,19 @@ NON_TEXT_JS = _with_helpers(
     var cs = getComputedStyle(el);
     var bg = effectiveBackground(el.parentElement || el);
     if(!bg.resolved){ unresolved++; continue; }
+    /* `class_name` read with getAttribute, NOT `el.className`: on an SVG
+       element `className` is an SVGAnimatedString, not a string, so
+       `pathOf` (which type-checks for a string) silently drops the class of
+       every chart node. Without this field a chart element arrives as a bare
+       `circle` and the enumerated exemption below could only be expressed as
+       a path guess. */
     var record = function(kind, value, widthPx){
       var c = parseColour(value);
       if(!c || c.a === 0) return;
       var solid = composite(c, bg.colour);
       out.push({
         path: pathOf(el), kind: kind,
+        class_name: el.getAttribute('class') || '',
         colour: hex(solid), background_hex: hex(bg.colour),
         thickness_px: widthPx,
         ratio: Math.round(ratio(solid, bg.colour) * 100) / 100
@@ -714,11 +724,59 @@ def running_animations(measurement: dict[str, Any], *, epsilon: float = MOTION_E
     ]
 
 
+#: The ONE enumerated exemption from the non-text floor, by class name, and
+#: the whole of it. Machine-checked rather than argued in prose: an entry here
+#: is skipped by `below_non_text_floor` and returned by
+#: `exempt_below_non_text_floor` instead, so an exempted surface stays
+#: MEASURED, stays in the artifact, and is pinned by its own test
+#: (`test_the_non_text_exemption_stays_narrow`) -- it is never dropped.
+#:
+#: WHY THESE TWO, MEASURED (chromium 148, L1, 2026-09-05). `.donut-track` is
+#: the status-mix donut's background ring and `.donut-hatch-gap` the hatch line
+#: that closes it: the part of the figure that must read as NOT a status. They
+#: paint `--glass-fill-strong`, computing #2c2d34 on #14161d (1.32:1) in dark
+#: and #d5d9e3 on #e4e8f2 (1.15:1) in light.
+#:
+#: Taking the track to the NEAREST colour that clears 3:1 against its own card
+#: -- #616367 dark, #808591 light -- collapses the figure it exists to carry:
+#:
+#:     track vs. --blocked segment    dark 3.64:1 -> 1.60:1   light 5.88:1 -> 2.25:1
+#:     track vs. --ink-quiet segment  dark 5.73:1 -> 2.52:1   light 5.18:1 -> 1.98:1
+#:
+#: i.e. the EMPTY ring would separate from a real BLOCKED arc by less than the
+#: 3:1 the floor is asking for in the first place, and the donut would read as
+#: six segments instead of five-plus-ground. WCAG 1.4.11's graphical-object
+#: half covers "parts of graphics REQUIRED to understand the content"; the arcs
+#: are, their backing track is not. Recorded as OSV1-010's one BLOCKED residual
+#: rather than met by making the chart say something false.
+NON_TEXT_EXEMPT_CLASSES = frozenset({"donut-track", "donut-hatch-gap"})
+
+
+def _is_exempt(entry: dict[str, Any]) -> bool:
+    classes = str(entry.get("class_name", "")).split()
+    return any(c in NON_TEXT_EXEMPT_CLASSES for c in classes)
+
+
 def below_non_text_floor(
     measurement: dict[str, Any], *, floor: float = NON_TEXT_CONTRAST_FLOOR
 ) -> list:
+    """Every measured non-text surface under the floor, EXEMPTIONS REMOVED."""
     return sorted(
-        (e for e in measurement["measured"] if float(e["ratio"]) < floor),
+        (e for e in measurement["measured"] if float(e["ratio"]) < floor and not _is_exempt(e)),
+        key=lambda e: float(e["ratio"]),
+    )
+
+
+def exempt_below_non_text_floor(
+    measurement: dict[str, Any], *, floor: float = NON_TEXT_CONTRAST_FLOOR
+) -> list:
+    """The other half of the same split: what the exemption actually excused.
+
+    Kept as its own function, and recorded in every artifact, so the size of
+    the allowance is a number on disk rather than an absence.
+    """
+    return sorted(
+        (e for e in measurement["measured"] if float(e["ratio"]) < floor and _is_exempt(e)),
         key=lambda e: float(e["ratio"]),
     )
 
