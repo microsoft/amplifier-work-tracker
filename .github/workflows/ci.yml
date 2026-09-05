@@ -104,6 +104,15 @@ jobs:
       - name: Tier 4 -- conformance ledger
         run: .venv/bin/python -m pytest ledger/checks -v
 
+      # Tier 6 -- contracts/operator-surface.v1.md's Tier-A conformance kit.
+      # Freeze 1 requires it to exist AND to run on every pull request, so it
+      # is a named step of its own: a kit that runs in no gate is the exact
+      # failure ledger row CCV1-022 already recorded once. Runs AFTER the
+      # tiers above because its rendered checks need the same real `bd` and
+      # dolt those tiers install.
+      - name: Tier 6 -- operator-surface conformance (Tier A)
+        run: .venv/bin/python -m pytest tests/conformance/operator_surface -v
+
       # Tier 5 -- the amplifier tool module's own suite
       # (modules/tool-work-tracker/tests). The only place the post-reclaim
       # custody behaviour of the AGENT SEAM (work_claim / work_declare /

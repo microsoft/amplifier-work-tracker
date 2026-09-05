@@ -363,13 +363,19 @@ def _m023_test_location_regresses(w: World) -> None:
 # shape and must go red the moment the shape is right. The seven green rows get
 # the known-wrong shape they forbid instead (direction REGRESSION).
 #
-# Eleven rows pin the absence of a conformance-kit file, and their
+# Six rows still pin the absence of the TIER-B kit file, and their
 # counterfactual is `world.touch(...)` -- the file simply existing. That is a
 # WEAKER mutation than the source-shape ones, deliberately and visibly: the
 # thing being proven is only that the pin notices the path appearing, which is
-# exactly what those rows claim and no more. Four of them carry a SECOND
+# exactly what those rows claim and no more. Three of them carry a SECOND
 # mutation against their substantive half, so the weak half is never the only
 # evidence.
+#
+# The TIER-A kit now EXISTS (OSV1-027), so "the file appears" is spent as a
+# counterfactual for the rows that used it. Each has been retargeted at what
+# actually has to move for it to go green: for the three Conformance-fixture
+# rows, the Core row their deferred good half waits on closing; for Freeze 1,
+# CI dropping the step that runs the kit.
 # =============================================================================
 
 TIER_A_KIT = op_probes.TIER_A_KIT
@@ -511,9 +517,20 @@ def _mo011_a_second_motion_block_appears(w: World) -> None:
     )
 
 
-def _mo012_the_empty_sentence_becomes_a_zero(w: World) -> None:
-    """REGRESSION: the calm queue is celebrated as a numeral instead of said."""
-    w.replace(WEBAPP, "Nothing is waiting to be claimed in this queue right now.", "0")
+def _mo012_the_empty_slot_gains_its_sentence(w: World) -> None:
+    """FIXED: `render_attention_queue` grows the empty branch Core 8 asks for,
+    so the L0 region that keeps its slot finally says so."""
+    w.replace(
+        WIDGETS,
+        "    rows_html: list[str] = []\n"
+        '    for r in data["rows"]:\n'
+        '        priority_label = _esc(r["priority"].upper())',
+        '    if not data["rows"]:\n'
+        "        return '<div class=\"attn-list\">Nothing needs you right now.</div>'\n"
+        "    rows_html: list[str] = []\n"
+        '    for r in data["rows"]:\n'
+        '        priority_label = _esc(r["priority"].upper())',
+    )
 
 
 def _mo013_a_template_engine_is_declared(w: World) -> None:
@@ -548,10 +565,6 @@ def _mo017_a_second_push_call_site_appears(w: World) -> None:
     w.append(WEBAPP, "\ndef _ledger_mutation():\n    WP.fire_reclaim_alarm(1, 2, 3)\n")
 
 
-def _mo_tier_a_kit_appears(w: World) -> None:
-    w.touch(TIER_A_KIT)
-
-
 def _mo_tier_b_kit_appears(w: World) -> None:
     w.touch(TIER_B_KIT)
 
@@ -579,9 +592,16 @@ def _mo023_a_swept_breakpoint_disappears(w: World) -> None:
     w.replace(WEBTHEME, "@media (max-width:1280px){", "@media (max-width:1281px){")
 
 
-def _mo027_the_makefile_wires_the_kit(w: World) -> None:
-    """The wiring half of Freeze 1: existing is not the same as running."""
-    w.append(MAKEFILE, "\ntest-conformance:\n\t$(PYTEST) tests/conformance -v\n")
+def _mo027_ci_stops_running_the_kit(w: World) -> None:
+    """REGRESSION on the wiring half of Freeze 1: the kit still exists, but CI
+    no longer runs it -- which is exactly the "green claims nobody executed"
+    failure CCV1-022 already recorded once in this repo."""
+    w.replace(
+        CI_WORKFLOW,
+        "      - name: Tier 6 -- operator-surface conformance (Tier A)\n"
+        "        run: .venv/bin/python -m pytest tests/conformance/operator_surface -v\n",
+        "",
+    )
 
 
 def _mo029_an_artifact_directory_appears(w: World) -> None:
@@ -598,6 +618,26 @@ def _mo031_a_red_core_row_goes_green(w: World) -> None:
         ROWS_PATH,
         "  disposition: VIOLATION\n  work: work_item_pipeline-ujy",
         "  disposition: CONFORMS\n  work: work_item_pipeline-ujy",
+    )
+
+
+def _mo025_the_literal_style_row_goes_green(w: World) -> None:
+    """FIXED: OSV1-005 closes, so Conformance 6's deferred good half should now
+    pass -- and this row must be re-derived from the PASSING pair."""
+    w.replace(
+        ROWS_PATH,
+        "  disposition: VIOLATION\n  work: work_item_pipeline-np3",
+        "  disposition: CONFORMS\n  work: work_item_pipeline-np3",
+    )
+
+
+def _mo026_the_empty_slot_row_goes_green(w: World) -> None:
+    """FIXED: OSV1-012 closes, so Conformance 7's deferred good halves should
+    now pass."""
+    w.replace(
+        ROWS_PATH,
+        "  disposition: VIOLATION\n  work: work_item_pipeline-c1a",
+        "  disposition: CONFORMS\n  work: work_item_pipeline-c1a",
     )
 
 
@@ -780,8 +820,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-012",
-        "the calm queue's empty sentence becomes a bare zero",
-        _mo012_the_empty_sentence_becomes_a_zero,
+        "the empty attention queue grows the sentence Core 8 asks for",
+        _mo012_the_empty_slot_gains_its_sentence,
     ),
     Mutation(
         "OSV1-013", "the manifest declares a template engine", _mo013_a_template_engine_is_declared
@@ -805,7 +845,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         _mo017_a_second_push_call_site_appears,
     ),
     Mutation("OSV1-020", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
-    Mutation("OSV1-021", "the Tier-A kit file appears", _mo_tier_a_kit_appears),
+    Mutation("OSV1-021", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
     Mutation("OSV1-022", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
     Mutation(
         "OSV1-022",
@@ -818,14 +858,25 @@ MUTATIONS: tuple[Mutation, ...] = (
         "a swept breakpoint disappears from the stylesheet",
         _mo023_a_swept_breakpoint_disappears,
     ),
-    Mutation("OSV1-024", "the Tier-A kit file appears", _mo_tier_a_kit_appears),
-    Mutation("OSV1-025", "the Tier-A kit file appears", _mo_tier_a_kit_appears),
-    Mutation("OSV1-026", "the Tier-A kit file appears", _mo_tier_a_kit_appears),
-    Mutation("OSV1-027", "the Tier-A kit file appears", _mo_tier_a_kit_appears),
+    Mutation(
+        "OSV1-024",
+        "OSV1-001 closes, so Conformance 5's deferred good half should now pass",
+        _mo031_a_red_core_row_goes_green,
+    ),
+    Mutation(
+        "OSV1-025",
+        "OSV1-005 closes, so Conformance 6's deferred good half should now pass",
+        _mo025_the_literal_style_row_goes_green,
+    ),
+    Mutation(
+        "OSV1-026",
+        "OSV1-012 closes, so Conformance 7's deferred good halves should now pass",
+        _mo026_the_empty_slot_row_goes_green,
+    ),
     Mutation(
         "OSV1-027",
-        "the Makefile wires a conformance target (the 'runs in a gate' half)",
-        _mo027_the_makefile_wires_the_kit,
+        "CI stops running the Tier-A kit (the 'runs in a gate' half)",
+        _mo027_ci_stops_running_the_kit,
     ),
     Mutation("OSV1-028", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
     Mutation("OSV1-029", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
@@ -834,7 +885,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "a Tier-B artifact directory appears",
         _mo029_an_artifact_directory_appears,
     ),
-    Mutation("OSV1-030", "the Tier-A kit file appears", _mo_tier_a_kit_appears),
+    Mutation("OSV1-030", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
     Mutation(
         "OSV1-031",
         "one of the ten red Core-carrying rows flips to CONFORMS",
