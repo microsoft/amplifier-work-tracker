@@ -680,7 +680,10 @@ class KpiCard(TypedDict):
     value: int
     href: str
     icon: NotRequired[str]
-    icon_color_var: NotRequired[str]
+    #: A STYLESHEET CLASS for the icon's ink (e.g. `"ic-blocked"`), never a
+    #: token name to interpolate into an inline `style=` -- operator-surface.v1
+    #: Core 4: a colour is named in the stylesheet or it is not named.
+    icon_class: NotRequired[str]
     is_blocked: NotRequired[bool]
 
 
@@ -700,9 +703,12 @@ def render_kpi_strip(data: KpiStripData) -> str:
         icon_html = ""
         icon = c.get("icon")
         if icon:
-            color_var = c.get("icon_color_var")
-            style = f' style="color:var({color_var})"' if color_var else ""
-            icon_html = f'<span class="icon sm"{style}><svg><use href="#{icon}"/></svg></span> '
+            # The ink is a CLASS, not a token name interpolated into an
+            # inline style: the stylesheet is where a colour is allowed to be
+            # named (`.icon.ic-blocked`, webtheme's SINGLE_SOURCE_CSS).
+            tone = c.get("icon_class")
+            cls = f"icon sm {tone}" if tone else "icon sm"
+            icon_html = f'<span class="{cls}"><svg><use href="#{icon}"/></svg></span> '
         cards_html.append(
             f'<a href="{_esc(c["href"])}" class="{classes}">'
             f'<div class="k"><span>{icon_html}{_esc(c["label"])}</span>'
@@ -799,13 +805,13 @@ _MIX_ORDER: tuple[str, str, str, str, str, str] = (
     "deferred",
     "blocked",
 )
-_MIX_COLOR_VAR: dict[str, str] = {
-    "resolved": "--ink-quiet",
-    "ready": "--ink-secondary",
-    "held": "--brand-cyan-ink",
-    "intake": "--ink-tertiary",
-    "blocked": "--blocked",
-}
+# The colour per mix slot is NOT declared here. It used to be a dict of token
+# names interpolated into `background:var(...)` at two call sites -- the mix
+# bar and the donut legend -- which meant the palette of a single reading lived
+# in Python rather than in the stylesheet. It is now `.status-mix span.mix-*`
+# and `.sw.mix-*` in webtheme's SINGLE_SOURCE_CSS, keyed by the same
+# `_MIX_ORDER` slot name emitted as a class. `deferred` is still the exception
+# it always was: it draws through `.pat-hatch`, a texture, never a flat colour.
 
 
 class FleetStatusMix(TypedDict):
@@ -830,9 +836,7 @@ def _status_mix_bar_html(mix: FleetStatusMix) -> str:
         if key == "deferred":
             segments.append(f'<span style="width:{pct}%" class="pat-hatch"></span>')
         else:
-            segments.append(
-                f'<span style="width:{pct}%;background:var({_MIX_COLOR_VAR[key]})"></span>'
-            )
+            segments.append(f'<span class="mix-{key}" style="width:{pct}%"></span>')
     tooltip = (
         f"{mix['ready']} ready · {mix['held']} held · {mix['blocked']} blocked · "
         f"{mix['deferred']} deferred · {mix['intake']} intake · {mix['resolved']} resolved"
@@ -1041,7 +1045,7 @@ def render_activity_feed(data: ActivityFeedData) -> str:
         icon = _FEED_ICON[item["kind"]]
         items_html.append(
             f'<a href="{_esc(item["href"])}" class="feed-item k-{item["kind"]}">'
-            f'<span class="dot"><span class="icon" style="width:.7em;height:.7em">'
+            f'<span class="dot"><span class="icon">'
             f'<svg><use href="#{icon}"/></svg></span></span>'
             f'<span class="txt"><b>{_esc(item["actor"])}</b> {_esc(item["verb"])} '
             f'<span class="proj">{_esc(item["project_item"])}</span> — '
@@ -1058,7 +1062,7 @@ def render_activity_feed(data: ActivityFeedData) -> str:
         # already persists whatever state the user leaves it in across
         # a refresh, so defaulting to open costs nothing on that front.
         '<details class="dormant-details feed-details" open>'
-        '<summary>Activity feed <span class="note" style="font-weight:400;margin-left:8px">'
+        '<summary>Activity feed <span class="note">'
         "cross-project · reverse-chronological</span> "
         '<span class="icon sm chev"><svg><use href="#i-chevron"/></svg></span></summary>'
         '<div class="glass-panel chart-card" style="margin-top:var(--space-3)">'
@@ -1107,7 +1111,7 @@ def render_status_breakdown(data: StatusBreakdownData) -> str:
         swatch = (
             '<span class="sw pat-hatch"></span>'
             if key == "deferred"
-            else f'<span class="sw" style="background:var({_MIX_COLOR_VAR[key]})"></span>'
+            else f'<span class="sw mix-{key}"></span>'
         )
         legend_rows.append(
             f'<div class="li">{swatch}<span class="name">{_MIX_NAME[key]}</span>'

@@ -1033,8 +1033,8 @@
 
     HONEST LIMIT: this is a declaration check over the token block. A literal
     hue painted OUTSIDE the token system is not visible to it -- that is Core 4
-    (OSV1-005, which measures 66 such inline sites) and the calm-pixel sweep
-    (OSV1-003).
+    (OSV1-005, which measured 66 such inline sites and now measures zero) and
+    the calm-pixel sweep (OSV1-003).
 
 - id: OSV1-003
   title: a calm L1 paints 97 --blocked pixels with nothing blocked
@@ -1096,9 +1096,31 @@
     the light renders for the dark values -- reporting a confident zero for a
     page it had not examined. The tokens are read from the live page.
 
-    STILL TRUE, and still pinned by this probe: the retired-palette specimens
-    at webpwa.py:121-122 and webtrust.py:258-259 remain in the tree (also
-    scored by Core 4, OSV1-005).
+    THE TWO PALETTE SPECIMENS CLOSED 2026-09-05 (work_item_pipeline-np3,
+    OSV1-005), and this row's PROBE moved with them while its DISPOSITION did
+    not. Both are gone: webpwa.py's offline body carries no colour, font or
+    size at all (it asks the UA via `<meta name="color-scheme">`), and
+    webtrust.py ships no stylesheet -- it emits `webtheme.trust_style_tag()`,
+    which inlines the live tokens.
+
+    DISPOSITION UNCHANGED, VIOLATION, and for the reason the measurement above
+    gives: a calm L1 still paints `--blocked` with nothing blocked. The
+    specimens were never what made this row red -- the recorded sweep is.
+
+    THE PROBE'S TWO SPECIMEN ASSERTIONS FLIPPED SIDES rather than being
+    deleted. They pinned "the retired palette is still in the tree"; a pin that
+    a defect is present is a FALSE pin once the defect is gone, and silently
+    deleting them would drop the only in-process guard that the palette stays
+    gone. They now assert the palette is ABSENT from both modules.
+    `_mo003b_the_retired_palette_returns` proves the new guards discriminate;
+    `_mo003_the_calm_page_stops_painting_blocked` still proves the pixel pin
+    does.
+
+    THE CONFORMANCE 1 BAD FIXTURE no longer has an in-tree specimen to point
+    at, which is the good problem: it must now CONSTRUCT its hardcoded amber.
+    The contract's own named specimen (`style="color:#D9A253"`) is already
+    exactly that, and Conformance 6's bad half (OSV1-025) already runs it.
+
 - id: OSV1-004
   title: state is never colour-only -- measured on rendered L0/L1/L2, and it holds
   contract:
@@ -1153,7 +1175,7 @@
 
 - id: OSV1-005
   title: >-
-    66 inline style= sites and 40 <style>-block declarations carry a literal
+    zero inline style= sites and zero <style>-block declarations carry a literal
     colour, font, or size
   contract:
     file: contracts/operator-surface.v1.md
@@ -1161,87 +1183,90 @@
     quote: |
       Literal colour, font, or size in an inline `style=` attribute, or in a `<style>` block
       outside the token module (`webtheme.py`'s token block), is a violation; zero are tolerated.
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-np3
   assertion:
     kind: probe
     ref: test_row_osv1_005
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED 2026-09-05 from VIOLATION (VIOLATION-MOVEMENT: the pinning probe
+    went red because the tree moved TOWARD the clause). The probe was retargeted
+    at the fixed shape in the same change, and its two mutations rewritten to
+    reinstate each half of the closed defect. Flip direction is now REGRESSION.
 
-    THE CENSUS LIVES HERE, NOT IN THE CONTRACT -- Phase-1 ruling Need 2: "the
-    register and the ceiling live in `ledger/`", so shrinking the count is a
-    convergent change needing no amendment and no SYNC re-hash. The probe
-    RE-RUNS this census every ledger run; the numbers below are its output on
-    4aaee50, not a transcription.
+    THE CENSUS STILL LIVES HERE, NOT IN THE CONTRACT -- Phase-1 ruling Need 2.
+    The probe RE-RUNS it on every ledger run; the numbers below are its output
+    on this change, not a transcription.
 
-    137 inline `style="` sites in `src/amplifier_work_tracker/` (parsed count
-    == raw count, asserted by the probe -- a parser that silently loses a site
-    would understate the violation):
-      LITERAL   66   chartsvg 1, webapp 44, webbrowse 15, webpwa 1, webtrust 3, widgets 2
-      COMPUTED  23   chartsvg 3, webapp 13, webtheme 3, widgets 4   -- see OSV1-006
-      TOKEN     48   chartsvg 5, webapp 20, webbrowse 15, widgets 8
+    INLINE HALF, measured before and after:
+      LITERAL   66 -> 0    chartsvg 1->0, webapp 44->0, webbrowse 15->0,
+                           webpwa 1->0, webtrust 3->0, widgets 2->0
+      COMPUTED  23 -> 8    see OSV1-006, which owns the register
+      TOKEN     48 -> 47
+      TOTAL    137 -> 55
+    `<style>`-BLOCK HALF: 40 literal declarations -> 0, and the population of
+    blocks outside the token module went 1 -> 0.
 
-    CLASSIFICATION RULE, encoded in the probe so the census is reproducible
-    rather than asserted: LITERAL = a hex or rgb()/hsl() colour not routed
-    through `var(--token)`, OR a font-family/size/weight carrying a literal
-    value, OR a length literal (px/rem/em/%) on a size or spacing property.
-    COMPUTED = the declaration carries an interpolated `{...}` placeholder.
-    TOKEN = only `var(--token)` values and/or properties that are none of
-    colour, font or size. The parser splices Python string-literal
-    concatenation boundaries first, so an attribute split across adjacent
-    literals (webapp.py:1712, webbrowse.py:741) is read as ONE attribute.
+    HOW, so a reader can check the fix rather than trust the count. The literal
+    values did not move sideways into another file; they moved into the ONE
+    module Core 4 exempts by name:
+      webtheme.py  gains `SINGLE_SOURCE_CSS`, appended last in the cascade
+                   (so a utility beats the component rule it replaces without
+                   `!important` -- the priority the inline attribute used to
+                   buy, bought once). It carries the `.mt-*`/`.ml-*`/`.mr-*`
+                   spacing utilities, the `.hist-*` histogram rules, the
+                   `.fill-*`/`.mix-*` state fills, `tr.attn-row`, `.hero-alarm`,
+                   `h1.page-h1`, `.field-textarea`, and the chart fills.
+      webtheme.py  also splits `TOKENS_CSS` out of `CSS` (the token block
+                   alone; `CSS` is byte-identical to before, verified) and adds
+                   `TRUST_CSS` + `trust_style_tag()`.
+      webtrust.py  ships NO stylesheet and no style tag at all any more. It
+                   used to embed a page-local sheet re-declaring the whole role
+                   set as its own literal near-black-and-warm-amber values --
+                   the retired pre-blend-3 palette, drifted three generations
+                   behind the live `--color-ground:#05070f`. It now emits
+                   `webtheme.trust_style_tag()`, which INLINES `TRUST_CSS`
+                   (`TOKENS_CSS` + the page's own rules, all on `var()` tokens).
+                   The page stays self-contained -- inlined, never fetched --
+                   which it must: a device reading it has not installed the CA
+                   yet, so an external asset link would be a broken fetch at the
+                   worst possible moment.
+      webpwa.py    the offline body carries no colour, font or size AT ALL now,
+                   deliberately rather than by omission. It is produced with no
+                   stylesheet reachable (the service worker caches nothing, by
+                   design), so any styling it carries can only ever be a second,
+                   unverifiable copy of the visual truth -- which is exactly how
+                   it came to hold a three-generation-stale palette unnoticed.
+                   It asks the user agent instead:
+                   `<meta name="color-scheme" content="dark light">`.
 
-    THE 66 LITERAL SITES, enumerated so the migration has no ambiguity:
-      chartsvg.py:271
-      webapp.py:1677,1703,1712,1715,1742,2264,2267,2288,2293,2295,2297,2299,
-        2313,2330,2728,2750,2763,3008,3037,3050,3055,3100,3108,3109,3111,3112,
-        3113,3161,3170,3174,3178,3183,3342,3346,3350,3352,3356,3359,3363,4216,
-        4396,4909,4912,4918
-      webbrowse.py:499,580,645,654,741,747,753,759,763,767,792,798,850,868,869
-      webpwa.py:121
-      webtrust.py:326,343,382
-      widgets.py:1044,1061
-    The worst is webpwa.py:121 -- the service worker's offline body carries
-    `background:#0D0D0C;color:#F2EEE6;font:16px -apple-system,sans-serif`, the
-    RETIRED pre-blend-3 palette, while the live ground token is `#05070f`. The
-    webapp.py bulk is overwhelmingly `margin-top:Npx` spacing literals that
-    belong on the `--space-*` scale.
+    SPACING WAS SNAPPED TO THE 4px SCALE, one documented rule applied
+    uniformly, ties rounding UP: 6->8, 10->12, 14->16, 18->20, 22->24, 30->32,
+    `.3rem`->4px. Maximum drift 2px on any one margin. That drift is the point
+    of the clause: the scale decides the value, not whoever last typed a number
+    into an attribute.
 
-    RE-READ 2026-09-04 against the owner-ratified DRAFT true-up #1 ("yep, do
-    it all."), which SETTLED the reading this row returned to the root at seed
-    and widened Core 4 to reach "a `<style>` block outside the token module
-    (`webtheme.py`'s token block)". Quote RE-ANCHORED to the widened sentence
-    -- same clause, and the sentence this row was always about. Disposition
-    unchanged (VIOLATION); the row now measures TWO halves, pinned separately
-    so that fixing one is progress it records rather than a flip it did not
-    earn.
+    LAUNDERED LITERALS WERE COUNTED AS LITERALS, not exempted. Several sites
+    read as COMPUTED to the census only because a fixed string was built in
+    Python and interpolated (`heading_style` in three places,
+    `_CONTENT_MONO_STACK`, `seg_base`/`ax_base`, `_STATE_FILL`,
+    `_MIX_COLOR_VAR`, `_BUCKET_HEIGHT`). Those are literals wearing a
+    placeholder; they are gone too, which is most of why the register fell from
+    23 to 8. See OSV1-006.
 
-    THE `<style>`-BLOCK HALF, measured on this branch by the same probe: ONE
-    `<style>` block exists outside the token module -- webtrust.py:256-302
-    (the `_CSS` constant, embedded at webtrust.py:374) -- and it carries 40
-    literal colour/font/size declarations. Eight of them are the retired
-    pre-blend-3 palette this row recorded-but-did-not-score at seed:
-      webtrust.py:258  --ground:#0D0D0C  --raise:#151513  --ink:#F2EEE6  --mid:#A6A199
-      webtrust.py:259  --quiet:#9C978F   --amber:#D9A253  --rule:#1F1F1D  --rule-hi:#333330
-    The other 32 are literal fonts and sizes in the same sheet (Georgia/
-    Helvetica Neue font stacks, `font-size:32px`, `padding:52px 24px 80px`,
-    and so on). The block deliberately does not import `webtheme.CSS`
-    (webtrust.py:249-253 says so in its own comment) -- which is exactly why
-    it is a second source of visual truth, and exactly what the widened clause
-    forbids. It is also the specimen the Conformance 1 bad fixture reinstates.
+    HONEST LIMIT, unchanged and still the safe direction: `classify_style`
+    skips a size declaration whose value mentions `var(`, so
+    `border:1px solid var(--rule-hi)` is not counted as literal. It
+    under-counts rather than over-counts. Now that this row is green, that
+    limit means a literal length could hide beside a `var()` in the same
+    declaration -- narrower than it sounds (the value must mention `var(`), and
+    it is recorded here rather than fixed, because changing the rule would
+    change what BOTH halves measure and belongs in one change of its own.
 
-    HONEST LIMIT of the block census, the same one the inline census carries:
-    `classify_style` skips a size declaration whose value mentions `var(`, so
-    `border:1px solid var(--rule-hi)` is NOT counted as literal. That
-    under-counts rather than over-counts, which is the safe direction for a
-    pin; the rule is shared between both halves ON PURPOSE, so one cannot
-    quietly become stricter than the other.
-
-    NOT FIXED HERE, DELIBERATELY: the palette itself. That is
-    work_item_pipeline-np3's job, and this branch amends the contract and the
-    ledger only.
+    NOT DONE HERE: `style=` is not gone -- 55 inline attributes remain, 47 of
+    them TOKEN-bucket (`color:var(--ink)`, `margin-top:var(--space-3)`,
+    `overflow-wrap:anywhere`) which Core 4 permits, and 8 computed-geometry.
+    Backlogged 2 ("no inline `style=` at all") is not claimed by this row.
 
 - id: OSV1-006
   title: every computed-geometry inline site is on the ledger's exemption register
@@ -1259,58 +1284,55 @@
     THIS ROW IS THE EXEMPTION REGISTER. Core 4 says the register lives in
     `ledger/`, not in the contract, "so that shrinking it is a convergent
     change requiring no amendment" -- Phase-1 ruling Need 2 made that binding
-    and forbade a ceiling constant in Core. The register is the 23 sites below;
-    the probe asserts computed-geometry sites are exactly this set. A DECREASE
-    is convergent (shrink the register, let the ledger confirm). An INCREASE --
-    a new inline computed site not listed here -- fails the probe loudly.
+    and forbade a ceiling constant in Core. The probe asserts computed-geometry
+    sites are EXACTLY the set below. A DECREASE is convergent (shrink the
+    register, let the ledger confirm). An INCREASE -- a new inline computed site
+    not listed here -- fails the probe loudly.
 
-    CONFORMS is honest and not circular: the claim is "no computed-geometry
-    site exists outside the register", and that is what the probe checks on
-    every run against a set fixed at this seed. It is not a claim that 23 is
-    an acceptable number; Backlogged 2 ("no inline `style=` at all") promotes
-    when this register reaches ZERO, and that promotion is a named contract
-    trigger, not a silent win.
+    THE REGISTER SHRANK 23 -> 8 on 2026-09-05 (work_item_pipeline-np3). That is
+    a convergent change and needs no amendment; it is recorded here because the
+    register IS this row.
 
-    THE REGISTER, measured 2026-09-04 against 4aaee50 -- 23 sites, each
-    carrying an interpolated value:
-      chartsvg.py:268   fill:{val_color}                      bar fill, resolved-count
-      chartsvg.py:464   {stub_style}                          axis stub, watch-vs-quiet
-      chartsvg.py:488   {value_style}                         value label
-      webapp.py:1122    {style}                               computed row style
-      webapp.py:1144    background:{swatch}                   legend swatch
-      webapp.py:1709    {seg_style}                           histogram segment
-      webapp.py:1711    {ax_style}                            axis label
-      webapp.py:1829    width:{today_w}px                     bar width (today)
-      webapp.py:1832    width:{prior_w}px                     bar width (prior)
-      webapp.py:2101    {row_style}                           computed row style
-      webapp.py:2142    background:{tint};box-shadow:inset 4px 0 0 {accent}
-      webapp.py:2266    color:{accent}                        computed accent
-      webapp.py:2572    {style}                               computed style
-      webapp.py:3376    {heading_style}                       computed heading
-      webapp.py:4421    {heading_style}                       computed heading
-      webapp.py:4936    {remove_heading_style}                computed heading
-      webtheme.py:4185  {style}                               computed style
-      webtheme.py:4204  left:{_grad_x(f):.1f}px               gradient stop offset
-      webtheme.py:4211  width:{px}px                          swatch width
-      widgets.py:704    color:var({color_var})                token chosen at runtime
-      widgets.py:831    width:{pct}%                          mix-bar width
-      widgets.py:834    width:{pct}%;background:var({_MIX_COLOR_VAR[key]})
-      widgets.py:1110   background:var({_MIX_COLOR_VAR[key]})
+    THE REGISTER, measured 2026-09-05 -- 8 sites, each carrying a value that is
+    genuinely computed per render:
+      webapp.py:1127    flex:{n} 1 0              state-bar segment ratio
+      webapp.py:1823    width:{today_w}px         throughput bar, today
+      webapp.py:1826    width:{prior_w}px         throughput bar, prior 6 d
+      webtheme.py:4197  {style}                   axis ruler numeral offset
+      webtheme.py:4216  left:{_grad_x(f):.1f}px   graduation tick offset
+      webtheme.py:4223  width:{px}px              age bar length
+      widgets.py:837    width:{pct}%              status-mix segment (hatched)
+      widgets.py:839    width:{pct}%              status-mix segment
+    Every one is "a bar width, a chart offset" -- the clause's own gloss of what
+    this exemption is FOR.
 
-    The three `webtheme.py` coordinates were RE-DERIVED on 2026-09-04 by
-    work_item_pipeline-sxh (OSV1-009), which added comment lines above them:
-    4120/4139/4146 -> 4131/4150/4157. Same three sites, same code, same
-    register SET -- only the line numbers moved. A `file:line` register is
-    coordinate-fragile by construction; any edit above a site shifts it.
+    THE ROOT'S TRIAGE RULING WAS APPLIED, and it is what removed 15 sites. Two
+    kinds were on the register that should not have been:
+      (a) A COMPUTED COLOUR. Six sites interpolated a colour rather than a
+          geometry (chartsvg.py:268, webapp.py:2142/2266, widgets.py:704/834/
+          1110). Every one of them was chosen from an ENUMERABLE set -- a
+          two-state today/not-today, a watch/not-watch band, a fixed five- or
+          six-slot state key -- so each became a class or a data attribute the
+          stylesheet resolves, and left the register. NONE of the six now
+          interpolates a colour inline; the "a token-derived colour may stay,
+          with its derivation noted" arm of the ruling was not needed.
+          widgets.py:834 kept its site because its WIDTH is real computed
+          geometry; only its background moved to a class.
+      (b) A LAUNDERED LITERAL. Nine sites read as computed only because a FIXED
+          string was assembled in Python and interpolated -- `{heading_style}`
+          three times, `{style}` for the content block, `{seg_style}`/
+          `{ax_style}`, `background:{swatch}`. Nothing about those was computed;
+          the placeholder was hiding a literal from the census. They are classes
+          now (`h1.page-h1`, `.content-block.mono-measure`, `.hist-seg`,
+          `.hist-ax`, `.sw.fill-*`).
 
-    HONEST LIMIT: several registered sites interpolate a COLOUR, not a
-    geometry (webapp.py:2142/2266, chartsvg.py:268, widgets.py:704/834/1110).
-    They pass Core 4's literal test because the value is computed rather than
-    literal, and several resolve to a `var(--token)` -- but "a bar width, a
-    chart offset" is the clause's own gloss of what the exemption is FOR.
-    Whether a computed COLOUR belongs on a computed-GEOMETRY register is a
-    reading this reconcile returns to the root rather than settling. They are
-    listed, not hidden.
+    A `file:line` register is coordinate-fragile by construction: any edit above
+    a site shifts it. That is deliberate -- it forces a human to look -- and it
+    is why the probe prints the observed set on failure.
+
+    AT ZERO THIS FIRES BACKLOGGED 2's promotion trigger ("no inline `style=` at
+    all"), which is an owner amendment, not a silent win. It is not zero: 8
+    remain, and each is a length or a ratio that genuinely depends on data.
 
 - id: OSV1-007
   title: no GET handler reaches a mutating adapter call
@@ -2272,14 +2294,14 @@
 
 - id: OSV1-025
   title: >-
-    Conformance 6 (inline-style register) -- fixture exists and discriminates,
-    good half deferred against OSV1-005
+    Conformance 6 (inline-style register) -- fixture exists, discriminates, and
+    its good half passes over the real tree
   contract:
     file: contracts/operator-surface.v1.md
     clause: Conformance 6
     quote: |
       **Test location:** `tests/conformance/operator_surface/test_tier_a.py` (Core 4).
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-c1a
   assertion:
     kind: probe
@@ -2296,9 +2318,11 @@
         site is reported as unregistered -- injected over the census's OWN
         reader, so the real engine does the classifying and nothing on disk is
         touched.
-      GOOD, DEFERRED  66 literal inline sites and 40 `<style>`-block
-        declarations remain, so the good half is `xfail(strict=True)` naming
-        OSV1-005.
+      GOOD, PASSING (2026-09-05)  the good half runs the three conjuncts over
+        the real `src/` tree -- zero literal inline sites, zero unregistered
+        computed sites, zero literal declarations in a `<style>` block outside
+        the token module -- and passes. The `xfail(strict=True)` marker naming
+        OSV1-005 was deleted in the same change that closed OSV1-005.
 
     THE OVERLAP IS KEPT DELIBERATE, as this row required at seed: the kit does
     not grow its own census. It imports `ledger/checks/_support.py`'s engines
@@ -2308,9 +2332,17 @@
     asserts that the imported register and the live COMPUTED census agree, so
     the two cannot drift apart silently.
 
-    THIS ROW GOES GREEN WHEN OSV1-005 DOES. The probe asserts both facts -- the
-    fixture is present with its pair and reads the ledger's register, and
-    OSV1-005 is still red -- so flipping either one alone fails loudly.
+    FLIPPED 2026-09-05 from GAP (VIOLATION-MOVEMENT), in the same change that
+    closed OSV1-005 -- which is what this row said would happen ("THIS ROW GOES
+    GREEN WHEN OSV1-005 DOES"). Flip direction is now REGRESSION: the probe
+    asserts the good half is NOT deferred and that OSV1-005 is not red, so
+    reinstating either alone fails loudly.
+
+    The register the kit imports shrank 23 -> 8 in the same change (OSV1-006).
+    The kit needed no edit for that, which is the point of the one-register
+    ruling -- it reads `EXEMPTION_REGISTER` rather than keeping a copy, and its
+    own `..._the_register_is_the_ledgers_own` test re-proves the two agree on
+    every run.
 
 - id: OSV1-026
   title: >-
@@ -2644,6 +2676,24 @@
     measurement (see its own notes and the tests named there), not flipped
     because a file appeared.
 
+    TALLY MOVED 2026-09-05, RE-MEASURED FROM THE LEDGER RATHER THAN FROM THE
+    PRECEDING PARAGRAPHS -- which had drifted: the entry above says "nine red
+    now" and then lists OSV1-004 and OSV1-009 among them, both of which its own
+    earlier paragraphs record as CONFORMS. The observed red set on this change,
+    computed by the probe, is SIX: OSV1-003, -008, -010, -012, -015, -016.
+    Two flips account for the difference from the (correct) count of seven this
+    branch inherited:
+      OSV1-005 VIOLATION -> CONFORMS (work_item_pipeline-np3): zero literal
+                  inline sites and zero literal `<style>`-block declarations
+                  remain. Re-derived from the re-run census, not from a file
+                  appearing -- see OSV1-005's own before/after numbers.
+      (and the inherited seven already reflected OSV1-001 going green on
+      2026-09-05, work_item_pipeline-ujy.)
+    Pinned count moved 9 -> 6 in this change. THREE, not one, because the pin
+    was ALREADY red on this branch's base at seven: the hero lane flipped
+    OSV1-001 without moving this tally with it. That is the defect this row
+    exists to catch, and it is recorded rather than quietly absorbed.
+
     THE FAILURE MODE THIS ROW EXISTS TO CATCH: a GAP row whose only defect is
     "the kit is not built" being flipped to CONFORMS because a file now exists,
     rather than re-derived from the kit's real results. OSV1-004 was flipped
@@ -2684,8 +2734,8 @@
 
 - id: OSV1-032
   title: >-
-    Freeze 6 -- 66 literal inline sites and 40 <style>-block declarations
-    remain, so the register is not complete
+    Freeze 6 -- the exemption register is complete and no literal colour, font
+    or size site remains
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 6
@@ -2693,38 +2743,36 @@
       **Freeze 6:** the exemption register named in Core 4 is complete in `ledger/` — every
       computed-geometry inline-style site enumerated, and no literal colour, font, or size site
       remaining.
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-np3
   assertion:
     kind: probe
     ref: test_row_osv1_032
   notes: >
-    PINNING ROW -- the probe pins that literal sites still remain; a passing
-    probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED 2026-09-05 from GAP (VIOLATION-MOVEMENT: the pinning probe went red
+    because both halves closed). Retargeted in the same change; flip direction
+    is now REGRESSION.
 
-    TWO CONJUNCTS, MEASURED SEPARATELY 2026-09-04 against 4aaee50:
-      "every computed-geometry inline-style site enumerated"  -- ALREADY TRUE.
-      OSV1-006 enumerates all 23 and asserts the set is exact on every run.
-      "no literal colour, font, or size site remaining"       -- FALSE. 66
-      remain (OSV1-005).
-    So this condition fails on its second half only, and it closes exactly when
-    OSV1-005 does. It is rowed separately rather than folded into OSV1-005
-    because it is the Freeze Bar's own gate: the register being COMPLETE is a
-    stronger statement than the census being CURRENT, and a future reader
-    stamping FROZEN reads this row, not the census row.
+    TWO CONJUNCTS, MEASURED SEPARATELY 2026-09-05:
+      "every computed-geometry inline-style site enumerated"  -- TRUE, and it
+      was already true at seed. OSV1-006 now enumerates 8 (was 23) and asserts
+      the set is EXACT on every run.
+      "no literal colour, font, or size site remaining"       -- NOW TRUE. 66
+      inline sites -> 0, and 40 `<style>`-block declarations -> 0 (OSV1-005).
 
-    RE-READ 2026-09-04 against the DRAFT true-up #1. Freeze 6's own text is
-    UNCHANGED by the true-up and this row's quote still verifies byte-for-byte
-    -- but the word "site" in its second half reads through Core 4, and Core 4
-    was widened. So what this gate now requires is zero literal sites in BOTH
-    senses: inline `style=` attributes (66 remain) AND declarations in a
-    `<style>` block outside the token module (40 remain, all in
-    webtrust.py:256-302). The probe was extended to pin both halves
-    SEPARATELY, because the failure mode this row exists to prevent is exactly
-    the plausible one: migrating all 66 inline sites, seeing a green inline
-    census, and stamping a Freeze gate while a whole page-local stylesheet
-    still hardcodes the retired palette. Disposition unchanged (GAP); the same
-    work item (work_item_pipeline-np3) closes both halves.
+    THE WORD "site" READS THROUGH CORE 4, which the 2026-09-04 true-up widened,
+    so this gate required zero in BOTH senses: an inline `style=` attribute AND
+    a declaration in a `<style>` block outside the token module. Both are zero,
+    so the gate closes. The probe still asserts the two halves SEPARATELY, and
+    that is not redundancy: the failure mode this row exists to prevent is
+    stamping a Freeze gate on a green inline census while a page-local
+    stylesheet quietly hardcodes a palette. Reaching zero once does not retire
+    that failure mode.
+
+    ROWED SEPARATELY FROM OSV1-005 STILL, for the reason it always was: the
+    register being COMPLETE is a stronger statement than the census being
+    CURRENT, and a future reader stamping FROZEN reads this row, not the census
+    row.
 
 - id: OSV1-033
   title: Freeze 7 -- every quotation citing an in-repo file verifies against it

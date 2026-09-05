@@ -374,7 +374,7 @@ def _hero_counts(*, held: int, blocked: int, attention: int, ready: int) -> list
             value=blocked,
             href="#attention-queue",
             icon="i-octagon-x",
-            icon_color_var="--blocked",
+            icon_class="ic-blocked",
             is_blocked=True,
         ),
         WD.KpiCard(
@@ -550,7 +550,7 @@ def test_render_kpi_strip_blocked_zero_gets_quiet_class() -> None:
                 value=0,
                 href="#",
                 icon="i-octagon-x",
-                icon_color_var="--blocked",
+                icon_class="ic-blocked",
                 is_blocked=True,
             ),
             WD.KpiCard(key="resolved24h", label="Resolved 24h", value=29, href="#"),

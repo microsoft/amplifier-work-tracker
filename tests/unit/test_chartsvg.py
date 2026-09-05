@@ -16,6 +16,7 @@ import re
 import xml.etree.ElementTree as ET
 
 from amplifier_work_tracker import chartsvg as C
+from amplifier_work_tracker import webtheme as T
 
 # A raw hex/rgb colour literal -- the design-system firewall (widgets.py's
 # firewall_check) forbids this anywhere in widget-authored HTML; chartsvg's
@@ -437,13 +438,21 @@ def test_age_histogram_zero_bucket_draws_a_deliberate_stub_no_value_label() -> N
     zero_normal, nonzero, zero_watch = bars
     assert float(zero_normal.get("height", "")) == 2.0
     assert float(zero_normal.get("y", "")) == round(baseline_y - 2.0, 2)
-    assert "fill:var(--ink-quiet)" in (zero_normal.get("style") or "")
+    # The stub's fill is named ONCE, in the stylesheet -- the markup carries
+    # only what the element IS (`zero-stub`) and, for the watch band, its
+    # state. Both halves are asserted, or "it has the class" would pass with
+    # no rule behind it.
+    assert zero_normal.get("class") == "zero-stub"
+    assert zero_normal.get("data-watch") is None
+    assert ".zero-stub{fill:var(--ink-quiet)}" in T.CSS
 
     assert float(nonzero.get("height", "")) > 2.0
     assert nonzero.get("class") == "bar"
 
     assert float(zero_watch.get("height", "")) == 2.0
-    assert "fill:var(--watch)" in (zero_watch.get("style") or "")
+    assert zero_watch.get("class") == "zero-stub"
+    assert zero_watch.get("data-watch") == "1"
+    assert ".zero-stub[data-watch]{fill:var(--watch)}" in T.CSS
 
     value_labels = root.findall("text[@class='axis-label']")
     value_texts = [t.text for t in value_labels if t.text and t.text.isdigit()]

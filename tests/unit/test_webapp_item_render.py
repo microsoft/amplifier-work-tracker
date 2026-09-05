@@ -18,6 +18,7 @@ import pytest
 pytest.importorskip("fastapi", reason="the 'web' extra is not installed")
 
 from amplifier_work_tracker import adapter as A  # noqa: E402
+from amplifier_work_tracker import webtheme as T  # noqa: E402
 from amplifier_work_tracker.webapp import (  # noqa: E402
     _activity_feed_html,
     _content_block_html,
@@ -99,9 +100,14 @@ def test_content_block_html_shows_empty_message_when_text_is_empty_string():
 def test_content_block_html_renders_provided_text_with_monospace_and_measure():
     html = _content_block_html("hello world", empty_message="unused")
     assert "hello world" in html
-    assert 'class="content-block"' in html
-    assert "monospace" in html
-    assert "max-width:90ch" in html
+    assert 'class="content-block mono-measure"' in html
+    # The font stack and the ~90ch measure used to be built in Python and
+    # interpolated into an inline `style=`. They now live once in the
+    # stylesheet, so BOTH halves are asserted -- the markup carrying the class,
+    # and the class actually resolving to a monospace face and that measure.
+    rule = T.CSS.split(".content-block.mono-measure{", 1)[1].split("}", 1)[0]
+    assert "monospace" in rule
+    assert "max-width:90ch" in rule
 
 
 def test_content_block_html_renders_markdown_inside_the_block():

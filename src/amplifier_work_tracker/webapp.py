@@ -1053,25 +1053,24 @@ def _secondary_readings_html(
 
 
 _STATE_ORDER = ("ready", "held", "blocked", "deferred", "resolved")
-_STATE_FILL = {
-    "ready": "var(--st-ready)",
-    "held": "var(--amber)",  # same hue as `.state.warnv` elsewhere -- held
-    # is ATTENTION, not alarm, not good news; never a second, competing hue.
-    "blocked": "var(--crimson)",  # same hue as `.st-blkd` -- escalation.
-    "deferred": "var(--st-deferred)",
-    "resolved": "var(--st-resolved)",
-}
+# THE FILL PER STATE IS NOT DECLARED HERE ANY MORE. It used to be a dict of
+# token names interpolated into an inline `background:` -- a second place the
+# workspace bar's palette lived, and one the stylesheet could not see. It is
+# now `.sbar i.fill-*` / `.sw.fill-*` in webtheme's SINGLE_SOURCE_CSS, keyed by
+# the same `_STATE_ORDER` slot name this module already emits as a class:
+# held reuses --amber (ATTENTION, not alarm, not good news -- never a second,
+# competing hue), blocked reuses --crimson (escalation, same hue as `.st-blkd`),
+# and a zero-count slot draws `--st-empty` via `.sw.fill-empty`.
 
 # The three states that must never render as a mere hairline once they go
 # non-zero -- see `_state_bar_html`'s own comment for why the hue alone
 # (already correct: held/blocked already reuse the app's amber/crimson
-# escalation hues) is not enough on a workspace with hundreds of items.
+# escalation hues) is not enough on a workspace with hundreds of items. The
+# floor WIDTH itself (bigger than the calm seam's 3px `--st-empty`, small
+# enough it never dominates a genuinely large count -- flex-grow still wins
+# once the real proportional width exceeds it) is `.sbar i.alarm-floor` in
+# webtheme; this set is only which states get it.
 _ALARM_STATES = frozenset({"held", "blocked", "deferred"})
-# A real alarm segment's floor width -- bigger than the calm seam's 3px
-# (`--st-empty`, see webtheme.py), small enough it never dominates a
-# genuinely large count (flex-grow still wins once the real proportional
-# width would exceed this floor; this only ever WIDENS a would-be sliver).
-_ALARM_MIN_PX = 16
 
 
 def _state_counts(s: A.ProjectSummary) -> dict[str, int]:
@@ -1116,10 +1115,16 @@ def _state_bar_html(counts: dict[str, int]) -> str:
     for key in _STATE_ORDER:
         n = counts[key]
         if n > 0:
-            style = f"flex:{n} 1 0;background:{_STATE_FILL[key]}"
+            # The FILL and the alarm-state minimum width are slot facts, so
+            # they are class names resolved in the stylesheet (`.sbar i.fill-*`
+            # / `.sbar i.alarm-floor`, webtheme's SINGLE_SOURCE_CSS). Only the
+            # flex RATIO is genuinely computed per render, and it is the one
+            # thing left inline -- the registered computed-geometry exemption
+            # (ledger OSV1-006).
+            cls = f"fill-{key}"
             if key in _ALARM_STATES:
-                style += f";min-width:{_ALARM_MIN_PX}px"
-            parts.append(f'<i style="{style}"></i>')
+                cls += " alarm-floor"
+            parts.append(f'<i class="{cls}" style="flex:{n} 1 0"></i>')
         else:
             parts.append('<span class="seam"></span>')
     return f'<div class="sbar">{"".join(parts)}</div>'
@@ -1138,10 +1143,10 @@ def _state_legend_html(counts: dict[str, int]) -> str:
     items = []
     for key in _STATE_ORDER:
         n = counts[key]
-        swatch = _STATE_FILL[key] if n else "var(--st-empty)"
+        fill = f"fill-{key}" if n else "fill-empty"
         cls = "n" if n else "n z"
         items.append(
-            f'<div class="li"><span class="sw" style="background:{swatch}"></span>'
+            f'<div class="li"><span class="sw {fill}"></span>'
             f'<span class="{cls}">{n}</span><span class="l">{key}</span></div>'
         )
     return f'<div class="legend">{"".join(items)}</div>'
@@ -1648,7 +1653,10 @@ def _status_tabs_html(name: str, status: str | None, q: str, counts: dict[str, i
     return f'<nav class="tabs" aria-label="Filter items by status">{"".join(tabs)}</nav>'
 
 
-_BUCKET_HEIGHT = {"0-1": 12, "2-3": 22, "4-6": 34, "7+": 44}
+# The band -> tick-class map. The tick HEIGHT that used to sit beside it here
+# (12/22/34/44px, interpolated into every single tick's `style=`) is now
+# `.ticks .tick.t0..t3` in webtheme's SINGLE_SOURCE_CSS -- same four values,
+# declared once in the stylesheet instead of once per rendered tick.
 _BUCKET_BAND = {"0-1": "t0", "2-3": "t1", "4-6": "t2", "7+": "t3"}
 
 
@@ -1674,23 +1682,16 @@ def _heartbeat_html(buckets: dict[str, int]) -> str:
         empty_note = "Nothing is ready to be claimed anywhere."
         return (
             '<div class="beat"><span class="eyebrow">Ready queue by age</span>'
-            f'<div class="subtle" style="margin-top:14px">{empty_note}</div></div>'
+            f'<div class="subtle mt-4">{empty_note}</div></div>'
         )
-    seg_base = (
-        "flex:1 1 0;min-width:0;display:flex;align-items:flex-end;gap:2px;"
-        "overflow:hidden;padding:0 8px"
-    )
-    ax_base = (
-        "flex:1 1 0;min-width:0;display:flex;flex-direction:column;"
-        "align-items:center;gap:3px;padding:0 8px"
-    )
-    divider = ";border-left:1px solid var(--rule)"
+    # The band geometry (segment/axis-column layout, the between-band divider,
+    # every tick's height, the axis label's type) is `.hist-*` in webtheme's
+    # SINGLE_SOURCE_CSS. This function decides only WHICH band a thing is in.
     segments = []
     axis = []
     for idx, (label, lo, hi) in enumerate(A.READY_AGE_BUCKETS):
         n = buckets.get(label, 0)
         band = _BUCKET_BAND[label]
-        height = _BUCKET_HEIGHT[label]
         # readable day-range for this band -- the axis unit the old
         # "FRESHER -> OLDER" strip lacked: "0-1d", "2-3d", "4-6d", "7d+".
         if hi is None:
@@ -1699,21 +1700,14 @@ def _heartbeat_html(buckets: dict[str, int]) -> str:
             day = f"0\u2013{hi}d"
         else:
             day = f"{lo}\u2013{hi}d"
-        ticks = "".join(
-            f'<span class="tick {band}" style="height:{height}px;flex:0 0 3px"></span>'
-            for _n in range(n)
-        )
-        seg_style = seg_base + (divider if idx else "")
-        ax_style = ax_base + (divider if idx else "")
-        num_color = "var(--amber)" if (hi is None and n) else "var(--mid)"
-        segments.append(f'<span style="{seg_style}">{ticks}</span>')
+        ticks = "".join(f'<span class="tick {band}"></span>' for _n in range(n))
+        divided = " divided" if idx else ""
+        hot = " hot" if (hi is None and n) else ""
+        segments.append(f'<span class="hist-seg{divided}">{ticks}</span>')
         axis.append(
-            f'<span style="{ax_style}">'
-            '<span style="font-family:var(--sans);font-size:10px;font-weight:500;'
-            "letter-spacing:.1em;text-transform:uppercase;color:var(--dim);"
-            f'white-space:nowrap">{_esc(day)}</span>'
-            '<span style="font-family:var(--sans);font-size:14px;font-weight:500;'
-            f'line-height:1;color:{num_color}">{n}</span></span>'
+            f'<span class="hist-ax{divided}">'
+            f'<span class="hist-day">{_esc(day)}</span>'
+            f'<span class="hist-num{hot}">{n}</span></span>'
         )
     fresh = buckets.get("0-1", 0)
     stale = buckets.get("7+", 0)
@@ -1739,7 +1733,7 @@ def _heartbeat_html(buckets: dict[str, int]) -> str:
     {legend}
   </div>
   <div class="ticks" role="img" aria-label="{aria}">{"".join(segments)}</div>
-  <div style="display:flex;margin-top:8px">{"".join(axis)}</div>
+  <div class="hist-axis">{"".join(axis)}</div>
 </div>"""
 
 
@@ -2075,17 +2069,18 @@ def _dashboard_row(s: A.ProjectSummary) -> str:
         # 5 of 10 attempts against a healthy project. Amber "Unavailable"
         # says the true thing: unknown, not bad.
         unavailable = A.is_unavailable_status(st)
+        # The accent and its tint always travel together, so they are ONE
+        # class (`tr.attn-row` / `tr.attn-row.is-blocked`, webtheme's
+        # SINGLE_SOURCE_CSS) rather than two strings a caller could pair
+        # wrongly -- and the pair is declared where every other status hue is.
         if creating:
-            kind, word, accent = "warn", "Provisioning", "var(--amber)"
-            tint = "var(--alarm-surface)"
+            kind, word, tone = "warn", "Provisioning", ""
             detail = "Being created \u2014 counts appear once its database is ready."
         elif unavailable:
-            kind, word, accent = "warn", "Unavailable", "var(--amber)"
-            tint = "var(--alarm-surface)"
+            kind, word, tone = "warn", "Unavailable", ""
             detail = st  # "UNAVAILABLE: ..." (already truncated by the adapter)
         else:
-            kind, word, accent = "bad", "Broken", "var(--crimson)"
-            tint = "var(--blocked-surface)"
+            kind, word, tone = "bad", "Broken", " is-blocked"
             detail = st  # e.g. "ERROR: ..." (already truncated by the adapter)
         # keep the reading width sane: one legible line, full text on hover
         shown = detail if len(detail) <= 120 else detail[:119] + "\u2026"
@@ -2096,9 +2091,8 @@ def _dashboard_row(s: A.ProjectSummary) -> str:
         else:
             state_word = "broken"
         key = f"{s.name} {state_word} {st}".lower()
-        row_style = f"background:{tint};box-shadow:inset 4px 0 0 {accent}"
         return (
-            f'<tr class="alarm" data-t="{_esc(key)}" style="{row_style}">'
+            f'<tr class="alarm attn-row{tone}" data-t="{_esc(key)}">'
             f'<td class="link-cell"><a href="/projects/{_esc(s.name)}">{_esc(s.name)}</a></td>'
             f'<td colspan="5"><span class="c">{T.state_html(kind, word)} '
             f'<span class="muted" title="{_esc(st)}" style="overflow-wrap:anywhere">'
@@ -2135,18 +2129,16 @@ def _dashboard_row(s: A.ProjectSummary) -> str:
     # (.12 alpha), since "this queue has a stuck item" is real attention,
     # not "this queue's backend cannot be read."
     alarm_active = bool(counts["held"] or counts["blocked"] or counts["deferred"])
-    row_style = ""
+    row_cls = ""
     if alarm_active:
-        accent = "var(--crimson)" if counts["blocked"] else "var(--amber)"
-        tint = "var(--blocked-surface)" if counts["blocked"] else "var(--alarm-surface)"
-        row_style = f' style="background:{tint};box-shadow:inset 4px 0 0 {accent}"'
+        row_cls = ' class="attn-row is-blocked"' if counts["blocked"] else ' class="attn-row"'
 
     key_bits = [s.name]
     key_bits += [state for state in ("held", "blocked", "deferred") if counts[state]]
     if not alarm_active:
         key_bits.append("healthy")
     key = " ".join(key_bits).lower()
-    return f"""<tr data-t="{_esc(key)}"{row_style}>
+    return f"""<tr data-t="{_esc(key)}"{row_cls}>
   <td class="link-cell"><a href="/projects/{_esc(s.name)}">{_esc(s.name)}</a></td>
   <td class="mb">{mini_bar}</td>
   <td class="r"><span class="c r"><span class="n">{total}</span></span></td>
@@ -2252,19 +2244,18 @@ def _project_hero_html(name: str, summary: A.ProjectSummary, oldest_item: A.Item
         st = summary.status
         creating = st.lower().startswith(("creating", "provisioning"))
         if creating:
-            label, accent, tint = "Provisioning", "var(--amber)", "var(--alarm-surface)"
+            label, tone = "Provisioning", ""
             body = (
                 "This project is still being created. Its counts appear once its database is ready."
             )
         else:
-            label, accent, tint = "Unavailable", "var(--crimson)", "var(--blocked-surface)"
+            label, tone = "Unavailable", " is-broken"
             body = st
         return (
             '<div class="hero alarm" style="display:block">'
-            f'<div style="border-left:4px solid {accent};background:{tint};'
-            'padding:20px 24px;max-width:640px">'
-            f'<span class="eyebrow" style="color:{accent}">{label}</span>'
-            '<div class="subtle" style="margin-top:12px;overflow-wrap:anywhere">'
+            f'<div class="hero-alarm{tone}">'
+            f'<span class="eyebrow">{label}</span>'
+            '<div class="subtle mt-3" style="overflow-wrap:anywhere">'
             f"{_esc(body)}</div></div></div>"
         )
     age = summary.oldest_unclaimed_age_seconds
@@ -2285,18 +2276,17 @@ def _project_hero_html(name: str, summary: A.ProjectSummary, oldest_item: A.Item
             )
             item_href = f"/projects/{_esc(name)}/items/{_esc(oldest_item.id)}"
             said = (
-                '<div class="said" style="max-width:560px">'
-                # `.who` is an unstyled div, so name and id butted together
-                # ("cortex" + "cortex-i2u" -> "cortexcortex-i2u"). Lay it out
-                # as a baseline flex row with a real gap, and give the id the
-                # same dim secondary treatment the hero attribution uses.
-                '<div class="who" style="display:flex;gap:8px;align-items:baseline;'
-                f'flex-wrap:wrap">{_esc(name)}'
-                '<span class="id" style="color:var(--dim);font-weight:400;'
-                f'letter-spacing:.04em">{_esc(oldest_item.id)}</span></div>'
-                f'<a class="what" href="{item_href}" style="display:inline-block;'
-                f'max-width:100%;overflow-wrap:anywhere">{_esc(oldest_item.title)}</a>'
-                '<div class="subtle" style="margin-top:8px">'
+                '<div class="said u-measure-sm">'
+                # `.who` used to be an unstyled div, so name and id butted
+                # together ("cortex" + "cortex-i2u" -> "cortexcortex-i2u").
+                # It is now a baseline flex row with a real gap, and the id
+                # gets the same dim secondary treatment the hero attribution
+                # uses -- `.said .who` / `.said .who .id` in webtheme's
+                # SINGLE_SOURCE_CSS, not an inline style repeated per render.
+                f'<div class="who">{_esc(name)}'
+                f'<span class="id">{_esc(oldest_item.id)}</span></div>'
+                f'<a class="what" href="{item_href}">{_esc(oldest_item.title)}</a>'
+                '<div class="subtle mt-2">'
                 f"Unclaimed since {_esc(since)}, no holder</div></div>"
             )
         else:
@@ -2310,7 +2300,7 @@ def _project_hero_html(name: str, summary: A.ProjectSummary, oldest_item: A.Item
         <span class="k">Resolved</span></div>
       <div class="tally"><div class="v">{summary.held}</div><span class="k">Held</span></div>
     </div>"""
-    throughput = f"""<div class="grp" style="margin-top:22px">
+    throughput = f"""<div class="grp mt-6">
       <span class="glbl">Throughput</span>
       <div class="stat"><span class="v">{summary.resolved_24h}</span>
         <span class="k">Resolved &middot; 24h</span></div>
@@ -2327,7 +2317,7 @@ def _project_hero_html(name: str, summary: A.ProjectSummary, oldest_item: A.Item
     <div class="figrow">{fig}</div>
     {said}
   </div>
-  <div class="beat" style="min-width:260px;flex:1 1 260px">
+  <div class="beat grow">
     <div class="bhead">{beat_head}</div>
     {tallies}
     {throughput}
@@ -2568,8 +2558,7 @@ def _content_block_html(text: str | None, *, empty_message: str) -> str:
     if not text:
         return f'<div class="content-block"><span class="muted">{_esc(empty_message)}</span></div>'
     rendered = _render_item_markdown(text)
-    style = f"font-family:{_CONTENT_MONO_STACK};max-width:90ch"
-    return f'<div class="content-block" style="{style}">{rendered}</div>'
+    return f'<div class="content-block mono-measure">{rendered}</div>'
 
 
 def _fact_value_html(value: str) -> str:
@@ -2725,7 +2714,7 @@ def _blocked_by_list_html(name: str, links: list[dict]) -> str:
     if not banners:
         return ""
     return (
-        '<h2 class="eyebrow am" style="display:block;margin-top:30px">Blocked by</h2>'
+        '<h2 class="eyebrow am section-head">Blocked by</h2>'
         f'<div class="blocker-chain">{banners}</div>'
     )
 
@@ -2747,8 +2736,7 @@ def _cheap_ref_list_html(name: str, heading: str, links: list[dict]) -> str:
     if not rows:
         return ""
     return (
-        f'<h2 class="eyebrow" style="display:block;margin-top:30px">{_esc(heading)}</h2>'
-        f'<ul class="links-list">{rows}</ul>'
+        f'<h2 class="eyebrow section-head">{_esc(heading)}</h2><ul class="links-list">{rows}</ul>'
     )
 
 
@@ -2760,7 +2748,7 @@ def _discovered_note_html(name: str, links: list[dict], *, label: str) -> str:
     refs = [r for r in refs if r]
     if not refs:
         return ""
-    return f'<p class="muted" style="margin-top:10px">{_esc(label)} {", ".join(refs)}</p>'
+    return f'<p class="muted mt-3">{_esc(label)} {", ".join(refs)}</p>'
 
 
 def _link_chip_html(name: str, link: dict) -> str:
@@ -3005,7 +2993,7 @@ def _tls_status_html(request: Request) -> str:
         return (
             '<div class="formsec">'
             '<span class="flegend">TLS status</span>'
-            '<p class="subtle" style="margin-top:10px">Serving over '
+            '<p class="subtle mt-3">Serving over '
             '<b style="color:var(--ink)">HTTP</b> &mdash; not a secure origin. Installing this '
             "dashboard as an app (&ldquo;Add to Home Screen&rdquo;) needs HTTPS. Pick a method "
             "below, generate a certificate, then restart the service to serve it.</p>"
@@ -3034,7 +3022,7 @@ def _tls_status_html(request: Request) -> str:
         ""
         if scheme == "https"
         else (
-            '<p class="subtle" style="color:var(--amber);margin-top:8px">A certificate exists '
+            '<p class="subtle u-alarm mt-2">A certificate exists '
             "on disk, but this server is currently serving plain HTTP &mdash; a running server "
             "cannot hot-swap its own TLS material. Restart the service to pick it up.</p>"
         )
@@ -3047,12 +3035,12 @@ def _tls_status_html(request: Request) -> str:
     return f"""
     <div class="formsec">
       <span class="flegend">TLS status</span>
-      <div class="kv" style="margin-top:10px">
+      <div class="kv mt-3">
         <div><span class="k">Scheme</span>{scheme_html}</div>
         <div><span class="k">Issuer</span><span class="v">{issuer_label}</span></div>
         <div><span class="k">Expires</span>{expires_html}</div>
       </div>
-      <p class="subtle" style="margin-top:10px">Covers <span class="mono">{hostnames_str}</span></p>
+      <p class="subtle mt-3">Covers <span class="mono">{hostnames_str}</span></p>
       {stale_note}
     </div>
     """
@@ -3096,21 +3084,16 @@ def _setup_method_row(
         if disabled
         else '<button type="submit" class="secondary">Generate</button>'
     )
-    badge = (
-        ' <span style="color:var(--amber);font-weight:700;text-transform:none;'
-        'letter-spacing:normal">&bull; Recommended</span>'
-        if recommended
-        else ""
-    )
+    badge = ' <span class="rec-badge">&bull; Recommended</span>' if recommended else ""
     return f"""
     <div class="formsec">
       <span class="flegend">{_esc(title)}{badge}</span>
-      <p class="subtle" style="margin-top:8px">{description}</p>
-      <p class="subtle" style="margin-top:6px">
+      <p class="subtle mt-2">{description}</p>
+      <p class="subtle mt-2">
         <b style="color:var(--ink)">When to pick this:</b> {when_to_pick}</p>
-      <p class="subtle" style="margin-top:6px">{availability_html}</p>
-      <p class="subtle" style="margin-top:8px">CLI equivalent: <code>{_esc(command)}</code></p>
-      <form method="post" action="/setup/tls" style="margin-top:10px">
+      <p class="subtle mt-2">{availability_html}</p>
+      <p class="subtle mt-2">CLI equivalent: <code>{_esc(command)}</code></p>
+      <form method="post" action="/setup/tls" class="mt-3">
         <input type="hidden" name="method" value="{_esc(method)}">
         {btn}
       </form>
@@ -3158,8 +3141,7 @@ def _setup_friction_spectrum_html(*, recommended: str) -> str:
 
     def _mark(method: str) -> str:
         return (
-            ' <span style="color:var(--amber);font-weight:700">&mdash; recommended for '
-            "personal use</span>"
+            ' <span class="rec-mark">&mdash; recommended for personal use</span>'
             if recommended == method
             else ""
         )
@@ -3167,20 +3149,20 @@ def _setup_friction_spectrum_html(*, recommended: str) -> str:
     return f"""
     <div class="formsec">
       <span class="flegend">Which method fits how you reach this server?</span>
-      <p class="subtle" style="margin-top:8px">A publicly-trusted certificate can only be
+      <p class="subtle mt-2">A publicly-trusted certificate can only be
         issued for a name a public certificate authority can verify &mdash; never a bare LAN
         IP or a private hostname. That is a hard constraint, not a preference, and it is what
         decides the right method below:</p>
-      <p class="subtle" style="margin-top:12px">
+      <p class="subtle mt-3">
         <b style="color:var(--ink)">Tailscale name</b>{_mark("tailscale")} &mdash;
         browser-trusted, zero install, works from any device already on your tailnet. Covers
         only the tailnet name, never the bare LAN IP.</p>
-      <p class="subtle" style="margin-top:8px">
+      <p class="subtle mt-2">
         <b style="color:var(--ink)">Local CA</b>{_mark("ca")} &mdash; covers the LAN IP,
         hostname, and tailnet name together, but needs a one-time CA install per device
         &mdash; painless via the <span class="mono">/trust</span> page (see below once one is
         configured).</p>
-      <p class="subtle" style="margin-top:8px">
+      <p class="subtle mt-2">
         <b style="color:var(--ink)">Self-signed</b> &mdash; works anywhere, on any device,
         with a browser warning every single visit. Best for a quick check, not a device
         you'll return to.</p>
@@ -3339,28 +3321,28 @@ def _setup_ca_download_html(request: Request) -> str:
     return f"""
     <div class="formsec">
       <span class="flegend">Install the local CA</span>
-      <p class="subtle" style="margin-top:8px">A local CA is configured on this host. Install it
+      <p class="subtle mt-2">A local CA is configured on this host. Install it
         once on each client device to eliminate the browser warning for the Local CA certificate
         above. The leaf certificate rotates yearly without re-trusting anything -- the CA is the
         one thing you install.</p>
-      <p class="subtle" style="margin-top:12px"><b style="color:var(--ink)">Adding a new
+      <p class="subtle mt-3"><b style="color:var(--ink)">Adding a new
         device?</b> Skip the manual steps below &mdash; open <code>{_esc(trust_url)}</code> on
         that device and follow its guided install.{trust_caveat} It needs no login and no
         browser warning to reach; everything else on that port simply redirects here.</p>
-      <p style="margin-top:10px"><a class="btn secondary" href="/setup/ca.crt">Download CA
+      <p class="mt-3"><a class="btn secondary" href="/setup/ca.crt">Download CA
         certificate</a></p>
-      <p class="subtle" style="margin-top:16px">
+      <p class="subtle mt-4">
         <b style="color:var(--ink)">Windows</b> (PowerShell, no admin needed):</p>
       <p class="subtle"><code>Import-Certificate -FilePath &lt;path-to-ca.crt&gt;
         -CertStoreLocation Cert:\\CurrentUser\\Root</code></p>
-      <p class="subtle" style="margin-top:12px"><b style="color:var(--ink)">macOS</b>:</p>
+      <p class="subtle mt-3"><b style="color:var(--ink)">macOS</b>:</p>
       <p class="subtle"><code>sudo security add-trusted-cert -d -r trustRoot -k
         /Library/Keychains/System.keychain &lt;path-to-ca.crt&gt;</code></p>
-      <p class="subtle" style="margin-top:12px">
+      <p class="subtle mt-3">
         <b style="color:var(--ink)">Linux</b> (system-wide):</p>
       <p class="subtle"><code>sudo cp &lt;path-to-ca.crt&gt;
         /usr/local/share/ca-certificates/ &amp;&amp; sudo update-ca-certificates</code></p>
-      <p class="subtle" style="margin-top:12px"><b style="color:var(--ink)">iOS</b>: open the
+      <p class="subtle mt-3"><b style="color:var(--ink)">iOS</b>: open the
         downloaded file to install the profile, then enable full trust for it under
         Settings &rsaquo; General &rsaquo; About &rsaquo; Certificate Trust Settings.</p>
     </div>
@@ -3368,12 +3350,9 @@ def _setup_ca_download_html(request: Request) -> str:
 
 
 def _setup_body(request: Request) -> str:
-    heading_style = (
-        "font-family:var(--sans);font-size:24px;font-weight:500;color:var(--ink);margin:20px 0 4px"
-    )
     return f"""
     {_flash(request)}
-    <h1 style="{heading_style}">Setup</h1>
+    <h1 class="page-h1">Setup</h1>
     <p class="subtle">TLS/HTTPS configuration for this deployment.</p>
     {_tls_status_html(request)}
     {_setup_method_options_html()}
@@ -4241,7 +4220,7 @@ def create_app(
             '<div class="flash flash-error" role="alert">'
             f"Heads up &mdash; {len(pairs)} {noun} not healthy and must not be "
             "read as an empty queue:"
-            f'<ul style="margin:8px 0 0;padding-left:22px">{rows}</ul>'
+            f'<ul class="flash-list">{rows}</ul>'
             "</div>"
         )
 
@@ -4413,15 +4392,11 @@ def create_app(
             else '<input type="hidden" name="username" value="operator">'
         )
         error_html = f'<div class="flash flash-error">{_esc(error)}</div>' if error else ""
-        heading_style = (
-            "font-family:var(--sans);font-size:24px;font-weight:500;"
-            "color:var(--ink);margin:20px 0 4px"
-        )
         body = f"""
-        <h1 style="{heading_style}">Sign in</h1>
+        <h1 class="page-h1">Sign in</h1>
         <p class="subtle">{mode_hint}</p>
         {error_html}
-        <form method="post" action="/login" style="max-width:340px;margin-top:16px">
+        <form method="post" action="/login" class="form-narrow mt-4">
           <input type="hidden" name="next" value="{_esc(next_value)}">
           {username_field}
           <label for="password">Password</label>
@@ -4644,7 +4619,7 @@ def create_app(
                 value=blocked_total,
                 href="#attention-queue",
                 icon="i-octagon-x",
-                icon_color_var="--blocked",
+                icon_class="ic-blocked",
                 is_blocked=True,
             ),
             WD.KpiCard(
@@ -4927,23 +4902,19 @@ def create_app(
 
     @app.get("/projects/{name}/remove", response_class=HTMLResponse)
     async def remove_confirm(request: Request, name: str):  # type: ignore[no-untyped-def]
-        remove_heading_style = (
-            "font-family:var(--sans);font-size:24px;font-weight:500;"
-            "color:var(--ink);margin:20px 0 14px"
-        )
         body = f"""
         {_flash(request)}
-        <h1 style="{remove_heading_style}">Remove project '{_esc(name)}'</h1>
-        <p class="subtle" style="max-width:640px">This permanently deletes the project's local
+        <h1 class="page-h1 roomy">Remove project '{_esc(name)}'</h1>
+        <p class="subtle u-measure">This permanently deletes the project's local
           directory AND its shared-server database. It is refused if any item is currently
           <strong style="color:var(--ink)">held</strong>. This cannot be undone.</p>
-        <form method="post" action="/projects/{_esc(name)}/remove" style="margin-top:18px">
+        <form method="post" action="/projects/{_esc(name)}/remove" class="mt-5">
           <label for="confirm_name">Type the project name
             (<code>{_esc(name)}</code>) to confirm</label>
           <input type="text" id="confirm_name" name="confirm_name" required autocomplete="off">
           <button type="submit" class="danger">Permanently remove</button>
         </form>
-        <p style="margin-top:14px">
+        <p class="mt-4">
           <a href="/projects/{_esc(name)}">&laquo; cancel, back to project</a></p>
         """
         return _page(

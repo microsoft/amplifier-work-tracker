@@ -252,6 +252,13 @@ def velocity_chart(
         bh = _bar_height(day["resolved"])
         by = round(baseline_y - bh, 2)
         bx = round(cx - bar_width / 2, 2)
+        # STATE RIDES A DATA ATTRIBUTE, NOT THE CLASS. `class` here names what
+        # the element IS (bar / val-label / axis-label / zero-stub) and the
+        # chart's structure tests read it as exactly that; "which day is today"
+        # and "is this the watch band" are state, so they are data attributes
+        # the stylesheet selects on (`.val-label[data-today]`, webtheme's
+        # SINGLE_SOURCE_CSS). No fill is named in this file.
+        today_attr = ' data-today="1"' if is_today else ""
         bar_style = ' style="fill:var(--brand-cyan-ink)"' if is_today else ""
         bars.append(
             f'<rect class="bar" x="{bx}" y="{by}" width="{bar_width}" height="{bh}" rx="3"'
@@ -262,16 +269,15 @@ def velocity_chart(
             # --ink-quiet -> --ink-tertiary (visual-polish punchlist item
             # 1): an in-chart value label is functional data-ink, not
             # decoration.
-            val_color = "var(--brand-cyan-ink)" if is_today else "var(--ink-tertiary)"
             val_labels.append(
-                f'<text class="val-label" x="{cx}" y="{round(by - 6, 2)}" text-anchor="middle" '
-                f'style="fill:{val_color}">{int(day["resolved"])}</text>'
+                f'<text class="val-label"{today_attr} x="{cx}" y="{round(by - 6, 2)}" '
+                f'text-anchor="middle">{int(day["resolved"])}</text>'
             )
 
-        axis_style = ' style="fill:var(--brand-cyan-ink);font-weight:600"' if is_today else ""
         axis_labels.append(
-            f'<text class="axis-label" x="{cx}" y="{round(baseline_y + 18, 2)}" '
-            f'text-anchor="middle"{axis_style}>{_esc(day["label"])}</text>'
+            f'<text class="axis-label"{today_attr} x="{cx}" '
+            f'y="{round(baseline_y + 18, 2)}" '
+            f'text-anchor="middle">{_esc(day["label"])}</text>'
         )
 
         if not is_all_zero:
@@ -455,15 +461,16 @@ def age_histogram(
         bx = round(cx - bar_width / 2, 2)
         is_watch = bucket["is_watch"]
         count = bucket["count"]
+        # See `velocity_chart` above: `class` is WHAT the element is, state
+        # rides a data attribute the stylesheet selects on.
+        watch_attr = ' data-watch="1"' if is_watch else ""
 
         if count <= 0:
             by = round(baseline_y - zero_stub_height, 2)
-            stub_style = "fill:var(--watch)" if is_watch else "fill:var(--ink-quiet)"
             bars.append(
-                f'<rect x="{bx}" y="{by}" width="{bar_width}" height="{zero_stub_height}" '
-                f'rx="1" style="{stub_style}"/>'
+                f'<rect class="zero-stub"{watch_attr} x="{bx}" y="{by}" '
+                f'width="{bar_width}" height="{zero_stub_height}" rx="1"/>'
             )
-            label_style = ' style="fill:var(--watch)"' if is_watch else ""
         else:
             bh = round((count / max_count) * max_bar_height, 2)
             by = round(baseline_y - bh, 2)
@@ -473,24 +480,21 @@ def age_histogram(
                     f'<rect x="{bx}" y="{by}" width="{bar_width}" height="{bh}" rx="3" '
                     'style="fill:var(--watch)"/>'
                 )
-                value_style = "fill:var(--watch);font-weight:600"
-                label_style = ' style="fill:var(--watch)"'
             else:
                 bars.append(
                     f'<rect class="bar" x="{bx}" y="{by}" width="{bar_width}" height="{bh}" '
                     'rx="3"/>'
                 )
-                value_style = "fill:var(--ink-primary);font-weight:600"
-                label_style = ""
 
             value_labels.append(
-                f'<text class="axis-label" x="{cx}" y="{round(by - 4, 2)}" text-anchor="middle" '
-                f'style="{value_style}">{int(count)}</text>'
+                f'<text class="axis-label" data-val="1"{watch_attr} x="{cx}" '
+                f'y="{round(by - 4, 2)}" text-anchor="middle">{int(count)}</text>'
             )
 
         axis_labels.append(
-            f'<text class="axis-label" x="{cx}" y="{round(baseline_y + 16, 2)}" '
-            f'text-anchor="middle"{label_style}>{_esc(bucket["label"])}</text>'
+            f'<text class="axis-label"{watch_attr} x="{cx}" '
+            f'y="{round(baseline_y + 16, 2)}" text-anchor="middle">'
+            f"{_esc(bucket['label'])}</text>"
         )
 
     return (
