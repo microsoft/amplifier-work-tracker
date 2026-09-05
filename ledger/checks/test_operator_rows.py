@@ -41,12 +41,14 @@ required to sit on a cadence. It is never a place to put work.
 
 from __future__ import annotations
 
+import ast
 import re
 
 from ._support import (
     CHARTSVG,
     LITERAL,
     OPERATOR_CONTRACT_PATH,
+    PINNING_DISPOSITIONS,
     PYPROJECT,
     REPO_ROOT,
     SUPERVISOR,
@@ -90,6 +92,66 @@ CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 def _exists(rel: str) -> bool:
     return (REPO_ROOT / rel).exists()
+
+
+# ---------------------------------------------------------------------------
+# Reading the Tier-A conformance kit.
+#
+# Several rows below are about the KIT rather than about `src/` -- whether the
+# check the contract names is implemented, whether it ships a bad half, and
+# whether its good half is still DEFERRED against an open row. All three go
+# through `read()` so the mutation harness's reader injection reaches them.
+# ---------------------------------------------------------------------------
+
+
+def _kit_source() -> str:
+    return read(REPO_ROOT / TIER_A_KIT)
+
+
+def _kit_defs(kit: str) -> frozenset[str]:
+    return frozenset(
+        n.name
+        for n in ast.walk(ast.parse(kit))
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+    )
+
+
+def _kit_bad_halves(kit: str, good: str) -> list[str]:
+    """The bad-half tests paired with a check's good half, by name."""
+    return sorted(n for n in _kit_defs(kit) if n.startswith(f"{good}_bad_half_"))
+
+
+def _kit_deferred_rows(kit: str, test_name: str) -> frozenset[str]:
+    """Row ids named in `test_name`'s `xfail` reason -- empty if not deferred.
+
+    A kit test marked `xfail(strict=True)` is a check that RUNS and currently
+    FAILS, with the ledger row that owns the failure named in its reason. That
+    marker is what a red Conformance row pins: when the product fix lands the
+    test XPASSes, the run fails, and the marker and the row move together.
+    """
+    for node in ast.walk(ast.parse(kit)):
+        if not isinstance(node, ast.FunctionDef) or node.name != test_name:
+            continue
+        for dec in node.decorator_list:
+            if not isinstance(dec, ast.Call):
+                continue
+            if not ast.unparse(dec.func).endswith("xfail"):
+                continue
+            for kw in dec.keywords:
+                if kw.arg == "reason" and isinstance(kw.value, ast.Constant):
+                    return frozenset(re.findall(r"OSV1-\d{3}", str(kw.value.value)))
+            return frozenset()
+    return frozenset()
+
+
+def _widgets_function(name: str) -> str:
+    """One function's source out of `widgets.py`, via the patched reader."""
+    src = read(WIDGETS)
+    lines = src.splitlines()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return "\n".join(lines[node.lineno - 1 : (node.end_lineno or node.lineno)])
+    raise AssertionError(f"widgets.py no longer defines {name!r}")
 
 
 def _repo_mentions(needle: str) -> bool:
@@ -259,12 +321,28 @@ def test_row_osv1_003() -> None:
 
 
 def test_row_osv1_004() -> None:
-    """Core 3 GAP pin: no rendered-fixture kit, and the chip vocabulary that
-    the kit will check is still the five-word map measured at seed.
+    """Core 3 CONFORMS: the rendered check exists, is not deferred, and the
+    chip vocabulary it walks still gives every status a WORD.
+
+    This row rests on the kit's real result over rendered L0/L1/L2 (recorded
+    in the row itself), which no in-process probe can re-run. So this probe
+    asserts the two things that CAN still be seen going wrong from here: the
+    check disappearing or being deferred, and a status losing its word in the
+    map the check walks.
     """
-    assert not _exists(TIER_A_KIT), (
-        f"OSV1-004 (Core 3): {TIER_A_KIT} now exists -- re-derive this row from the "
-        f"kit's real result over rendered L0/L1/L2 fixtures (work_item_pipeline-c1a)."
+    assert _exists(TIER_A_KIT), (
+        f"OSV1-004 (Core 3) REGRESSION: {TIER_A_KIT} is gone. Core 3's check is Tier "
+        f"A and scoped to RENDERED fixtures -- without the kit nothing asserts it, and "
+        f"this row has no basis to be green."
+    )
+    kit = _kit_source()
+    assert {"check_state_not_colour_only", "test_state_not_colour_only"} <= _kit_defs(kit), (
+        "OSV1-004 (Core 3) REGRESSION: the kit no longer implements "
+        "`state.not_colour_only` over rendered pages."
+    )
+    assert not _kit_deferred_rows(kit, "test_state_not_colour_only"), (
+        "OSV1-004 (Core 3) REGRESSION: the rendered Core 3 check is now marked xfail. "
+        "This row is CONFORMS because the check PASSES; a deferred check is a red row."
     )
     browse = read(WEBBROWSE)
     labels = set(re.findall(r'"(?:open|held|blocked|deferred|resolved)":\s*"([A-Z]+)"', browse))
@@ -366,15 +444,15 @@ def test_row_osv1_005() -> None:
 # --------------------------------------------------------------- OSV1-006
 
 
-def test_row_osv1_006() -> None:
-    """Core 4 CONFORMS: computed-geometry sites are EXACTLY the register.
-
-    This is the exemption register itself (Phase-1 ruling Need 2 put it in
-    `ledger/` so shrinking it needs no amendment). Shrinking passes only after
-    the register below is shrunk to match; GROWING fails immediately, which is
-    the direction that matters.
-    """
-    register = {
+#: THE exemption register Core 4 names -- "The register lives in `ledger/`, not
+#: in this contract, so that shrinking it is a convergent change requiring no
+#: amendment." Module-level rather than local to `test_row_osv1_006` below so
+#: that the Tier-A conformance kit
+#: (`tests/conformance/operator_surface/test_tier_a.py`, Conformance 6) reads
+#: THIS register rather than growing a second copy: OSV1-025's own notes name
+#: that as the failure to avoid, because two censuses disagree silently.
+EXEMPTION_REGISTER: frozenset[str] = frozenset(
+    {
         "chartsvg.py:268",
         "chartsvg.py:464",
         "chartsvg.py:488",
@@ -399,6 +477,18 @@ def test_row_osv1_006() -> None:
         "widgets.py:834",
         "widgets.py:1110",
     }
+)
+
+
+def test_row_osv1_006() -> None:
+    """Core 4 CONFORMS: computed-geometry sites are EXACTLY the register.
+
+    This is the exemption register itself (Phase-1 ruling Need 2 put it in
+    `ledger/` so shrinking it needs no amendment). Shrinking passes only after
+    `EXEMPTION_REGISTER` above is shrunk to match; GROWING fails immediately,
+    which is the direction that matters.
+    """
+    register = EXEMPTION_REGISTER
     observed = set(style_sites_in("COMPUTED"))
     unregistered = observed - register
     assert not unregistered, (
@@ -587,13 +677,32 @@ def test_row_osv1_011() -> None:
 
 
 def test_row_osv1_012() -> None:
-    """Core 8 GAP pin: no two-render kit, and the empty sentences measured at
-    seed are still the ones the kit will look for.
+    """Core 8 VIOLATION pin: two widget renderers still have no empty branch,
+    and the kit's two `calm.keeps_slot` halves are still deferred against this
+    row.
+
+    Pinned on the RENDERERS rather than on a rendered page, because that is
+    what an in-process probe can see: `render_attention_queue` and
+    `render_agents_panel` return their container unconditionally, so an empty
+    one is a slot with nothing in it. Giving either an empty branch flips this
+    pin -- which is the fix landing.
     """
-    assert not _exists(TIER_A_KIT), (
-        f"OSV1-012 (Core 8): {TIER_A_KIT} now exists -- re-derive this row from a real "
-        f"empty-vs-populated render comparison (work_item_pipeline-c1a)."
-    )
+    for func in ("render_attention_queue", "render_agents_panel"):
+        body = _widgets_function(func)
+        assert "if not data[" not in body, (
+            f"OSV1-012 (Core 8) PIN BROKE THE RIGHT WAY: `{func}` now has an empty "
+            f"branch. If it emits the empty SENTENCE Core 8 requires, re-run the "
+            f"Tier-A kit's `calm.keeps_slot` halves, flip OSV1-012 to CONFORMS, delete "
+            f"their xfail markers and retarget this probe -- all in the same change "
+            f"(work_item_pipeline-c1a)."
+        )
+    kit = _kit_source()
+    for test_name in ("test_calm_keeps_slot", "test_calm_keeps_slot_l1"):
+        assert "OSV1-012" in _kit_deferred_rows(kit, test_name), (
+            f"OSV1-012 (Core 8) PIN BROKE THE RIGHT WAY: the kit's `{test_name}` is no "
+            f"longer deferred against this row. A passing good half is the fix -- flip "
+            f"the row in the same change."
+        )
     assert contains(WIDGETS, '"All clear"'), (
         "OSV1-012 (Core 8): the calm headline 'All clear' is gone. Calm must stay "
         "STATED -- and must not become a triumphant zero."
@@ -829,12 +938,22 @@ def test_row_osv1_020() -> None:
 
 
 def test_row_osv1_021() -> None:
-    """Conformance 2 pin: NEITHER named kit exists (this fixture spans tiers)."""
-    assert not _exists(TIER_A_KIT) and not _exists(TIER_B_KIT), (
-        "OSV1-021 (Conformance 2): a named kit path appeared. This is the one fixture "
-        "that spans BOTH tiers -- it goes green only when the Tier-A accessible-name "
-        "half (work_item_pipeline-c1a) AND the Tier-B hue half "
-        "(work_item_pipeline-qgo) both land and both discriminate."
+    """Conformance 2 pin: the Tier-A half landed; the Tier-B hue half has not,
+    and that absence is what keeps this row red."""
+    assert not _exists(TIER_B_KIT), (
+        f"OSV1-021 (Conformance 2): {TIER_B_KIT} now exists. This is the one fixture "
+        f"that spans BOTH tiers -- the Tier-A accessible-name half already landed "
+        f"(work_item_pipeline-c1a, measured in OSV1-004); re-derive this row from the "
+        f"Tier-B hue half's own demonstrated pair (work_item_pipeline-qgo)."
+    )
+    kit = _kit_source()
+    assert "check_state_not_colour_only" in _kit_defs(kit), (
+        "OSV1-021 (Conformance 2): the Tier-A half is gone from the kit. This row is "
+        "red on the Tier-B half ONLY -- losing the Tier-A half is a second, new defect."
+    )
+    assert _kit_bad_halves(kit, "test_state_not_colour_only"), (
+        "OSV1-021 (Conformance 2): the Tier-A half no longer ships a bad half. A "
+        "fixture whose bad half nobody runs is a claim, not a fixture (Freeze 4)."
     )
     assert contains(
         OPERATOR_CONTRACT_PATH, "fixture whose status chips carry only a status class"
@@ -871,10 +990,27 @@ def test_row_osv1_023() -> None:
 
 
 def test_row_osv1_024() -> None:
-    """Conformance 5 pin: no Tier-A kit, so hero composition is unasserted."""
-    assert not _exists(TIER_A_KIT), (
-        f"OSV1-024 (Conformance 5): {TIER_A_KIT} now exists -- re-derive from the "
-        f"demonstrated good/bad pair (work_item_pipeline-c1a)."
+    """Conformance 5 pin: the fixture exists and discriminates, and its GOOD
+    half is still deferred against OSV1-001."""
+    kit = _kit_source()
+    assert "check_hero_velocity_and_counts" in _kit_defs(kit), (
+        f"OSV1-024 (Conformance 5): {TIER_A_KIT} no longer implements "
+        f"`hero.velocity_and_counts` at the location the contract names."
+    )
+    assert _kit_bad_halves(kit, "test_hero_velocity_and_counts"), (
+        "OSV1-024 (Conformance 5): the fixture no longer ships a bad half -- a fixture "
+        "that cannot be watched failing is a claim (Freeze 4)."
+    )
+    assert "OSV1-001" in _kit_deferred_rows(kit, "test_hero_velocity_and_counts"), (
+        "OSV1-024 (Conformance 5) PIN BROKE THE RIGHT WAY: the good half is no longer "
+        "deferred against OSV1-001. If the hero now carries velocity with its window "
+        "and all four counts, flip OSV1-001 AND this row and retarget both probes in "
+        "the same change (work_item_pipeline-ujy)."
+    )
+    assert row("OSV1-001")["disposition"] in PINNING_DISPOSITIONS, (
+        "OSV1-024 (Conformance 5) PIN BROKE THE RIGHT WAY: OSV1-001 is no longer red, "
+        "so Conformance 5's good half should now pass against a conforming hero. "
+        "Re-derive this row from the PASSING pair, never from the fixture's presence."
     )
     assert contains(
         OPERATOR_CONTRACT_PATH,
@@ -883,11 +1019,29 @@ def test_row_osv1_024() -> None:
 
 
 def test_row_osv1_025() -> None:
-    """Conformance 6 pin: no Tier-A kit, so the register is checked only here."""
-    assert not _exists(TIER_A_KIT), (
-        f"OSV1-025 (Conformance 6): {TIER_A_KIT} now exists. Make sure it reads THIS "
-        f"ledger's register (OSV1-006) rather than growing its own copy -- two censuses "
-        f"will disagree, silently (work_item_pipeline-c1a)."
+    """Conformance 6 pin: the fixture exists, reads THIS ledger's register, and
+    its GOOD half is still deferred against OSV1-005."""
+    kit = _kit_source()
+    assert "check_visual_single_source" in _kit_defs(kit), (
+        f"OSV1-025 (Conformance 6): {TIER_A_KIT} no longer implements "
+        f"`visual.single_source` at the location the contract names."
+    )
+    assert _kit_bad_halves(kit, "test_visual_single_source"), (
+        "OSV1-025 (Conformance 6): the fixture no longer ships a bad half (Freeze 4)."
+    )
+    assert "EXEMPTION_REGISTER" in kit, (
+        "OSV1-025 (Conformance 6): the kit stopped importing this ledger's exemption "
+        "register. ONE census, ONE register (Phase-1 ruling Need 2) -- a second copy "
+        "disagrees with this one, silently."
+    )
+    assert "OSV1-005" in _kit_deferred_rows(kit, "test_visual_single_source"), (
+        "OSV1-025 (Conformance 6) PIN BROKE THE RIGHT WAY: the good half is no longer "
+        "deferred against OSV1-005. Flip OSV1-005 AND this row and retarget both "
+        "probes in the same change (work_item_pipeline-np3)."
+    )
+    assert row("OSV1-005")["disposition"] in PINNING_DISPOSITIONS, (
+        "OSV1-025 (Conformance 6) PIN BROKE THE RIGHT WAY: OSV1-005 is no longer red, "
+        "so Conformance 6's good half should now pass. Re-derive from the PASSING pair."
     )
     assert contains(OPERATOR_CONTRACT_PATH, 'style="color:#D9A253"'), (
         "OSV1-025: Conformance 6's named bad specimen moved in the contract -- re-review the row."
@@ -895,10 +1049,24 @@ def test_row_osv1_025() -> None:
 
 
 def test_row_osv1_026() -> None:
-    """Conformance 7 pin: no Tier-A kit, so empty-vs-populated is uncompared."""
-    assert not _exists(TIER_A_KIT), (
-        f"OSV1-026 (Conformance 7): {TIER_A_KIT} now exists -- re-derive from a real "
-        f"two-render comparison (work_item_pipeline-c1a)."
+    """Conformance 7 pin: the two-render fixture exists and discriminates, and
+    its GOOD halves are still deferred against OSV1-012."""
+    kit = _kit_source()
+    assert "check_calm_keeps_slot" in _kit_defs(kit), (
+        f"OSV1-026 (Conformance 7): {TIER_A_KIT} no longer implements "
+        f"`calm.keeps_slot` at the location the contract names."
+    )
+    assert _kit_bad_halves(kit, "test_calm_keeps_slot"), (
+        "OSV1-026 (Conformance 7): the fixture no longer ships a bad half (Freeze 4)."
+    )
+    assert "OSV1-012" in _kit_deferred_rows(kit, "test_calm_keeps_slot"), (
+        "OSV1-026 (Conformance 7) PIN BROKE THE RIGHT WAY: the good half is no longer "
+        "deferred against OSV1-012. Flip OSV1-012 AND this row and retarget both "
+        "probes in the same change (work_item_pipeline-c1a)."
+    )
+    assert row("OSV1-012")["disposition"] in PINNING_DISPOSITIONS, (
+        "OSV1-026 (Conformance 7) PIN BROKE THE RIGHT WAY: OSV1-012 is no longer red, "
+        "so Conformance 7's good halves should now pass. Re-derive from the PASSING pair."
     )
     assert contains(
         OPERATOR_CONTRACT_PATH, "a render that drops empty widgets, or renders a hero-scale `0`"
@@ -910,27 +1078,38 @@ def test_row_osv1_026() -> None:
 
 
 def test_row_osv1_027() -> None:
-    """Freeze 1 pin: the Tier-A kit neither exists nor runs in any gate.
+    """Freeze 1 CONFORMS: the Tier-A kit exists AND runs in a real gate.
 
-    Both halves are pinned, because a kit that exists but runs in nothing is
+    Both halves are asserted, because a kit that exists but runs in nothing is
     the exact failure this repo already measured once (CCV1-022: a whole suite
-    of green claims nobody had ever executed).
+    of green claims nobody had ever executed). Matched on the KIT PATH, never
+    on the word "conformance": the Makefile and ci.yml already say "conformance
+    ledger" about Tier 4, and a check a pre-existing comment satisfies asserts
+    nothing.
     """
-    assert not _exists(TIER_A_KIT), (
-        f"OSV1-027 (Freeze 1): {TIER_A_KIT} now exists. Freeze 1 ALSO requires it to "
-        f"run on every pull request -- do not flip this row on the file alone "
-        f"(work_item_pipeline-c1a)."
+    assert _exists(TIER_A_KIT), f"OSV1-027 (Freeze 1) REGRESSION: {TIER_A_KIT} is gone."
+    make = read(MAKEFILE)
+    assert "tests/conformance" in make and "test-conformance-a:" in make, (
+        "OSV1-027 (Freeze 1) REGRESSION: the Makefile no longer carries a target "
+        "covering tests/conformance. Existing is not the same as running."
     )
-    # Matched on the KIT PATH, never on the word "conformance": the Makefile
-    # and ci.yml already say "conformance ledger" about Tier 4, and a probe
-    # that a pre-existing comment satisfies is a probe asserting nothing.
-    assert "tests/conformance" not in read(MAKEFILE), (
-        "OSV1-027 (Freeze 1): the Makefile now has a target covering tests/conformance "
-        "-- the wiring half is landing. Re-derive."
+    ci = read(CI_WORKFLOW)
+    assert "tests/conformance/operator_surface" in ci, (
+        "OSV1-027 (Freeze 1) REGRESSION: ci.yml no longer runs the Tier-A kit -- "
+        "Freeze 1's second half is 'runs on every pull request'."
     )
-    assert "tests/conformance" not in read(CI_WORKFLOW), (
-        "OSV1-027 (Freeze 1): ci.yml now runs tests/conformance -- the 'runs on every "
-        "pull request' half is landing. Re-derive."
+    assert "pull_request" in ci, (
+        "OSV1-027 (Freeze 1) REGRESSION: the workflow that runs the kit no longer "
+        "triggers on pull_request."
+    )
+    kit = _kit_source()
+    assert "TIER_A_CHECKS" in kit and _kit_defs(kit) >= {
+        "test_every_tier_a_machine_check_the_contract_names_is_implemented_here",
+        "test_every_check_ships_a_bad_half",
+    }, (
+        "OSV1-027 (Freeze 1) REGRESSION: the kit dropped its own coverage tripwires. "
+        "Without them it can quietly cover less of the contract than it claims, which "
+        "is the failure Freeze 1 and Freeze 4 exist to prevent."
     )
 
 
@@ -969,11 +1148,17 @@ def test_row_osv1_029() -> None:
 
 
 def test_row_osv1_030() -> None:
-    """Freeze 4 pin: neither kit exists, so no fixture has been demonstrated."""
-    assert not _exists(TIER_A_KIT) and not _exists(TIER_B_KIT), (
-        "OSV1-030 (Freeze 4): a kit path appeared. 'Demonstrated by running it' is the "
-        "whole clause -- record WHICH revert produced WHICH failure, the way "
-        "CCV1-023 did for the custody family, before flipping this row."
+    """Freeze 4 pin: the Tier-A fixtures are demonstrated; no browser kit
+    exists, so the three Tier-B fixtures are not."""
+    assert not _exists(TIER_B_KIT), (
+        "OSV1-030 (Freeze 4): the Tier-B kit path appeared. 'Demonstrated by running "
+        "it' is the whole clause -- record WHICH revert produced WHICH failure, the "
+        "way CCV1-023 did for the custody family, before flipping this row."
+    )
+    assert _exists(TIER_A_KIT) and _kit_bad_halves(_kit_source(), "test_calm_keeps_slot"), (
+        "OSV1-030 (Freeze 4): the Tier-A fixtures' demonstrated bad halves are gone. "
+        "This row is red on the TIER-B half only -- losing the Tier-A half is a "
+        "second, new defect."
     )
 
 
@@ -1002,8 +1187,8 @@ def test_row_osv1_031() -> None:
         "to CONFORMS and retarget this probe to assert no Core row is red "
         "(work_item_pipeline-umm)."
     )
-    assert len(red) == 10, (
-        f"OSV1-031 (Freeze 5): pinned 10 red Core-carrying rows, observed {len(red)}: "
+    assert len(red) == 9, (
+        f"OSV1-031 (Freeze 5): pinned 9 red Core-carrying rows, observed {len(red)}: "
         f"{red}. Movement in either direction means this gate's tally changed -- update "
         f"the pin and the row's notes in the same change."
     )
