@@ -1670,11 +1670,26 @@ button.secondary,a.btn.secondary{background:transparent;color:var(--mid);
   border-color:var(--rule)}
 button.secondary:hover,a.btn.secondary:hover{color:var(--brand-cyan-ink);border-color:var(--rule-hi)}
 /* DANGER -- per the design system's token map: a soft surface (never a
-   solid full-bleed fill) -- background/border/text all drawn from the
-   SAME --blocked-* trio the blocker-chain/flash-error banners use. */
+   solid full-bleed fill) -- background/text drawn from the --blocked-*
+   trio the blocker-chain/flash-error banners use.
+   THE BORDER IS THE EXCEPTION, and deliberately so (OSV1-003, Core 2):
+   --blocked itself is a STATUS hue, reserved for an item that IS blocked.
+   A destructive control is not a status -- it is an affordance -- so at REST
+   it signals destructive through its word ("Remove this project...", "Rename
+   this project..."), its tinted surface and its ink, with a neutral
+   --ink-quiet rule. The reserved hue returns on hover/focus/active, where
+   the operator is actually about to fire it and the escalation is real.
+   Measured note, recorded rather than implied: these three controls live
+   inside a CLOSED `<details class="actions-drawer">`, so they contributed
+   ZERO of a calm L1's 97 --blocked pixels -- laid out but never painted.
+   They are fixed anyway: a conformance that holds only while a drawer
+   happens to be shut is an accident, not a property. */
 button.danger,input.danger,a.btn.danger{background:var(--blocked-surface);
-  border-color:var(--blocked);color:var(--blocked-ink-on-surface)}
-button.danger:hover,a.btn.danger:hover{filter:brightness(1.08)}
+  border-color:var(--ink-quiet);color:var(--blocked-ink-on-surface)}
+button.danger:hover,a.btn.danger:hover{filter:brightness(1.08);
+  border-color:var(--blocked)}
+button.danger:focus-visible,input.danger:focus-visible,a.btn.danger:focus-visible,
+button.danger:active,a.btn.danger:active{border-color:var(--blocked)}
 /* The shared button rule's `margin-top:0.7rem` above is for a STACKED
    form (label, field, ..., button below it with real vertical breathing
    room) -- exactly wrong inside a horizontal `.controls` row (the
@@ -3002,6 +3017,13 @@ border-color:var(--glass-hairline);
 }
 .wt-observatory .status-tab .dot{width:6px;height:6px;border-radius:999px;background:currentColor}
 .wt-observatory .status-tab.tab-blocked .dot{background:var(--blocked)}
+/* ...but only while there is something blocked to point at. At zero the lamp
+   stays on the panel and goes dark (Core 8 keeps the slot; the tab, its word
+   "Blocked" and its count are untouched), because Core 2 reserves this hue
+   for status that is actually present -- this dot was the other 16 of the 97
+   --blocked pixels a calm L1 painted (OSV1-003). The word carries the tab
+   either way, so nothing here was ever colour-only (Core 3). */
+.wt-observatory .status-tab.tab-blocked .dot.is-zero{background:var(--ink-quiet)}
 .wt-observatory .items-col-head{
   display:grid;grid-template-columns:96px 32px 1fr 150px 90px 16px;gap:var(--space-3);
   padding:0 var(--space-4) var(--space-2);font-size:.6875rem;font-weight:600;
@@ -4472,6 +4494,20 @@ tr.attn-row.is-blocked{background:var(--blocked-surface);
 .sw.mix-held{background:var(--brand-cyan-ink)}
 .sw.mix-intake{background:var(--ink-tertiary)}
 .sw.mix-blocked{background:var(--blocked)}
+/* A ZERO-count bucket's swatch previews NOTHING. The slot stays -- the row,
+   its name, its `0` and its `0.0%` all still render (Core 8: an empty state
+   keeps its slot) -- but the HUE goes, because Core 2 reserves --alarm and
+   --blocked for status that is actually PRESENT. A "Blocked 0" swatch
+   painting --blocked is the hue borrowed without the meaning, and it was
+   81 of the 97 --blocked pixels a calm L1 painted (OSV1-003). Same "lamp
+   present, switched off" convention -- and the same --ink-quiet -- as
+   `.kpi-card.is-blocked.is-zero .k .icon` above; the bar legend next door
+   makes the identical move with `.sw.fill-empty`.
+   SCOPED and placed AFTER the `mix-*` palette so it wins on specificity AND
+   order: a bare `.sw.is-zero` merely TIES with `.sw.mix-blocked` (0-2-0 each)
+   and would hang on source order alone -- the specificity trap OSV1-005
+   recorded when the chart-ink migration silently lost a rule. */
+.wt-observatory .mix-legend-full .li .sw.is-zero{background:var(--ink-quiet)}
 
 /* ---------- SVG charts (chartsvg) --------------------------------------
      In the charts a `class` names WHAT an element is (bar / val-label /

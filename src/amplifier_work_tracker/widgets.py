@@ -1108,11 +1108,15 @@ def render_status_breakdown(data: StatusBreakdownData) -> str:
     for key in _MIX_ORDER:
         count = counts[key]  # type: ignore[literal-required]
         pct = round(count * 100 / total, 1) if total > 0 else 0.0
-        swatch = (
-            '<span class="sw pat-hatch"></span>'
-            if key == "deferred"
-            else f'<span class="sw mix-{key}"></span>'
-        )
+        # A zero-count bucket keeps its whole row (Core 8) but its swatch
+        # previews nothing -- `is-zero` quiets it to --ink-quiet in
+        # webtheme's `.mix-legend-full .li .sw.is-zero`. Core 2 (OSV1-003):
+        # the "Blocked 0" swatch was 81 of the 97 --blocked pixels a calm L1
+        # painted. Applied to EVERY bucket, not just blocked -- "this slot is
+        # off" is one rule, the same one `_state_legend_html` already makes
+        # with `fill-empty`, not a special case for one hue.
+        base = "sw pat-hatch" if key == "deferred" else f"sw mix-{key}"
+        swatch = f'<span class="{base}{"" if count else " is-zero"}"></span>'
         legend_rows.append(
             f'<div class="li">{swatch}<span class="name">{_MIX_NAME[key]}</span>'
             f'<span class="cnt">{count}</span><span class="pct">{pct}%</span></div>'

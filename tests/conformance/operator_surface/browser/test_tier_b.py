@@ -124,19 +124,14 @@ _CONTRAST_LEVELS = [
     ),
 ]
 
-#: The calm pixel sweep: L0 is clean in both themes, L1 is not (OSV1-003).
-_CALM_LEVELS = [
-    pytest.param("L0"),
-    pytest.param(
-        "L1",
-        marks=known_violation(
-            "OSV1-003",
-            "a calm L1 paints 97 `--blocked` pixels in both themes -- the legend "
-            "swatch (`span.sw`), the live `span.dot`, and the destructive "
-            "`button.btn.danger`'s border -- with nothing blocked in the project",
-        ),
-    ),
-]
+#: The calm pixel sweep: L0 and L1 are both clean in both themes.
+#: L1 CARRIED A MARKER UNTIL 2026-09-05 (OSV1-003): it painted 97 `--blocked`
+#: pixels with nothing blocked -- 81 from the status-donut legend's
+#: zero-count `span.sw.mix-blocked`, 16 from the Blocked tab's `span.dot`.
+#: Both now keep their slot and drop the hue at zero, the marker XPASSed, and
+#: it was deleted with the fix. Neither level is marked now, deliberately: a
+#: blanket marker would hide the next regression behind an expected failure.
+_CALM_LEVELS = [pytest.param("L0"), pytest.param("L1")]
 
 
 # ---------------------------------------------------------------------------

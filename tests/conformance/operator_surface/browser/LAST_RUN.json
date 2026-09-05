@@ -27,7 +27,7 @@
         "blocked": 0,
         "pixels_swept": 2813440,
         "retired_amber": 0,
-        "watch": 5229
+        "watch": 5265
       },
       "bad-alarm-fixture/L0/dark": {
         "alarm": 0,
@@ -48,7 +48,7 @@
         "blocked": 0,
         "pixels_swept": 2813440,
         "retired_amber": 16681,
-        "watch": 5047
+        "watch": 5099
       },
       "calm/L0/dark": {
         "alarm": 0,
@@ -62,21 +62,21 @@
         "blocked": 0,
         "pixels_swept": 2813440,
         "retired_amber": 0,
-        "watch": 5168
+        "watch": 5291
       },
       "calm/L1/dark": {
         "alarm": 0,
-        "blocked": 97,
+        "blocked": 0,
         "pixels_swept": 3792640,
         "retired_amber": 0,
         "watch": 1161
       },
       "calm/L1/light": {
         "alarm": 0,
-        "blocked": 97,
+        "blocked": 0,
         "pixels_swept": 3792640,
         "retired_amber": 0,
-        "watch": 6443
+        "watch": 6331
       }
     },
     "kit.pinned_browser": {
@@ -215,7 +215,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 430,
         "text_below_floor": 3,
-        "text_scored": 177
+        "text_scored": 178
       },
       "calm/L1/430/light": {
         "client_width": 430,
@@ -392,6 +392,6 @@
       }
     }
   },
-  "recorded_at": "2026-09-05T11:55:58Z",
+  "recorded_at": "2026-09-05T22:29:15Z",
   "schema": "operator-surface-tier-b/1"
 }

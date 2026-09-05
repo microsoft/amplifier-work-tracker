@@ -424,14 +424,13 @@ def _mo002_alias_becomes_a_bespoke_hue(w: World) -> None:
 def _mo003b_the_retired_palette_returns(w: World) -> None:
     """The retired pre-blend-3 ground comes back to webpwa.py's offline body.
 
-    DIRECTION NOTE, stated rather than hidden: OSV1-003's declared direction is
-    VIOLATION-MOVEMENT (it is still VIOLATION -- a calm L1 still paints
-    `--blocked`, which `_mo003_the_calm_page_stops_painting_blocked` is the
-    counterfactual for). This mutation pushes the OTHER way, and it is here on
-    purpose: the row's two palette specimens
-    CLOSED on 2026-09-05 (OSV1-005), so its probe stopped pinning them as
-    present and started guarding that they stay gone. A guard nobody has
-    watched fail is a guard that might assert nothing.
+    DIRECTION NOTE, no longer an exception: OSV1-003 flipped to CONFORMS on
+    2026-09-05 (work_item_pipeline-a1o), so the whole row is REGRESSION-directed
+    now and this mutation is the same shape as its two siblings rather than the
+    odd one out. It was already pushing this way while the row was red, because
+    the row's two palette specimens CLOSED on 2026-09-05 (OSV1-005) and its
+    probe stopped pinning them as present and started guarding that they stay
+    gone. A guard nobody has watched fail is a guard that might assert nothing.
     """
     w.replace(
         WEBPWA,
@@ -618,16 +617,37 @@ def _mo027_ci_stops_running_the_kit(w: World) -> None:
     )
 
 
-def _mo003_the_calm_page_stops_painting_blocked(w: World) -> None:
-    """FIXED: a calm L1 stops painting `--blocked`.
+def _mo003_the_calm_page_paints_blocked_again(w: World) -> None:
+    """REGRESSION: a calm L1 goes back to painting `--blocked`.
 
-    The counterfactual a pinning row needs -- the browser measuring the FIXED
-    behaviour. Both themes measured 97, so both anchors move together.
+    DIRECTION REVERSED 2026-09-05 with the row (work_item_pipeline-a1o).
+    While OSV1-003 was a VIOLATION pin this mutation had to model the FIX (97
+    -> 0); the fix landed, the row reads CONFORMS, and the counterfactual a
+    green row needs is the defect COMING BACK. The number restored is the one
+    actually measured before the fix, not a token non-zero: 97 --blocked on a
+    calm L1 in dark.
     """
     w.replace(
         TIER_B_SUMMARY,
-        '"calm/L1/dark": {\n        "alarm": 0,\n        "blocked": 97,',
         '"calm/L1/dark": {\n        "alarm": 0,\n        "blocked": 0,',
+        '"calm/L1/dark": {\n        "alarm": 0,\n        "blocked": 97,',
+    )
+
+
+def _mo003c_the_alarming_fixture_stops_painting_blocked(w: World) -> None:
+    """REGRESSION, and the one that matters most on a row full of zeroes.
+
+    "Zero alarm pixels on a calm page" is trivially satisfiable by a sweep that
+    has stopped seeing the hue at all, so OSV1-003's green rests on the
+    discriminating arm as much as on the calm one. This blinds that arm -- the
+    genuinely-alarming fixture reporting 0 --blocked where it measured 264 --
+    and the probe must refuse the row rather than keep reading its own zeroes
+    as evidence.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"bad-alarm-fixture/L0/dark": {\n        "alarm": 0,\n        "blocked": 264,',
+        '"bad-alarm-fixture/L0/dark": {\n        "alarm": 0,\n        "blocked": 0,',
     )
 
 
@@ -1042,8 +1062,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-003",
-        "the browser measures a calm L1 painting ZERO --blocked pixels (the fix)",
-        _mo003_the_calm_page_stops_painting_blocked,
+        "the browser measures a calm L1 painting --blocked again (97 px, the pre-fix reading)",
+        _mo003_the_calm_page_paints_blocked_again,
     ),
     Mutation(
         "OSV1-003",
@@ -1051,6 +1071,12 @@ MUTATIONS: tuple[Mutation, ...] = (
         "(the specimen this row pinned as PRESENT until OSV1-005 closed it, now "
         "guarded from the other side)",
         _mo003b_the_retired_palette_returns,
+    ),
+    Mutation(
+        "OSV1-003",
+        "the sweep goes blind: the genuinely-alarming fixture reports 0 --blocked "
+        "where it measured 264, so the row's calm zeroes stop being evidence",
+        _mo003c_the_alarming_fixture_stops_painting_blocked,
     ),
     Mutation(
         "OSV1-004",

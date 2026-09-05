@@ -141,7 +141,15 @@ def _status_tabs_html(name: str, status: str, counts: dict[str, int]) -> str:
     for key, label in _STATUS_TABS:
         active = " is-active" if key == status else ""
         blocked_cls = " tab-blocked" if key == "blocked" else ""
-        dot = '<span class="dot"></span> ' if key == "blocked" else ""
+        # The Blocked tab's dot keeps its SLOT at every count (Core 8) and
+        # its hue only while there is something blocked (Core 2 -- OSV1-003:
+        # a calm L1 painted 16 --blocked pixels here with nothing blocked).
+        # The class rides the DOT, not the tab, so `.status-tab tab-blocked
+        # is-active` stays exactly the string the tab tests already pin.
+        dot = ""
+        if key == "blocked":
+            zero_cls = " is-zero" if not counts.get(key, 0) else ""
+            dot = f'<span class="dot{zero_cls}"></span> '
         title = (
             ' title="Newly filed, not yet triaged into ready or deferred"'
             if key == "intake"

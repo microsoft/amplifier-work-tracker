@@ -1037,21 +1037,99 @@
     the calm-pixel sweep (OSV1-003).
 
 - id: OSV1-003
-  title: a calm L1 paints 97 --blocked pixels with nothing blocked
+  title: a calm L0 and L1 both paint zero --alarm and zero --blocked pixels, in both themes
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 2
     quote: |
       On a calm screen — nothing held past TTL, nothing blocked — zero `--alarm` and zero
       `--blocked` pixels are painted; that absence is what makes the alarm pop.
-  disposition: VIOLATION
-  work: work_item_pipeline-qgo
+  disposition: CONFORMS
+  work: work_item_pipeline-a1o
   assertion:
     kind: probe
     ref: test_row_osv1_003
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED 2026-09-05, VIOLATION -> CONFORMS (VIOLATION-MOVEMENT: the pin went
+    red because the tree moved TOWARD the clause), work_item_pipeline-a1o. This
+    is no longer a pinning row: the probe asserts the INVARIANT now, and the
+    flip direction is REGRESSION.
+
+    THE MEASUREMENT THAT FLIPPED IT, same pinned chromium 148.0.7778.0 /
+    playwright 1.60.0, same isolated calm fixture, same full-page sweep against
+    the LIVE token values, re-recorded on this tree and read back by this row's
+    probe from `tests/conformance/operator_surface/browser/LAST_RUN.json`:
+      L0 dark   0 --alarm, 0 --blocked  across 2 813 440 px  (was 0 / 0)
+      L0 light  0 --alarm, 0 --blocked  across 2 813 440 px  (was 0 / 0)
+      L1 dark   0 --alarm, 0 --blocked  across 3 792 640 px  (was 0 / 97)
+      L1 light  0 --alarm, 0 --blocked  across 3 792 640 px  (was 0 / 97)
+    The Tier-B `xfail(strict=True)` this row owned on `calm.zero_alarm_pixels`
+    at L1 XPASSed on that run and was deleted in the same change, per Freeze 3's
+    own instruction.
+
+    WHERE THE 97 PIXELS ACTUALLY WERE, located pixel-by-pixel before anything
+    was changed rather than inferred from the stylesheet -- the sweep's own
+    matching coordinates were clustered and reconciled against every element's
+    computed style and page-space rect on a calm L1 in dark:
+      81 px  `span.sw.mix-blocked`, the status-donut legend's swatch for the
+             ZERO-count "Blocked" bucket, a 10x10 3px-radius chip at (275, 621)
+      16 px  `span.dot` inside the Blocked status TAB, a 6px circle at (316, 2167)
+      97 px  total, and the two clusters account for it exactly.
+
+    THE THIRD PAINTER THIS ROW NAMED PAINTED NOTHING, recorded because a row
+    that keeps repeating an unverified attribution is the drift `ledger/` exists
+    to catch. The prior note (and the deleted xfail reason) named
+    `button.btn.danger`'s border as the third source. It is not: all three
+    `.btn.danger` controls live inside a CLOSED `<details class="actions-drawer">`,
+    where chromium lays them out (`getBoundingClientRect` reports 216x44 at
+    y=3356 and y=3368) but never paints them -- the full-page screenshot is
+    2 963 px tall and they sit outside it entirely. Their contribution to the 97
+    was ZERO. The attribution was plausible from the stylesheet and wrong in the
+    render, which is the whole reason this check is a pixel sweep.
+
+    THEY WERE FIXED ANYWAY, and the reason is recorded rather than assumed: a
+    conformance that holds only while a drawer happens to be shut is an accident,
+    not a property. `button.danger`'s rest border moved from `--blocked` to the
+    neutral `--ink-quiet`, with the reserved hue returning on
+    hover/focus-visible/active. Verified by re-running the sweep with every
+    `<details>` on the page forced open: 0 --alarm and 0 --blocked in BOTH
+    themes, drawer open or closed.
+
+    WHAT THE FIX IS, in the clause's own terms. Core 2 reserves `--alarm` and
+    `--blocked` for status that is actually present, and each of the two real
+    painters was borrowing the hue with no status behind it -- a "Blocked 0"
+    legend swatch and a lamp on a tab with nothing to point at. Both now keep
+    their SLOT and drop their HUE at zero (`is-zero` -> `--ink-quiet`), which is
+    the existing "alarm lamp present and switched off" convention this surface
+    already uses at `.kpi-card.is-blocked.is-zero` and `.sw.fill-empty`. Core 8
+    is unaffected: the legend row still renders its name, its `0` and its
+    `0.0%`, and the tab still renders the word "Blocked" and its count. Core 3
+    is unaffected for the same reason -- neither was ever colour-only. Core 4 is
+    unaffected: three CSS rules and two class names, zero literals.
+
+    THE SWEEP STILL DISCRIMINATES -- the same three arms, re-run on the fixed
+    tree, every number byte-identical to the pre-fix recording:
+      injected `var(--alarm)` chip on a calm L0   10 531 --alarm px
+      genuinely-alarming fixture (no injection)      264 --blocked px
+      reinstated retired `#D9A253` palette region 16 681 retired_amber px
+    A fix that had merely blinded the sweep would have moved all three. The
+    alarming L1 render also still paints the reserved hue -- `alarm.reserved_hue`
+    on `alarm/L1/dark` reads 2 669 --alarm and 734 --blocked, unchanged, because
+    the legend swatch keeps its hue the moment the count is non-zero. That is
+    the discrimination the fix had to preserve and did.
+
+    NO OTHER ROW'S RECORDED NUMBERS MOVED, checked rather than hoped: on the
+    re-recording, `perception.floors` reads L1 `non_text_below_floor` 23 of 73
+    and `text_below_floor` 3 dark / 4 light, and L0 16 of 79 / 26 of 34 controls
+    -- every figure OSV1-010 pins, unchanged, including across the danger
+    border's move to `--ink-quiet` (which clears 3:1 where `--rule-hi` would not
+    have). The only fields that moved at all are the LIGHT-theme `--watch`
+    counts, which Core 2 does not score and no row reads, and which this row
+    already records as jittering by up to ~2% run to run.
+
+    HISTORY BELOW THIS LINE is the record as it stood while the row was red. It
+    is left rather than deleted: the measurement that made it red is what makes
+    the flip meaningful.
 
     RE-DERIVED 2026-09-05, GAP -> VIOLATION. The kit the previous disposition
     was waiting on now exists and has run
@@ -1360,13 +1438,21 @@
       webapp.py:1127    flex:{n} 1 0              state-bar segment ratio
       webapp.py:1823    width:{today_w}px         throughput bar, today
       webapp.py:1826    width:{prior_w}px         throughput bar, prior 6 d
-      webtheme.py:4197  {style}                   axis ruler numeral offset
-      webtheme.py:4216  left:{_grad_x(f):.1f}px   graduation tick offset
-      webtheme.py:4223  width:{px}px              age bar length
+      webtheme.py:4219  {style}                   axis ruler numeral offset
+      webtheme.py:4238  left:{_grad_x(f):.1f}px   graduation tick offset
+      webtheme.py:4245  width:{px}px              age bar length
       widgets.py:837    width:{pct}%              status-mix segment (hatched)
       widgets.py:839    width:{pct}%              status-mix segment
     Every one is "a bar width, a chart offset" -- the clause's own gloss of what
     this exemption is FOR.
+
+    THE THREE WEBTHEME PINS MOVED +22 ON 2026-09-05 (work_item_pipeline-a1o,
+    from 4197/4216/4223), and nothing else about this row did. OSV1-003's fix
+    inserted three commented CSS rules higher in the same file; the SITES, the
+    expressions and the count are identical, and the register neither grew nor
+    shrank. Recorded rather than quietly re-numbered, because "the register did
+    not change" and "the register changed by three line numbers" look the same
+    in a diff and mean different things.
 
     THE ROOT'S TRIAGE RULING WAS APPLIED, and it is what removed 15 sites. Two
     kinds were on the register that should not have been:
@@ -2686,7 +2772,7 @@
     matching bad half go red while every good half stayed green.
 - id: OSV1-031
   title: >-
-    Freeze 5 -- 4 of the 19 Core-carrying rows are still red, and all four are
+    Freeze 5 -- 3 of the 19 Core-carrying rows are still red, and all three are
     now MEASURED VIOLATIONs (no Core row is an unasserted GAP any more)
   contract:
     file: contracts/operator-surface.v1.md
@@ -2810,6 +2896,23 @@
       GAP 0             every Core clause is still ASSERTED
     Four red, every one of them a MEASURED failure. Freeze 5 is met when all
     four are green and the two NOT-ASSERTABLE rows still name their cadence.
+
+    RE-PINNED 2026-09-05 by the calm-pixels lane (work_item_pipeline-a1o),
+    THREE RED, on that lane's own tree rather than on the union -- the
+    orchestrator re-counts on the union, and this number is honest only about
+    what this tree contains. ONE flip moves it: OSV1-003 (Core 2) VIOLATION ->
+    CONFORMS, re-derived from a chromium run RE-RECORDED on this tree, not from
+    a marker being deleted -- a calm L1 measured 0 --alarm and 0 --blocked in
+    both themes where it measured 97 --blocked, and the three discrimination
+    arms (10 531 / 264 / 16 681) came back byte-identical, so the sweep was not
+    merely blinded. The tally is now:
+      CONFORMS 14       OSV1-001, -002, -003, -004, -005, -006, -007, -009,
+                        -011, -013, -014, -015, -016, -017
+      NOT-ASSERTABLE 2  OSV1-018 (Core 12), OSV1-019 (Core 13) -- unchanged
+      VIOLATION 3       OSV1-008, -010, -012
+      GAP 0             every Core clause is still ASSERTED
+    Three red, every one a MEASURED failure. Freeze 5 is met when all three are
+    green and the two NOT-ASSERTABLE rows still name their cadence.
 
 - id: OSV1-032
   title: >-
