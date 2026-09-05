@@ -10,3 +10,8 @@ DONE.json
 
 # goal-batch orchestration scratch (per-run, never repo content)
 .amplifier/goals/
+
+# Tier-B conformance artifacts -- a RUN's evidence (pixel counts, contrast
+# numbers, post-swap DOM snapshots, screenshots), never repo content. A
+# committed artifact is a number nobody re-measured.
+tests/conformance/operator_surface/browser/_artifacts/

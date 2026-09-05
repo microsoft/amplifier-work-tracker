@@ -31,6 +31,16 @@ dev = [
     # by format, so its own tripwires need a parser. Deliberately NOT a
     # runtime dependency: nothing in src/ imports yaml.
     "pyyaml>=6.0",
+    # tests/conformance/operator_surface/browser only -- the Tier-B kit for
+    # contracts/operator-surface.v1.md. PINNED TO AN EXACT VERSION on purpose,
+    # and that pin is the point: Freeze 2 requires a "pinned chromium", and a
+    # playwright release pins exactly one chromium build revision (1.60.0 ->
+    # chromium-1234, recorded in every emitted artifact's `browser` block). An
+    # unpinned browser makes a computed contrast ratio or a pixel-sweep count
+    # unreproducible, which would make every Tier-B number a self-report.
+    # Chromium itself is NOT installed by this dependency -- run
+    # `make playwright-install`.
+    "playwright==1.60.0",
 ]
 # `amplifier-work-tracker web` -- the dashboard/interaction UI (see
 # webapp.py, webauth.py). Optional so the core CLI install (`uv tool
@@ -57,14 +67,35 @@ packages = ["src/amplifier_work_tracker"]
 #   tier 1 (unit)        tests/unit/         no marker, no bd, no network
 #   tier 2 (integration) tests/integration/  @pytest.mark.integration
 #   tier 3 (cli)         tests/cli/          @pytest.mark.cli
+#
+# Plus one OPT-IN tier that a bare `pytest` DESELECTS rather than runs:
+#
+#   tier B (browser)     tests/conformance/operator_surface/browser/
+#                        @pytest.mark.tier_b, selected only by
+#                        `make test-conformance-b` / the CI "Tier 7" step.
+#
+# `-m "not tier_b"` lives in `addopts` below, so every existing invocation
+# (`make test`, `make test-unit`, a bare `pytest`) deselects the browser tier
+# by default; a command-line `-m tier_b` overrides it, because pytest inserts
+# addopts BEFORE the command line and the last `-m` wins. Deselected, never
+# `--ignore`d: the module is still imported and collected, so a Tier-B kit
+# that has stopped importing at all fails the fast tiers loudly instead of
+# vanishing from the run.
+#
+# Opt-in because it costs a real chromium launch and a real app boot per test,
+# and because a browser tier's flake profile must not ride inside the fast
+# tiers (contracts/operator-surface.v1.md Freeze 2: "runs as its own CI
+# tier"). `--strict-markers` is what makes the marker a real gate rather than
+# a typo waiting to silently select nothing.
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
     "integration: real bd + shared dolt server required (tier 2)",
     "cli: full amplifier-work-tracker CLI-surface tests, requires the real bd binary (tier 3)",
+    "tier_b: real-browser operator-surface conformance, requires chromium (tier B, opt-in)",
 ]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers -m 'not tier_b'"
 
 [tool.ruff]
 target-version = "py311"

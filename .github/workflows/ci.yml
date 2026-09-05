@@ -116,6 +116,38 @@ jobs:
       - name: Tier 5 -- tool module tests
         run: .venv/bin/python -m pytest modules/tool-work-tracker/tests -v
 
+      # Tier 7 -- operator-surface conformance, Tier B (real browser).
+      # contracts/operator-surface.v1.md Freeze 2 requires the Tier-B kit to
+      # "run as its own CI tier", and this is that tier: a separate step, so a
+      # browser failure is legible at a glance as a RENDERED-SURFACE failure
+      # and its cost/flake profile never rides inside the fast tiers above.
+      # Chromium is installed here rather than in the shared setup step for
+      # the same reason -- nothing above this line needs a browser.
+      #
+      # The kit is deselected everywhere else by pyproject's `-m "not tier_b"`
+      # addopts; `-m tier_b` on this command line is what selects it.
+      #
+      # `if: always()` is deliberate: this tier's whole job is to report what
+      # the rendered surface actually does, and a red tier above (a unit-test
+      # regression, say) must not hide that report.
+      - name: Tier 7 -- operator-surface conformance (Tier B, browser)
+        if: always()
+        run: |
+          .venv/bin/playwright install --with-deps chromium
+          .venv/bin/python -m pytest -m tier_b tests/conformance/operator_surface/browser -v
+
+      # The Tier-B artifacts (pixel counts, computed contrast ratios, bounding
+      # boxes, post-swap DOM snapshots, screenshots) -- Freeze 3's "artifacts
+      # the orchestrator re-checks itself". Uploaded on every run, pass or
+      # fail: a failing run's numbers are the ones worth reading.
+      - name: Tier 7 artifacts -- operator-surface Tier-B evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-surface-tier-b-artifacts
+          path: tests/conformance/operator_surface/browser/_artifacts/
+          if-no-files-found: warn
+
       - name: Dolt server log (always, for debugging)
         if: always()
         run: cat /tmp/dolt-server.log || true
