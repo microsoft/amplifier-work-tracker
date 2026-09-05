@@ -3,5 +3,6 @@
 Tier A is everything assertable in-process: a static pass over `src/`, a token
 computation, or an assertion over rendered HTML. Tier B (a real browser, pixel
 sweeps, computed contrast, post-swap DOM snapshots) lives beside this package
-in `browser/` and is a different lane's work.
+in `browser/`, is marked `tier_b`, and runs as its own tier via
+`make test-conformance-b`.
 """

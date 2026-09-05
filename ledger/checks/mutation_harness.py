@@ -81,6 +81,13 @@ from ._support import (
 
 CLI = probes.CLI
 
+#: The Tier-B kit's committed run summary. Every OSV1 row that re-reads a
+#: browser-produced number reads it from here, so every mutation for those
+#: rows is a mutation OF THIS FILE -- the counterfactual is "the browser
+#: measured something else", stated the only way an in-process harness can
+#: state it.
+TIER_B_SUMMARY = _support.REPO_ROOT / op_probes.TIER_B_SUMMARY
+
 #: Every module that owns `test_row_*` probes. Readers are patched in ALL of
 #: them, so a mutation is seen the same way whichever family's probe runs --
 #: the alternative (patching only the family under test) would let a probe that
@@ -519,11 +526,6 @@ def _mo009b_the_attr_light_block_regresses(w: World) -> None:
     )
 
 
-def _mo010_a_browser_driver_appears(w: World) -> None:
-    """FIXED: something in the repo starts driving a browser."""
-    w.append(PYPROJECT, '\n# test-only: "playwright>=1.40"\n')
-
-
 def _mo011_a_second_motion_block_appears(w: World) -> None:
     """REGRESSION: reduced motion becomes per-widget opt-in."""
     w.append(
@@ -588,10 +590,6 @@ def _mo017_a_second_push_call_site_appears(w: World) -> None:
     w.append(WEBAPP, "\ndef _ledger_mutation():\n    WP.fire_reclaim_alarm(1, 2, 3)\n")
 
 
-def _mo_tier_b_kit_appears(w: World) -> None:
-    w.touch(TIER_B_KIT)
-
-
 def _mo022_the_swap_mechanism_changes(w: World) -> None:
     """The substantive half of Conformance 3's pin: the whole-body innerHTML
     replacement IS the mechanism the bad fixture describes.
@@ -627,9 +625,184 @@ def _mo027_ci_stops_running_the_kit(w: World) -> None:
     )
 
 
-def _mo029_an_artifact_directory_appears(w: World) -> None:
-    """The substantive half of Freeze 3: artifacts start being emitted."""
-    w.touch("tests/conformance/operator_surface/browser/artifacts/.keep")
+def _mo003_the_calm_page_stops_painting_blocked(w: World) -> None:
+    """FIXED: a calm L1 stops painting `--blocked`.
+
+    The counterfactual a pinning row needs -- the browser measuring the FIXED
+    behaviour. Both themes measured 97, so both anchors move together.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L1/dark": {\n        "alarm": 0,\n        "blocked": 97,',
+        '"calm/L1/dark": {\n        "alarm": 0,\n        "blocked": 0,',
+    )
+
+
+def _mo008_the_swap_starts_restoring_the_disclosure(w: World) -> None:
+    """FIXED: an open `<details>` survives the body-swap on L0."""
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 0,\n'
+        '        "marked_live_regions_after": 0,\n        "open_details_preserved": false,',
+        '"calm/L0/dark": {\n        "details_with_id": 2,\n        "live_regions_before": 0,\n'
+        '        "marked_live_regions_after": 0,\n        "open_details_preserved": true,',
+    )
+
+
+def _mo008_the_pause_control_starts_surviving(w: World) -> None:
+    """FIXED: the pause CONTROL's own state survives the swap on L0.
+
+    Separable from the disclosure half above, and pinned separately, because
+    the two are different fixes: one needs ids in the markup, the other needs
+    the re-rendered button to be re-synchronised with `window.__wtRefreshPaused`.
+    A row that noticed only one of them would absorb the other silently.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 0,\n'
+        '        "marked_live_regions_after": 0,\n        "open_details_preserved": false,\n'
+        '        "pause_control_preserved": false,',
+        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 0,\n'
+        '        "marked_live_regions_after": 0,\n        "open_details_preserved": false,\n'
+        '        "pause_control_preserved": true,',
+    )
+
+
+def _mo010_the_target_floor_is_met(w: World) -> None:
+    """FIXED: every interactive control on L0 reaches 44px."""
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L0/1280/dark": {\n        "client_width": 1280,\n        "controls": 35,\n'
+        '        "controls_below_44px": 26,',
+        '"calm/L0/1280/dark": {\n        "client_width": 1280,\n        "controls": 35,\n'
+        '        "controls_below_44px": 0,',
+    )
+
+
+def _mo020_the_calm_bad_half_stops_discriminating(w: World) -> None:
+    """REGRESSION: Conformance 1's injected-alarm-chip bad half stops firing.
+
+    A green fixture row whose bad half quietly stopped catching its defect is
+    the failure Freeze 4 exists to prevent, and it is invisible from the
+    browser tier's own green -- every good half still passes.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"bad-alarm-chip/L0/dark": {\n        "alarm": 10531,',
+        '"bad-alarm-chip/L0/dark": {\n        "alarm": 0,',
+    )
+
+
+def _mo021_the_rendered_chips_lose_their_word(w: World) -> None:
+    """REGRESSION on the half of Conformance 2 that HAS landed: a rendered
+    status chip stops carrying a word, which the Tier-B arm must notice even
+    while the row stays red for the Tier-A half."""
+    w.replace(
+        TIER_B_SUMMARY,
+        '"alarm/L1/dark": {\n        "status_elements": 19,\n        "wordless": 0',
+        '"alarm/L1/dark": {\n        "status_elements": 19,\n        "wordless": 4',
+    )
+
+
+def _mo021_the_tier_a_good_half_is_deferred_again(w: World) -> None:
+    """REGRESSION on the half of Conformance 2 that Tier A owns: the rendered
+    accessible-name check is deferred behind an `xfail(strict)` again.
+
+    A deferred good half is a check that does not currently pass, and a green
+    Conformance row whose good half does not pass is a claim. The Tier-B arm
+    would not notice: every browser measurement still holds.
+    """
+    w.replace(
+        _support.REPO_ROOT / TIER_A_KIT,
+        "def test_state_not_colour_only(alarm_dataset, level: str) -> None:",
+        '@pytest.mark.xfail(strict=True, reason="OSV1-004 regressed")\n'
+        "def test_state_not_colour_only(alarm_dataset, level: str) -> None:",
+    )
+
+
+def _mo030_a_tier_a_bad_half_stops_being_run(w: World) -> None:
+    """REGRESSION: one of the Tier-A kit's demonstrated bad halves stops being
+    collected -- the same defect as its Tier-B twin below, on the other kit.
+
+    Renamed rather than deleted, which is the realistic shape: the code is
+    still in the file, pytest simply never runs it again, and every remaining
+    good half stays green.
+    """
+    w.replace(
+        _support.REPO_ROOT / TIER_A_KIT,
+        "def test_calm_keeps_slot_bad_half_a_slot_that_says_nothing() -> None:",
+        "def _disabled_calm_keeps_slot_a_slot_that_says_nothing() -> None:",
+    )
+
+
+def _mo022_the_swap_bad_half_stops_discriminating(w: World) -> None:
+    """REGRESSION: the naive replacement stops losing the open disclosure, so
+    Conformance 3's bad half no longer differs from the shipped poller."""
+    w.replace(
+        TIER_B_SUMMARY,
+        '"bad-naive-replacement/L0/dark": {\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 0,\n        "marked_live_regions_after": 0,\n'
+        '        "open_details_preserved": false,',
+        '"bad-naive-replacement/L0/dark": {\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 0,\n        "marked_live_regions_after": 0,\n'
+        '        "open_details_preserved": true,',
+    )
+
+
+def _mo023_the_contrast_bad_half_loses_its_control(w: World) -> None:
+    """REGRESSION: the contrast probe starts reporting the recorded pair below
+    the floor in DARK as well as light.
+
+    That is the shape of a probe that has stopped measuring and started always
+    saying no -- and it would leave every good half in Conformance 4 looking
+    exactly as it does now.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"bad-low-contrast/L0/dark": {\n        "min_ratio": 5.53',
+        '"bad-low-contrast/L0/dark": {\n        "min_ratio": 2.1',
+    )
+
+
+def _mo028_the_browser_pin_moves_without_a_re_run(w: World) -> None:
+    """REGRESSION: the manifest's playwright pin moves while the recorded
+    numbers stay behind.
+
+    The precise hazard Freeze 2's "pinned chromium" exists to prevent: every
+    contrast ratio and pixel count in the ledger would silently start
+    describing a browser build nobody ran.
+    """
+    w.replace(PYPROJECT, '"playwright==1.60.0",', '"playwright==1.61.0",')
+
+
+def _mo029_the_kit_stops_reading_its_artifacts_back(w: World) -> None:
+    """REGRESSION: ONE Tier-B check stops reading its artifact back and asserts
+    on the value still in its own local variable.
+
+    Freeze 3's whole content, and the reason the probe counts read-backs
+    against writes rather than looking for the call anywhere: every other
+    check would still read back, the artifact would still be written, and the
+    browser tier would still be green.
+    """
+    w.replace(
+        _support.REPO_ROOT / op_probes.TIER_B_KIT,
+        "        cache[key] = _artifacts.read(path)",
+        '        cache[key] = {"measurement": measurement}  # trust the local value',
+    )
+
+
+def _mo030_a_demonstrated_bad_half_stops_being_run(w: World) -> None:
+    """REGRESSION: one of the eight demonstrated Conformance 1-4 bad halves
+    disappears from the recorded run.
+
+    "Demonstrated by running it" is the whole clause; a bad half that stopped
+    being executed is a claim again, and nothing else in the ledger notices.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"bad-wordless-chips/L1/dark"',
+        '"bad-wordless-chips-DISABLED/L1/dark"',
+    )
 
 
 def _mo031_a_red_core_row_goes_green(w: World) -> None:
@@ -808,6 +981,11 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-003",
+        "the browser measures a calm L1 painting ZERO --blocked pixels (the fix)",
+        _mo003_the_calm_page_stops_painting_blocked,
+    ),
+    Mutation(
+        "OSV1-003",
         "the retired palette a calm sweep would catch is tokenised away",
         _mo003_retired_palette_removed,
     ),
@@ -840,8 +1018,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-008",
-        "the body-swap starts restoring the pause flag",
-        _mo008_swap_restores_the_pause_flag,
+        "the browser measures an open `<details>` surviving the swap (the fix)",
+        _mo008_the_swap_starts_restoring_the_disclosure,
+    ),
+    Mutation(
+        "OSV1-008",
+        "the browser measures the pause CONTROL surviving the swap (the fix)",
+        _mo008_the_pause_control_starts_surviving,
     ),
     Mutation(
         "OSV1-009",
@@ -853,7 +1036,11 @@ MUTATIONS: tuple[Mutation, ...] = (
         '--ink-quiet falls back below the text floor in the :root[data-theme="light"] block',
         _mo009b_the_attr_light_block_regresses,
     ),
-    Mutation("OSV1-010", "a browser driver appears in the repo", _mo010_a_browser_driver_appears),
+    Mutation(
+        "OSV1-010",
+        "the browser measures every interactive control on L0 reaching 44px (the fix)",
+        _mo010_the_target_floor_is_met,
+    ),
     Mutation(
         "OSV1-011",
         "reduced motion becomes per-widget opt-in (a second @media block)",
@@ -890,15 +1077,40 @@ MUTATIONS: tuple[Mutation, ...] = (
         "the push channel acquires a second call site",
         _mo017_a_second_push_call_site_appears,
     ),
-    Mutation("OSV1-020", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
-    Mutation("OSV1-021", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
-    Mutation("OSV1-022", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
+    Mutation(
+        "OSV1-020",
+        "Conformance 1's injected-alarm-chip bad half stops catching its defect",
+        _mo020_the_calm_bad_half_stops_discriminating,
+    ),
+    # OSV1-021 carried a "the OTHER tier's kit file appears" pin in each lane.
+    # Both kits landed at the wave-2 integration, so neither pin is true any
+    # more and the row is green: one REGRESSION mutation per half, so a row
+    # that spans two tiers cannot be held up by only one of them.
+    Mutation(
+        "OSV1-021",
+        "Conformance 2's Tier-A good half is deferred again behind an xfail",
+        _mo021_the_tier_a_good_half_is_deferred_again,
+    ),
+    Mutation(
+        "OSV1-021",
+        "a rendered status chip loses its word (the Tier-B half)",
+        _mo021_the_rendered_chips_lose_their_word,
+    ),
+    Mutation(
+        "OSV1-022",
+        "Conformance 3's naive-replacement bad half stops losing the open disclosure",
+        _mo022_the_swap_bad_half_stops_discriminating,
+    ),
     Mutation(
         "OSV1-022",
         "the whole-body innerHTML swap (the bad fixture's own premise) changes shape",
         _mo022_the_swap_mechanism_changes,
     ),
-    Mutation("OSV1-023", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
+    Mutation(
+        "OSV1-023",
+        "Conformance 4's contrast bad half loses its dark-mode control",
+        _mo023_the_contrast_bad_half_loses_its_control,
+    ),
     Mutation(
         "OSV1-023",
         "a swept breakpoint disappears from the stylesheet",
@@ -924,17 +1136,32 @@ MUTATIONS: tuple[Mutation, ...] = (
         "CI stops running the Tier-A kit (the 'runs in a gate' half)",
         _mo027_ci_stops_running_the_kit,
     ),
-    Mutation("OSV1-028", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
-    Mutation("OSV1-029", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
+    Mutation(
+        "OSV1-028",
+        "the manifest's chromium pin moves while the recorded numbers stay behind",
+        _mo028_the_browser_pin_moves_without_a_re_run,
+    ),
     Mutation(
         "OSV1-029",
-        "a Tier-B artifact directory appears",
-        _mo029_an_artifact_directory_appears,
+        "the Tier-B kit stops reading its own artifacts back before asserting",
+        _mo029_the_kit_stops_reading_its_artifacts_back,
     ),
-    Mutation("OSV1-030", "the Tier-B kit file appears", _mo_tier_b_kit_appears),
+    # OSV1-030 (Freeze 4) spans both kits too, and went green the same way:
+    # one REGRESSION mutation per kit, because a demonstration that quietly
+    # narrowed on either side is the failure this clause exists to catch.
+    Mutation(
+        "OSV1-030",
+        "one of the demonstrated Tier-A bad halves stops being run",
+        _mo030_a_tier_a_bad_half_stops_being_run,
+    ),
+    Mutation(
+        "OSV1-030",
+        "one of the demonstrated Conformance 1-4 bad halves stops being run",
+        _mo030_a_demonstrated_bad_half_stops_being_run,
+    ),
     Mutation(
         "OSV1-031",
-        "one of the ten red Core-carrying rows flips to CONFORMS",
+        "one of the five red Core-carrying rows flips to CONFORMS",
         _mo031_a_red_core_row_goes_green,
     ),
     Mutation(

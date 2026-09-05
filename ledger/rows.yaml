@@ -1037,14 +1037,14 @@
     (OSV1-003).
 
 - id: OSV1-003
-  title: a calm screen paints zero alarm and zero blocked pixels -- unmeasured, no kit
+  title: a calm L1 paints 97 --blocked pixels with nothing blocked
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 2
     quote: |
       On a calm screen — nothing held past TTL, nothing blocked — zero `--alarm` and zero
       `--blocked` pixels are painted; that absence is what makes the alarm pop.
-  disposition: GAP
+  disposition: VIOLATION
   work: work_item_pipeline-qgo
   assertion:
     kind: probe
@@ -1053,33 +1053,48 @@
     PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
     a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
 
-    GAP, REASON "KIT NOT BUILT" -- never NOT-ASSERTABLE. The contract names the
-    check (`calm.zero_alarm_pixels`), names its tier (B) and names its file
-    (`tests/conformance/operator_surface/browser/test_tier_b.py`, Conformance
-    1). It IS assertable; it simply is not asserted yet.
+    RE-DERIVED 2026-09-05, GAP -> VIOLATION. The kit the previous disposition
+    was waiting on now exists and has run
+    (`tests/conformance/operator_surface/browser/test_tier_b.py`,
+    `calm.zero_alarm_pixels`), so this row no longer records "unmeasured"; it
+    records a measurement.
 
-    MEASURED 2026-09-04 against 4aaee50: `tests/conformance` does not exist at
-    all (`tests/` holds only cli/, integration/, unit/, conftest.py,
-    _dolt_isolation.py, _util.py), and the repo contains ZERO occurrences of
-    playwright, selenium, screenshot or axe-core -- so no pixel of this surface
-    has ever been asserted by any test.
+    MEASURED IN A REAL BROWSER 2026-09-05 -- chromium 148.0.7778.0 via the
+    pinned playwright 1.60.0, against a live app on an ephemeral loopback port
+    over the isolated dolt fixture. Every number below is re-read by this
+    row's probe from `tests/conformance/operator_surface/browser/LAST_RUN.json`,
+    the kit's committed run summary; the probe never trusts the browser tier's
+    own pass/fail (Freeze 3 / Phase-1 ruling 6).
 
-    KNOWN SPECIMEN THE SWEEP WOULD HAVE TO CATCH, measured here so the kit has
-    a real target rather than a synthetic one: webpwa.py:121-122 renders the
-    offline body with the RETIRED palette inline
-    (`background:#0D0D0C;color:#F2EEE6`), and webtrust.py:258-259 declares
-    `--ground:#0D0D0C; --ink:#F2EEE6; --amber:#D9A253` in its own `<style>`
-    block, deliberately not importing `webtheme.CSS` (webtrust.py:249-253).
-    That hardcoded amber outside the token set is exactly the Conformance 1 bad
-    fixture the contract describes.
+    THE RESULT, calm fixture (ready work, one healthily-held item with fresh
+    custody, resolved throughput; nothing held past TTL, nothing blocked):
+      L0 dark   0 --alarm, 0 --blocked  across 2 850 560 px  CLEAN
+      L0 light  0 --alarm, 0 --blocked  across 2 850 560 px  CLEAN
+      L1 dark   0 --alarm, 97 --blocked across 3 792 640 px  VIOLATION
+      L1 light  0 --alarm, 97 --blocked across 3 792 640 px  VIOLATION
+    The three painters, identified in the render: the legend swatch
+    `span.sw`, the live `span.dot`, and the destructive `button.btn.danger`'s
+    border -- all page chrome, none of them the state of any item. `--watch`
+    is swept too and deliberately NOT scored: Core 2 says only `--alarm` and
+    `--blocked` carry status meaning.
 
-    RE-READ 2026-09-04 (DRAFT true-up #1): the webtrust.py specimen above is
-    now ALSO a scored Core 4 violation -- the true-up widened that clause to
-    reach `<style>` blocks outside the token module, and OSV1-005 counts it.
-    Nothing about THIS row moved: Core 2's calm-pixel half is still unmeasured
-    because no browser kit exists, and this row still pins the specimen's
-    presence so the sweep, when built, has a real target.
+    THE SWEEP DISCRIMINATES, demonstrated by running it (Freeze 4): an
+    injected `var(--alarm)` chip on a calm L0 reports 10 531 --alarm px; the
+    genuinely-alarming fixture (one blocked item, no injection at all) reports
+    264 --blocked px; the contract's own named bad half -- the retired
+    `#D9A253` palette region reinstated -- reports 16 681 px in its own
+    bucket. That third bucket exists because the retired amber is a DIFFERENT
+    hue from `--alarm` and an honest token sweep does not classify it as one.
 
+    THE SWEEP IS THEME-RESOLVED, not hardcoded: the light theme redefines all
+    three status hues (`--alarm:#92400e`, `--blocked:#991b1b`,
+    `--watch:#3a4468`, webtheme.py:391), and an earlier form of the kit swept
+    the light renders for the dark values -- reporting a confident zero for a
+    page it had not examined. The tokens are read from the live page.
+
+    STILL TRUE, and still pinned by this probe: the retired-palette specimens
+    at webpwa.py:121-122 and webtrust.py:258-259 remain in the tree (also
+    scored by Core 4, OSV1-005).
 - id: OSV1-004
   title: state is never colour-only -- measured on rendered L0/L1/L2, and it holds
   contract:
@@ -1335,7 +1350,7 @@
          kit would close the residue.
 
 - id: OSV1-008
-  title: body-swap survival, including a pending announcement -- unmeasured, no browser kit
+  title: one of Core 6's four named survivals holds; the other three do not
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 6
@@ -1343,7 +1358,7 @@
       Scroll position, every open `<details>`, and the pause control's state survive that swap,
       and an assistive-technology announcement pending at the moment of the swap is not silently
       destroyed by it.
-  disposition: GAP
+  disposition: VIOLATION
   work: work_item_pipeline-qgo
   assertion:
     kind: probe
@@ -1352,34 +1367,55 @@
     PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
     a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
 
-    GAP, REASON "KIT NOT BUILT" -- never NOT-ASSERTABLE. The contract names the
-    check (`swap.survives`), its tier (B) and its file (Conformance 3). No
-    browser test exists anywhere in the repo.
+    RE-DERIVED 2026-09-05, GAP -> VIOLATION. At seed this row recorded source
+    shape as HYPOTHESES for a browser run to confirm or refute. The run has
+    happened.
 
-    MEASURED SOURCE STATE 2026-09-04 against 4aaee50. These are HYPOTHESES for
-    the browser run to confirm or refute -- source shape is not behaviour, and
-    this row does not credit any of them as a result:
-      webapp.py:129            `_AUTO_REFRESH_MS = 20_000`; the poll is on L0
-                               (webapp.py:4777) and L1 (webbrowse.py:605), never L2.
-      webtheme.py auto_refresh_js
-                               the swap is `document.body.innerHTML =
-                               doc.body.innerHTML`, then every `<script>` is
-                               re-created so inline JS re-runs.
-      captureState/restoreState
-                               restore EXACTLY TWO things: the ids of open
-                               `details[id]` elements, and `window.scrollY`.
-      THE PAUSE CONTROL IS NOT AMONG THEM. `window.__wtRefreshPaused` lives on
-      `window` and survives the swap, so polling stays paused -- but the button
-      is re-rendered by the server at `aria-pressed="false"`
-      (webapp.py:3549) and nothing re-applies the flag to it, so the CONTROL's
-      state does not visibly survive. Two of the clause's four named things
-      have a restore implementation; one has a split outcome.
-      THE ANNOUNCEMENT HALF HAS NO IMPLEMENTATION AT ALL: `aria-live` has ZERO
-      occurrences in `src/`. The only live regions are implicit -- `role="alert"`
-      at webapp.py:1211 and webapp.py:4213, `role="status"` at webapp.py:1507 --
-      and a whole-body innerHTML replacement recreates them, which is precisely
-      the Conformance 3 bad-half behaviour.
+    MEASURED IN A REAL BROWSER 2026-09-05 -- chromium 148.0.7778.0 via the
+    pinned playwright 1.60.0, against a live app on an ephemeral loopback port
+    over the isolated dolt fixture. Every number below is re-read by this
+    row's probe from `tests/conformance/operator_surface/browser/LAST_RUN.json`,
+    the kit's committed run summary; the probe never trusts the browser tier's
+    own pass/fail (Freeze 3 / Phase-1 ruling 6).
 
+    THE RESULT, L0 and L1, scrolled 400px, one `<details>` opened, the poll
+    paused, the surface's own poller forced through one tick:
+      scroll offset      PRESERVED      (`restoreState`'s `window.scrollTo`)
+      open `<details>`   LOST           hypothesis REFUTED in practice
+      pause control      LOST           hypothesis CONFIRMED
+      announcement       NOTHING TO LOSE  hypothesis CONFIRMED, and worse
+    One of four holds.
+
+    THE DISCLOSURE HALF IS WORSE THAN THE SEED THOUGHT. The seed recorded that
+    `restoreState` restores open `details[id]`, and read that as an
+    implementation being present. Measured in the render, the mechanism has
+    ZERO TARGETS: no `<details>` on L0, L1 or L2 carries an id at all (help
+    popover, activity feed, actions drawer -- all id-less; `details_with_id`
+    is 0 in the run summary). An open disclosure therefore closes on every
+    20-second poll.
+
+    THE PAUSE CONTROL, exactly as the seed predicted: `window.__wtRefreshPaused`
+    survives (it lives on `window`, which a body swap never replaces) but the
+    button is re-rendered by the server at `aria-pressed="false"`
+    (webapp.py:3549) and nothing re-applies the flag. A paused page shows
+    itself as running. The run records both halves separately
+    (`pause_flag_preserved: true`, `pause_control_preserved: false`) because
+    an operator reads the control, not the flag.
+
+    THE ANNOUNCEMENT HALF HAS NOTHING TO PRESERVE: `live_regions_before` is 0.
+    `aria-live` has zero occurrences in `src/`, and neither `role="status"`
+    (webapp.py:1507) nor `role="alert"` (webapp.py:1211, :4213) renders on a
+    calm L0/L1 at all -- checked including with a `?msg=` flash. So the clause
+    fails one step earlier than the swap: there is no announcement for a body
+    swap to destroy, and none for the operator to hear.
+
+    THE KIT DOES NOT MEASURE THIS VACUOUSLY. A forced tick whose fetch quietly
+    fails leaves the page untouched, and an untouched page "preserves"
+    everything; the kit plants a sentinel node before the swap and refuses to
+    measure until it is gone. That guard caught exactly this: chromium marks a
+    page that is not the front page of its window as hidden, the poller's
+    first guard is `document.hidden`, and the first version of these numbers
+    was taken from a page nothing had swapped.
 - id: OSV1-009
   title: every declared token pair clears its floor -- 4.5:1 text, 3:1 non-text, both themes
   contract:
@@ -1457,7 +1493,7 @@
     necessary, never sufficient.
 
 - id: OSV1-010
-  title: rendered contrast, target boxes and a motion trace -- unmeasured, no browser kit
+  title: rendered contrast, target boxes and a motion trace -- measured, three of four floors fail
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 7
@@ -1465,7 +1501,7 @@
       plus a browser run emitting computed contrast ratios, target bounding boxes, and a
       motion-preference trace at 430, 900, and 1280px in both themes; the orchestrator
       re-checks those numbers against the floors.
-  disposition: GAP
+  disposition: VIOLATION
   work: work_item_pipeline-qgo
   assertion:
     kind: probe
@@ -1474,27 +1510,59 @@
     PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
     a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
 
-    GAP, REASON "KIT NOT BUILT" -- never NOT-ASSERTABLE. This is the clause the
-    Phase-1 ruling 6 speaks to most directly: a browser run must emit ARTIFACTS
-    THE ORCHESTRATOR RE-CHECKS ITSELF -- computed contrast numbers, pixel
-    sweeps, bounding boxes -- never a "looks correct" verdict (PROTOCOL.md
-    pillar 2). None of that machinery exists.
+    RE-DERIVED 2026-09-05, GAP -> VIOLATION. The browser run this clause names
+    now exists and emits exactly what the clause asks for -- computed contrast
+    ratios, target bounding boxes and a motion trace at 430, 900 and 1280px in
+    both themes, at all three IA levels (18 measured renders).
 
-    MEASURED 2026-09-04 against 4aaee50: zero playwright/selenium/screenshot/
-    axe-core references in the repo; `tests/conformance` absent; and, from
-    Brief A sec.9 re-verified here, no rendered-pixel, layout, computed-contrast,
-    responsive-breakpoint, focus-order or screen-reader test exists anywhere.
+    MEASURED IN A REAL BROWSER 2026-09-05 -- chromium 148.0.7778.0 via the
+    pinned playwright 1.60.0, against a live app on an ephemeral loopback port
+    over the isolated dolt fixture. Every number below is re-read by this
+    row's probe from `tests/conformance/operator_surface/browser/LAST_RUN.json`,
+    the kit's committed run summary; the probe never trusts the browser tier's
+    own pass/fail (Freeze 3 / Phase-1 ruling 6).
 
-    WHAT IS ALREADY IN PLACE FOR THE RUN TO MEASURE, not credited as
-    conformance: `--u:44px /* WCAG target minimum */` (webtheme.py:278) applied
-    via `min-height:var(--u)` on 8 rules (:577, :831, :1101, :1106, :1282,
-    :1348, :1614, :1635, :1831); six declared breakpoints (1280, 900, 860, 720,
-    600, 430px); and `<meta name="viewport" content="width=device-width,
-    initial-scale=1">` at webtheme.py:3424. Two horizontal-overflow defects are
-    recorded in-code as previously observed (webtheme.py:1838, :2624-2630),
-    which is exactly what the `scrollWidth == clientWidth` half of Conformance
-    4 would catch.
+    TEXT CONTRAST (floor 4.5:1) -- L0 CLEAN, L1 and L2 BELOW:
+      L0  0 of 135 scored below floor, both themes, all three widths
+      L1  3 of 183 dark, 5 of 183 light
+      L2  1 of 58 dark, 2 of 58 light
+    Named: `.status-chip.st-resolved` reads 3.13:1 dark / 2.26:1 light against
+    its own chip surface; light also drops `.actions-drawer summary .count` to
+    2.83:1 and `.st-held` to 3.99:1; L2's `summary .count` reads 3.77:1 dark.
+    That last pair is the `--ink-quiet` reading copy OSV1-009 scored by token
+    arithmetic -- measured here in the render, independently.
 
+    TARGET SIZE (floor 44px) -- FAILS EVERYWHERE:
+      L0  26 of 35 controls under 44px at 900/1280, 16 of 35 at 430
+      L1  22 of 41 (21 of 40 at 430)
+      L2  11 of 20
+    Among them the auto-refresh pause control itself at 26x26, every
+    window-selector link at 28px tall, and the footer links at 11.5px tall.
+    Inline links are excluded per WCAG 2.5.8's own inline exception and the
+    excluded population is emitted alongside, never silently dropped.
+
+    NON-TEXT CONTRAST (floor 3:1) -- FAILS, over a NAMED population:
+      L0  17 of 82 dark, 29 of 82 light
+      L1  23 of 73 dark, 44 of 73 light
+      L2  11 of 33 dark, 13 of 33 light
+    The population is interactive-control borders plus SVG icon strokes --
+    WCAG 1.4.11's own scope. An earlier, broader form measured every border on
+    the page and reported 36-65 failures per view, most of them decorative
+    panel hairlines the guideline exempts; a number that large stops being a
+    finding. The icon-button border is `#303238` on `#1e2027`: 1.27:1.
+
+    REDUCED MOTION -- PASSES, at every level, width and theme: zero animations
+    run under an emulated `prefers-reduced-motion: reduce` (Core 7's kernel
+    rule at webtheme.py:2162 collapses durations to .001ms, so the kit asks
+    "does anything actually RUN", not "does any animation exist").
+
+    HORIZONTAL OVERFLOW -- PASSES, and the pass is recorded as WEAK EVIDENCE
+    on purpose: `scrollWidth == clientWidth` at all nine level/width pairs,
+    but `html`/`body` carry `overflow-x: clip`, so that metric cannot move.
+    The kit therefore also emits `elements_beyond_viewport` (border boxes past
+    `clientWidth`, which clipping cannot hide) -- 0 everywhere, including at
+    430px. The two in-code overflow notes (webtheme.py:1838, :2624-2630)
+    describe defects this fixture did not reproduce; see OSV1-023.
 - id: OSV1-011
   title: reduced motion is honoured by one kernel-level rule, not per-widget opt-in
   contract:
@@ -1894,122 +1962,183 @@
     kind: none
 
 - id: OSV1-020
-  title: Conformance 1 (calm render, no alarm colour) has no test file
+  title: Conformance 1 (calm render, no alarm colour) exists and discriminates
   contract:
     file: contracts/operator-surface.v1.md
     clause: Conformance 1
     quote: |
       **Test location:** `tests/conformance/operator_surface/browser/test_tier_b.py` (Core 2).
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-qgo
   assertion:
     kind: probe
     ref: test_row_osv1_020
   notes: >
-    PINNING ROW -- the probe pins the named path's ABSENCE; a passing probe
-    here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    RE-DERIVED 2026-09-05, GAP -> CONFORMS. The named path exists and carries
+    `calm.zero_alarm_pixels` under the contract's own check name. This row is
+    about the FIXTURE, not about Core 2 conforming -- the calm render's actual
+    verdict lives in OSV1-003, which is VIOLATION.
 
-    MEASURED 2026-09-04 against 4aaee50: `tests/conformance/` does not exist.
-    THE FIXTURE THIS ROW WAITS ON, from the contract: L0 and L1 rendered
-    against a fixture with nothing held past TTL and nothing blocked, swept
-    pixel-wise in both themes. GOOD = zero pixels matching `--alarm` or
-    `--blocked`. BAD = the retired-palette region reinstated -- a hardcoded
-    amber outside the token set -- reported as alarm-coloured pixels on a calm
-    page. A real specimen for the bad half already exists in the tree
-    (webpwa.py:121-122, webtrust.py:258-259); see OSV1-005.
+    THE GOOD HALF: L0 and L1 rendered against a calm fixture (nothing held
+    past TTL, nothing blocked) in both themes, screenshotted full-page,
+    decoded to pixels and swept against the LIVE token values. Deliberately
+    not an empty project -- an empty page is trivially free of alarm colour.
 
+    THREE BAD HALVES, ALL RUN (Freeze 4), each catching a different defect:
+      injected `var(--alarm)` chip on a calm L0   10 531 --alarm px
+      the contract's named retired `#D9A253` region  16 681 px, own bucket
+      the genuinely-alarming fixture, no injection    264 --blocked px
+    The third is the strongest: same page, same sweep, same code path, and the
+    only difference is one real blocked item in the project.
+
+    This row's probe RE-READS those numbers from the kit's committed run
+    summary (`LAST_RUN.json`), so a bad half that silently stopped
+    discriminating fails the ledger, not just the browser tier.
 - id: OSV1-021
   title: >-
-    Conformance 2 (alarm unmissable, never colour-only) -- Tier-A half lands,
-    Tier-B hue half still has no test file
+    Conformance 2 (alarm unmissable, never colour-only) -- BOTH halves landed:
+    the Tier-A accessible-name half and the Tier-B hue half, each discriminating
   contract:
     file: contracts/operator-surface.v1.md
     clause: Conformance 2
     quote: |
       **Test location:** `tests/conformance/operator_surface/test_tier_a.py` (Core 3),
       `tests/conformance/operator_surface/browser/test_tier_b.py` (Core 2).
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-c1a
   assertion:
     kind: probe
     ref: test_row_osv1_021
   notes: >
-    PINNING ROW -- one half has landed, the other has not, so the probe now
-    pins the TIER-B half's absence rather than both. A passing probe here is
-    NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    RE-DERIVED CONFORMS 2026-09-05 at highway wave-2 integration: both halves
+    present and demonstrated (Tier-A: 26 bad halves executed, of which
+    Conformance 2's own is `test_state_not_colour_only_bad_half_chip_with_only_a_class`;
+    Tier-B: 8 bad halves executed with the measured px counts below). The probe
+    now asserts BOTH halves in the CONFORMS direction -- the Tier-A check
+    exists, ships its bad half and is NOT deferred, and the Tier-B hue and
+    wordless readings are re-read from the committed run summary -- so this row
+    goes red again if EITHER half stops holding. Flip direction REGRESSION.
 
     THE ONLY CONFORMANCE FIXTURE THAT SPANS BOTH TIERS, so it is owned by two
-    items. Status 2026-09-05:
-      TIER-A HALF, LANDED (work_item_pipeline-c1a). "every status-bearing
-        element also carries a word" is implemented as `state.not_colour_only`
-        in `tests/conformance/operator_surface/test_tier_a.py`, run over
-        rendered L0/L1/L2 of the ALARM fixture, and it PASSES -- see OSV1-004,
-        which carries the measurement. Its bad half is this fixture's own named
-        specimen ("a fixture whose status chips carry only a status class") and
-        the same function reports it.
-      TIER-B HALF, NOT BUILT (work_item_pipeline-qgo). "the alarm region is
-        present, its hue is `--alarm` or `--blocked`" needs a real browser;
-        `tests/conformance/operator_surface/browser/test_tier_b.py` does not
-        exist.
-    Both must land before this row can go green; the single-ref schema records
-    the first, and this note records the second so the second is not lost.
+    items, and BOTH have now landed.
 
+    TIER-A HALF, LANDED 2026-09-05 (work_item_pipeline-c1a, this row's `work`
+    ref). "every status-bearing element also carries a word" is implemented as
+    `state.not_colour_only` in `tests/conformance/operator_surface/test_tier_a.py`,
+    run over rendered L0/L1/L2 of the ALARM fixture, and it PASSES -- see
+    OSV1-004, which carries the measurement. Its bad half is this fixture's own
+    named specimen ("a fixture whose status chips carry only a status class")
+    and the same function reports it.
+
+    TIER-B HALF, LANDED 2026-09-05 (work_item_pipeline-qgo, this row's second
+    owner, recorded in this note because the schema holds one `work` ref): the
+    Tier-B file exists and carries both arms of the rendered check. Measured
+    with chromium 148.0.7778.0 / playwright 1.60.0 against the alarm fixture
+    (one genuinely blocked item):
+      `alarm.reserved_hue`   L1 dark paints 2 669 --alarm and 734 --blocked px
+                             -- the alarm region carries a RESERVED hue
+      `state.not_colour_only` L0 1, L1 19, L2 1 status-bearing elements, ZERO
+                             of them wordless, measured after CSS has had its
+                             say rather than in the markup
+    Its bad half is run: stripping the word and the accessible name off every
+    status chip while LEAVING the status class (the defect the clause names)
+    makes the same probe report them wordless.
+
+    NOTHING OUTSTANDING: this was the only Conformance fixture spanning both
+    tiers, each lane pinned the OTHER lane's half, and the two pins met here.
+    Neither lane could have flipped this row alone, and neither pin was wrong
+    when it was written.
 - id: OSV1-022
-  title: Conformance 3 (body-swap survival) has no test file
+  title: Conformance 3 (body-swap survival) exists and discriminates
   contract:
     file: contracts/operator-surface.v1.md
     clause: Conformance 3
     quote: |
       **Test location:** `tests/conformance/operator_surface/browser/test_tier_b.py` (Core 6).
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-qgo
   assertion:
     kind: probe
     ref: test_row_osv1_022
   notes: >
-    PINNING ROW -- the probe pins the named path's ABSENCE; a passing probe
-    here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    RE-DERIVED 2026-09-05, GAP -> CONFORMS. The fixture exists, runs both
+    halves, and discriminates. Core 6's own verdict is OSV1-008 (VIOLATION);
+    this row is about the fixture.
 
-    MEASURED 2026-09-04 against 4aaee50: no browser test exists. GOOD = the
-    post-swap DOM snapshot preserves scroll offset, the open disclosure, and
-    the pause flag, and the live region survives to announce. BAD = a whole-body
-    innerHTML replacement that recreates the region loses all four.
+    THE SEED'S WARNING WAS RIGHT and shaped the build: "the bad half of this
+    fixture is uncomfortably close to the shipped behaviour -- make sure the
+    bad half discriminates against something the good half genuinely does
+    differently." Measured, the shipped poller differs from a naive
+    replacement in exactly ONE of the four named survivals (scroll), so the
+    bad halves are built around that.
 
-    NOTE FOR WHOEVER BUILDS IT: the shipped swap IS a whole-body innerHTML
-    replacement, and the measured source state (OSV1-008) says two of the four
-    have a restore implementation, the pause CONTROL does not, and the live
-    region does not exist at all. The bad half of this fixture is therefore
-    uncomfortably close to the shipped behaviour -- build the good half against
-    the fixed implementation, and make sure the bad half discriminates against
-    something the good half genuinely does differently.
+    BAD HALF 1, the contract's literal wording -- a whole-body `innerHTML`
+    replacement with no capture/restore. It loses the open `<details>`, and
+    that is what the test asserts.
 
+    BAD HALF 2, and the honest reason it exists: on chromium 148 a SYNCHRONOUS
+    `body.innerHTML = html` preserves `window.scrollY` by itself -- the
+    document never collapses, so the engine never clamps the offset. The
+    contract's literal bad half therefore does NOT discriminate on Core 6's
+    scroll half at all. The same whole-body replacement written the other
+    common way (clear, force layout, refill) does lose the offset, and that is
+    what proves the good half's scroll assertion can see a loss when there is
+    one. Both readings are emitted.
+
+    THE VACUOUS-PASS GUARD is part of the fixture, not a nicety. The poller
+    swallows every error by design, so a forced tick whose fetch failed leaves
+    the page untouched -- and an untouched page "preserves" all four. The kit
+    plants a sentinel node before the swap and refuses to measure until it is
+    gone. It caught a real instance: chromium marks a non-front page as
+    hidden, `document.hidden` is the poller's first guard, and the first
+    version of these numbers came from a page nothing had swapped.
+
+    The whole-body `innerHTML` swap this fixture's premise rests on is still
+    the shipped mechanism, and this row's probe still pins that.
 - id: OSV1-023
-  title: Conformance 4 (viewport sweep at 430/900/1280) has no test file
+  title: Conformance 4 (viewport sweep at 430/900/1280) exists and discriminates
   contract:
     file: contracts/operator-surface.v1.md
     clause: Conformance 4
     quote: |
       **Test location:** `tests/conformance/operator_surface/browser/test_tier_b.py` (Core 7).
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-qgo
   assertion:
     kind: probe
     ref: test_row_osv1_023
   notes: >
-    PINNING ROW -- the probe pins the named path's ABSENCE; a passing probe
-    here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    RE-DERIVED 2026-09-05, GAP -> CONFORMS. The fixture exists and sweeps what
+    the clause names: L0, L1 and L2 at 430, 900 and 1280px in both themes --
+    18 measured renders, each emitting computed contrast ratios, target
+    bounding boxes, a motion trace and two overflow readings. Core 7's own
+    verdict is OSV1-010 (VIOLATION); this row is about the fixture.
 
-    MEASURED 2026-09-04 against 4aaee50: no browser test exists. GOOD =
-    `scrollWidth == clientWidth` at every viewport, every interactive target at
-    least 44px, computed text contrast at least 4.5:1, across L0/L1/L2 at 430,
-    900 and 1280px in both themes. BAD = a fixed-width element wider than 430px
-    emits `scrollWidth > clientWidth`; the recorded 4.27:1 ink pair emits a
-    contrast number below the floor.
+    BAD HALF, CONTRAST ARM -- and it carries its own control. The recorded
+    `--ink-quiet`/`--ground` pair is injected as real copy into the real page
+    and asserted BELOW the floor in light AND at or above it in dark
+    (measured: 5.53:1 dark). A probe that reported "below floor" for
+    everything would satisfy the first assertion and fail the second, so the
+    pair together is what proves the number is a measurement.
 
-    TWO OVERFLOW DEFECTS ARE ALREADY RECORDED IN-CODE as previously observed at
-    <=480px and 415px (webtheme.py:1838, :2624-2630), so the good half of this
-    fixture has a real chance of failing on first run -- which is the point.
+    BAD HALF, OVERFLOW ARM -- run, and the result recorded as measured rather
+    than reinterpreted. The clause's literal bad half ("a fixed-width element
+    wider than 430px emits `scrollWidth > clientWidth`") DOES NOT FIRE on this
+    surface: `html`/`body` carry `overflow-x: clip`, so a 900px element at a
+    430px viewport moves `scrollWidth` not at all. The kit therefore emits a
+    second reading -- border boxes extending past `clientWidth`, which
+    clipping cannot hide -- and the bad half asserts on THAT. Both readings
+    are in the artifact so the clause's wording is shown to be
+    non-discriminating here instead of being quietly rewritten.
 
+    A FUTURE AMENDMENT MAY WANT THIS: the contract's `scrollWidth ==
+    clientWidth` wording is satisfiable by clipping the overflow rather than
+    preventing it. Naming it here rather than proposing a change from a test
+    file.
+
+    The three swept breakpoints are still declared in the stylesheet, and this
+    row's probe still pins that -- a viewport the stylesheet no longer knows
+    about is a different test.
 - id: OSV1-024
   title: >-
     Conformance 5 (hero composition) -- fixture exists, discriminates, and its
@@ -2181,7 +2310,7 @@
     (CCV1-022, where a whole suite's green claims had never been run).
 
 - id: OSV1-028
-  title: Freeze 2 -- the Tier-B browser kit does not exist; no browser test exists at all
+  title: Freeze 2 -- the Tier-B browser kit exists, pins chromium, and runs as its own CI tier
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 2
@@ -2189,84 +2318,120 @@
       **Freeze 2:** the Tier-B kit exists at
       `tests/conformance/operator_surface/browser/test_tier_b.py`, drives a pinned chromium
       against a live app with isolated fixture data, and runs as its own CI tier.
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-qgo
   assertion:
     kind: probe
     ref: test_row_osv1_028
   notes: >
-    PINNING ROW -- the probe pins the path's absence AND the absence of any
-    browser-driver reference anywhere in the repo; a passing probe here is NOT
-    conformance. Flip direction VIOLATION-MOVEMENT.
+    RE-DERIVED 2026-09-05, GAP -> CONFORMS. The seed named THREE SEPARABLE
+    SUB-CONDITIONS and said a partial build satisfies none of them; all four
+    parts (path, pinned browser, isolated data, own CI tier) are checked
+    independently by this row's probe.
 
-    MEASURED 2026-09-04 against 4aaee50: the path does not exist, and
-    `playwright`, `selenium`, `screenshot` and `axe-core` have ZERO occurrences
-    across the tree. Not one test opens a browser. This is the single largest
-    gap in the OSV1 family -- four Core-clause rows (OSV1-003, -008, -010) plus
-    four Conformance rows (OSV1-020..-023) have no other remedy.
+    THE PATH exists at the name the contract gives it.
 
-    THE THREE SUB-CONDITIONS ARE SEPARABLE, and a partial build satisfies none
-    of them: the kit must exist, drive a PINNED chromium (an unpinned browser
-    makes a contrast number unreproducible), use ISOLATED fixture data
-    (`tests/conftest.py::isolated_dolt_server` -- never the live service), and
-    run as its OWN CI tier (a browser tier's cost and flake profile must not
-    ride inside the fast tiers).
+    THE BROWSER IS PINNED, and pinned at the manifest: `playwright==1.60.0` is
+    an EXACT pin in `pyproject.toml`'s dev extra, and a playwright release
+    ships exactly one chromium build -- resolved here to chromium 148.0.7778.0
+    and recorded in every emitted artifact's `browser` block. The kit asserts
+    the pin itself, so moving it without re-running is a red test rather than
+    a quietly-changed contrast number.
 
+    THE FIXTURE DATA IS ISOLATED, in four layers: the session-scoped
+    `tests/conftest.py::isolated_dolt_server` (inherited, not re-implemented);
+    a SEPARATE `A.Workspace` per scenario, because L0 renders every project in
+    its workspace and a shared root would let the alarm scenario's blocked
+    item paint onto the calm scenario's L0; uvicorn on `127.0.0.1:0` with the
+    port read back off the live socket, plus an explicit refusal to serve on
+    any live-service port; and a per-run random password. The live service is
+    unreachable from this tier by construction.
+
+    IT RUNS AS ITS OWN TIER: `make test-conformance-b` (depending on
+    `make playwright-install`) and a CI step named "Tier 7 -- operator-surface
+    conformance (Tier B, browser)", separate from tiers 1-5, installing
+    chromium itself and uploading the artifacts. Deliberately NOT part of
+    `make test`: `-m "not tier_b"` in pyproject's addopts deselects the tier
+    everywhere else, and a command-line `-m tier_b` overrides it.
+
+    DESELECTED, NOT `--ignore`d, on purpose: the module is still imported and
+    collected by the fast tiers, so a Tier-B kit that has stopped importing at
+    all fails loudly instead of vanishing from the run.
 - id: OSV1-029
-  title: Freeze 3 -- no Tier-B artifact exists for the orchestrator to re-check
+  title: Freeze 3 -- every Tier-B check emits artifacts, and this ledger re-reads them
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 3
     quote: |
       **Freeze 3:** every Tier-B check emits artifacts the orchestrator re-checks itself; no
       check reports a rendered impression as a pass.
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-qgo
   assertion:
     kind: probe
     ref: test_row_osv1_029
   notes: >
-    PINNING ROW -- the probe pins that no Tier-B artifact path exists; a
-    passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    RE-DERIVED 2026-09-05, GAP -> CONFORMS, against the closing condition the
+    seed itself wrote: "a stable on-disk artifact path with a documented JSON
+    shape, and ledger probes here that RE-READ those numbers rather than
+    trusting the browser test's own pass/fail." Both halves exist.
 
-    GAP vacuously today (there are no Tier-B checks, so none of them fails to
-    emit), and rowed anyway BECAUSE it is vacuous: this is the condition most
-    likely to be quietly skipped once a browser kit does exist and its
-    assertions look green. Phase-1 ruling 6 makes it binding -- the run must
-    emit computed contrast NUMBERS, pixel-sweep counts, bounding boxes and
-    post-swap DOM snapshots the orchestrator re-reads, never a "looks correct"
-    verdict (PROTOCOL.md pillar 2: an agent's or monitor's verdict is a raw
-    observation).
+    THE KIT'S OWN DISCIPLINE is measure -> write -> read back -> assert. Every
+    check computes numbers in the browser, writes them to a JSON record under
+    a per-run directory, reads that file back through a reader that REFUSES a
+    malformed envelope or an empty measurement, and asserts against what came
+    off disk. No assertion in the kit rests on a value that only lived in a
+    local variable. Screenshots are saved beside the JSON and NOTHING asserts
+    on them -- they are evidence for a human's Freeze 8 look.
 
-    WHAT WOULD CLOSE THIS ROW: a stable on-disk artifact path with a documented
-    JSON shape, and ledger probes here that RE-READ those numbers rather than
-    trusting the browser test's own pass/fail. Until the ledger re-checks them
-    itself, a green Tier-B tier is a self-report.
+    THE LEDGER RE-READS THE NUMBERS ITSELF. The per-run directory is
+    gitignored and browserless probes could never read it, so the kit also
+    writes a committed run summary at
+    `tests/conformance/operator_surface/browser/LAST_RUN.json`: schema
+    `operator-surface-tier-b/1`, the browser build the numbers came from, and
+    a short headline per check per scenario. OSV1-003, -008, -010, -020, -022,
+    -023 and -028 all read their verdicts out of THAT file, in-process and
+    sub-second. Until this existed, a green Tier-B tier was a self-report.
 
+    IT IS A RECORDED MEASUREMENT, NOT A LIVE ONE, and is treated as such: the
+    summary names the browser build, and this row's probe pins that build
+    against `pyproject.toml`'s playwright pin -- so moving the pin fails the
+    ledger until the kit is re-run. Re-running rewrites the file; the diff IS
+    the new measurement.
+
+    A PARTIAL RUN CANNOT OVERWRITE A FULL ONE: the summary is only written
+    when the run produced headlines, so `pytest -k something` cannot replace a
+    complete record with a near-empty one that the ledger would read as an
+    absence of evidence.
 - id: OSV1-030
   title: >-
-    Freeze 4 -- the four Tier-A fixtures discriminate; the three Tier-B ones
-    have no kit to demonstrate
+    Freeze 4 -- every Conformance fixture demonstrated by running it: Tier-A's
+    (5, 6, 7 and Core 3's half) and Tier-B's (1, 2, 3, 4)
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 4
     quote: |
       **Freeze 4:** every Conformance fixture discriminates: its bad half fails against the
       defect it names, demonstrated by running it.
-  disposition: GAP
-  work: work_item_pipeline-qgo
+  disposition: CONFORMS
+  work: work_item_pipeline-c1a
   assertion:
     kind: probe
     ref: test_row_osv1_030
   notes: >
-    PINNING ROW -- the probe now pins the TIER-B kit's absence only, the
-    Tier-A half having landed; a passing probe here is NOT conformance. Flip
-    direction VIOLATION-MOVEMENT.
+    RE-DERIVED CONFORMS 2026-09-05 at highway wave-2 integration: both halves
+    present and demonstrated (Tier-A: 26 bad halves executed; Tier-B: 8 bad
+    halves executed with the measured px counts below). Each lane pinned the
+    OTHER kit's absence and neither pin is true any more. The probe re-reads
+    BOTH demonstrations -- the Tier-A bad halves out of the kit's own source
+    and the Tier-B ones out of the committed run summary -- so a demonstration
+    that narrows on either side takes this row red again. Flip direction
+    REGRESSION.
 
-    SPANS BOTH KITS: Conformance 1-4 belong to the Tier-B item
-    (work_item_pipeline-qgo, this row's `work` ref) and Conformance 5-7 to the
-    Tier-A item (work_item_pipeline-c1a). The single-ref schema records the
-    first; this note records the second so it is not lost.
+    SPANS BOTH KITS. Conformance 1-4 belong to the Tier-B item
+    (work_item_pipeline-qgo) and 5-7 to the Tier-A item
+    (work_item_pipeline-c1a, now this row's `work` ref since it carries the
+    outstanding half).
 
     RE-DERIVED 2026-09-05, TIER-A HALF DEMONSTRATED. Every bad half in
     `tests/conformance/operator_surface/test_tier_a.py` is a test that RUNS and
@@ -2279,19 +2444,47 @@
     status class. The kit also carries a tripwire asserting every check ships a
     bad half at all, so the demonstration cannot quietly narrow.
 
-    STILL RED ON THE TIER-B HALF: Conformance 1, 3 and 4 (and Conformance 2's
-    hue half) need a real browser, and no browser kit exists.
+    DEMONSTRATED BY RUNNING IT, 2026-09-05, Conformance 1-4 -- eight bad
+    halves, each executed against the defect its clause names, each caught:
+      C1  injected `var(--alarm)` chip on a calm L0     10 531 --alarm px
+      C1  the named retired `#D9A253` region reinstated 16 681 px
+      C1  the genuinely-alarming fixture, no injection     264 --blocked px
+      C2  status chips stripped to a class, word and accessible name removed
+          -> the same probe reports them wordless
+      C3  naive whole-body `innerHTML` replacement -> the open `<details>` is
+          lost; the same replacement with a forced reflow -> the scroll offset
+          is lost too
+      C4  a 900px fixed-width element at a 430px viewport -> caught by the
+          element-level reading (and, recorded honestly, NOT by the clause's
+          own `scrollWidth` wording, which `overflow-x: clip` neutralises);
+          the recorded `--ink-quiet`/`--ground` pair -> below floor in light
+          and, as its own control, above it in dark
+    Each is re-read from the committed run summary by this row's probe, so a
+    bad half that silently stopped discriminating fails the ledger too.
 
-    "DEMONSTRATED BY RUNNING IT" IS THE WHOLE CLAUSE. A bad half that has never
-    been executed is a claim, and PROTOCOL.md pillar 4 exists because prose
-    freezes nothing. The house already has a worked precedent to copy: the
-    custody family's CCV1-023 recorded discrimination by REVERTING each fix in
-    turn and observing exactly the matching bad half go red while every good
-    half stayed green. Do the same here, and record which revert produced which
-    failure.
+    RE-COUNTED AT THE INTEGRATION: the Tier-A paragraph above was written
+    against its own lane's base and says twenty-two; the merged kit carries 26
+    bad-half tests (the hero and contrast lanes added to it in wave 1), and 26
+    is what the probe pins. Both numbers are left standing rather than one
+    quietly overwritten -- each was true when it was measured.
 
+    "DEMONSTRATED BY RUNNING IT" IS THE WHOLE CLAUSE, and the seed's
+    instruction was followed on both sides: the house's worked precedent is the
+    custody family's CCV1-023, which recorded discrimination by REVERTING each
+    fix in turn and observing exactly the matching bad half go red while every
+    good half stayed green.
+
+    NOTHING OUTSTANDING ON THIS CLAUSE. Freeze 4 asks that every fixture's BAD
+    half has been run and caught its defect, which both kits have now done. It
+    does not ask that every GOOD half passes: Conformance 6 and 7 still carry
+    `xfail(strict)` good halves against the open product defects OSV1-005 and
+    OSV1-012, and those two rows (OSV1-025, OSV1-026) stay red for exactly that
+    reason. A strict xfail is a check that RUNS -- it is the deferral being
+    visible, not the demonstration being missing.
 - id: OSV1-031
-  title: Freeze 5 -- 5 of the 19 Core-carrying rows read VIOLATION or GAP
+  title: >-
+    Freeze 5 -- 5 of the 19 Core-carrying rows are still red, and all five are
+    now MEASURED VIOLATIONs (no Core row is an unasserted GAP any more)
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 5
@@ -2367,6 +2560,23 @@
       VIOLATION 3       OSV1-001, -005, -009
       GAP 5             OSV1-003, -004, -008, -010, -012
     Eight red. Freeze 5 is met when all eight are green and the two
+    NOT-ASSERTABLE rows still name their cadence.
+
+    RE-COUNTED 2026-09-05 at highway wave-2 integration, STILL FIVE RED, and
+    the pin does not move -- but the COLOUR of three of them did. The tier-b-kit
+    lane re-derived Core 2, 6 and 7's browser halves from a real chromium run,
+    so OSV1-003, -008 and -010 went GAP -> VIOLATION: same red, better reason
+    ("we looked and it fails" rather than "nobody has looked"). Neither
+    OSV1-021 nor OSV1-030 counts here -- both went CONFORMS at this
+    integration and both are Conformance/Freeze rows, not Core-carrying ones.
+    The tally is now:
+      CONFORMS 12       OSV1-001, -002, -004, -006, -007, -009, -011, -013,
+                        -014, -015, -016, -017
+      NOT-ASSERTABLE 2  OSV1-018 (Core 12), OSV1-019 (Core 13) -- unchanged
+      VIOLATION 5       OSV1-003, -005, -008, -010, -012
+      GAP 0             every Core clause is now ASSERTED; what remains is
+                        measured failure, which is the only honest kind of red
+    Five red. Freeze 5 is met when all five are green and the two
     NOT-ASSERTABLE rows still name their cadence.
 
 - id: OSV1-032
