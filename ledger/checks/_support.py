@@ -433,9 +433,148 @@ def style_sites_in(bucket: str) -> list[str]:
     return sorted(f"{f}:{n}" for f, n, b, _d in inline_style_sites() if b == bucket)
 
 
+# ------------------------------------------------- `<style>`-block census
+#
+# Added by the owner-ratified DRAFT true-up #1 (2026-09-04). Core 4's frozen
+# text used to be scoped to inline `style=` attributes ONLY, so the retired
+# palette webtrust.py hardcodes inside a whole `<style>` BLOCK was recorded by
+# the SEED reconcile and deliberately NOT scored -- the same defect wearing a
+# different tag, unreachable by the clause. The amendment widened the clause to
+# reach "a `<style>` block outside the token module (`webtheme.py`'s token
+# block)", and this is the engine that measures it.
+#
+# The token module is the ONE exemption, and it is the clause's own point: the
+# token block IS the single source of visual truth, so literal values there are
+# not a violation but the definition.
+
+#: The module whose `<style>` block Core 4 exempts by name.
+TOKEN_MODULE = WEBTHEME
+
+_STYLE_TAG = re.compile(r"<style[^>]*>(.*?)</style>", re.DOTALL)
+#: An f-string placeholder naming a bare module-level constant -- the shape
+#: `webtrust.py:374` (`<style>{_CSS}</style>`) uses to embed its stylesheet.
+_NAME_PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z_0-9]*)\}")
+
+
+def _module_str_constants(path: Path) -> dict[str, tuple[str, int]]:
+    """Module-level `NAME = "..."` string constants -> (value, line).
+
+    Read by PARSING, never importing -- the same rule the rest of this kit
+    follows, so the census stays in-process and side-effect free.
+    """
+    out: dict[str, tuple[str, int]] = {}
+    for node in ast.parse(read(path)).body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Constant):
+            continue
+        if not isinstance(node.value.value, str):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                out[target.id] = (node.value.value, node.value.lineno)
+    return out
+
+
+def style_blocks_outside_token_module() -> list[tuple[str, int, str]]:
+    """Every `<style>` block embedded by a module OTHER than the token module.
+
+    Returns (file, line-of-the-CSS-text, css). A block's CSS may be written
+    straight into the tag, or interpolated from a module-level constant; both
+    are resolved, and the constant's OWN line is reported so a reader lands on
+    the stylesheet rather than on the tag that emits it.
+
+    Raises if a block interpolates something this census cannot resolve -- a
+    block it cannot read would UNDERSTATE the violation, which is the one
+    direction a census must never fail in (same rule as `inline_style_sites`).
+    """
+    out: list[tuple[str, int, str]] = []
+    for path in src_modules():
+        if path == TOKEN_MODULE:
+            continue  # the exemption Core 4 names by module
+        text = read(path)
+        if "<style" not in text:
+            continue
+        consts = _module_str_constants(path)
+        tags = list(_STYLE_TAG.finditer(text))
+        opened = text.count("<style")
+        if len(tags) != opened:
+            raise AssertionError(
+                f"`<style>`-block census cannot parse {path.name}: {opened} `<style` "
+                f"opening(s) but {len(tags)} closed block(s). A block whose `</style>` "
+                f"lives in a different string literal is INVISIBLE to this census, which "
+                f"would understate the violation -- fix the matcher, never the count."
+            )
+        for tag in tags:
+            body = tag.group(1)
+            tag_line = text.count("\n", 0, tag.start()) + 1
+            literal = _NAME_PLACEHOLDER.sub("", body)
+            if literal.strip():
+                out.append((path.name, tag_line, literal))
+            for name in _NAME_PLACEHOLDER.findall(body):
+                resolved = consts.get(name)
+                if resolved is None:
+                    raise AssertionError(
+                        f"`<style>`-block census cannot resolve {{{name}}} embedded at "
+                        f"{path.name}:{tag_line} -- it is not a module-level string "
+                        f"constant. The census is only honest while every block it finds "
+                        f"can be READ; extend the resolver, never drop the block."
+                    )
+                out.append((path.name, resolved[1], resolved[0]))
+    return out
+
+
+#: Shared with the token-pair luminance engine below -- both read real CSS, and
+#: both must strip comments FIRST or a commented-out declaration is scored.
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_CSS_DECL_SPLIT = re.compile(r"[;\n]")
+
+
+def _block_declarations(css: str) -> list[tuple[int, str]]:
+    """(offset-within-css, declaration) for every declaration inside a brace.
+
+    Selectors are skipped by a brace-depth walk rather than a regex, so a
+    pseudo-selector (`p.subtle`, `details summary`) is never mistaken for a
+    `property:value` pair.
+    """
+    stripped = _CSS_COMMENT.sub(lambda m: " " * len(m.group(0)), css)
+    out: list[tuple[int, str]] = []
+    depth, start = 0, 0
+    for i, ch in enumerate(stripped):
+        if ch == "{":
+            if depth == 0:
+                start = i + 1
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                chunk = stripped[start:i]
+                pos = start
+                for piece in _CSS_DECL_SPLIT.split(chunk):
+                    if ":" in piece.strip():
+                        out.append((pos, piece.strip()))
+                    pos += len(piece) + 1
+    return out
+
+
+def style_block_literal_sites() -> list[tuple[str, int, str, list[str]]]:
+    """(file, line, declaration, reasons) for every LITERAL colour/font/size
+    declaration inside a `<style>` block outside the token module.
+
+    Classified by `classify_style` -- the SAME rule the inline census uses, so
+    the two halves of Core 4 are measured identically and one cannot quietly
+    become stricter than the other.
+    """
+    out: list[tuple[str, int, str, list[str]]] = []
+    for name, css_line, css in style_blocks_outside_token_module():
+        for offset, decl in _block_declarations(css):
+            bucket, reasons = classify_style(decl)
+            if bucket != LITERAL:
+                continue
+            out.append((name, css_line + css.count("\n", 0, offset), decl, reasons))
+    return sorted(out, key=lambda e: (e[0], e[1], e[2]))
+
+
 # ------------------------------------------------------ token-pair luminance
 
-_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _CSS_DECL = re.compile(r"(--[a-z0-9-]+)\s*:\s*([^;]+);")
 _HEX_EXACT = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 _VAR_ONLY = re.compile(r"var\((--[a-z0-9-]+)\)")

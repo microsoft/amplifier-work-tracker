@@ -52,9 +52,9 @@ Every element carrying a state carries it in text as well as hue — a status ch
 
 ### Core 4: One source of visual truth
 
-Literal colour, font, or size in an inline `style=` attribute is a violation; zero are tolerated. Computed geometry in an inline `style=` — a bar width, a chart offset — is permitted only for sites enumerated on the exemption register. The register lives in `ledger/`, not in this contract, so that shrinking it is a convergent change requiring no amendment.
+Literal colour, font, or size in an inline `style=` attribute, or in a `<style>` block outside the token module (`webtheme.py`'s token block), is a violation; zero are tolerated. Computed geometry in an inline `style=` — a bar width, a chart offset — is permitted only for sites enumerated on the exemption register. The register lives in `ledger/`, not in this contract, so that shrinking it is a convergent change requiring no amendment.
 
-**Machine check:** `visual.single_source` — zero inline `style=` attributes carrying a literal colour, font, or size anywhere in `src/`; every inline `style=` site carrying computed geometry appears on the ledger's exemption register.
+**Machine check:** `visual.single_source` — zero inline `style=` attributes carrying a literal colour, font, or size anywhere in `src/`; every inline `style=` site carrying computed geometry appears on the ledger's exemption register; and zero literal colour/font/size declarations in any `<style>` block outside the token module.
 
 **Tier:** A
 
@@ -126,7 +126,7 @@ The surface is server-rendered HTML composed in Python, with small inline script
 
 No kanban drag-board — its central gesture fights machine-owned custody. No client-side state that dies on refresh. No new chart library or JS dependency. No unbounded query behind a view.
 
-**Machine check:** `antigoals.enforced` — the dependency manifest declares no charting or drag-and-drop library; every adapter call reached from a view passes an explicit limit; no view stores state only in the browser.
+**Machine check:** `antigoals.enforced` — the dependency manifest declares no charting or drag-and-drop library; every adapter call reached from a view passes an explicit limit; no view holds state that does not survive a refresh (state persisted in `localStorage` or on the server survives; state held only in page memory does not).
 
 **Tier:** A
 
@@ -378,5 +378,6 @@ Before this contract moves from DRAFT to FROZEN, all of the following conditions
 
 ## Changelog
 
+- **2026-09-04 — DRAFT true-up #1,** owner-ratified ("yep, do it all."): Core 4 widened to reach per-page `<style>` blocks outside the token module (evidence: `webtrust.py`'s hardcoded retired palette); Core 10's machine-check wording aligned to the clause ("does not survive a refresh"); the Changelog's `webapp.py:38-39` quotation made byte-exact (Freeze 7). Status remains DRAFT.
 - **2026-09-04 — ENCODE gate:** owner reviewed the DRAFT text and ratified it (literal: "lgtm."). Status remains DRAFT.
-- **2026-09-04 — DRAFT.** First draft, authored at the ENCODE gate from Phase-0 evidence (Brief A, shipped surface; Brief B, prior decisions), nine owner-ratified decisions, and four conformance rulings. Owner ratification, literal: *"Let's make hero the velocity, along w/ other numbers that matter, such as the active/in-flight, blocked, need attention, open, etc. Focus is on observability, etc. The rest looks good to me."* That overrode a recorded invariant — *"the dashboard's hero is the AGE of the oldest unclaimed item, **never a count**"*, rationale *"a giant `0` trains a viewer to stop looking. An age reads as neglect"* (`webapp.py:37-44`). The owner weighed that alternative and chose observability, so Core 1 asserts velocity with the counts that matter; the concern behind the alternative survives in the form the owner accepted, as Core 8. Settled by ruling: a human-perception seam is admissible, so every clause admitting a machine check carries one and the two that cannot are named NOT-ASSERTABLE; no ceiling constant enters Core, the exemption register living in `ledger/` (Core 4, Backlogged 2); the custody boundary is a one-way citation, leaving `contracts/custody-coordination.v1.md` untouched; CLI `--json` is Reserved 1, a different seam being a different contract.
+- **2026-09-04 — DRAFT.** First draft, authored at the ENCODE gate from Phase-0 evidence (Brief A, shipped surface; Brief B, prior decisions), nine owner-ratified decisions, and four conformance rulings. Owner ratification, literal: *"Let's make hero the velocity, along w/ other numbers that matter, such as the active/in-flight, blocked, need attention, open, etc. Focus is on observability, etc. The rest looks good to me."* That overrode a recorded invariant — *"the dashboard's hero is the AGE of the oldest unclaimed item, never a count"*, rationale *"a giant `0` trains a viewer to stop looking. An age reads as neglect"* (`webapp.py:37-44`). The owner weighed that alternative and chose observability, so Core 1 asserts velocity with the counts that matter; the concern behind the alternative survives in the form the owner accepted, as Core 8. Settled by ruling: a human-perception seam is admissible, so every clause admitting a machine check carries one and the two that cannot are named NOT-ASSERTABLE; no ceiling constant enters Core, the exemption register living in `ledger/` (Core 4, Backlogged 2); the custody boundary is a one-way citation, leaving `contracts/custody-coordination.v1.md` untouched; CLI `--json` is Reserved 1, a different seam being a different contract.
