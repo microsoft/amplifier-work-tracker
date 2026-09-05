@@ -4599,44 +4599,45 @@ def create_app(
                 held_total=held_total,
             )
         )
-        hero_html = WD.render_verdict_hero(
-            WD.VerdictHeroData(
+        # operator-surface.v1 Core 1: the hero region LEADS with fleet
+        # velocity over a STATED window, and carries the four counts an
+        # operator acts on -- in flight (held), blocked, needs attention,
+        # open/ready -- adjacent INSIDE that same region. The five-card strip
+        # that used to sit below the hero is reshaped into exactly those four
+        # and composed in. "Resolved 24h" is no longer a card because it is
+        # the hero figure now; the agents-active reading it displaced still
+        # reads in the verdict caption ("N agents are moving ...") and in the
+        # "Agents now" section the In-flight card links to.
+        hero_counts = [
+            WD.KpiCard(key="held", label="In flight (held)", value=held_total, href="#agents-now"),
+            WD.KpiCard(
+                key="blocked",
+                label="Blocked",
+                value=blocked_total,
+                href="#attention-queue",
+                icon="i-octagon-x",
+                icon_color_var="--blocked",
+                is_blocked=True,
+            ),
+            WD.KpiCard(
+                key="needs_attention",
+                label="Needs attention",
+                value=len(attention_rows_raw),
+                href="#attention-queue",
+                icon="i-alert-triangle",
+            ),
+            WD.KpiCard(key="ready", label="Open / ready", value=ready_total, href="#fleet"),
+        ]
+        hero_html = WD.render_velocity_hero(
+            WD.VelocityHeroData(
                 state=verdict["state"],
-                eyebrow=f"Environment verdict \u00b7 {len(names)} projects",
+                eyebrow=f"Environment velocity \u00b7 {len(names)} projects",
+                velocity_value=resolved_24h_total,
+                velocity_noun="resolved",
+                velocity_window="last 24h",
                 headline=verdict["headline"],
                 detail_html=verdict["detail_html"],
-            )
-        )
-
-        kpi_html = WD.render_kpi_strip(
-            WD.KpiStripData(
-                cards=[
-                    WD.KpiCard(
-                        key="agents",
-                        label="Agents active now",
-                        value=agents_active_count,
-                        href="#agents-now",
-                        icon="i-bot",
-                        icon_color_var="--brand-cyan-ink",
-                    ),
-                    WD.KpiCard(key="held", label="Held", value=held_total, href="#fleet"),
-                    WD.KpiCard(key="ready", label="Ready", value=ready_total, href="#fleet"),
-                    WD.KpiCard(
-                        key="blocked",
-                        label="Blocked",
-                        value=blocked_total,
-                        href="#attention-queue",
-                        icon="i-octagon-x",
-                        icon_color_var="--blocked",
-                        is_blocked=True,
-                    ),
-                    WD.KpiCard(
-                        key="resolved24h",
-                        label="Resolved 24h",
-                        value=resolved_24h_total,
-                        href="#fleet",
-                    ),
-                ]
+                counts=hero_counts,
             )
         )
 
@@ -4738,7 +4739,6 @@ def create_app(
         <div class="container">
         {_flash(request)}
         <div id="verdict-hero" class="section">{hero_html}</div>
-        <div class="section">{kpi_html}</div>
         <div class="two-up section">
           <div class="glass-panel chart-card">{velocity_html}</div>
           <div class="glass-panel chart-card">
