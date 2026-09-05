@@ -1263,6 +1263,18 @@
     it is recorded here rather than fixed, because changing the rule would
     change what BOTH halves measure and belongs in one change of its own.
 
+    ONE RENDERED BEHAVIOUR CHANGED, and it is reported rather than folded in.
+    The Blocked KPI card's icon carried its alarm ink as an INLINE style, and
+    an inline style outranks every stylesheet rule -- including
+    `.wt-observatory .kpi-card.is-blocked.is-zero .k .icon{color:var(--ink-quiet)}`,
+    which exists precisely so that "0 blocked" stops reading as alarm-red. That
+    rule had never been able to win. With the ink moved to `.icon.ic-blocked`
+    the is-zero rule now applies, so a calm screen paints one fewer alarm-
+    coloured pixel. That is the direction Core 2 asks for ("zero `--alarm`
+    pixels on a calm screen"), and it is a change in rendered output, so it is
+    named here. No other rendered output moved except spacing, per the 4px
+    snap above.
+
     NOT DONE HERE: `style=` is not gone -- 55 inline attributes remain, 47 of
     them TOKEN-bucket (`color:var(--ink)`, `margin-top:var(--space-3)`,
     `overflow-wrap:anywhere`) which Core 4 permits, and 8 computed-geometry.
