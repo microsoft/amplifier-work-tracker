@@ -65,6 +65,31 @@ from amplifier_work_tracker.webapp import (
 #: this pre-built constant instead of an inline escaped literal.
 _EM_DASH = "\u2014"
 
+#: Hard ceiling on how many items ONE L1 render reads --
+#: `contracts/operator-surface.v1.md` Core 10: "every adapter call reached
+#: from a view passes an explicit limit". This handler sits on the 20s
+#: whole-body self-poll (`_AUTO_REFRESH_MS`), so the `limit=0` (bd's own
+#: "unlimited") this replaces re-materialised the ENTIRE item set, resolved
+#: included, three times a minute per open tab -- and `adapter.Beads.list`'s
+#: own docstring records what that costs at size (cortex, 465 items, is
+#: where materialising the full set reliably loses a dolt serialization
+#: conflict).
+#:
+#: `LIST_MAX_LIMIT` is the repo's EXISTING ceiling convention -- the CLI's
+#: `list --limit` clamps to it (`adapter.Beads.list_bounded`) -- and it is
+#: exactly ten pages of this view's own `LIST_DEFAULT_LIMIT` page size, so
+#: every row this query returns stays reachable by paging.
+#:
+#: THE HONEST COST, stated because a bound is a truncation: the SQL orders
+#: by `priority ASC, created_at DESC, id ASC`
+#: (`adapter._list_rows_via_sql`) and this view then re-sorts by
+#: `updated_at DESC`. On a project with MORE matching items than this
+#: ceiling, the table therefore shows the most-recently-updated of the
+#: first 500 BY PRIORITY -- not of all of them. `_truncation_note_html`
+#: says the read was capped whenever that happens; a bounded window is
+#: never presented as a complete one.
+_L1_ITEM_QUERY_LIMIT = A.LIST_MAX_LIMIT
+
 # ---------------------------------------------------------------------------
 # status tabs -- real `?status=` links (GAUNTLET-SYNTHESIS.md item 6), never
 # client-side JS state. Order matches the mockup's own tab row and the
@@ -192,6 +217,39 @@ def _item_row_html(name: str, item: A.Item) -> str:
         '<span class="icon sm chev"><svg><use href="#i-chevron"/></svg></span>'
         "</a>"
     )
+
+
+# ---------------------------------------------------------------------------
+# truncation note -- what the item table says about what it is NOT showing
+# ---------------------------------------------------------------------------
+
+
+def _truncation_note_html(*, shown: int, matched: int, capped: bool) -> str:
+    """The one sentence under the item table that reconciles "rows on this
+    page" against "rows that matched" -- and, when the READ ITSELF was
+    bounded (`_L1_ITEM_QUERY_LIMIT`), says so instead of passing a window
+    off as a total.
+
+    `matched` is what the filtered query returned; `capped` is the fact
+    that more rows exist beyond the ceiling. With `capped` true the total
+    is rendered `N+` ("at least N") -- never a bare `N`, which would be a
+    measured-looking number this view has no way to know. The CLI's own
+    `list` prints "showing N of M matching items"; this is the same
+    sentence for a surface that additionally has a ceiling to confess.
+
+    Returns `""` when there is nothing to say: everything that matched is
+    on the page and the read was not capped.
+    """
+    if not capped and matched <= shown:
+        return ""
+    total = f"{matched}+" if capped else str(matched)
+    tail = (
+        f"read capped at {_L1_ITEM_QUERY_LIMIT} \u00b7 narrow with search or a status tab "
+        "to reach the rest"
+        if capped
+        else "filter or page for more"
+    )
+    return f'<div class="truncation-note">Showing {shown} of {total} items \u00b7 {tail}</div>'
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +394,19 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
 
         try:
             status_filter = _TAB_STATUS_FILTER.get(status)
-            all_matching = bd.list(status=status_filter, include_resolved=True, limit=0)
+            # `+ 1` is the one-past-the-window probe: asking for one more row
+            # than we will ever show tells us whether MORE items exist beyond
+            # the ceiling as a FACT, without a second query and without
+            # inferring it from a full window (a project holding exactly 500
+            # matching items is not truncated, and must not be labelled as
+            # though it were). See `_L1_ITEM_QUERY_LIMIT` for the bound itself.
+            fetched = bd.list(
+                status=status_filter,
+                include_resolved=True,
+                limit=_L1_ITEM_QUERY_LIMIT + 1,
+            )
+            query_capped = len(fetched) > _L1_ITEM_QUERY_LIMIT
+            all_matching = fetched[:_L1_ITEM_QUERY_LIMIT]
             if status == "ready":
                 all_matching = [i for i in all_matching if A.LANE_WORK in i.tags]
             elif status == "intake":
@@ -489,12 +559,10 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
             sep = " \u00b7 "
             pagination_html = f'<div class="pagination">{sep.join(links)}</div>'
 
-        truncation = (
-            f'<div class="truncation-note">Showing {len(shown)} of {len(all_matching)} items'
-            f" \u00b7 filter or page for more</div>{pagination_html}"
-            if len(all_matching) > len(shown) or pagination_html
-            else ""
+        note_html = _truncation_note_html(
+            shown=len(shown), matched=len(all_matching), capped=query_capped
         )
+        truncation = f"{note_html}{pagination_html}" if note_html or pagination_html else ""
         empty_html = (
             '<div class="empty-state" style="padding:2rem 0;text-align:center;'
             'color:var(--ink-tertiary)">No items match this filter.</div>'
@@ -629,7 +697,12 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
         identity_val = _esc(_identity(request))
 
         try:
-            activity_events = bd.activity(item.id)
+            # The bound is `activity`'s own default; passed EXPLICITLY because
+            # Core 10 asks a view to state its bound rather than inherit one
+            # silently -- an inherited default is a bound nobody at this call
+            # site can see, and the next person to change that default changes
+            # this page without knowing it.
+            activity_events = bd.activity(item.id, limit=A.HISTORY_LIMIT)
         except A.BeadsError:
             activity_events = []
         activity_html = _activity_feed_html(activity_events)

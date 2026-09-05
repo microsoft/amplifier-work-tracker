@@ -3403,6 +3403,52 @@ def _esc(value: object) -> str:
 # page shell
 # ---------------------------------------------------------------------------
 
+#: Where a chosen theme LIVES. Written by `wtSetTheme` (webapp.py's
+#: `_OBSERVATORY_THEME_JS`), read back by `theme_boot_js` below. Declared
+#: once, on purpose: a writer and a first-paint reader that each spelled
+#: their own key would fail silently and look exactly like "the toggle does
+#: nothing". Same discipline `list_controls_js`'s own `wt-density` key
+#: already follows -- and the same mechanism, which is what makes both
+#: preferences survive a refresh (`contracts/operator-surface.v1.md`
+#: Core 10: "no view holds state that does not survive a refresh").
+THEME_STORAGE_KEY = "wt-theme"
+
+
+def theme_boot_js() -> str:
+    """The first-paint theme resolver, inlined in `<head>`.
+
+    It has to run BEFORE `<body>` is parsed: a script at the end of the
+    body applies the stored theme one full paint too late, which is the
+    classic flash-of-wrong-theme. That is the whole reason this is not
+    simply folded into `page()`'s `js=` payload (emitted at the END of the
+    body) alongside `wtSetTheme` itself.
+
+    Resolution, most specific first:
+
+      1. an explicit stored choice (`THEME_STORAGE_KEY`, written by
+         `wtSetTheme` when the visitor clicks Dark/Light);
+      2. else the OS's own `prefers-color-scheme: light`;
+      3. else nothing at all -- the server-rendered `data-theme="dark"`
+         default below is LEFT EXACTLY WHERE IT IS.
+
+    Case 3 is load-bearing. This script only ever REPLACES that attribute,
+    never removes it, so the DOM-measured defect the attribute was added to
+    fix (a light-OS browser silently winning the token cascade because
+    `<html>` carried no `data-theme` at all) cannot come back through here.
+
+    Every `localStorage` touch is wrapped: a browser with storage disabled
+    throws on `getItem`, and a theme preference is never worth breaking a
+    page over -- it falls through to the default instead.
+    """
+    return (
+        "(function(){var t=null;"
+        f"try{{t=localStorage.getItem('{THEME_STORAGE_KEY}');}}catch(e){{t=null;}}"
+        "if(t!=='light'&&t!=='dark'){"
+        "t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches)"
+        "?'light':null;}"
+        "if(t){document.documentElement.setAttribute('data-theme',t);}})();"
+    )
+
 
 def page(
     title: str, body: str, *, js: str = "", measure_px: int = 620, body_class: str = ""
@@ -3430,9 +3476,17 @@ def page(
         # the verdict hero and every other surface actually rendered with
         # light-mode tokens. `wtSetTheme` (this page's own inline JS)
         # overwrites this attribute the moment a user picks Light/Dark
-        # explicitly; this default only governs the page's first paint.
+        # explicitly; this default governs the first paint ONLY when the
+        # visitor has neither a stored choice nor a light OS preference --
+        # `theme_boot_js`, inlined immediately below, is what resolves that,
+        # and what makes a chosen theme survive a refresh at all.
         '<html lang="en" data-theme="dark"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        # FIRST thing after the two required metas, and deliberately ahead of
+        # the stylesheet below: it has to run before any of this page's markup
+        # is painted, or a visitor who chose Light watches it flash dark on
+        # every single load.
+        f"<script>{theme_boot_js()}</script>"
         f"{_PWA_HEAD_HTML}"
         f"<title>{_esc(title)}</title><style>\n{CSS}\n"
         f":root{{--measure:{measure_px}px}}\n</style></head><body{body_attr}>\n"
