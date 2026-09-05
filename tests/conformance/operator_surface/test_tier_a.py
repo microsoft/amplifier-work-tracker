@@ -21,11 +21,10 @@ returning one string per violation. Two tests wrap each one:
 
 ## `xfail(strict=True)` is a ledger row, never a skip
 
-Three clauses do not hold on today's code, and each has an open `ledger/` row
+Two clauses do not hold on today's code, and each has an open `ledger/` row
 saying so. Their good halves are `pytest.mark.xfail(strict=True)` with the row
 id in the reason -- never `skip`, never deleted:
 
-    hero.velocity_and_counts  OSV1-001  the L0 hero is a verdict line
     visual.single_source      OSV1-005  66 literal inline sites + 40 in blocks
     calm.keeps_slot           OSV1-012  an empty widget keeps its slot but
                                         says nothing
@@ -298,12 +297,6 @@ def test_hero_velocity_and_counts_bad_half_a_loose_number_is_not_a_count() -> No
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="OSV1-001 (Core 1): the L0 hero is a verdict line; velocity is a chart "
-    "below it and `blocked`/`needs attention` are only in the KPI strip outside "
-    "the hero. Flip the row and delete this marker in the same change.",
-)
 def test_hero_velocity_and_counts(calm_dataset) -> None:
     """Conformance 5's GOOD half: L0 rendered against a populated fixture."""
     problems = check_hero_velocity_and_counts(calm_dataset.l0)
