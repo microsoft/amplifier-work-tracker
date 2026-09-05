@@ -398,9 +398,7 @@ def test_item_detail_shows_discovered_from_provenance(client, project_factory):
     # would false-positive on the stylesheet rather than real content. A
     # rendered `<li>` always carries `class="blocker-item ..."` (a space,
     # not the CSS selector's dot) -- that's the precise, unambiguous signal.
-    assert '<h2 class="eyebrow am" style="display:block;margin-top:30px">Blocked by</h2>' not in (
-        resp.text
-    )
+    assert '<h2 class="eyebrow am section-head">Blocked by</h2>' not in resp.text
     assert 'class="blocker-item' not in resp.text
 
 
@@ -438,9 +436,7 @@ def test_item_detail_with_no_dependencies_shows_no_open_blockers_empty_state(
     # bare substring check would false-positive on the stylesheet rather
     # than real content (same discipline
     # `test_item_detail_shows_discovered_from_provenance` already uses).
-    assert '<h2 class="eyebrow am" style="display:block;margin-top:30px">Blocked by</h2>' not in (
-        resp.text
-    )
+    assert '<h2 class="eyebrow am section-head">Blocked by</h2>' not in resp.text
 
 
 def test_item_detail_with_unsatisfied_blocker_does_not_also_show_no_open_blockers(
