@@ -58,7 +58,6 @@ from . import test_operator_rows as op_probes
 from ._support import (
     ADAPTER,
     AWARENESS,
-    CHARTSVG,
     CI_WORKFLOW,
     CLAIM_SKILL,
     CONTRACT_PATH,
@@ -478,12 +477,23 @@ def _mo008_swap_restores_the_pause_flag(w: World) -> None:
     )
 
 
-def _mo009_the_below_floor_token_stops_painting_copy(w: World) -> None:
-    """FIXED: the empty-state caption moves off the below-floor token."""
+def _mo009a_the_media_light_block_regresses(w: World) -> None:
+    """REGRESSION: `--ink-quiet` falls back below the floor in the MEDIA block.
+
+    One mutation per light block on purpose. webtheme.py keeps the two in sync
+    by comment alone, so a probe that noticed only the block it happened to read
+    first would credit a half-reverted colour as conformance -- which is exactly
+    the shape the seed pin recorded (three grounds x TWO blocks = six pairs).
+    """
+    w.replace(WEBTHEME, "    --ink-quiet:#596473;", "    --ink-quiet:#7c8ba0;")
+
+
+def _mo009b_the_attr_light_block_regresses(w: World) -> None:
+    """REGRESSION: the same fallback in the manual-toggle light block."""
     w.replace(
-        CHARTSVG,
-        'style="fill:var(--ink-quiet)">',
-        'style="fill:var(--ink-tertiary)">',
+        WEBTHEME,
+        "  --ink-quiet:#596473;     /* likewise",
+        "  --ink-quiet:#7c8ba0;     /* likewise",
     )
 
 
@@ -754,8 +764,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-009",
-        "the below-floor token stops painting the empty-state caption",
-        _mo009_the_below_floor_token_stops_painting_copy,
+        "--ink-quiet falls back below the text floor in the prefers-color-scheme light block",
+        _mo009a_the_media_light_block_regresses,
+    ),
+    Mutation(
+        "OSV1-009",
+        '--ink-quiet falls back below the text floor in the :root[data-theme="light"] block',
+        _mo009b_the_attr_light_block_regresses,
     ),
     Mutation("OSV1-010", "a browser driver appears in the repo", _mo010_a_browser_driver_appears),
     Mutation(

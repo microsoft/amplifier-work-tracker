@@ -1235,13 +1235,19 @@
       webapp.py:3376    {heading_style}                       computed heading
       webapp.py:4393    {heading_style}                       computed heading
       webapp.py:4908    {remove_heading_style}                computed heading
-      webtheme.py:4120  {style}                               computed style
-      webtheme.py:4139  left:{_grad_x(f):.1f}px               gradient stop offset
-      webtheme.py:4146  width:{px}px                          swatch width
+      webtheme.py:4131  {style}                               computed style
+      webtheme.py:4150  left:{_grad_x(f):.1f}px               gradient stop offset
+      webtheme.py:4157  width:{px}px                          swatch width
       widgets.py:704    color:var({color_var})                token chosen at runtime
       widgets.py:831    width:{pct}%                          mix-bar width
       widgets.py:834    width:{pct}%;background:var({_MIX_COLOR_VAR[key]})
       widgets.py:1110   background:var({_MIX_COLOR_VAR[key]})
+
+    The three `webtheme.py` coordinates were RE-DERIVED on 2026-09-04 by
+    work_item_pipeline-sxh (OSV1-009), which added comment lines above them:
+    4120/4139/4146 -> 4131/4150/4157. Same three sites, same code, same
+    register SET -- only the line numbers moved. A `file:line` register is
+    coordinate-fragile by construction; any edit above a site shifts it.
 
     HONEST LIMIT: several registered sites interpolate a COLOUR, not a
     geometry (webapp.py:2142/2266, chartsvg.py:268, widgets.py:704/834/1110).
@@ -1340,49 +1346,73 @@
       the Conformance 3 bad-half behaviour.
 
 - id: OSV1-009
-  title: six declared text pairs sit below the 4.5:1 floor, and the token paints real copy
+  title: every declared token pair clears its floor -- 4.5:1 text, 3:1 non-text, both themes
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 7
     quote: |
       Text contrast is at least 4.5:1 and non-text contrast at least 3:1, in both themes
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-sxh
   assertion:
     kind: probe
     ref: test_row_osv1_009
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED VIOLATION -> CONFORMS 2026-09-04 by work_item_pipeline-sxh, in the
+    same change that retargeted the probe off its pin.
 
     The Tier-A half of `perception.floors`: "token-pair relative-luminance math
     over the declared token set". The rendered half is OSV1-010; the
-    reduced-motion half is OSV1-011.
+    reduced-motion half is OSV1-011. Closing this does NOT close OSV1-010 --
+    see the honest limit at the end.
 
-    MEASURED 2026-09-04 against 4aaee50 -- WCAG relative luminance over the
-    three declared token blocks (dark `:root` webtheme.py:109,
-    `@media (prefers-color-scheme:light)` :287, `:root[data-theme="light"]`
-    :373), ink x ground, re-computed by the probe on every run:
-      54 text pairs evaluated, 48 clear 4.5:1, SIX DO NOT -- all `--ink-quiet`
-      in LIGHT mode:
-        #7c8ba0 on --color-ground          #eef2fb = 3.09:1
-        #7c8ba0 on --color-ground-elevated #e7ecf7 = 2.93:1
-        #7c8ba0 on --color-ground-sunken   #dde4f2 = 2.72:1
-      (three pairs x two light blocks, which declare identical values.)
-      The same token is fine in dark: 5.53 / 5.26 / 5.67:1.
-      9 status-hue/ground non-text pairs, worst 5.35:1 (`--blocked` on dark
-      ground). THE NON-TEXT FLOOR OF 3:1 CONFORMS; this row is only about text.
+    WHAT WAS WRONG AT SEED (4aaee50). 54 text pairs evaluated, 48 cleared
+    4.5:1, SIX DID NOT -- all `--ink-quiet` in LIGHT mode, three grounds x the
+    two duplicated light blocks, which declared identical values. The same
+    token was already fine in dark (5.53 / 5.26 / 5.67:1). It was a VIOLATION
+    and not a documented decorative exemption because the token painted real
+    reading copy: chartsvg.py:294's `<text class="chart-caption" ...
+    style="fill:var(--ink-quiet)">` renders the sentence "No activity in this
+    window", plus the `.status-chip.st-resolved` / `.priority-chip.p3,.p4` /
+    `.link-chip .none` / `.fleet-row .agents.is-zero` / actions-drawer count
+    rules inside webtheme.py itself.
 
-    WHY THIS IS A VIOLATION RATHER THAN A DOCUMENTED EXEMPTION.
-    webtheme.py:141-152 declares `--ink-quiet` "decorative/disabled-only, not
-    guaranteed >=4.5:1 in light mode", which would be a legitimate WCAG
-    exemption if it were only ever decorative. Measured, it is not:
-      chartsvg.py:294  `<text class="chart-caption" ... style="fill:var(--ink-quiet)">`
-                       renders the sentence "No activity in this window" -- reading
-                       copy, on the empty-state path Core 8 exists to protect.
-      chartsvg.py:461  the axis stub label falls back to the same token.
-      21 further `var(--ink-quiet)` uses inside webtheme.py's own rules, not
-      audited per-site here.
+    THE FIX, AND WHERE. At the TOKEN, not at the call sites -- `--ink-quiet`
+    darkened along the same hue (hsl ~215 deg) from #7c8ba0 to #596473, in BOTH
+    light blocks: `@media (prefers-color-scheme:light)` webtheme.py:338 AND
+    `:root[data-theme="light"]` :408. They are held in sync only by comment, so
+    changing one and not the other was the standing hazard; the probe now
+    asserts their parity over the measured token set directly. No call site
+    moved off the token, and no reading-copy usage was relabelled decorative.
+
+    MEASURED 2026-09-04 after the fix -- WCAG relative luminance over the three
+    declared token blocks (dark `:root` webtheme.py:109, the two light blocks
+    above), re-computed by the probe on every run, never transcribed:
+      TEXT, floor 4.5:1 -- 54 of 54 pairs clear it. The six that did not, before
+      -> after (identical in both light blocks):
+        --ink-quiet on --color-ground          #eef2fb  3.09:1 -> 5.36:1
+        --ink-quiet on --color-ground-elevated #e7ecf7  2.93:1 -> 5.08:1
+        --ink-quiet on --color-ground-sunken   #dde4f2  2.72:1 -> 4.71:1
+      Worst declared text pair overall moved 2.72:1 -> 4.71:1.
+      NON-TEXT, floor 3:1 -- 9 of 9 status-hue x ground pairs clear it, worst
+      5.35:1 (`--blocked` on the dark ground), UNCHANGED by this fix. That half
+      conformed at seed; the probe now guards it rather than assuming it.
+
+    HIERARCHY PRESERVED, deliberately. Quiet was taken to ~4.7-5.4:1, not to
+    7:1: in light it still reads clearly quieter than --ink-tertiary (7.85:1 on
+    the base ground) and --ink-secondary (9.16:1). The probe asserts the four
+    ink-ramp steps still resolve to four DISTINCT colours in every block, so a
+    future "fix" cannot buy contrast by collapsing a ramp step onto its
+    neighbour.
+
+    NOT COVERED, checked and clean: `--ink-on-solid` and `--ink-on-ground-inverse`
+    compute ~1.0-1.2:1 against the page grounds and are correctly excluded from
+    the ink set -- by definition they never sit on those grounds (they paint on
+    `--brand-gradient-solid` and on an inverted surface respectively).
+    `--brand-cyan-ink`, used as real text at chartsvg.py's value labels, clears
+    4.80:1 worst case in light and 10.59:1 in dark. Hairline and glass tokens
+    are `rgba()` over a ground, not hex, so flat pair math cannot evaluate them
+    at all -- that is squarely OSV1-010's rendered half, not a gap here.
 
     HONEST LIMIT, and why closing this does not close OSV1-010: flat token-pair
     math models a swatch on a bare ground. The real surface puts glass panels
@@ -2084,7 +2114,7 @@
     failure.
 
 - id: OSV1-031
-  title: Freeze 5 -- 10 of the 19 Core-carrying rows read VIOLATION or GAP
+  title: Freeze 5 -- 9 of the 19 Core-carrying rows read VIOLATION or GAP
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 5
@@ -2112,8 +2142,15 @@
                         condition's second limb
       VIOLATION 5       OSV1-001, -005, -009, -015, -016
       GAP 5             OSV1-003, -004, -008, -010, -012
-    Ten red. Freeze 5 is met when all ten are green and the two NOT-ASSERTABLE
-    rows still name their cadence.
+    Ten red at seed. Freeze 5 is met when all of them are green and the two
+    NOT-ASSERTABLE rows still name their cadence.
+
+    MOVEMENT SINCE SEED, one line per flip -- this tally is a pin, so it is
+    updated only in the SAME change that flips the row it counts:
+      2026-09-04  OSV1-009 VIOLATION -> CONFORMS (work_item_pipeline-sxh):
+                  every declared token pair now clears its floor in both
+                  themes, re-derived from the live luminance math, not from a
+                  file appearing. Red 10 -> 9 (VIOLATION 4, GAP 5).
 
     THE FAILURE MODE THIS ROW EXISTS TO CATCH: a GAP row whose only defect is
     "the kit is not built" being flipped to CONFORMS because a file now exists,
