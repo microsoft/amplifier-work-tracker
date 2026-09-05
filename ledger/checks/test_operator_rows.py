@@ -1565,7 +1565,7 @@ def test_row_osv1_025() -> None:
     assert not _kit_deferred_rows(kit, "test_visual_single_source"), (
         "OSV1-025 (Conformance 6) REGRESSION: Conformance 6's good half is deferred "
         "again. This row is green because the pair PASSES -- the bad half reports the "
-        "contract's own `style=\"color:#D9A253\"` specimen and an unregistered computed "
+        'contract\'s own `style="color:#D9A253"` specimen and an unregistered computed '
         "site, and the good half passes over the real `src/` tree."
     )
     assert row("OSV1-005")["disposition"] not in PINNING_DISPOSITIONS, (

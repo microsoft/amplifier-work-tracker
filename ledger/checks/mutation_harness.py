@@ -435,7 +435,7 @@ def _mo003b_the_retired_palette_returns(w: World) -> None:
     """
     w.replace(
         WEBPWA,
-        "'<meta name=\"color-scheme\" content=\"dark light\">' +",
+        '\'<meta name="color-scheme" content="dark light">\' +',
         "'<body style=\"background:#0D0D0C;color:#F2EEE6\">' +",
     )
 
@@ -452,8 +452,7 @@ _LITERAL_INLINE_SITE = "\n_LEDGER_MUTATION = '<i style=\"color:#D9A253\"></i>'\n
 #: A page-local stylesheet, exactly the shape webtrust.py used to ship: its own
 #: `:root` re-declaring role tokens as literal hexes.
 _PAGE_LOCAL_SHEET = (
-    "\n_LEDGER_MUTATION_CSS = "
-    '"<style>:root{--ground:#0D0D0C;--amber:#D9A253}</style>"\n'
+    '\n_LEDGER_MUTATION_CSS = "<style>:root{--ground:#0D0D0C;--amber:#D9A253}</style>"\n'
 )
 
 
