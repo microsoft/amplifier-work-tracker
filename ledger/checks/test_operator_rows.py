@@ -42,9 +42,11 @@ required to sit on a cadence. It is never a place to put work.
 from __future__ import annotations
 
 import ast
+import json
 import re
 
 from ._support import (
+    ADAPTER,
     CHARTSVG,
     GROUND_TOKENS,
     LITERAL,
@@ -52,6 +54,7 @@ from ._support import (
     PINNING_DISPOSITIONS,
     PYPROJECT,
     REPO_ROOT,
+    ROUTE_MODULES,
     SUPERVISOR,
     WEBAPP,
     WEBBROWSE,
@@ -60,6 +63,8 @@ from ._support import (
     WEBTHEME,
     WEBTRUST,
     WIDGETS,
+    _called_names,
+    _route_methods,
     collapse,
     contains,
     count,
@@ -89,6 +94,54 @@ BROWSER_DRIVERS = ("playwright", "selenium", "axe-core", "axe_core")
 
 MAKEFILE = REPO_ROOT / "Makefile"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+
+#: The Tier-B kit's COMMITTED run summary -- the bridge that lets this
+#: in-process, browserless ledger re-read numbers a real chromium produced
+#: (Freeze 3, OSV1-029). Written by
+#: `tests/conformance/operator_surface/browser/_artifacts.py`; the per-run
+#: artifact directory beside it is gitignored and unreadable from here.
+TIER_B_PROBE_LIB = "tests/conformance/operator_surface/browser/_probe.py"
+TIER_B_SUMMARY = "tests/conformance/operator_surface/browser/LAST_RUN.json"
+TIER_B_SUMMARY_SCHEMA = "operator-surface-tier-b/1"
+
+
+def tier_b_summary() -> dict:
+    """The Tier-B run summary, parsed, with its envelope checked.
+
+    Fails loud rather than returning `{}`: a probe that quietly read an empty
+    summary would report "no violation measured" for every Tier-B row at once,
+    which is precisely the hollow green Freeze 3 exists to prevent. Read
+    through `read()` so the mutation harness's injected world is what a
+    mutated run sees.
+    """
+    path = REPO_ROOT / TIER_B_SUMMARY
+    assert path.exists(), (
+        f"{TIER_B_SUMMARY} is missing. Every Tier-B row re-reads its verdict "
+        f"from it -- run `make test-conformance-b` to regenerate it."
+    )
+    data = json.loads(read(path))
+    assert data.get("schema") == TIER_B_SUMMARY_SCHEMA, (
+        f"{TIER_B_SUMMARY} declares schema {data.get('schema')!r}, expected "
+        f"{TIER_B_SUMMARY_SCHEMA!r} -- the artifact shape moved under the ledger."
+    )
+    assert data.get("checks"), f"{TIER_B_SUMMARY} carries no checks"
+    return data
+
+
+def tier_b(check: str, scenario: str) -> dict:
+    """One headline out of the run summary, or a loud failure naming what is there."""
+    checks = tier_b_summary()["checks"]
+    assert check in checks, (
+        f"the Tier-B run summary has no `{check}` check (it has "
+        f"{sorted(checks)}). Either the kit stopped emitting it or the run was "
+        f"partial -- re-run `make test-conformance-b`."
+    )
+    scenarios = checks[check]
+    assert scenario in scenarios, (
+        f"the Tier-B run summary has no `{check}` / `{scenario}` scenario (it has "
+        f"{sorted(scenarios)})."
+    )
+    return scenarios[scenario]
 
 
 def _exists(rel: str) -> bool:
@@ -326,14 +379,28 @@ def test_row_osv1_002() -> None:
 
 
 def test_row_osv1_003() -> None:
-    """Core 2 GAP pin (calm pixels): no pixel sweep exists, and the retired
-    palette that a sweep would catch is still in the tree.
+    """Core 2 VIOLATION pin, RE-READ from the browser run's own numbers.
+
+    Not "a file appeared" and not the browser tier's pass/fail: the calm sweep
+    wrote pixel counts, and this reads them back. L0 is clean in both themes;
+    L1 paints `--blocked` on a page with nothing blocked, and THAT is the
+    pinned violation.
     """
-    assert not _exists(TIER_B_KIT), (
-        f"OSV1-003 (Core 2): {TIER_B_KIT} now exists. Re-derive this row from the "
-        f"sweep's EMITTED ARTIFACT (Freeze 3 / ruling 6) -- never from the fact that "
-        f"a file appeared (work_item_pipeline-qgo)."
-    )
+    for theme in ("dark", "light"):
+        clean = tier_b("calm.zero_alarm_pixels", f"calm/L0/{theme}")
+        assert clean["alarm"] == 0 and clean["blocked"] == 0, (
+            f"OSV1-003 (Core 2): a calm L0 in {theme} now paints "
+            f"{clean['alarm']} --alarm and {clean['blocked']} --blocked pixels. "
+            f"L0 was the CLEAN half of this row -- a regression, not progress."
+        )
+        dirty = tier_b("calm.zero_alarm_pixels", f"calm/L1/{theme}")
+        assert dirty["blocked"] == 97, (
+            f"OSV1-003 (Core 2) PIN MOVED: a calm L1 in {theme} painted "
+            f"{dirty['blocked']} --blocked pixels, pinned at 97. If the legend "
+            f"swatch, the live dot and the danger button stopped painting "
+            f"`--blocked` on a calm page, re-derive this row from the new sweep "
+            f"(work_item_pipeline-qgo)."
+        )
     assert contains(WEBPWA, "background:#0D0D0C;color:#F2EEE6"), (
         "OSV1-003 (Core 2): the retired palette at webpwa.py:121-122 is gone. That is "
         "the Conformance 1 bad fixture's specimen and a Core 4 violation closing "
@@ -344,9 +411,6 @@ def test_row_osv1_003() -> None:
         "hardcoded amber outside the token set that Conformance 1's bad half "
         "reinstates. Re-derive this row and OSV1-005's note."
     )
-
-
-# --------------------------------------------------------------- OSV1-004
 
 
 def test_row_osv1_004() -> None:
@@ -417,8 +481,8 @@ def test_row_osv1_005() -> None:
         "OSV1-005 (Core 4): webpwa.py:121's retired-palette inline body is no longer "
         "counted as a literal site -- the worst specimen in the census. Re-derive."
     )
-    assert "webbrowse.py:741" in literal, (
-        "OSV1-005 (Core 4): webbrowse.py:741's textarea (literal font-size, max-width "
+    assert "webbrowse.py:814" in literal, (
+        "OSV1-005 (Core 4): webbrowse.py:814's textarea (literal font-size, max-width "
         "and padding) is no longer counted. Re-derive."
     )
     total = len(inline_style_sites())
@@ -496,11 +560,11 @@ EXEMPTION_REGISTER: frozenset[str] = frozenset(
         "webapp.py:2266",
         "webapp.py:2572",
         "webapp.py:3376",
-        "webapp.py:4393",
-        "webapp.py:4908",
-        "webtheme.py:4131",
-        "webtheme.py:4150",
-        "webtheme.py:4157",
+        "webapp.py:4421",
+        "webapp.py:4936",
+        "webtheme.py:4185",
+        "webtheme.py:4204",
+        "webtheme.py:4211",
         "widgets.py:704",
         "widgets.py:831",
         "widgets.py:834",
@@ -570,33 +634,72 @@ def test_row_osv1_007() -> None:
 # --------------------------------------------------------------- OSV1-008
 
 
+#: Live regions present BEFORE the forced swap, per level, as the 2026-09-05
+#: re-recorded run measures them. L0 renders exactly ONE since the hero
+#: rebuild landed (`widgets.py:1379`, the verdict hero's `role="status"`); L1
+#: still renders none. Pinned per level rather than as a single number,
+#: because the two levels answer Core 6's announcement half differently and a
+#: shared pin would let one move under the other.
+_LIVE_REGIONS_BEFORE_SWAP = {"L0": 1, "L1": 0}
+
+
 def test_row_osv1_008() -> None:
-    """Core 6 GAP pin: no browser kit, and the swap restores exactly two
-    things -- neither of them the pause control or a live region.
+    """Core 6 VIOLATION pin: one of four survivals holds, RE-READ from the run.
+
+    Pinned in BOTH directions per survival, because they are separable and a
+    fix to any one of them is progress this row must record rather than
+    absorb.
     """
-    assert not _exists(TIER_B_KIT), (
-        f"OSV1-008 (Core 6): {TIER_B_KIT} now exists -- re-derive this row from the "
-        f"post-swap DOM SNAPSHOT it emits (work_item_pipeline-qgo)."
-    )
-    theme = read(WEBTHEME)
-    assert "function captureState()" in theme and "function restoreState(state)" in theme, (
-        "OSV1-008 (Core 6): the swap's capture/restore pair is gone -- the mechanism "
-        "this row measures moved. Re-derive."
-    )
-    restore = theme[theme.index("function restoreState(state)") :][:400]
-    assert "openIds" in restore and "scrollTo" in restore, (
-        "OSV1-008 (Core 6): `restoreState` no longer restores open disclosures and scroll position."
-    )
-    assert "__wtRefreshPaused" not in restore, (
-        "OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY: `restoreState` now touches the "
-        "pause flag. The pause CONTROL's state surviving the swap is one of the four "
-        "things Core 6 names -- flip the row only after the browser kit MEASURES it, "
-        "and retarget this probe in the same change (work_item_pipeline-qgo)."
-    )
+    for level in ("L0", "L1"):
+        m = tier_b("swap.survives", f"calm/{level}/dark")
+        assert m["scroll_preserved"], (
+            f"OSV1-008 (Core 6): scroll offset stopped surviving the body-swap on "
+            f"{level}. That was the ONE of Core 6's four named survivals that held "
+            f"-- a regression."
+        )
+        assert not m["open_details_preserved"], (
+            f"OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY on {level}: an open "
+            f"`<details>` now survives the swap. Confirm it survives because the "
+            f"markup gained ids and `restoreState` reaches them, then re-derive "
+            f"this row (work_item_pipeline-qgo)."
+        )
+        assert m["details_with_id"] == 0, (
+            f"OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY on {level}: "
+            f"{m['details_with_id']} `<details>` now carry an id. `restoreState` "
+            f"only ever re-opens `details[id]`, so this is the mechanism acquiring "
+            f"its first targets -- re-derive from the new swap measurement."
+        )
+        assert not m["pause_control_preserved"], (
+            f"OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY on {level}: the pause "
+            f"CONTROL's state now survives the swap. Re-derive this row."
+        )
+        assert m["pause_flag_preserved"], (
+            f"OSV1-008 (Core 6): `window.__wtRefreshPaused` stopped surviving the "
+            f"swap on {level}. The flag living on `window` is why polling stays "
+            f"paused at all -- a regression."
+        )
+        assert m["live_regions_before"] == _LIVE_REGIONS_BEFORE_SWAP[level], (
+            f"OSV1-008 (Core 6) PIN MOVED on {level}: the page renders "
+            f"{m['live_regions_before']} live region(s) before the swap, pinned at "
+            f"{_LIVE_REGIONS_BEFORE_SWAP[level]}. Movement in either direction "
+            f"changes what Core 6's announcement half is even asking -- re-derive "
+            f"this row from the new swap measurement (work_item_pipeline-qgo)."
+        )
+        assert m["marked_live_regions_after"] == 0, (
+            f"OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY on {level}: "
+            f"{m['marked_live_regions_after']} of the live region(s) tagged before "
+            f"the swap SURVIVED it. On L0 that is the announcement half closing -- "
+            f"re-derive this row from the new measurement."
+        )
     assert count(WEBAPP, "aria-live") == 0 and count(WEBTHEME, "aria-live") == 0, (
-        "OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY: an `aria-live` region appeared. "
-        "Core 6's announcement half had NO implementation at seed -- if one landed, "
-        "re-derive this row from the Tier-B snapshot rather than from its presence."
+        "OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY: an `aria-live` region appeared "
+        "in the source. Re-derive this row from the Tier-B snapshot rather than "
+        "from its presence."
+    )
+    assert contains(WIDGETS, ' role="status">'), (
+        'OSV1-008 (Core 6): the verdict hero\'s `role="status"` region is gone -- '
+        "that is the ONE live region L0 renders, and the thing the swap destroys. "
+        "Re-derive this row (and OSV1-001's hero rebuild) from a fresh run."
     )
 
 
@@ -694,33 +797,58 @@ def test_row_osv1_009() -> None:
 
 
 def test_row_osv1_010() -> None:
-    """Core 7 GAP pin (rendered half): nothing in this repo drives a browser."""
-    assert not _exists(TIER_B_KIT), (
-        f"OSV1-010 (Core 7): {TIER_B_KIT} now exists -- re-derive this row from the "
-        f"computed contrast ratios, bounding boxes and motion trace it EMITS, which "
-        f"the ledger must re-check itself (Freeze 3 / ruling 6)."
+    """Core 7 VIOLATION pin (rendered half), RE-READ from the browser run.
+
+    Four floors, measured across 18 renders. Three fail and one passes, and
+    all four are pinned: a fix to any one is progress this row must record.
+    """
+    l0 = tier_b("perception.floors", "calm/L0/1280/dark")
+    l1 = tier_b("perception.floors", "calm/L1/1280/dark")
+    l1_light = tier_b("perception.floors", "calm/L1/1280/light")
+
+    assert l0["text_below_floor"] == 0, (
+        f"OSV1-010 (Core 7): L0 now has {l0['text_below_floor']} text elements below "
+        f"4.5:1. L0 was the CLEAN level for text contrast -- a regression."
     )
-    for driver in BROWSER_DRIVERS:
-        assert not _repo_mentions(driver), (
-            f"OSV1-010 (Core 7) PIN BROKE THE RIGHT WAY: {driver!r} now appears in the "
-            f"repo. A browser is being driven somewhere -- re-derive this row, and "
-            f"OSV1-003, -008, -020..-023, from what it actually measures."
-        )
+    assert l1["text_below_floor"] == 3 and l1_light["text_below_floor"] == 4, (
+        f"OSV1-010 (Core 7) PIN MOVED: L1 text below 4.5:1 measured "
+        f"{l1['text_below_floor']} dark / {l1_light['text_below_floor']} light, "
+        f"pinned at 3 / 4 (light was 5 before the contrast lane moved "
+        f"`--ink-quiet`). Movement in either direction means the render changed "
+        f"-- re-derive (work_item_pipeline-qgo)."
+    )
+    assert l0["controls_below_44px"] == 26 and l0["controls"] == 34, (
+        f"OSV1-010 (Core 7) PIN MOVED: L0 measured {l0['controls_below_44px']} of "
+        f"{l0['controls']} interactive controls under 44px, pinned at 26 of 34 "
+        f"(35 before the hero rebuild replaced one control)."
+    )
+    assert l0["non_text_below_floor"] > 0, (
+        "OSV1-010 (Core 7) PIN BROKE THE RIGHT WAY: every measured control border "
+        "and icon stroke on L0 now meets 3:1. Re-derive this row."
+    )
+    assert l0["running_animations_under_reduced_motion"] == 0, (
+        f"OSV1-010 (Core 7): {l0['running_animations_under_reduced_motion']} "
+        f"animation(s) now run under `prefers-reduced-motion: reduce`. That floor "
+        f"PASSED at this measurement -- a regression, and Core 7's kernel-rule half "
+        f"(OSV1-011) with it."
+    )
     assert contains(WEBTHEME, "--u:44px"), (
         "OSV1-010 (Core 7): the 44px target token is gone -- the thing the Tier-B "
         "bounding-box check exists to verify."
     )
 
 
-# --------------------------------------------------------------- OSV1-011
-
-
 def test_row_osv1_011() -> None:
-    """Core 7 CONFORMS: reduced motion is ONE kernel-level rule.
+    """Core 7 CONFORMS: reduced motion is ONE kernel-level rule -- and the
+    browser confirms nothing runs under the preference.
 
-    Both halves matter: exactly one block, and its selector is universal. A
-    per-widget opt-in would satisfy a naive "is it handled?" check and is
-    precisely what the clause forbids.
+    Three halves now, all load-bearing: exactly one block, its selector is
+    universal, and (RE-DERIVED 2026-09-05) the recorded browser run measures
+    ZERO running animations under `prefers-reduced-motion: reduce` in every
+    one of the 18 renders it sweeps. A per-widget opt-in would satisfy a naive
+    "is it handled?" check and is precisely what the clause forbids; a
+    stylesheet that says the right thing while the page still animates would
+    satisfy the static halves alone.
     """
     theme = read(WEBTHEME)
     blocks = re.findall(r"@media \(prefers-reduced-motion:\s*reduce\)\s*\{", theme)
@@ -743,6 +871,31 @@ def test_row_osv1_011() -> None:
     assert not others, (
         "OSV1-011 (Core 7): a `prefers-reduced-motion` query appeared outside "
         "webtheme.py. The rule is kernel-level and belongs in one place."
+    )
+
+    # The browser half, re-read from the run summary rather than trusted from
+    # the Tier-B tier's own green (Freeze 3). Every swept render, not one: the
+    # count is only meaningful measured on a QUIESCENT page, and reading a
+    # single scenario would let the other seventeen move unseen.
+    swept = {
+        scenario: headline["running_animations_under_reduced_motion"]
+        for scenario, headline in tier_b_summary()["checks"]["perception.floors"].items()
+        if scenario.startswith("calm/")
+    }
+    assert len(swept) == 18, (
+        f"OSV1-011 (Core 7): the recorded run sweeps {len(swept)} renders, not the "
+        f"18 (L0/L1/L2 x 430/900/1280 x dark/light) this row reads. A narrowed "
+        f"sweep is a narrowed claim -- re-derive."
+    )
+    still_running = {s: n for s, n in sorted(swept.items()) if n}
+    assert not still_running, (
+        f"OSV1-011 (Core 7) REGRESSION: the recorded run measures animations still "
+        f"running under `prefers-reduced-motion: reduce`: {still_running}. The "
+        f"kernel rule collapses every duration to .001ms, so a running animation "
+        f"means something escapes it -- read the run's "
+        f"`motion`/`motion_at_preference_change` artifacts before flipping this row: "
+        f"a transition created BEFORE the preference was applied and still finishing "
+        f"is the page settling, and is recorded separately for exactly that reason."
     )
 
 
@@ -879,26 +1032,175 @@ def test_row_osv1_014() -> None:
 # --------------------------------------------------------------- OSV1-015
 
 
-def test_row_osv1_015() -> None:
-    """Core 10 VIOLATION pin: the L1 view's unbounded query, and the dead
-    uncapped helper beside it.
+#: Every adapter read that ACCEPTS a `limit` -- the calls Core 10's "every
+#: adapter call reached from a view passes an explicit limit" is about. A
+#: scalar read has nothing to bound, so it is not listed.
+_BOUNDED_READS = frozenset(
+    {
+        "list",
+        "list_bounded",
+        "activity",
+        "attention_items",
+        "attention_items_from_rows",
+        "recent_activity_feed",
+    }
+)
+
+#: A helper that makes an unbounded listing call but is reached by NO route.
+#: Dead code is not "reached from a view", so the clause as written does not
+#: condemn it -- but the exemption is re-earned every run below, by proving it
+#: is still dead.
+_UNREACHED_UNCAPPED = ("_oldest_ready_item", WEBAPP)
+
+
+def _module_int_constants(path) -> dict[str, int]:  # type: ignore[no-untyped-def]
+    """Module-level `NAME = <int>` assignments, plus one alias hop through the
+    adapter (`NAME = A.LIST_MAX_LIMIT`), read by PARSING -- never importing.
+    Static reading is what lets this kit measure source it does not execute.
     """
-    assert contains(WEBBROWSE, "bd.list(status=status_filter, include_resolved=True, limit=0)"), (
-        "OSV1-015 (Core 10) PIN BROKE THE RIGHT WAY: webbrowse.py's `limit=0` call is "
-        "gone. If the L1 view now passes a bound that actually bounds (e.g. via "
-        "`adapter.list_bounded`), flip OSV1-015 to CONFORMS and retarget this probe IN "
-        "THE SAME CHANGE (work_item_pipeline-8vv). A passing pin is not conformance."
+    adapter_consts: dict[str, int] = {}
+    for node in ast.parse(read(ADAPTER)).body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, int)
+        ):
+            adapter_consts[node.targets[0].id] = node.value.value
+    out: dict[str, int] = {}
+    for node in ast.parse(read(path)).body:
+        if not (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            continue
+        name = node.targets[0].id
+        value = node.value
+        if isinstance(value, ast.Constant) and isinstance(value.value, int):
+            out[name] = value.value
+        elif isinstance(value, ast.Attribute) and value.attr in adapter_consts:
+            out[name] = adapter_consts[value.attr]
+    return out
+
+
+def _limit_passed(call: ast.Call, consts: dict[str, int]) -> object:
+    """The `limit=` this call passes: an int where it resolves, `None` when no
+    `limit` keyword is present at all, `"?"` when one IS passed from an
+    expression this static reading cannot evaluate.
+
+    `"?"` is not a failure: the clause asks for an EXPLICIT limit at the call
+    site, and a value computed from a parameter is explicit there. `None` is
+    the failure -- an inherited default is a bound nobody at the call site
+    can see.
+    """
+
+    def evaluate(node: ast.expr) -> object:
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            return consts.get(node.id, "?")
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add | ast.Sub | ast.Mult):
+            left, right = evaluate(node.left), evaluate(node.right)
+            if isinstance(left, int) and isinstance(right, int):
+                if isinstance(node.op, ast.Add):
+                    return left + right
+                return left - right if isinstance(node.op, ast.Sub) else left * right
+        return "?"
+
+    for kw in call.keywords:
+        if kw.arg == "limit":
+            return evaluate(kw.value)
+    return None
+
+
+def view_listing_calls() -> list[tuple[str, int, str, object]]:
+    """`(module, line, handler, limit)` for every listing call a read-only
+    route reaches -- the same module-local, depth-4 name-following the route
+    audit above already uses, and the same honest bound: a call reached
+    through a callable handed in from another module is invisible to it.
+    """
+    found: list[tuple[str, int, str, object]] = []
+    for path in ROUTE_MODULES:
+        tree = ast.parse(read(path))
+        funcs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                funcs.setdefault(node.name, node)
+        consts = _module_int_constants(path)
+        for handler in funcs.values():
+            methods: list[str] = []
+            for dec in handler.decorator_list:
+                methods += _route_methods(dec) or []
+            if not any(m in {"GET", "HEAD"} for m in methods):
+                continue
+            reached = [handler]
+            seen: set[str] = set()
+            frontier = _called_names(handler)
+            for _ in range(4):
+                nxt: set[str] = set()
+                for name in frontier - seen:
+                    seen.add(name)
+                    helper = funcs.get(name)
+                    if helper is not None and helper is not handler:
+                        reached.append(helper)
+                        nxt |= _called_names(helper)
+                frontier = nxt - seen
+                if not frontier:
+                    break
+            for fn in reached:
+                for node in ast.walk(fn):
+                    if (
+                        isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in _BOUNDED_READS
+                    ):
+                        found.append(
+                            (path.name, node.lineno, handler.name, _limit_passed(node, consts))
+                        )
+    return found
+
+
+def test_row_osv1_015() -> None:
+    """Core 10 CONFORMS: every adapter listing call a read-only route reaches
+    passes an explicit, finite limit -- MEASURED here, not asserted from a
+    remembered line number.
+
+    Retargeted from the pin on `webbrowse.py`'s `limit=0` when
+    work_item_pipeline-8vv landed. The pin named ONE call; this audits the
+    population, so the next unbounded view query fails here too rather than
+    slipping in beside a fixed one.
+
+    `limit=0` is bd's own "unlimited" (`adapter.Beads.list`'s docstring says
+    so outright) and an omitted `limit` leaves bd's default in place
+    implicitly -- the clause asks for an EXPLICIT bound, so both are failures.
+    """
+    calls = view_listing_calls()
+    assert any(m == "webbrowse.py" and h == "project_view" for m, _, h, _ in calls), (
+        f"OSV1-015 (Core 10): the traversal no longer reaches `project_view`'s item "
+        f"listing -- an audit that matches nothing passes forever while proving "
+        f"nothing. Re-derive this row. Found: {calls}"
     )
-    app = read(WEBAPP)
-    assert app.count("_oldest_ready_item") == 1, (
-        f"OSV1-015 (Core 10): `_oldest_ready_item` now has "
-        f"{app.count('_oldest_ready_item') - 1} caller(s). It calls `bd.list(...)` with "
-        f"NO limit at all -- dead code was the only reason it did not violate this "
-        f"clause. Give it a bound or delete it."
+    offenders = [c for c in calls if c[3] is None or (isinstance(c[3], int) and c[3] <= 0)]
+    assert not offenders, (
+        "OSV1-015 (Core 10) REGRESSION -- a view-reached adapter read no longer "
+        "passes an explicit, finite limit (`None` = no `limit=` at all, so the call "
+        "silently inherits the seam's default; `0` = bd's own \"unlimited\"):\n  "
+        + "\n  ".join(f"{m}:{ln} in {h}() -> limit={lim!r}" for m, ln, h, lim in offenders)
+        + "\n This surface re-renders every 20 seconds; an unbounded read here runs "
+        "three times a minute per open tab."
+    )
+    name, module = _UNREACHED_UNCAPPED
+    app = read(module)
+    assert app.count(name) == 1, (
+        f"OSV1-015 (Core 10): `{name}` now has {app.count(name) - 1} caller(s). It "
+        f"calls `bd.list(...)` with NO limit at all -- being reached by nothing was "
+        f"the only reason it did not violate this clause. Give it a bound or delete it."
     )
     assert contains(WEBAPP, 'items = bd.list(lane=A.LANE_WORK, status="open")'), (
         "OSV1-015 (Core 10): the uncapped `bd.list` in `_oldest_ready_item` is gone -- "
-        "welcome, and the row's second pinned fact just changed. Re-derive."
+        "welcome, and the row's exemption just changed. Re-derive."
     )
 
 
@@ -906,51 +1208,98 @@ def test_row_osv1_015() -> None:
 
 
 def test_row_osv1_016() -> None:
-    """Core 10 VIOLATION pin: the theme choice persists nowhere.
+    """Core 10 CONFORMS: a chosen theme survives a refresh -- and so does the
+    other preference on this surface.
 
-    Pinned narrowly, on theme only. At seed the density preference raised a
-    genuine reading question (localStorage survives a refresh but IS 'only in
-    the browser') that the reconcile returned to the root rather than deciding,
-    so this probe deliberately said nothing about it.
+    Retargeted from the pin on `wtSetTheme` persisting NOTHING, when
+    work_item_pipeline-dg3 landed. Three facts hold it up, and all three are
+    load-bearing:
 
-    SETTLED 2026-09-04 by the owner-ratified DRAFT true-up #1: the machine
-    check now reads "no view holds state that does not survive a refresh
-    (state persisted in `localStorage` or on the server survives; ...)". Under
-    that wording density is CONFORMANT and theme is still a violation, so the
-    probe now asserts BOTH -- the pin on theme, and the persistence that makes
-    density conformant, since a row whose notes rule on density must notice if
-    density stops persisting.
+      * the choice is WRITTEN (`wtSetTheme` -> `localStorage`);
+      * it is READ BACK AT FIRST PAINT, from `<head>`, before `<body>` is
+        parsed -- a body-end read applies it one paint too late, which is a
+        flash, not a fix;
+      * writer and reader name the SAME key, taken from ONE declaration. Two
+        spellings would fail silently and look exactly like "the toggle does
+        nothing".
+
+    The server's `data-theme="dark"` default is asserted UNCHANGED: the
+    resolver only ever replaces that attribute, never removes it, so PR #55's
+    fix (a light-OS browser silently winning the token cascade because
+    `<html>` carried no `data-theme` at all) stays fixed.
+
+    Density is checked alongside, unchanged in meaning from the pin: under
+    the 2026-09-04 aligned wording its `localStorage` persistence is exactly
+    why it is conformant, and a row whose notes rule on density must notice
+    if density stops persisting.
     """
     app = read(WEBAPP)
-    setter = app[app.index("function wtSetTheme(t){") :][:340]
-    assert "setAttribute('data-theme', t)" in setter, (
-        "OSV1-016 (Core 10): `wtSetTheme` no longer sets the theme attribute -- the "
-        "mechanism this row measures moved."
-    )
-    for persistence in ("localStorage", "sessionStorage", "document.cookie", "fetch("):
-        assert persistence not in setter, (
-            f"OSV1-016 (Core 10) PIN BROKE THE RIGHT WAY: `wtSetTheme` now uses "
-            f"{persistence!r}. If the theme choice survives a refresh, flip OSV1-016 to "
-            f"CONFORMS and retarget this probe IN THE SAME CHANGE "
-            f"(work_item_pipeline-dg3). A passing pin is not conformance."
-        )
-    assert contains(WEBTHEME, '<html lang="en" data-theme="dark">'), (
-        'OSV1-016 (Core 10): the server no longer hardcodes `data-theme="dark"` on '
-        "every page. That hardcoding is the other half of why a chosen theme dies on "
-        "refresh -- re-derive the row."
-    )
-    # The OTHER preference on this surface, and the one the true-up's aligned
-    # wording rules CONFORMANT: density persists, so it survives a refresh. Not
-    # a pin -- a live check on the fact this row's notes rule on.
     theme_src = read(WEBTHEME)
-    assert theme_src.count("wt-density") == 2 and contains(
+
+    key_decl = 'THEME_STORAGE_KEY = "wt-theme"'
+    assert key_decl in theme_src, (
+        "OSV1-016 (Core 10): `webtheme.THEME_STORAGE_KEY` is gone or renamed. It is "
+        "the ONE declaration the writer and the first-paint reader both take their "
+        "key from -- re-derive this row before letting them drift apart."
+    )
+
+    assert "function wtSetTheme(t){" in app, (
+        "OSV1-016 (Core 10): `wtSetTheme` is gone or renamed -- the mechanism this row "
+        "measures moved. Re-derive."
+    )
+    setter = app[app.index("function wtSetTheme(t){") :][:200]
+    assert "localStorage.setItem(" in setter, (
+        "OSV1-016 (Core 10) REGRESSION: `wtSetTheme` no longer persists the choice. "
+        "A theme held only in page memory dies on the next load -- that is this "
+        "clause's anti-goal in its own words (work_item_pipeline-dg3)."
+    )
+
+    assert "def theme_boot_js()" in theme_src, (
+        "OSV1-016 (Core 10) REGRESSION: `webtheme.theme_boot_js` is gone. Without a "
+        "first-paint resolver a stored theme is written and never read back."
+    )
+    boot = theme_src[theme_src.index("def theme_boot_js()") :]
+    boot = boot[: boot.index("\ndef ")]
+    assert "localStorage.getItem(" in boot and "setAttribute('data-theme'" in boot, (
+        "OSV1-016 (Core 10) REGRESSION: the first-paint resolver no longer reads the "
+        "stored theme and applies it. Written-but-never-read is not persistence."
+    )
+    assert "removeAttribute" not in boot, (
+        "OSV1-016 (Core 10): the resolver now REMOVES `data-theme` rather than only "
+        "replacing it -- that is how a light-OS browser silently wins the token "
+        "cascade again (PR #55). Re-derive."
+    )
+
+    page_src = theme_src[theme_src.index("def page(") :]
+    page_src = page_src[: page_src.index("\n# ---")]
+    assert "<script>{theme_boot_js()}</script>" in page_src, (
+        "OSV1-016 (Core 10) REGRESSION: `page()` no longer inlines the first-paint "
+        "resolver at all, so a stored theme is never applied on load."
+    )
+    head_at = page_src.index('<html lang="en" data-theme="dark"><head>')
+    script_at = page_src.index("<script>{theme_boot_js()}</script>")
+    body_at = page_src.index("</style></head><body")
+    assert head_at < script_at < body_at, (
+        "OSV1-016 (Core 10) REGRESSION: the first-paint resolver is no longer inlined "
+        "in `<head>` ahead of the body. Applying a stored theme after the body is "
+        "parsed is a flash of the wrong theme on every single load."
+    )
+    assert contains(WEBTHEME, '<html lang="en" data-theme="dark">'), (
+        'OSV1-016 (Core 10): the server no longer renders `data-theme="dark"` as the '
+        "first-paint default. That attribute is what the resolver REPLACES; without "
+        "it a light-OS browser wins the cascade before any script runs (PR #55)."
+    )
+
+    # The OTHER preference on this surface, and the one the true-up's aligned
+    # wording rules CONFORMANT: density persists, so it survives a refresh.
+    assert "var KEY='wt-density';" in theme_src and contains(
         WEBTHEME, "localStorage.setItem(KEY, next ? 'compact' : 'comfortable')"
     ), (
         "OSV1-016 (Core 10): the density preference no longer persists in "
         "`localStorage`. Under the 2026-09-04 aligned wording that persistence is "
-        "exactly why density is CONFORMANT while theme is not -- if it stopped, "
-        "density became a second violation of this clause and this row's ruling note "
-        "is stale. Re-derive."
+        "exactly why density is CONFORMANT alongside theme -- if it stopped, density "
+        "became a violation of this clause and this row's ruling note is stale. "
+        "Re-derive."
     )
 
 
@@ -998,12 +1347,32 @@ def test_row_osv1_017() -> None:
 
 
 def test_row_osv1_020() -> None:
-    """Conformance 1 pin: no browser kit, so no calm pixel sweep exists."""
-    assert not _exists(TIER_B_KIT), (
-        f"OSV1-020 (Conformance 1): {TIER_B_KIT} now exists. Freeze 4 requires the BAD "
-        f"half to fail against the defect it names, DEMONSTRATED BY RUNNING IT -- "
-        f"re-derive this row from that demonstration, never from the file's existence "
-        f"(work_item_pipeline-qgo)."
+    """Conformance 1 CONFORMS: the fixture exists AND its bad halves caught the
+    defects they name -- re-read, not taken on the kit's word.
+
+    Deliberately not `_exists(TIER_B_KIT)` alone. Freeze 4 is about a bad half
+    that FAILS against its defect, demonstrated by running it, so this reads
+    the three demonstrations' own numbers back out of the run summary.
+    """
+    assert _exists(TIER_B_KIT), (
+        f"OSV1-020 (Conformance 1): {TIER_B_KIT} is gone -- the fixture this row "
+        f"records no longer exists."
+    )
+    chip = tier_b("calm.zero_alarm_pixels", "bad-alarm-chip/L0/dark")
+    assert chip["alarm"] > 0, (
+        f"OSV1-020 (Conformance 1): the injected `var(--alarm)` chip bad half "
+        f"reported {chip['alarm']} --alarm pixels. A bad half that no longer "
+        f"discriminates makes the good half vacuous."
+    )
+    retired = tier_b("calm.zero_alarm_pixels", "bad-retired-palette/L0/dark")
+    assert retired["retired_amber"] > 0, (
+        "OSV1-020 (Conformance 1): the contract's own named bad half -- the retired "
+        "#D9A253 palette region reinstated -- reported zero pixels of it."
+    )
+    real = tier_b("calm.zero_alarm_pixels", "bad-alarm-fixture/L0/dark")
+    assert real["alarm"] > 0 or real["blocked"] > 0, (
+        "OSV1-020 (Conformance 1): the genuinely-alarming fixture (one real blocked "
+        "item, nothing injected) painted no reserved status hue at all."
     )
     assert contains(
         OPERATOR_CONTRACT_PATH, "the sweep reports zero pixels matching `--alarm` or `--blocked`"
@@ -1011,33 +1380,100 @@ def test_row_osv1_020() -> None:
 
 
 def test_row_osv1_021() -> None:
-    """Conformance 2 pin: the Tier-A half landed; the Tier-B hue half has not,
-    and that absence is what keeps this row red."""
-    assert not _exists(TIER_B_KIT), (
-        f"OSV1-021 (Conformance 2): {TIER_B_KIT} now exists. This is the one fixture "
-        f"that spans BOTH tiers -- the Tier-A accessible-name half already landed "
-        f"(work_item_pipeline-c1a, measured in OSV1-004); re-derive this row from the "
-        f"Tier-B hue half's own demonstrated pair (work_item_pipeline-qgo)."
+    """Conformance 2 CONFORMS: BOTH tiers' halves landed and both discriminate.
+
+    RE-DERIVED 2026-09-05 at the wave-2 integration. This is the only
+    Conformance fixture that spans both tiers, so it was pinned twice -- once
+    by each lane, each pinning the OTHER half's absence. Both halves are now
+    present, so neither pin is true any more and the row is derived from what
+    the two kits actually measure:
+
+      TIER-A half (work_item_pipeline-c1a) `state.not_colour_only` exists in
+        the Tier-A kit, ships a bad half, and is NOT deferred behind an xfail --
+        a deferred good half is a check that does not currently pass.
+      TIER-B half (work_item_pipeline-qgo) the alarm region paints a RESERVED
+        hue, and every status-bearing element on L0/L1/L2 carries a word after
+        CSS has had its say.
+
+    Each half keeps its own lane's assertions: this row goes red if EITHER
+    stops holding, which is the only way a two-tier fixture can be honest.
+    """
+    # --- the Tier-A half: present, ships its bad half, and not deferred -----
+    assert _exists(TIER_A_KIT), (
+        f"OSV1-021 (Conformance 2) REGRESSION: {TIER_A_KIT} is gone. This row went "
+        f"CONFORMS on BOTH halves landing (work_item_pipeline-c1a); losing the "
+        f"Tier-A half puts it back to red."
     )
     kit = _kit_source()
     assert "check_state_not_colour_only" in _kit_defs(kit), (
-        "OSV1-021 (Conformance 2): the Tier-A half is gone from the kit. This row is "
-        "red on the Tier-B half ONLY -- losing the Tier-A half is a second, new defect."
+        "OSV1-021 (Conformance 2) REGRESSION: the Tier-A accessible-name half is gone from the kit."
     )
     assert _kit_bad_halves(kit, "test_state_not_colour_only"), (
-        "OSV1-021 (Conformance 2): the Tier-A half no longer ships a bad half. A "
-        "fixture whose bad half nobody runs is a claim, not a fixture (Freeze 4)."
+        "OSV1-021 (Conformance 2) REGRESSION: the Tier-A half no longer ships a bad "
+        "half. A fixture whose bad half nobody runs is a claim, not a fixture "
+        "(Freeze 4)."
     )
+    deferred = _kit_deferred_rows(kit, "test_state_not_colour_only")
+    assert not deferred, (
+        f"OSV1-021 (Conformance 2) REGRESSION: the Tier-A good half is deferred "
+        f"behind an xfail naming {sorted(deferred)}. A green Conformance row whose "
+        f"good half does not currently pass is a claim."
+    )
+    # --- the Tier-B half: re-read from the committed run summary ------------
+    assert _exists(TIER_B_KIT), (
+        f"OSV1-021 (Conformance 2) REGRESSION: {TIER_B_KIT} is gone -- the hue half "
+        f"(work_item_pipeline-qgo) is what took this row green alongside Tier A."
+    )
+    hue = tier_b("alarm.reserved_hue", "alarm/L1/dark")
+    assert hue["alarm"] > 0 or hue["blocked"] > 0, (
+        "OSV1-021 (Conformance 2): the Tier-B hue half stopped measuring -- the "
+        "alarm render painted neither --alarm nor --blocked."
+    )
+    for level in ("L0", "L1", "L2"):
+        words = tier_b("state.not_colour_only", f"alarm/{level}/dark")
+        assert words["status_elements"] > 0, (
+            f"OSV1-021 (Conformance 2): no status-bearing element was found on "
+            f"{level} in the render -- the check cannot pass vacuously."
+        )
+        assert words["wordless"] == 0, (
+            f"OSV1-021 (Conformance 2): {words['wordless']} status-bearing element(s) "
+            f"on {level} now carry a class and no word. Core 3's rendered half was "
+            f"CLEAN at this measurement -- a regression (OSV1-004)."
+        )
     assert contains(
         OPERATOR_CONTRACT_PATH, "fixture whose status chips carry only a status class"
     ), "OSV1-021: Conformance 2's bad half moved in the contract -- re-review the row."
 
 
 def test_row_osv1_022() -> None:
-    """Conformance 3 pin: no browser kit, so body-swap survival is untested."""
-    assert not _exists(TIER_B_KIT), (
-        f"OSV1-022 (Conformance 3): {TIER_B_KIT} now exists -- re-derive from the "
-        f"post-swap DOM snapshot and the demonstrated bad half (work_item_pipeline-qgo)."
+    """Conformance 3 CONFORMS: both bad halves ran and both caught their defect.
+
+    Two of them, because the contract's literal bad half does not discriminate
+    on scroll here (a synchronous whole-body replacement preserves the offset
+    by itself on chromium 148); the reflow variant does. Both are re-read.
+    """
+    assert _exists(TIER_B_KIT), (
+        f"OSV1-022 (Conformance 3): {TIER_B_KIT} is gone -- the fixture this row "
+        f"records no longer exists."
+    )
+    naive = tier_b("swap.survives", "bad-naive-replacement/L0/dark")
+    assert not naive["open_details_preserved"], (
+        "OSV1-022 (Conformance 3): the contract's literal bad half -- a naive "
+        "whole-body innerHTML replacement -- no longer loses the open `<details>`, "
+        "so it discriminates against nothing."
+    )
+    reflow = tier_b("swap.survives", "bad-naive-replacement-reflow/L0/dark")
+    assert not reflow["scroll_preserved"], (
+        "OSV1-022 (Conformance 3): the reflow bad half no longer loses the scroll "
+        "offset. It exists precisely because the literal bad half cannot "
+        "discriminate on scroll -- without it, the good half's scroll assertion is "
+        "unproven."
+    )
+    good = tier_b("swap.survives", "calm/L0/dark")
+    assert good["scroll_preserved"] and not good["open_details_preserved"], (
+        "OSV1-022 (Conformance 3): the good half's own outcome moved (scroll "
+        f"{good['scroll_preserved']}, disclosures {good['open_details_preserved']}) "
+        f"-- re-derive this row and OSV1-008 together."
     )
     assert contains(WEBTHEME, "document.body.innerHTML = doc.body.innerHTML"), (
         "OSV1-022 (Conformance 3): the whole-body innerHTML swap is gone. That IS the "
@@ -1047,12 +1483,55 @@ def test_row_osv1_022() -> None:
 
 
 def test_row_osv1_023() -> None:
-    """Conformance 4 pin: no viewport sweep, and the breakpoints it must sweep."""
-    assert not _exists(TIER_B_KIT), (
-        f"OSV1-023 (Conformance 4): {TIER_B_KIT} now exists -- re-derive from the "
-        f"emitted scrollWidth/clientWidth, bounding-box and contrast numbers "
-        f"(work_item_pipeline-qgo)."
+    """Conformance 4 CONFORMS: the sweep covers what the clause names, and its
+    bad halves ran.
+
+    The contrast bad half carries its own control -- a literal below-floor pair
+    must come back under 4.5:1 and a literal above-floor pair at or over it, in
+    BOTH themes -- which is what separates "the probe measures" from "the probe
+    always says no".
+    """
+    assert _exists(TIER_B_KIT), (
+        f"OSV1-023 (Conformance 4): {TIER_B_KIT} is gone -- the fixture this row "
+        f"records no longer exists."
     )
+    summary = tier_b_summary()["checks"]["perception.floors"]
+    swept = {s for s in summary if s.startswith("calm/")}
+    expected = {
+        f"calm/{level}/{width}/{theme}"
+        for level in ("L0", "L1", "L2")
+        for width in (430, 900, 1280)
+        for theme in ("dark", "light")
+    }
+    assert swept == expected, (
+        f"OSV1-023 (Conformance 4): the sweep no longer covers L0/L1/L2 at 430, 900 "
+        f"and 1280px in both themes. Missing: {sorted(expected - swept)}; "
+        f"unexpected: {sorted(swept - expected)}."
+    )
+    wide = summary.get("bad-wide-element/L0/430/dark")
+    assert wide and wide["elements_beyond_viewport_moved"], (
+        "OSV1-023 (Conformance 4): the overflow bad half -- a 900px fixed-width "
+        "element at a 430px viewport -- no longer moves the element-level reading."
+    )
+    assert wide["scroll_width_moved"] is False, (
+        "OSV1-023 (Conformance 4) PIN BROKE THE RIGHT WAY: the injected wide element "
+        "now DOES move `scrollWidth`. That means `overflow-x: clip` is gone from the "
+        "surface, the clause's literal metric has become discriminating, and this "
+        "row's note about it should be re-derived."
+    )
+    for theme in ("light", "dark"):
+        measured = summary.get(f"bad-low-contrast/L0/{theme}")
+        assert measured, f"OSV1-023 (Conformance 4): the contrast bad half did not run in {theme}."
+        assert measured["min_ratio"] < 4.5 <= measured["control_ratio"], (
+            f"OSV1-023 (Conformance 4): in {theme} the injected literal pair measured "
+            f"{measured['min_ratio']}:1 and its control {measured['control_ratio']}:1. "
+            f"The bad half needs BOTH -- the below-floor pair under 4.5:1 AND the "
+            f"control at or above it -- or it is not demonstrating a measurement, it "
+            f"is a probe that always says no. RE-DERIVED 2026-09-05: the pair is now "
+            f"LITERAL (#9aa3b2 on #eef2fb, 2.27:1) in both themes, because the "
+            f"live-token version stopped naming a defect when the contrast lane fixed "
+            f"`--ink-quiet` (OSV1-009, OSV1-030)."
+        )
     theme = read(WEBTHEME)
     for width in ("1280px", "900px", "430px"):
         assert f"max-width:{width}" in theme or f"min-width:{width}" in theme, (
@@ -1162,18 +1641,22 @@ def test_row_osv1_027() -> None:
     on the word "conformance": the Makefile and ci.yml already say "conformance
     ledger" about Tier 4, and a check a pre-existing comment satisfies asserts
     nothing.
+
+    NARROWED 2026-09-05 (work_item_pipeline-qgo's narrowing, kept through the
+    wave-2 integration and turned round to the CONFORMS direction): the Tier-B
+    browser kit is now wired too (Makefile `test-conformance-b`, CI "Tier 7"),
+    so bare containment of `tests/conformance` would be satisfied by wiring
+    that has nothing to do with Freeze 1. The Tier-B path is stripped from
+    each file BEFORE the check, so what remains can only be the Tier-A wiring
+    this row is about.
     """
     assert _exists(TIER_A_KIT), f"OSV1-027 (Freeze 1) REGRESSION: {TIER_A_KIT} is gone."
     make = read(MAKEFILE)
-    assert "tests/conformance" in make and "test-conformance-a:" in make, (
-        "OSV1-027 (Freeze 1) REGRESSION: the Makefile no longer carries a target "
-        "covering tests/conformance. Existing is not the same as running."
+    assert "test-conformance-a:" in make, (
+        "OSV1-027 (Freeze 1) REGRESSION: the Makefile no longer carries the "
+        "`test-conformance-a` target. Existing is not the same as running."
     )
     ci = read(CI_WORKFLOW)
-    assert "tests/conformance/operator_surface" in ci, (
-        "OSV1-027 (Freeze 1) REGRESSION: ci.yml no longer runs the Tier-A kit -- "
-        "Freeze 1's second half is 'runs on every pull request'."
-    )
     assert "pull_request" in ci, (
         "OSV1-027 (Freeze 1) REGRESSION: the workflow that runs the kit no longer "
         "triggers on pull_request."
@@ -1187,55 +1670,271 @@ def test_row_osv1_027() -> None:
         "Without them it can quietly cover less of the contract than it claims, which "
         "is the failure Freeze 1 and Freeze 4 exist to prevent."
     )
-
-
-def test_row_osv1_028() -> None:
-    """Freeze 2 pin: no browser kit path, and no browser driver anywhere."""
-    assert not _exists(TIER_B_KIT), (
-        f"OSV1-028 (Freeze 2): {TIER_B_KIT} now exists. Freeze 2 has THREE further "
-        f"conditions -- a PINNED chromium, ISOLATED fixture data, and its OWN CI tier. "
-        f"A partial build satisfies none of them (work_item_pipeline-qgo)."
-    )
-    for driver in BROWSER_DRIVERS:
-        assert not _repo_mentions(driver), (
-            f"OSV1-028 (Freeze 2): {driver!r} now appears in the repo -- a browser is "
-            f"being driven. Re-derive this row and every row that depends on it."
+    tier_b_dir = TIER_B_KIT.rsplit("/", 1)[0]
+    for path, where in ((MAKEFILE, "the Makefile"), (CI_WORKFLOW, "ci.yml")):
+        remainder = read(path).replace(TIER_B_KIT, "").replace(tier_b_dir, "")
+        assert TIER_A_KIT.rsplit("/", 1)[0] in remainder, (
+            f"OSV1-027 (Freeze 1) REGRESSION: {where} no longer wires the TIER-A kit "
+            f"path (the Tier-B browser wiring is stripped before this check, so it "
+            f"cannot stand in for it). Freeze 1's second half is 'runs on every pull "
+            f"request'."
         )
 
 
-def test_row_osv1_029() -> None:
-    """Freeze 3 pin: there is no Tier-B artifact for the orchestrator to re-check.
+def test_row_osv1_028() -> None:
+    """Freeze 2 CONFORMS: all four sub-conditions, checked independently.
 
-    Pinned even though it is vacuously unmet today, because this is the
-    condition most likely to be quietly skipped once a browser tier exists and
-    its own assertions look green (PROTOCOL.md pillar 2).
+    The seed said a partial build satisfies none of them, so none of them is
+    inferred from another: the path, the PIN, the isolation and the OWN TIER
+    are four separate assertions.
     """
-    assert not _exists(TIER_B_KIT), (
-        f"OSV1-029 (Freeze 3): {TIER_B_KIT} now exists. This row is NOT satisfied by "
-        f"the kit passing -- it is satisfied when the kit EMITS artifacts (contrast "
-        f"numbers, pixel counts, bounding boxes, DOM snapshots) that ledger probes "
-        f"here re-read for themselves. Until the ledger re-checks them, a green "
-        f"Tier-B tier is a self-report (work_item_pipeline-qgo)."
+    assert _exists(TIER_B_KIT), f"OSV1-028 (Freeze 2): {TIER_B_KIT} is gone."
+
+    pinned = "playwright=="
+    manifest = read(PYPROJECT)
+    assert pinned in manifest, (
+        "OSV1-028 (Freeze 2): `pyproject.toml` no longer pins playwright to an EXACT "
+        "version. A playwright release pins exactly one chromium build, and that pin "
+        "is the whole of 'a pinned chromium' -- an unpinned browser makes every "
+        "recorded contrast ratio and pixel count unreproducible."
     )
-    assert not _exists("tests/conformance/operator_surface/browser/artifacts"), (
-        "OSV1-029 (Freeze 3): an artifact directory appeared -- wire the ledger probes "
-        "to re-read it, then flip this row."
+    version = manifest.split(pinned, 1)[1].split('"', 1)[0].strip()
+    recorded = tier_b_summary()["browser"]
+    assert recorded.get("playwright") == version, (
+        f"OSV1-028 (Freeze 2): the manifest pins playwright {version!r} but the "
+        f"Tier-B run summary was produced by {recorded.get('playwright')!r}. The "
+        f"recorded numbers came from a different browser build than the one the repo "
+        f"now pins -- re-run `make test-conformance-b`."
     )
+    assert recorded.get("name") == "chromium" and recorded.get("version"), (
+        f"OSV1-028 (Freeze 2): the run summary names no chromium build ({recorded})."
+    )
+
+    makefile = read(MAKEFILE)
+    assert "test-conformance-b:" in makefile and "playwright-install" in makefile, (
+        "OSV1-028 (Freeze 2): the Makefile no longer carries `test-conformance-b` "
+        "(and its `playwright-install` dependency). Existing is not the same as "
+        "running."
+    )
+    ci = read(CI_WORKFLOW)
+    assert "Tier 7 -- operator-surface conformance (Tier B, browser)" in ci, (
+        "OSV1-028 (Freeze 2): CI no longer runs the browser tier as its OWN step. A "
+        "browser tier folded into another tier is not the tier Freeze 2 asks for."
+    )
+    assert "-m tier_b" in ci and "playwright install" in ci, (
+        "OSV1-028 (Freeze 2): the CI step no longer selects the `tier_b` marker or no "
+        "longer installs chromium -- either way the tier runs nothing."
+    )
+    kit = read(REPO_ROOT / "tests/conformance/operator_surface/browser/conftest.py")
+    assert "isolated_dolt_server" in kit and "port=0" in kit, (
+        "OSV1-028 (Freeze 2): the kit no longer states its isolation -- the inherited "
+        "isolated dolt server, or the ephemeral `port=0` bind. The live service must "
+        "be unreachable from this tier by construction, not by luck."
+    )
+
+
+def test_row_osv1_029() -> None:
+    """Freeze 3 CONFORMS: artifacts are emitted, AND this ledger re-reads them.
+
+    The row's own closing condition, written at seed: "a stable on-disk
+    artifact path with a documented JSON shape, and ledger probes here that
+    RE-READ those numbers rather than trusting the browser test's own
+    pass/fail." This probe checks both halves -- the summary parses and names
+    its schema and browser, and the kit is structurally incapable of asserting
+    on a screenshot.
+    """
+    data = tier_b_summary()
+    assert data.get("recorded_at") and data.get("browser"), (
+        "OSV1-029 (Freeze 3): the Tier-B run summary carries no provenance "
+        "(recorded_at / browser). A number with no named engine behind it is not "
+        "reproducible, which is the whole reason Freeze 2 pins the browser."
+    )
+    for check in ("calm.zero_alarm_pixels", "swap.survives", "perception.floors"):
+        assert data["checks"].get(check), (
+            f"OSV1-029 (Freeze 3): the run summary carries no `{check}` numbers. "
+            f"Every Tier-B check must emit artifacts the orchestrator re-checks."
+        )
+
+    kit = read(REPO_ROOT / TIER_B_KIT)
+    writes, reads = kit.count("artifacts.write("), kit.count("_artifacts.read(")
+    assert writes > 0 and reads >= writes, (
+        f"OSV1-029 (Freeze 3): the Tier-B kit performs {writes} artifact write(s) but "
+        f"only {reads} read-back(s). Measure -> write -> read back -> assert is the "
+        f"discipline this row records: a check that writes an artifact and then "
+        f"asserts on the value still in its own local variable is a self-report, and "
+        f"the artifact it left behind is decoration."
+    )
+    assert "save_screenshot" in kit and "assert" not in kit.split("save_screenshot")[0][-200:], (
+        "OSV1-029 (Freeze 3): a screenshot appears to be feeding an assertion. "
+        "Screenshots are evidence for a human's Freeze 8 look, never an input to a "
+        "pass -- 'no check reports a rendered impression as a pass'."
+    )
+    artifacts_module = read(REPO_ROOT / "tests/conformance/operator_surface/browser/_artifacts.py")
+    assert "carries an empty measurement" in artifacts_module, (
+        "OSV1-029 (Freeze 3): the artifact reader no longer refuses an empty "
+        "measurement. A check that wrote `{}` and asserted `.get(..., 0) == 0` would "
+        "pass forever while measuring nothing."
+    )
+
+
+#: What Conformance 4's contrast bad half injects: a LITERAL below-floor pair
+#: and a LITERAL above-floor control, neither of them reachable from the token
+#: set. It injected the LIVE tokens (`--ink-quiet` on `--ground`) until the
+#: contrast lane closed OSV1-009 by moving `--ink-quiet` off the recorded
+#: colour and the "defect" measured 5.36:1 -- above the floor. A fixture whose
+#: bad input is the product's own current state stops naming a defect the
+#: moment the product is fixed, which is the failure this row exists to catch.
+_LITERAL_BELOW_FLOOR_INJECTION = "color:#9aa3b2;background:#eef2fb"
+_LITERAL_CONTROL_INJECTION = "color:#1b2430;background:#eef2fb"
+_LIVE_TOKEN_PAIR_INJECTION = "color:var(--ink-quiet);background:var(--ground)"
+
+#: Freeze 4's population, enumerated: every Conformance fixture arm that has
+#: to have been RUN and seen to bite. Nine Tier-B scenarios read back out of
+#: the committed run summary, four Tier-A good halves whose bad halves are
+#: read out of the kit's own source, and the kit's own tripwire that no check
+#: may ship without one. Fourteen arms; a fixture that quietly drops one fails
+#: here rather than narrowing the claim in silence.
+_TIER_B_DEMONSTRATIONS = (
+    ("calm.zero_alarm_pixels", "bad-alarm-chip/L0/dark"),
+    ("calm.zero_alarm_pixels", "bad-retired-palette/L0/dark"),
+    ("calm.zero_alarm_pixels", "bad-alarm-fixture/L0/dark"),
+    ("state.not_colour_only", "bad-wordless-chips/L1/dark"),
+    ("swap.survives", "bad-naive-replacement/L0/dark"),
+    ("swap.survives", "bad-naive-replacement-reflow/L0/dark"),
+    ("perception.floors", "bad-wide-element/L0/430/dark"),
+    ("perception.floors", "bad-low-contrast/L0/light"),
+    ("perception.floors", "bad-low-contrast/L0/dark"),
+)
+
+_TIER_A_DEMONSTRATIONS = (
+    ("Conformance 2", "test_state_not_colour_only"),
+    ("Conformance 5", "test_hero_velocity_and_counts"),
+    ("Conformance 6", "test_visual_single_source"),
+    ("Conformance 7", "test_calm_keeps_slot"),
+)
 
 
 def test_row_osv1_030() -> None:
-    """Freeze 4 pin: the Tier-A fixtures are demonstrated; no browser kit
-    exists, so the three Tier-B fixtures are not."""
-    assert not _exists(TIER_B_KIT), (
-        "OSV1-030 (Freeze 4): the Tier-B kit path appeared. 'Demonstrated by running "
-        "it' is the whole clause -- record WHICH revert produced WHICH failure, the "
-        "way CCV1-023 did for the custody family, before flipping this row."
+    """Freeze 4 CONFORMS: all fourteen Conformance fixture arms demonstrate on
+    THIS tree, re-read from a run rather than taken on either kit's word.
+
+    RE-DERIVED 2026-09-05 (second wave-2 integration pass), VIOLATION ->
+    CONFORMS. The pin this row carried was Conformance 4's contrast bad half:
+    it injected the LIVE `--ink-quiet`/`--ground` pair, which WAS the recorded
+    4.27:1 specimen until the contrast lane closed OSV1-009 by moving the
+    token -- after which the same injection measured 5.36:1 in light, above
+    the floor, and the bad half named no defect at all. Two Tier-A bad halves
+    had lost their specimens the same way in the same wave (the `limit=0` call
+    and the non-persisting theme setter, both fixed by the core10 lane).
+
+    All three were rebuilt to own their bad input -- literal colours here, a
+    fabricated view module and a fabricated script module in the Tier-A kit --
+    and the kit was re-run: `make test-conformance-b` on this tree is 52
+    passed / 35 xfailed / 0 failed, `make test-conformance-a` 38 passed /
+    4 xfailed / 0 failed. The pin is retargeted onto the invariant it was
+    waiting for: every arm ran, and each one still bites.
+    """
+    # --- the Tier-A half -----------------------------------------------------
+    assert _exists(TIER_A_KIT), (
+        f"OSV1-030 (Freeze 4): {TIER_A_KIT} is gone -- the Conformance 5/6/7 (and "
+        f"Core 3) demonstrations went with it."
     )
-    assert _exists(TIER_A_KIT) and _kit_bad_halves(_kit_source(), "test_calm_keeps_slot"), (
-        "OSV1-030 (Freeze 4): the Tier-A fixtures' demonstrated bad halves are gone. "
-        "This row is red on the TIER-B half only -- losing the Tier-A half is a "
-        "second, new defect."
+    kit = _kit_source()
+    for fixture, good in _TIER_A_DEMONSTRATIONS:
+        assert _kit_bad_halves(kit, good), (
+            f"OSV1-030 (Freeze 4): {fixture}'s bad half is gone from the Tier-A "
+            f"kit. A bad half that has never been executed is a claim."
+        )
+    assert "test_every_check_ships_a_bad_half" in _kit_defs(kit), (
+        "OSV1-030 (Freeze 4): the Tier-A kit dropped the tripwire that every check "
+        "ships a bad half -- without it the demonstration can narrow silently, "
+        "which is the failure this clause exists to prevent."
     )
+    # A bad half must own its bad INPUT. Both of these fabricate their
+    # specimen; before the 2026-09-05 rebuild they borrowed the shipped
+    # `webbrowse.py` call and the shipped theme setter, and both stopped
+    # discriminating the moment those were fixed.
+    for owned in ("_UNBOUNDED_VIEW_SPECIMEN", "_UNPERSISTED_STATE_SPECIMEN"):
+        assert owned in kit, (
+            f"OSV1-030 (Freeze 4): the Tier-A kit no longer fabricates `{owned}`. "
+            f"Core 10's bad halves used the SHIPPED defects as their specimens and "
+            f"went red when the product was fixed -- a fixture that depends on the "
+            f"product staying broken demonstrates nothing."
+        )
+
+    # --- the Tier-B half: nine scenarios, all read back from the run ---------
+    assert _exists(TIER_B_KIT), (
+        f"OSV1-030 (Freeze 4): {TIER_B_KIT} is gone -- Conformance 1-4's "
+        f"demonstrations went with it."
+    )
+    checks = tier_b_summary()["checks"]
+    missing = sorted(f"{c}/{s}" for c, s in _TIER_B_DEMONSTRATIONS if s not in checks.get(c, {}))
+    assert not missing, (
+        f"OSV1-030 (Freeze 4): {len(missing)} Conformance 1-4 bad half/halves were "
+        f"not run in the recorded Tier-B run: {missing}. A bad half that has never "
+        f"been executed is a claim."
+    )
+    stripped = checks["state.not_colour_only"]["bad-wordless-chips/L1/dark"]
+    assert stripped["stripped"] > 0 and stripped["wordless"] > 0, (
+        "OSV1-030 (Freeze 4): the Conformance 2 bad half stopped discriminating -- "
+        f"it stripped {stripped['stripped']} chips and still reported "
+        f"{stripped['wordless']} wordless."
+    )
+    chip = checks["calm.zero_alarm_pixels"]["bad-alarm-chip/L0/dark"]
+    retired = checks["calm.zero_alarm_pixels"]["bad-retired-palette/L0/dark"]
+    real = checks["calm.zero_alarm_pixels"]["bad-alarm-fixture/L0/dark"]
+    assert chip["alarm"] > 0 and retired["retired_amber"] > 0, (
+        f"OSV1-030 (Freeze 4): a Conformance 1 injection stopped painting its hue "
+        f"({chip['alarm']} --alarm px for the chip, {retired['retired_amber']} px "
+        f"for the reinstated retired palette)."
+    )
+    assert real["alarm"] > 0 or real["blocked"] > 0, (
+        "OSV1-030 (Freeze 4): the genuinely-alarming fixture painted no reserved "
+        "status hue -- the strongest of Conformance 1's three arms, and the only "
+        "one with nothing injected."
+    )
+    naive = checks["swap.survives"]["bad-naive-replacement/L0/dark"]
+    reflow = checks["swap.survives"]["bad-naive-replacement-reflow/L0/dark"]
+    assert not naive["open_details_preserved"] and not reflow["scroll_preserved"], (
+        "OSV1-030 (Freeze 4): a Conformance 3 bad half stopped losing what it "
+        "exists to lose (the naive replacement's open `<details>`, the reflow "
+        "variant's scroll offset)."
+    )
+    assert checks["perception.floors"]["bad-wide-element/L0/430/dark"][
+        "elements_beyond_viewport_moved"
+    ], (
+        "OSV1-030 (Freeze 4): Conformance 4's overflow bad half stopped moving the "
+        "element-level reading -- the only reading `overflow-x: clip` cannot hide."
+    )
+
+    # --- the arm this row was red for: it must own its specimen now ---------
+    probe_lib = read(REPO_ROOT / TIER_B_PROBE_LIB)
+    assert _LIVE_TOKEN_PAIR_INJECTION not in probe_lib, (
+        "OSV1-030 (Freeze 4) REGRESSION: Conformance 4's contrast bad half injects "
+        "the LIVE token pair again. That is precisely how this row went red at the "
+        "wave-2 integration: `--ink-quiet` moved and the bad half's defect moved "
+        "with it, leaving a fixture that measures whatever the product currently "
+        "does. Inject a literal below-floor pair."
+    )
+    assert _LITERAL_BELOW_FLOOR_INJECTION in probe_lib, (
+        f"OSV1-030 (Freeze 4): the contrast bad half no longer injects the literal "
+        f"below-floor pair ({_LITERAL_BELOW_FLOOR_INJECTION}). Its specimen must be "
+        f"its own, not the token set's."
+    )
+    assert _LITERAL_CONTROL_INJECTION in probe_lib, (
+        f"OSV1-030 (Freeze 4): the contrast bad half lost its literal control "
+        f"({_LITERAL_CONTROL_INJECTION}). Without a pair that must come back ABOVE "
+        f"the floor, a probe that always says no would satisfy the bad half."
+    )
+    for theme in ("light", "dark"):
+        measured = checks["perception.floors"][f"bad-low-contrast/L0/{theme}"]
+        assert measured["min_ratio"] < 4.5 <= measured["control_ratio"], (
+            f"OSV1-030 (Freeze 4): in {theme} the recorded run measures the contrast "
+            f"bad half at {measured['min_ratio']}:1 with its control at "
+            f"{measured['control_ratio']}:1. Freeze 4 asks for a bad half that FAILS "
+            f"the check it names, demonstrated by running it -- re-derive this row "
+            f"and OSV1-023 together."
+        )
 
 
 def test_row_osv1_031() -> None:
@@ -1263,8 +1962,8 @@ def test_row_osv1_031() -> None:
         "to CONFORMS and retarget this probe to assert no Core row is red "
         "(work_item_pipeline-umm)."
     )
-    assert len(red) == 7, (
-        f"OSV1-031 (Freeze 5): pinned 7 red Core-carrying rows, observed {len(red)}: "
+    assert len(red) == 5, (
+        f"OSV1-031 (Freeze 5): pinned 5 red Core-carrying rows, observed {len(red)}: "
         f"{red}. Movement in either direction means this gate's tally changed -- update "
         f"the pin and the row's notes in the same change. (Was 10 at seed; OSV1-009 "
         f"went green 2026-09-04, work_item_pipeline-sxh.)"

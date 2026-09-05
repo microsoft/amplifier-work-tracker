@@ -28,8 +28,9 @@ id in the reason -- never `skip`, never deleted:
     visual.single_source      OSV1-005  66 literal inline sites + 40 in blocks
     calm.keeps_slot           OSV1-012  an empty widget keeps its slot but
                                         says nothing
-    antigoals.enforced        OSV1-015  the L1 view queries with `limit=0`
-                              OSV1-016  the theme choice dies on refresh
+    antigoals.enforced        OSV1-015  `_oldest_ready_item` calls `bd.list`
+                                        with no limit (the row's own recorded
+                                        residual -- see the marker's reason)
 
 `strict=True` is load-bearing: when the fix lands the test XPASSes, which
 FAILS the run. That failure is the instruction -- delete the marker and flip
@@ -947,11 +948,21 @@ _PRESENTATION_WRITE = re.compile(
 _PERSISTENCE = ("localStorage", "sessionStorage", "document.cookie", "fetch(")
 
 
-def unbounded_view_queries() -> list[str]:
-    """Every `.list(...)` in a route module with no limit, or with `limit=0`."""
+def unbounded_view_queries(sources: dict[str, str] | None = None) -> list[str]:
+    """Every `.list(...)` with no limit, or with `limit=0`, in each view source.
+
+    `sources` maps a module name to the source text to audit. The default --
+    the real route modules on disk -- is what the GOOD half runs against; a
+    bad half passes a FABRICATED module instead, so its specimen belongs to
+    the fixture rather than to whatever the product happens to be doing today
+    (the `limit=0` call this bad half used to borrow from `webbrowse.py` was
+    bounded by work_item_pipeline-8vv, and a bad half that follows the fix
+    around demonstrates nothing).
+    """
+    audited = sources if sources is not None else {p.name: S.read(p) for p in S.ROUTE_MODULES}
     out: list[str] = []
-    for path in S.ROUTE_MODULES:
-        tree = ast.parse(S.read(path))
+    for name, src in sorted(audited.items()):
+        tree = ast.parse(src)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                 continue
@@ -959,25 +970,31 @@ def unbounded_view_queries() -> list[str]:
                 continue
             limit = next((k for k in node.keywords if k.arg == "limit"), None)
             if limit is None:
-                out.append(f"{path.name}:{node.lineno} `.{node.func.attr}(...)` passes no limit")
+                out.append(f"{name}:{node.lineno} `.{node.func.attr}(...)` passes no limit")
             elif isinstance(limit.value, ast.Constant) and not limit.value.value:
                 out.append(
-                    f"{path.name}:{node.lineno} `.{node.func.attr}(..., "
+                    f"{name}:{node.lineno} `.{node.func.attr}(..., "
                     f"limit={limit.value.value!r})` -- a limit that does not bound"
                 )
     return out
 
 
-def unpersisted_view_state() -> list[str]:
+def unpersisted_view_state(sources: dict[str, str] | None = None) -> list[str]:
     """Every JS block that writes a presentation preference without saving it.
 
     The enclosing block is the module-level Python definition that produces
     the script -- `_OBSERVATORY_THEME_JS`, `list_controls_js`, and so on --
     because that is the unit a preference and its persistence are written in.
+
+    `sources` maps a module name to the source text to audit, on the same
+    terms as `unbounded_view_queries` above: the default is the shipped
+    surface (the GOOD half), a bad half fabricates its own specimen.
     """
+    audited = (
+        sources if sources is not None else {p.name: S.read(p) for p in (S.WEBAPP, S.WEBTHEME)}
+    )
     out: list[str] = []
-    for path in (S.WEBAPP, S.WEBTHEME):
-        src = S.read(path)
+    for name, src in sorted(audited.items()):
         lines = src.splitlines()
         tree = ast.parse(src)
         for node in ast.iter_child_nodes(tree):
@@ -989,13 +1006,13 @@ def unpersisted_view_state() -> list[str]:
                 continue
             if any(p in block for p in _PERSISTENCE):
                 continue
-            name = (
+            block_name = (
                 node.name
                 if isinstance(node, ast.FunctionDef)
                 else ast.unparse(node.targets[0] if isinstance(node, ast.Assign) else node.target)
             )
             out.append(
-                f"{path.name}:{node.lineno} `{name}` writes a presentation preference "
+                f"{name}:{node.lineno} `{block_name}` writes a presentation preference "
                 f"onto the document and persists it nowhere -- it dies on refresh"
             )
     return out
@@ -1017,67 +1034,110 @@ def test_antigoals_enforced_bad_half_a_chart_library_is_declared() -> None:
     assert any("chart.js" in p for p in problems), problems
 
 
-def test_antigoals_enforced_bad_half_an_unbounded_view_query(monkeypatch) -> None:
-    """`limit=0` and a missing limit must BOTH be reported -- the shipped L1
-    view is the specimen for the first (OSV1-015)."""
-    problems = unbounded_view_queries()
+#: A FABRICATED view module carrying both defects the clause names: one
+#: listing call whose `limit=0` disables the bound, and one that passes no
+#: limit at all. Synthetic on purpose. This bad half used to borrow the
+#: shipped `webbrowse.py` call as its `limit=0` specimen; work_item_pipeline-8vv
+#: bounded it, the specimen vanished, and the bad half started failing -- which
+#: is a fixture that depended on the product staying broken. Built the way the
+#: hero and palette bad halves are built: the fixture owns its own bad input.
+_UNBOUNDED_VIEW_SPECIMEN = '''\
+def project_view(request, name):
+    """A synthetic L1 view -- neither call bounds what it reads."""
+    rows = bd.list(status=status_filter, include_resolved=True, limit=0)
+    oldest = bd.list(lane=A.LANE_WORK, status="open")
+    return render(rows, oldest)
+'''
+
+#: The SAME synthetic view with both reads bounded. The control: a check that
+#: reported the fabricated defect but also reported this would not be
+#: discriminating, it would just always fail.
+_BOUNDED_VIEW_SPECIMEN = '''\
+def project_view(request, name):
+    """The same view, bounded."""
+    rows = bd.list(status=status_filter, include_resolved=True, limit=500)
+    oldest = bd.list(lane=A.LANE_WORK, status="open", limit=1)
+    return render(rows, oldest)
+'''
+
+#: A FABRICATED script module: a theme setter whose choice lives only in page
+#: memory (it dies on refresh -- the clause's own anti-goal), and a density
+#: setter beside it that persists. Both are needed: reporting the first is only
+#: a demonstration if the second is NOT reported. Synthetic for the same reason
+#: as the view above -- work_item_pipeline-dg3 made the shipped `wtSetTheme`
+#: persist, so the borrowed specimen is gone.
+_UNPERSISTED_STATE_SPECIMEN = '''\
+_SYNTHETIC_THEME_JS = """
+function wtSetTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+}
+"""
+
+_SYNTHETIC_DENSITY_JS = """
+function wtSetDensity(d){
+  document.documentElement.setAttribute('data-density', d);
+  localStorage.setItem('wt-density', d);
+}
+"""
+'''
+
+#: The same fabricated theme setter, persisting its choice.
+_PERSISTED_STATE_SPECIMEN = '''\
+_SYNTHETIC_THEME_JS = """
+function wtSetTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  localStorage.setItem('wt-theme', t);
+}
+"""
+'''
+
+
+def test_antigoals_enforced_bad_half_an_unbounded_view_query() -> None:
+    """`limit=0` and a missing limit must BOTH be reported, against a view
+    this fixture fabricates rather than one it hopes the product still has."""
+    problems = unbounded_view_queries({"synthetic_view.py": _UNBOUNDED_VIEW_SPECIMEN})
     assert any("limit=0" in p for p in problems), problems
     assert any("passes no limit" in p for p in problems), problems
 
-    real = S.read
-
-    def fake(path: Path) -> str:
-        text = real(path)
-        if Path(path) == S.WEBBROWSE:
-            text = text.replace(
-                "bd.list(status=status_filter, include_resolved=True, limit=0)",
-                "bd.list(status=status_filter, include_resolved=True, limit=500)",
-                1,
-            )
-        return text
-
-    monkeypatch.setattr(S, "read", fake)
-    fixed = unbounded_view_queries()
-    assert not any("limit=0" in p for p in fixed), (
-        "a real bound was still reported as unbounded -- the check does not "
-        "discriminate, it just always fails"
+    fixed = unbounded_view_queries({"synthetic_view.py": _BOUNDED_VIEW_SPECIMEN})
+    assert not fixed, (
+        f"a bounded view was still reported as unbounded ({fixed}) -- the check "
+        f"does not discriminate, it just always fails"
     )
 
 
-def test_antigoals_enforced_bad_half_state_that_dies_on_refresh(monkeypatch) -> None:
-    """The theme setter is the shipped specimen (OSV1-016); the density block
-    beside it persists, and must NOT be reported."""
-    problems = unpersisted_view_state()
-    assert any("_OBSERVATORY_THEME_JS" in p for p in problems), problems
-    assert not any("list_controls_js" in p for p in problems), (
-        "the density preference persists in localStorage and was still reported"
+def test_antigoals_enforced_bad_half_state_that_dies_on_refresh() -> None:
+    """A preference written onto the document and saved nowhere is reported;
+    the persisting one beside it is not.
+
+    Both halves against a fabricated script module, so the demonstration does
+    not rest on the shipped theme setter still being broken (it is not:
+    work_item_pipeline-dg3 closed OSV1-016).
+    """
+    problems = unpersisted_view_state({"synthetic_view.py": _UNPERSISTED_STATE_SPECIMEN})
+    assert any("_SYNTHETIC_THEME_JS" in p for p in problems), problems
+    assert not any("_SYNTHETIC_DENSITY_JS" in p for p in problems), (
+        f"the density preference persists in localStorage and was still reported: {problems}"
     )
 
-    real = S.read
-
-    def fake(path: Path) -> str:
-        text = real(path)
-        if Path(path) == S.WEBAPP:
-            text = text.replace(
-                "  document.documentElement.setAttribute('data-theme', t);",
-                "  document.documentElement.setAttribute('data-theme', t);\n"
-                "  localStorage.setItem('wt-theme', t);",
-                1,
-            )
-        return text
-
-    monkeypatch.setattr(S, "read", fake)
-    assert not any("_OBSERVATORY_THEME_JS" in p for p in unpersisted_view_state()), (
-        "a persisted theme was still reported as dying on refresh"
+    fixed = unpersisted_view_state({"synthetic_view.py": _PERSISTED_STATE_SPECIMEN})
+    assert not fixed, (
+        f"a persisted theme was still reported as dying on refresh ({fixed}) -- the "
+        f"check does not discriminate, it just always fails"
     )
 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="OSV1-015 (Core 10): the L1 project view runs `bd.list(..., limit=0)` on "
-    "every 20s poll, and `_oldest_ready_item` calls `bd.list` with no limit at all. "
-    "OSV1-016 (Core 10): the theme choice is client-side state that dies on refresh. "
-    "Flip both rows and delete this marker in the same change.",
+    reason="OSV1-015 (Core 10) records the residual this good half still sees: "
+    "`_oldest_ready_item` (webapp.py:909) calls `bd.list` with no limit at all. "
+    "The row reads CONFORMS because that function has NO callers and the clause "
+    "scores calls `reached from a view`; this kit's Core 10 reading is "
+    "source-wide and has no reachability analysis, so it still reports the call. "
+    "Delete the dead function (or teach this check reachability, one census) and "
+    "the marker goes with it. The two defects this marker used to name are both "
+    "CLOSED: `limit=0` (OSV1-015, work_item_pipeline-8vv) and the theme dying on "
+    "refresh (OSV1-016, work_item_pipeline-dg3).",
 )
 def test_antigoals_enforced() -> None:
     problems = check_antigoals_enforced(S.read(S.PYPROJECT))

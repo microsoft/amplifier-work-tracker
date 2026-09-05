@@ -157,3 +157,40 @@ def test_l1_and_l2_show_the_corrected_badge_and_errata_block_after_an_erratum(
     assert "corrector" in l2_html
     assert "the underlying data was mislabeled" in l2_html
     assert "corrected" in l2_html
+
+
+def test_l1_bounds_its_item_query_and_says_so_when_the_bound_binds(browse_env, monkeypatch):
+    """Core 10 end to end: the L1 read is bounded, and a bounded read is
+    confessed rather than passed off as a total.
+
+    The ceiling is lowered to 2 for this test rather than creating 501 items
+    -- the mechanism under test is the bound and the sentence it produces,
+    not the specific number. Three items against a ceiling of 2 also
+    exercises the one-past-the-window probe: the view asks for 3, gets 3,
+    and therefore KNOWS more exist rather than guessing from a full window.
+    """
+    name, bd, client = browse_env
+    for n in range(3):
+        bd.create(f"Bounded query item {n}", tags=[A.LANE_WORK])
+    monkeypatch.setattr(B, "_L1_ITEM_QUERY_LIMIT", 2)
+
+    html = client.get(f"/projects/{name}").text
+    assert "read capped at 2" in html, "a bounded read must say it was bounded"
+    assert "of 2+ items" in html, (
+        "a capped read reports a FLOOR (`2+`), never a bare count that reads as a measured total"
+    )
+
+
+def test_l1_says_nothing_about_truncation_when_it_is_showing_everything(browse_env):
+    """The other direction: a small project must not wear a truncation note
+    it did not earn.
+    """
+    name, bd, client = browse_env
+    bd.create("The only item", tags=[A.LANE_WORK])
+
+    html = client.get(f"/projects/{name}").text
+    assert "The only item" in html
+    # The CLASS name is always in the stylesheet; it is the rendered ELEMENT
+    # that must be absent.
+    assert '<div class="truncation-note">' not in html
+    assert "read capped at" not in html

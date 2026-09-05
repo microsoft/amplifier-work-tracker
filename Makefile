@@ -1,4 +1,6 @@
-.PHONY: venv test test-unit test-integration test-cli test-ledger ledger-mutate test-conformance-a test-module check lint types doctor clean
+.PHONY: venv playwright-install test test-unit test-integration test-cli test-ledger \
+	test-conformance-a test-conformance-b ledger-mutate test-module check lint types \
+	doctor clean
 
 PYTHON  ?= python3.12
 VENV    := .venv
@@ -60,6 +62,29 @@ ledger-mutate:
 ## the isolated dolt server and skip loudly without a real `bd`.
 test-conformance-a:
 	$(PYTEST) tests/conformance/operator_surface -v
+
+## Chromium for the Tier-B browser conformance kit. Separate from `venv`
+## on purpose: `playwright` (the library) is a normal dev dependency and
+## installs with everything else, but the BROWSER is a ~150MB download into
+## `~/.cache/ms-playwright` that a contributor who never runs the browser
+## tier should not pay for. `--with-deps` pulls the system libraries chromium
+## needs on a bare CI runner (it is a no-op where they are already present).
+playwright-install:
+	$(VENV)/bin/playwright install --with-deps chromium
+
+## Tier B -- operator-surface conformance in a REAL BROWSER
+## (contracts/operator-surface.v1.md Freeze 2). Its own target, and
+## deliberately NOT part of `test` below: it costs a chromium launch and a
+## live app boot per scenario, and Freeze 2 requires it to run as its own
+## tier so a browser tier's cost and flake profile never ride inside the fast
+## ones. `-m tier_b` overrides the `-m "not tier_b"` in pyproject's addopts
+## (pytest inserts addopts before the command line, and the last -m wins), so
+## every other invocation deselects this tier automatically.
+##
+## Depends on `playwright-install`: a Tier-B run without chromium is not a
+## pass and not a skip, it is an error naming the missing browser.
+test-conformance-b: playwright-install
+	$(PYTEST) -m tier_b tests/conformance/operator_surface/browser -v
 
 ## Tier 5 -- tool module: modules/tool-work-tracker's own suite, the only
 ## place the post-reclaim custody behaviour of the AGENT SEAM (work_claim /
