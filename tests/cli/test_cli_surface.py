@@ -304,12 +304,40 @@ def test_list_never_mutates_project_state(
 
 
 def test_list_on_a_project_with_no_matching_items_exits_zero_with_empty_list(
-    run_cli, shared_project_name, unique_lane
+    run_cli, unique_project_name
 ):
-    """An unused lane guarantees zero items for THIS status filter, without
-    needing a brand-new project -- proving the empty case is a normal,
-    non-error outcome, not a crash."""
-    result = run_cli(["list", "--project", shared_project_name, "--status", "deferred", "--json"])
+    """A project this test owns outright guarantees zero items for THIS
+    status filter -- proving the empty case is a normal, non-error outcome,
+    not a crash.
+
+    Scoped to its own project rather than the session-shared one on
+    purpose. This is an EXACT emptiness assertion, and
+    ``shared_project_name`` is session-scoped across ``tests/integration``
+    and ``tests/cli`` -- ``tests/integration/test_defer_block.py`` defers
+    items into it, so this assertion passed when the test ran alone and
+    failed the moment that module ran first (measured: 6 leaked deferred
+    items). That is collection order, not a regression. The earlier
+    version asked for ``unique_lane`` to scope itself and then never used
+    it, because ``list`` has no lane filter to pass it to -- an owned
+    project is the only scope this test actually controls. The
+    adapter-level siblings already do exactly this
+    (``test_work_list.py::test_list_bounded_on_empty_project_returns_empty_not_an_error``,
+    ``test_list_via_sql_equivalence.py::test_list_on_empty_project_returns_empty_not_an_error``,
+    both via ``project_factory``).
+
+    The project is deliberately NOT empty -- it holds one open item -- so
+    this still proves the *filter* matched nothing, rather than merely that
+    the project has nothing in it.
+    """
+    project = unique_project_name
+    created = run_cli(["new", project])
+    assert created.returncode == 0, created.stderr
+    added = run_cli(
+        ["add", "--project", project, "an open item the deferred filter must not match"]
+    )
+    assert added.returncode == 0, added.stderr
+
+    result = run_cli(["list", "--project", project, "--status", "deferred", "--json"])
     assert result.returncode == 0, result.stderr
     body = json.loads(result.stdout)
     assert body["items"] == []
