@@ -100,6 +100,7 @@ CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 #: (Freeze 3, OSV1-029). Written by
 #: `tests/conformance/operator_surface/browser/_artifacts.py`; the per-run
 #: artifact directory beside it is gitignored and unreadable from here.
+TIER_B_PROBE_LIB = "tests/conformance/operator_surface/browser/_probe.py"
 TIER_B_SUMMARY = "tests/conformance/operator_surface/browser/LAST_RUN.json"
 TIER_B_SUMMARY_SCHEMA = "operator-surface-tier-b/1"
 
@@ -1352,8 +1353,7 @@ def test_row_osv1_021() -> None:
     )
     kit = _kit_source()
     assert "check_state_not_colour_only" in _kit_defs(kit), (
-        "OSV1-021 (Conformance 2) REGRESSION: the Tier-A accessible-name half is "
-        "gone from the kit."
+        "OSV1-021 (Conformance 2) REGRESSION: the Tier-A accessible-name half is gone from the kit."
     )
     assert _kit_bad_halves(kit, "test_state_not_colour_only"), (
         "OSV1-021 (Conformance 2) REGRESSION: the Tier-A half no longer ships a bad "
@@ -1719,27 +1719,36 @@ def test_row_osv1_029() -> None:
     )
 
 
+#: What Conformance 4's contrast bad half injects: the LIVE tokens, not the
+#: literal colours the clause's "recorded 4.27:1 ink pair" names. That was the
+#: same thing until the contrast lane closed OSV1-009 by moving `--ink-quiet`.
+_LIVE_TOKEN_PAIR_INJECTION = "color:var(--ink-quiet);background:var(--ground)"
+
+
 def test_row_osv1_030() -> None:
-    """Freeze 4 CONFORMS: every Conformance fixture's bad half has been RUN.
+    """Freeze 4 VIOLATION pin: the Tier-A demonstrations hold and seven of the
+    eight Tier-B ones do, but Conformance 4's contrast bad half stopped naming
+    a defect the moment these two lanes met.
 
-    RE-DERIVED 2026-09-05 at the wave-2 integration. Each lane pinned the
-    other kit's absence -- Tier A had demonstrated Conformance 5, 6, 7 and
-    Conformance 2's accessible-name half, Tier B had demonstrated Conformance
-    1, 2, 3 and 4 -- and both kits are now present, so neither pin is true.
-    The row is derived from BOTH kits' own evidence, each side keeping the
-    assertions its lane wrote:
+    RE-DERIVED 2026-09-05 at the wave-2 integration, from a run rather than
+    from the two lanes' pins. Both lanes' halves landed, so neither "the other
+    kit does not exist" pin is true any more -- but `make test-conformance-b`
+    on the MERGED tree measures the injected `--ink-quiet`/`--ground` pair at
+    5.36:1 in light, ABOVE the 4.5:1 floor, where the committed run recorded
+    3.09:1. The bad half injects the LIVE tokens, and the contrast lane closed
+    OSV1-009 by moving `--ink-quiet` off the recorded colour, so the specimen
+    the clause names no longer exists on this tree. Freeze 4 says every
+    Conformance fixture's bad half fails against the defect it names,
+    DEMONSTRATED BY RUNNING IT; this one no longer does, so the row is red.
 
-      TIER A  the bad halves are tests that RUN in the kit, one per named
-              defect, plus the kit's own tripwire that every check ships one
-              at all -- so the demonstration cannot quietly narrow.
-      TIER B  the eight Conformance 1-4 bad halves are re-read from the
-              committed run summary, so a bad half that silently stopped
-              discriminating fails the LEDGER, not just the browser tier.
+    Neither lane could have seen this: each measured against its own base,
+    where the other lane's change was not present.
     """
-    # --- the Tier-A half: the fixtures' bad halves exist and are run --------
+    # --- the Tier-A half: still demonstrated, and losing it is a new defect --
     assert _exists(TIER_A_KIT), (
-        f"OSV1-030 (Freeze 4) REGRESSION: {TIER_A_KIT} is gone -- the Conformance "
-        f"5/6/7 (and Core 3) demonstrations went with it."
+        f"OSV1-030 (Freeze 4): {TIER_A_KIT} is gone -- the Conformance 5/6/7 (and "
+        f"Core 3) demonstrations went with it. This row is red on the TIER-B "
+        f"contrast arm only; losing the Tier-A half is a second, new defect."
     )
     kit = _kit_source()
     for fixture, good in (
@@ -1749,23 +1758,17 @@ def test_row_osv1_030() -> None:
         ("Conformance 7", "test_calm_keeps_slot"),
     ):
         assert _kit_bad_halves(kit, good), (
-            f"OSV1-030 (Freeze 4) REGRESSION: {fixture}'s bad half is gone from the "
-            f"Tier-A kit. A bad half that has never been executed is a claim."
+            f"OSV1-030 (Freeze 4): {fixture}'s bad half is gone from the Tier-A "
+            f"kit. A bad half that has never been executed is a claim."
         )
     assert "test_every_check_ships_a_bad_half" in _kit_defs(kit), (
-        "OSV1-030 (Freeze 4) REGRESSION: the Tier-A kit dropped the tripwire that "
-        "every check ships a bad half -- without it the demonstration can narrow "
-        "silently, which is the failure this clause exists to prevent."
+        "OSV1-030 (Freeze 4): the Tier-A kit dropped the tripwire that every check "
+        "ships a bad half -- without it the demonstration can narrow silently, "
+        "which is the failure this clause exists to prevent."
     )
-    tier_a_bad = [n for n in _kit_defs(kit) if "_bad_half_" in n]
-    assert len(tier_a_bad) >= 26, (
-        f"OSV1-030 (Freeze 4): the Tier-A demonstrated surface SHRANK to "
-        f"{len(tier_a_bad)} bad halves (26 measured at the wave-2 integration). "
-        f"Fewer bad halves is less demonstration -- re-derive this row."
-    )
-    # --- the Tier-B half: re-read from the committed run summary ------------
+    # --- the Tier-B half: eight bad halves ran; seven of them still bite -----
     assert _exists(TIER_B_KIT), (
-        f"OSV1-030 (Freeze 4) REGRESSION: {TIER_B_KIT} is gone -- Conformance 1-4's "
+        f"OSV1-030 (Freeze 4): {TIER_B_KIT} is gone -- Conformance 1-4's "
         f"demonstrations went with it."
     )
     demonstrated = {
@@ -1790,6 +1793,27 @@ def test_row_osv1_030() -> None:
         "OSV1-030 (Freeze 4): the Conformance 2 bad half stopped discriminating -- "
         f"it stripped {stripped['stripped']} chips and still reported "
         f"{stripped['wordless']} wordless."
+    )
+    # --- the pin itself: the eighth bad half no longer names its defect ------
+    assert _LIVE_TOKEN_PAIR_INJECTION in read(REPO_ROOT / TIER_B_PROBE_LIB), (
+        "OSV1-030 (Freeze 4) PIN BROKE THE RIGHT WAY: Conformance 4's contrast bad "
+        "half no longer injects the live token pair. If it now injects the LITERAL "
+        "colours the clause records (`#7c8ba0` on the ground), the specimen is back "
+        "-- re-run `make test-conformance-b`, confirm it fails below the floor in "
+        "light and holds above it in dark, and flip this row (work_item_pipeline-qgo)."
+    )
+    assert row("OSV1-009")["disposition"] == "CONFORMS", (
+        "OSV1-030 (Freeze 4): OSV1-009 is red again, so `--ink-quiet` is back below "
+        "the floor and the injected pair is a real specimen once more. Re-derive "
+        "this row from a fresh Tier-B run rather than from this pin."
+    )
+    low = checks["perception.floors"]["bad-low-contrast/L0/light"]["min_ratio"]
+    assert low < 4.5, (
+        f"OSV1-030 (Freeze 4) PIN BROKE THE RIGHT WAY: the committed Tier-B run now "
+        f"records {low}:1 for the contrast bad half in light, so the kit has been "
+        f"re-run on this tree. Either the bad half was fixed to name its defect "
+        f"again (flip this row) or the run recorded a bad half that does not "
+        f"discriminate (OSV1-023 goes red with it) -- re-derive both together."
     )
 
 

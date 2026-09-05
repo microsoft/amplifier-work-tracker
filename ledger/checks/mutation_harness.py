@@ -497,15 +497,6 @@ def _mo007_a_get_handler_reaches_a_write(w: World) -> None:
     )
 
 
-def _mo008_swap_restores_the_pause_flag(w: World) -> None:
-    """FIXED: `restoreState` starts touching the pause control."""
-    w.replace(
-        WEBTHEME,
-        "window.scrollTo(0, state.scrollY);",
-        "window.scrollTo(0, state.scrollY);\n    window.__wtRefreshPaused;",
-    )
-
-
 def _mo009a_the_media_light_block_regresses(w: World) -> None:
     """REGRESSION: `--ink-quiet` falls back below the floor in the MEDIA block.
 
@@ -720,18 +711,33 @@ def _mo021_the_tier_a_good_half_is_deferred_again(w: World) -> None:
     )
 
 
-def _mo030_a_tier_a_bad_half_stops_being_run(w: World) -> None:
-    """REGRESSION: one of the Tier-A kit's demonstrated bad halves stops being
-    collected -- the same defect as its Tier-B twin below, on the other kit.
+def _mo030_the_contrast_bad_half_pins_the_recorded_literal(w: World) -> None:
+    """FIXED: Conformance 4's contrast bad half stops injecting the LIVE token
+    pair and pins the literal colour the clause records.
 
-    Renamed rather than deleted, which is the realistic shape: the code is
-    still in the file, pytest simply never runs it again, and every remaining
-    good half stays green.
+    The fix this row waits on. The bad half was written when `var(--ink-quiet)`
+    WAS the recorded 4.27:1 colour; the contrast lane closed OSV1-009 by moving
+    the token, and a bad half that follows the fix around has stopped naming a
+    defect.
     """
     w.replace(
-        _support.REPO_ROOT / TIER_A_KIT,
-        "def test_calm_keeps_slot_bad_half_a_slot_that_says_nothing() -> None:",
-        "def _disabled_calm_keeps_slot_a_slot_that_says_nothing() -> None:",
+        _support.REPO_ROOT / op_probes.TIER_B_PROBE_LIB,
+        "color:var(--ink-quiet);background:var(--ground)",
+        "color:#7c8ba0;background:var(--ground)",
+    )
+
+
+def _mo030_the_run_is_re_recorded_on_the_merged_tree(w: World) -> None:
+    """FIXED, the other way in: somebody re-runs the kit on THIS tree, so the
+    committed summary stops carrying a number measured before the token moved.
+
+    5.36 is what `make test-conformance-b` measured here on 2026-09-05 under
+    the pinned chromium 148.0.7778.0 / playwright 1.60.0.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"bad-low-contrast/L0/light": {\n        "min_ratio": 3.09',
+        '"bad-low-contrast/L0/light": {\n        "min_ratio": 5.36',
     )
 
 
@@ -788,20 +794,6 @@ def _mo029_the_kit_stops_reading_its_artifacts_back(w: World) -> None:
         _support.REPO_ROOT / op_probes.TIER_B_KIT,
         "        cache[key] = _artifacts.read(path)",
         '        cache[key] = {"measurement": measurement}  # trust the local value',
-    )
-
-
-def _mo030_a_demonstrated_bad_half_stops_being_run(w: World) -> None:
-    """REGRESSION: one of the eight demonstrated Conformance 1-4 bad halves
-    disappears from the recorded run.
-
-    "Demonstrated by running it" is the whole clause; a bad half that stopped
-    being executed is a claim again, and nothing else in the ledger notices.
-    """
-    w.replace(
-        TIER_B_SUMMARY,
-        '"bad-wordless-chips/L1/dark"',
-        '"bad-wordless-chips-DISABLED/L1/dark"',
     )
 
 
@@ -1146,18 +1138,22 @@ MUTATIONS: tuple[Mutation, ...] = (
         "the Tier-B kit stops reading its own artifacts back before asserting",
         _mo029_the_kit_stops_reading_its_artifacts_back,
     ),
-    # OSV1-030 (Freeze 4) spans both kits too, and went green the same way:
-    # one REGRESSION mutation per kit, because a demonstration that quietly
-    # narrowed on either side is the failure this clause exists to catch.
+    # OSV1-030 (Freeze 4) is a PIN again after the wave-2 integration: both
+    # kits landed, but Conformance 4's contrast bad half stopped naming its
+    # defect when the contrast lane's token fix met the Tier-B kit. Both
+    # counterfactuals are therefore the FIXED behaviour -- the specimen coming
+    # back, and the run being re-recorded on this tree.
     Mutation(
         "OSV1-030",
-        "one of the demonstrated Tier-A bad halves stops being run",
-        _mo030_a_tier_a_bad_half_stops_being_run,
+        "Conformance 4's contrast bad half pins the RECORDED literal instead of the "
+        "live token, so its specimen exists again",
+        _mo030_the_contrast_bad_half_pins_the_recorded_literal,
     ),
     Mutation(
         "OSV1-030",
-        "one of the demonstrated Conformance 1-4 bad halves stops being run",
-        _mo030_a_demonstrated_bad_half_stops_being_run,
+        "the Tier-B run is re-recorded on the merged tree, so the stale below-floor "
+        "reading moves to what this tree actually measures",
+        _mo030_the_run_is_re_recorded_on_the_merged_tree,
     ),
     Mutation(
         "OSV1-031",
