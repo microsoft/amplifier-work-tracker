@@ -569,8 +569,8 @@ EXEMPTION_REGISTER: frozenset[str] = frozenset(
         "webtheme.py:4219",  # {style}               -- axis ruler numeral offset
         "webtheme.py:4238",  # left:{_grad_x(f):.1f}px -- graduation tick offset
         "webtheme.py:4245",  # width:{px}px          -- age bar length
-        "widgets.py:837",  # width:{pct}%            -- status-mix segment (hatched)
-        "widgets.py:839",  # width:{pct}%            -- status-mix segment
+        "widgets.py:866",  # width:{pct}%            -- status-mix segment (hatched)
+        "widgets.py:868",  # width:{pct}%            -- status-mix segment
     }
 )
 
@@ -2016,8 +2016,8 @@ def test_row_osv1_031() -> None:
         "to CONFORMS and retarget this probe to assert no Core row is red "
         "(work_item_pipeline-umm)."
     )
-    assert len(red) == 3, (
-        f"OSV1-031 (Freeze 5): pinned 3 red Core-carrying rows, observed {len(red)}: "
+    assert len(red) == 2, (
+        f"OSV1-031 (Freeze 5): pinned 2 red Core-carrying rows, observed {len(red)}: "
         f"{red}. Movement in either direction means this gate's tally changed -- update "
         f"the pin and the row's notes in the same change. (10 at seed; OSV1-009 went "
         f"green 2026-09-04, work_item_pipeline-sxh; OSV1-015 and -016 went green "

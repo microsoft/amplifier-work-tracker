@@ -890,13 +890,15 @@ def _mo031_a_red_core_row_goes_green(w: World) -> None:
     row's own probe ref rather than on its `work:` id, because
     `work_item_pipeline-qgo` names three still-red Core rows and a bare
     disposition/work pair is no longer unique.
+    RE-ANCHORED AGAIN 2026-09-05 at wave-4 integration (orchestrator): OSV1-003
+    went green (calm-pixels lane); now anchored on OSV1-008's probe ref.
     """
     w.replace(
         ROWS_PATH,
         "  disposition: VIOLATION\n  work: work_item_pipeline-qgo\n"
-        "  assertion:\n    kind: probe\n    ref: test_row_osv1_003",
+        "  assertion:\n    kind: probe\n    ref: test_row_osv1_008",
         "  disposition: CONFORMS\n  work: work_item_pipeline-qgo\n"
-        "  assertion:\n    kind: probe\n    ref: test_row_osv1_003",
+        "  assertion:\n    kind: probe\n    ref: test_row_osv1_008",
     )
 
 
