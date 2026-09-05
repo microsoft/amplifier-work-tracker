@@ -32,10 +32,18 @@ What each probe measures, and the honest limits of each
 
 `MOTION_JS`
     Every animation `document.getAnimations()` reports, with its effective
-    duration. Under `prefers-reduced-motion: reduce` the surface's kernel rule
-    collapses durations to `.001ms` rather than removing animations, so the
-    honest question is "does anything actually RUN", i.e. is any effective
-    duration longer than `MOTION_EPSILON_MS`.
+    duration, its target's path and the property or keyframe name driving it.
+    Under `prefers-reduced-motion: reduce` the surface's kernel rule collapses
+    durations to `.001ms` rather than removing animations, so the honest
+    question is "does anything actually RUN", i.e. is any effective duration
+    longer than `MOTION_EPSILON_MS`.
+
+    WHEN it is asked matters as much as what it asks: a transition created
+    before the preference was applied keeps the duration it was created with,
+    so a sample taken at the instant of the change catches the page finishing
+    what it had already started. `test_tier_b.py::_settled_motion` polls this
+    probe until the page is quiescent and records the instant-of-change
+    reading separately; neither reading is dropped.
 
 `NON_TEXT_JS`
     Border colours against their own element's background, and SVG
@@ -307,18 +315,30 @@ RESOLVE_STATUS_TOKENS_JS = r"""
 })()
 """
 
-MOTION_JS = r"""
+MOTION_JS = _with_helpers(
+    r"""
 (() => {
   var running = [];
   var anims = typeof document.getAnimations === 'function' ? document.getAnimations() : [];
+  var now = performance.now();
   for(var i = 0; i < anims.length; i++){
     var a = anims[i];
     var timing = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming() : {};
     var duration = typeof timing.duration === 'number' ? timing.duration : 0;
+    var target = a.effect && a.effect.target ? a.effect.target : null;
+    /* NAMED, not just counted: a row that has to say WHICH animations still
+       run under the preference cannot be written from a bare integer, and an
+       artifact that only carries the integer forces the note to hand-wave. */
     running.push({
       state: a.playState,
       duration_ms: Math.round(duration * 1000) / 1000,
-      target: a.effect && a.effect.target ? a.effect.target.tagName.toLowerCase() : ''
+      target: target ? target.tagName.toLowerCase() : '',
+      path: target ? pathOf(target) : '',
+      label: target ? (target.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40) : '',
+      kind: (a.constructor && a.constructor.name) || '',
+      property: a.transitionProperty || a.animationName || '',
+      current_time_ms: Math.round((a.currentTime || 0) * 1000) / 1000,
+      measured_at_ms: Math.round(now * 1000) / 1000
     });
   }
   var sampled = [];
@@ -337,6 +357,7 @@ MOTION_JS = r"""
   };
 })()
 """
+)
 
 #: Non-text contrast over a NAMED, DEFENSIBLE population: the visual boundary
 #: of an interactive control, and SVG icon strokes. WCAG 1.4.11 covers "user
@@ -606,16 +627,40 @@ INJECT_WIDE_ELEMENT_JS = r"""
 """
 
 #: The BAD half of Conformance 4, contrast arm: "a fixture using the recorded
-#: 4.27:1 ink pair emits a contrast number below the floor". `--ink-quiet` on
-#: `--ground` in light mode is the pair OSV1-009 recorded.
+#: 4.27:1 ink pair emits a contrast number below the floor".
+#:
+#: LITERAL colours, not the live tokens -- and that is the whole point. This
+#: injection used to paint the live `--ink-quiet` ink on the live `--ground`,
+#: which WAS the pair OSV1-009 recorded at 4.27:1. The contrast lane then
+#: closed OSV1-009 by moving `--ink-quiet` (#7c8ba0 -> #596473), and the same
+#: injection started measuring 5.36:1 in light -- ABOVE the floor. A bad half
+#: that stops naming a defect the moment the product is fixed was never naming
+#: the defect, it was naming the product; Freeze 4 asks for a fixture that
+#: FAILS the check by construction.
+#:
+#: `#9aa3b2` on `#eef2fb` is 2.27:1 by the ledger's own luminance math
+#: (`_support.contrast_ratio`) -- below the 4.5:1 text floor in either theme,
+#: whatever the token set does next.
+#:
+#: `#wt-bad-half-contrast-control` is the CONTROL, injected in the same act:
+#: `#1b2430` on the same ground is 13.96:1. A probe that reported everything
+#: below the floor would satisfy the assertion above and fail this one, so the
+#: two together are what make the number a measurement rather than a foregone
+#: conclusion. (That control used to be carried by measuring the SAME token
+#: pair in dark, which only worked while the pair was theme-dependent.)
 INJECT_BELOW_FLOOR_PAIR_JS = r"""
 (() => {
-  var el = document.createElement('p');
-  el.id = 'wt-bad-half-low-contrast';
-  el.textContent = 'recorded below-floor ink pair';
-  el.setAttribute('style', 'position:fixed;bottom:0;left:0;z-index:99999;' +
-                           'color:var(--ink-quiet);background:var(--ground);font-size:14px');
-  document.body.appendChild(el);
+  var add = function(id, text, css){
+    var el = document.createElement('p');
+    el.id = id;
+    el.textContent = text;
+    el.setAttribute('style', 'position:fixed;left:0;z-index:99999;font-size:14px;' + css);
+    document.body.appendChild(el);
+  };
+  add('wt-bad-half-low-contrast', 'literal below-floor ink pair',
+      'bottom:0;color:#9aa3b2;background:#eef2fb');
+  add('wt-bad-half-contrast-control', 'literal above-floor control pair',
+      'bottom:26px;color:#1b2430;background:#eef2fb');
   return true;
 })()
 """

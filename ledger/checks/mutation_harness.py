@@ -633,10 +633,27 @@ def _mo008_the_swap_starts_restoring_the_disclosure(w: World) -> None:
     """FIXED: an open `<details>` survives the body-swap on L0."""
     w.replace(
         TIER_B_SUMMARY,
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 0,\n'
+        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
         '        "marked_live_regions_after": 0,\n        "open_details_preserved": false,',
-        '"calm/L0/dark": {\n        "details_with_id": 2,\n        "live_regions_before": 0,\n'
+        '"calm/L0/dark": {\n        "details_with_id": 2,\n        "live_regions_before": 1,\n'
         '        "marked_live_regions_after": 0,\n        "open_details_preserved": true,',
+    )
+
+
+def _mo008_the_announcement_survives_the_swap(w: World) -> None:
+    """FIXED: the live region tagged before the swap SURVIVES it on L0.
+
+    Newly measurable since the hero rebuild: before it, L0 rendered no live
+    region at all and Core 6's announcement half had nothing to preserve. Now
+    there is exactly one (`role="status"`), the swap destroys it, and a fix
+    that carried it across would flip this half of the row.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
+        '        "marked_live_regions_after": 0,',
+        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
+        '        "marked_live_regions_after": 1,',
     )
 
 
@@ -650,10 +667,10 @@ def _mo008_the_pause_control_starts_surviving(w: World) -> None:
     """
     w.replace(
         TIER_B_SUMMARY,
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 0,\n'
+        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
         '        "marked_live_regions_after": 0,\n        "open_details_preserved": false,\n'
         '        "pause_control_preserved": false,',
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 0,\n'
+        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
         '        "marked_live_regions_after": 0,\n        "open_details_preserved": false,\n'
         '        "pause_control_preserved": true,',
     )
@@ -663,10 +680,34 @@ def _mo010_the_target_floor_is_met(w: World) -> None:
     """FIXED: every interactive control on L0 reaches 44px."""
     w.replace(
         TIER_B_SUMMARY,
-        '"calm/L0/1280/dark": {\n        "client_width": 1280,\n        "controls": 35,\n'
+        '"calm/L0/1280/dark": {\n        "client_width": 1280,\n        "controls": 34,\n'
         '        "controls_below_44px": 26,',
-        '"calm/L0/1280/dark": {\n        "client_width": 1280,\n        "controls": 35,\n'
+        '"calm/L0/1280/dark": {\n        "client_width": 1280,\n        "controls": 34,\n'
         '        "controls_below_44px": 0,',
+    )
+
+
+def _mo011_an_animation_runs_under_the_preference(w: World) -> None:
+    """REGRESSION: the browser measures an animation still RUNNING under
+    `prefers-reduced-motion: reduce` on one swept render.
+
+    The half this row acquired on 2026-09-05. The static halves -- one
+    `@media` block, universal selector -- would be entirely unmoved by it,
+    which is the point: a stylesheet that says the right thing while the page
+    still animates satisfies a source check and fails an operator.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L0/430/dark": {\n        "client_width": 430,\n        "controls": 34,\n'
+        '        "controls_below_44px": 16,\n        "elements_beyond_viewport": 0,\n'
+        '        "non_text_below_floor": 16,\n        "non_text_measured": 77,\n'
+        '        "overflow_x_style": "clip",\n'
+        '        "running_animations_under_reduced_motion": 0,',
+        '"calm/L0/430/dark": {\n        "client_width": 430,\n        "controls": 34,\n'
+        '        "controls_below_44px": 16,\n        "elements_beyond_viewport": 0,\n'
+        '        "non_text_below_floor": 16,\n        "non_text_measured": 77,\n'
+        '        "overflow_x_style": "clip",\n'
+        '        "running_animations_under_reduced_motion": 6,',
     )
 
 
@@ -711,33 +752,38 @@ def _mo021_the_tier_a_good_half_is_deferred_again(w: World) -> None:
     )
 
 
-def _mo030_the_contrast_bad_half_pins_the_recorded_literal(w: World) -> None:
-    """FIXED: Conformance 4's contrast bad half stops injecting the LIVE token
-    pair and pins the literal colour the clause records.
+def _mo030_the_contrast_bad_half_borrows_the_live_token_again(w: World) -> None:
+    """REGRESSION: Conformance 4's contrast bad half goes back to injecting the
+    LIVE token pair instead of owning its specimen.
 
-    The fix this row waits on. The bad half was written when `var(--ink-quiet)`
-    WAS the recorded 4.27:1 colour; the contrast lane closed OSV1-009 by moving
-    the token, and a bad half that follows the fix around has stopped naming a
-    defect.
+    Exactly how this row went red at the wave-2 integration: the bad half was
+    written when `var(--ink-quiet)` WAS the recorded 4.27:1 colour, the
+    contrast lane moved the token, and the fixture followed the fix around
+    until it named no defect at all. The run summary would not move at the
+    moment of the change -- which is why this is asserted on the fixture's
+    source, not only on its numbers.
     """
     w.replace(
         _support.REPO_ROOT / op_probes.TIER_B_PROBE_LIB,
-        "color:var(--ink-quiet);background:var(--ground)",
-        "color:#7c8ba0;background:var(--ground)",
+        "'bottom:0;color:#9aa3b2;background:#eef2fb'",
+        "'bottom:0;color:var(--ink-quiet);background:var(--ground)'",
     )
 
 
-def _mo030_the_run_is_re_recorded_on_the_merged_tree(w: World) -> None:
-    """FIXED, the other way in: somebody re-runs the kit on THIS tree, so the
-    committed summary stops carrying a number measured before the token moved.
+def _mo030_a_conformance_bad_half_stops_biting(w: World) -> None:
+    """REGRESSION, the other way in: a re-recorded run shows one of the
+    fourteen arms no longer failing against the defect it names.
 
-    5.36 is what `make test-conformance-b` measured here on 2026-09-05 under
-    the pinned chromium 148.0.7778.0 / playwright 1.60.0.
+    Conformance 4's contrast arm in LIGHT, chosen because it is the arm this
+    row was red for: a bad half measured at or above the floor is a fixture
+    that has stopped discriminating, whatever its source still says.
     """
     w.replace(
         TIER_B_SUMMARY,
-        '"bad-low-contrast/L0/light": {\n        "min_ratio": 3.09',
-        '"bad-low-contrast/L0/light": {\n        "min_ratio": 5.36',
+        '"bad-low-contrast/L0/light": {\n        "control_ratio": 13.96,\n'
+        '        "min_ratio": 2.27',
+        '"bad-low-contrast/L0/light": {\n        "control_ratio": 13.96,\n'
+        '        "min_ratio": 5.36',
     )
 
 
@@ -747,26 +793,28 @@ def _mo022_the_swap_bad_half_stops_discriminating(w: World) -> None:
     w.replace(
         TIER_B_SUMMARY,
         '"bad-naive-replacement/L0/dark": {\n        "details_with_id": 0,\n'
-        '        "live_regions_before": 0,\n        "marked_live_regions_after": 0,\n'
+        '        "live_regions_before": 1,\n        "marked_live_regions_after": 0,\n'
         '        "open_details_preserved": false,',
         '"bad-naive-replacement/L0/dark": {\n        "details_with_id": 0,\n'
-        '        "live_regions_before": 0,\n        "marked_live_regions_after": 0,\n'
+        '        "live_regions_before": 1,\n        "marked_live_regions_after": 0,\n'
         '        "open_details_preserved": true,',
     )
 
 
 def _mo023_the_contrast_bad_half_loses_its_control(w: World) -> None:
-    """REGRESSION: the contrast probe starts reporting the recorded pair below
-    the floor in DARK as well as light.
+    """REGRESSION: the contrast probe starts reporting the CONTROL pair -- a
+    literal 13.96:1 -- below the floor too.
 
     That is the shape of a probe that has stopped measuring and started always
-    saying no -- and it would leave every good half in Conformance 4 looking
-    exactly as it does now.
+    saying no, and it would leave every good half in Conformance 4 looking
+    exactly as it does now. (Before 2026-09-05 the control was the same token
+    pair measured in dark; it became a literal above-floor pair when the bad
+    half stopped depending on the token set.)
     """
     w.replace(
         TIER_B_SUMMARY,
-        '"bad-low-contrast/L0/dark": {\n        "min_ratio": 5.53',
-        '"bad-low-contrast/L0/dark": {\n        "min_ratio": 2.1',
+        '"bad-low-contrast/L0/dark": {\n        "control_ratio": 13.96,',
+        '"bad-low-contrast/L0/dark": {\n        "control_ratio": 2.1,',
     )
 
 
@@ -1019,6 +1067,13 @@ MUTATIONS: tuple[Mutation, ...] = (
         _mo008_the_pause_control_starts_surviving,
     ),
     Mutation(
+        "OSV1-008",
+        "the browser measures L0's live region surviving the swap (the fix, on the "
+        "half that only became measurable when the hero rebuild gave L0 a "
+        "`role=status` region to destroy)",
+        _mo008_the_announcement_survives_the_swap,
+    ),
+    Mutation(
         "OSV1-009",
         "--ink-quiet falls back below the text floor in the prefers-color-scheme light block",
         _mo009a_the_media_light_block_regresses,
@@ -1037,6 +1092,12 @@ MUTATIONS: tuple[Mutation, ...] = (
         "OSV1-011",
         "reduced motion becomes per-widget opt-in (a second @media block)",
         _mo011_a_second_motion_block_appears,
+    ),
+    Mutation(
+        "OSV1-011",
+        "the browser measures an animation still RUNNING under the preference on a "
+        "swept render, while the stylesheet still says the right thing",
+        _mo011_an_animation_runs_under_the_preference,
     ),
     Mutation(
         "OSV1-012",
@@ -1138,22 +1199,22 @@ MUTATIONS: tuple[Mutation, ...] = (
         "the Tier-B kit stops reading its own artifacts back before asserting",
         _mo029_the_kit_stops_reading_its_artifacts_back,
     ),
-    # OSV1-030 (Freeze 4) is a PIN again after the wave-2 integration: both
-    # kits landed, but Conformance 4's contrast bad half stopped naming its
-    # defect when the contrast lane's token fix met the Tier-B kit. Both
-    # counterfactuals are therefore the FIXED behaviour -- the specimen coming
-    # back, and the run being re-recorded on this tree.
+    # OSV1-030 (Freeze 4) went GREEN at the second wave-2 integration pass:
+    # the contrast bad half was rebuilt to own its specimen and the kit was
+    # re-run. Both counterfactuals are therefore the KNOWN-WRONG shape it now
+    # forbids -- the fixture borrowing the live token again, and a recorded
+    # arm that no longer bites.
     Mutation(
         "OSV1-030",
-        "Conformance 4's contrast bad half pins the RECORDED literal instead of the "
-        "live token, so its specimen exists again",
-        _mo030_the_contrast_bad_half_pins_the_recorded_literal,
+        "Conformance 4's contrast bad half borrows the LIVE token pair again, so its "
+        "defect goes back to following the product's own fixes around",
+        _mo030_the_contrast_bad_half_borrows_the_live_token_again,
     ),
     Mutation(
         "OSV1-030",
-        "the Tier-B run is re-recorded on the merged tree, so the stale below-floor "
-        "reading moves to what this tree actually measures",
-        _mo030_the_run_is_re_recorded_on_the_merged_tree,
+        "a re-recorded run shows one of the fourteen fixture arms measuring at or "
+        "above the floor it is supposed to fail",
+        _mo030_a_conformance_bad_half_stops_biting,
     ),
     Mutation(
         "OSV1-031",

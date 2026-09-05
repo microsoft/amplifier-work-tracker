@@ -41,6 +41,7 @@ one JSON record and one PNG per measurement, plus an `index.json`. See
 
 from __future__ import annotations
 
+import time
 from collections import Counter
 from typing import Any
 
@@ -104,18 +105,21 @@ _CONTRAST_LEVELS = [
         "L1",
         marks=known_violation(
             "OSV1-010",
-            "L1's `.status-chip.st-resolved` reads 3.13:1 in dark and 2.26:1 in "
-            "light against its own chip surface; light also drops "
-            "`.actions-drawer summary .count` to 2.83:1 and `.st-held` to 3.99:1",
+            "L1's `.status-chip.st-resolved` reads 3.13:1 in dark and 3.92:1 in "
+            "light against its own chip surface (3 occurrences each); light also "
+            "drops `.status-chip.st-held` to 3.99:1. Re-measured 2026-09-05 on the "
+            "merged tree: light was 5 failures at 2.26:1/2.83:1 before the contrast "
+            "lane moved `--ink-quiet` (OSV1-009), and is 4 now",
         ),
     ),
     pytest.param(
         "L2",
         marks=known_violation(
             "OSV1-010",
-            "L2's `.actions-drawer summary .count` reads 3.77:1 in dark and below "
-            "the floor in light -- the `--ink-quiet` reading-copy pair OSV1-009 "
-            "recorded, measured here in the render",
+            "L2's `.actions-drawer summary .count` reads 3.77:1 in dark and 4.26:1 "
+            "in light, and light also drops `.drawer-section label.eyebrow` to "
+            "4.35:1 -- the `--ink-quiet` reading-copy pair OSV1-009 recorded, "
+            "measured here in the render (re-measured 2026-09-05)",
         ),
     ),
 ]
@@ -701,9 +705,12 @@ def test_swap_preserves_the_pause_control(request, level):
 
 @known_violation(
     "OSV1-008",
-    "there is no live region to preserve: `aria-live` has zero occurrences in "
-    "`src/`, and neither `role=status` nor `role=alert` renders on a calm L0/L1 "
-    "at all, so nothing is ever announced across the swap",
+    "L0 now renders exactly ONE live region -- the rebuilt verdict hero's "
+    "`role=status` (widgets.py:1379) -- and the body-swap destroys it: 0 of the 1 "
+    "tagged node survives, and the page comes back with a fresh, empty region. On "
+    "L1 the clause still fails one step earlier: no live region renders at all "
+    "(`aria-live` has zero occurrences in `src/`), so nothing is ever announced "
+    "across the swap. Re-measured 2026-09-05 on the merged tree",
 )
 @pytest.mark.parametrize("level", ["L0", "L1"])
 def test_swap_preserves_a_pending_announcement(request, level):
@@ -827,6 +834,52 @@ def test_naive_replacement_with_reflow_loses_the_scroll_offset(
 # Core 7 / Conformance 4 -- perception.floors
 # ===========================================================================
 
+#: How long a page is given to go quiescent after the reduced-motion
+#: preference is applied, and how often it is asked. Generous rather than
+#: tight: a slow runner must not read as a conformance failure, and a page
+#: that never settles still fails -- see `_settled_motion`.
+_MOTION_SETTLE_TIMEOUT_MS = 3000
+_MOTION_SETTLE_POLL_MS = 100
+
+
+def _settled_motion(page) -> dict[str, Any]:
+    """What runs under the preference once the page is QUIESCENT.
+
+    MEASURED, and the reason this exists rather than a fixed sleep: the
+    surface animates `background-color` on its card and row links for
+    `--duration-fast` (120ms, webtheme.py:223). Those transitions are created
+    while the page loads and the theme is applied -- BEFORE the preference is
+    emulated -- and changing `transition-duration` does not retarget a
+    transition already in flight. The previous form of this measurement slept
+    exactly 120ms after `emulate_media` and then sampled: the same length as
+    the transition it was racing. Chromium 148 duly returned a coin flip.
+    Three full runs on this tree failed a DIFFERENT one to three of the nine
+    (level, width) scenarios each time -- L0/430 + L1/430 + L1/900, then
+    L0/430 + L1/430 + L0/900, then none at all -- and one sample caught six
+    transitions at `currentTime` 116.67 of 120, i.e. 3ms from finishing.
+
+    So the question Core 7 actually asks ("no animation runs under the
+    preference") is not "is anything mid-flight at the instant the preference
+    lands" -- that is the page finishing what it started before the preference
+    existed, and it is recorded in the artifact as
+    `motion_at_preference_change` rather than dropped. It is "does anything
+    RUN once the page is quiet". This polls until nothing is running or the
+    deadline passes, and returns the LAST reading either way: a page that
+    never goes quiet returns a non-empty animation set and fails the check,
+    loudly, which is the outcome a standing animation must produce.
+    """
+    deadline = time.monotonic() + _MOTION_SETTLE_TIMEOUT_MS / 1000
+    waited_ms = 0
+    measurement = page.evaluate(_probe.MOTION_JS)
+    while _probe.running_animations(measurement) and time.monotonic() < deadline:
+        page.wait_for_timeout(_MOTION_SETTLE_POLL_MS)
+        waited_ms += _MOTION_SETTLE_POLL_MS
+        measurement = page.evaluate(_probe.MOTION_JS)
+    return measurement | {
+        "settled_after_ms": waited_ms,
+        "settle_timeout_ms": _MOTION_SETTLE_TIMEOUT_MS,
+    }
+
 
 @pytest.fixture(scope="session")
 def perception(calm_app, context_factory, artifacts, browser_info):
@@ -851,8 +904,8 @@ def perception(calm_app, context_factory, artifacts, browser_info):
         overflow = page.evaluate(_probe.OVERFLOW_JS)
         non_text = page.evaluate(_probe.NON_TEXT_JS)
         page.emulate_media(reduced_motion="reduce")
-        page.wait_for_timeout(120)
-        motion = page.evaluate(_probe.MOTION_JS)
+        at_preference_change = page.evaluate(_probe.MOTION_JS)
+        motion = _settled_motion(page)
 
         scenario = f"calm/{level}/{width}/{theme}"
         artifacts.save_screenshot(
@@ -872,6 +925,7 @@ def perception(calm_app, context_factory, artifacts, browser_info):
                 "targets": targets,
                 "non_text_contrast": non_text,
                 "motion": motion,
+                "motion_at_preference_change": at_preference_change,
             },
             headline={
                 "scroll_width": overflow["scroll_width"],
@@ -962,9 +1016,10 @@ def test_text_contrast_floor(perception, level, width, theme):
 
 @known_violation(
     "OSV1-010",
-    "26 of 35 interactive controls on L0 (22 of 41 on L1, 11 of 20 on L2) measure "
+    "26 of 34 interactive controls on L0 (22 of 41 on L1, 11 of 20 on L2) measure "
     "under 44px on their smaller side -- among them the pause control itself at "
-    "26x26, every window-selector link at 28px tall, and the footer links at 11.5px",
+    "26x26, every window-selector link at 28px tall, and the footer links at 11.5px "
+    "(L0 was 35 controls before the hero rebuild; re-measured 2026-09-05)",
 )
 @pytest.mark.parametrize("level", LEVELS)
 @pytest.mark.parametrize("width", VIEWPORTS)
@@ -992,7 +1047,14 @@ def test_interactive_targets_meet_the_floor(perception, level, width):
 @pytest.mark.parametrize("level", LEVELS)
 @pytest.mark.parametrize("width", VIEWPORTS)
 def test_reduced_motion_stops_every_animation(perception, level, width):
-    """Core 7: "no animation runs under the preference"."""
+    """Core 7: "no animation runs under the preference".
+
+    Read from the SETTLED measurement (`_settled_motion`): what the page is
+    still finishing at the instant the preference lands is recorded separately
+    as `motion_at_preference_change` and is not scored here -- see
+    `_settled_motion`'s docstring for the measurement that established the
+    difference, and OSV1-011 for the row that records it.
+    """
     m = perception(level, width, "dark")["measurement"]["motion"]
     assert m["reduced_motion_matches"], (
         "the reduced-motion preference was not applied to the page, so this check "
@@ -1001,16 +1063,20 @@ def test_reduced_motion_stops_every_animation(perception, level, width):
     running = _probe.running_animations(m)
     assert not running, (
         f"perception.floors FAILED on {level} at {width}px: {len(running)} "
-        f"animation(s) still run under `prefers-reduced-motion: reduce`:\n"
-        + _probe.summarise(running, ("target", "state", "duration_ms"))
+        f"animation(s) still run under `prefers-reduced-motion: reduce`, "
+        f"{m['settled_after_ms']}ms after the preference was applied "
+        f"(settle deadline {m['settle_timeout_ms']}ms):\n"
+        + _probe.summarise(running, ("path", "property", "duration_ms", "state"))
     )
 
 
 @known_violation(
     "OSV1-010",
-    "17 of 82 interactive-control borders and icon strokes on L0 are below 3:1 in "
-    "dark (29 in light); L1 23/73 dark and 44/73 light; L2 11/33 and 13/33. The "
-    "icon-button border is #303238 on #1e2027 -- 1.27:1",
+    "16 of 79 interactive-control borders and icon strokes on L0 are below 3:1 in "
+    "dark (16 of 79 in light); L1 23/73 in both themes; L2 11/33 in both. The "
+    "icon-button border is #303238 on #1e2027 -- 1.27:1. Re-measured 2026-09-05 on "
+    "the merged tree: the light-mode counts fell (was 29/82 on L0, 44/73 on L1, "
+    "13/33 on L2) where the contrast lane moved `--ink-quiet`",
 )
 @pytest.mark.parametrize("level", LEVELS)
 @pytest.mark.parametrize("theme", THEMES)
@@ -1096,61 +1162,75 @@ def test_contrast_check_catches_the_recorded_below_floor_pair(
         **Bad:** [...] a fixture using the recorded 4.27:1 ink pair emits a
         contrast number below the floor.
 
-    `--ink-quiet` on `--ground` is the pair `ledger/rows.yaml` OSV1-009
-    recorded from the token-pair luminance math, and OSV1-009 records it as a
-    LIGHT-mode failure specifically. Injected as real copy into the real page,
-    so the browser -- not the ledger's arithmetic -- computes it.
+    A LITERAL below-floor pair, `#9aa3b2` on `#eef2fb` (2.27:1 by the ledger's
+    own luminance math), injected as real copy into the real page so the
+    browser -- not the ledger's arithmetic -- computes it.
 
-    Both themes are measured and BOTH are asserted, in opposite directions:
-    the same pair must come back below the floor in light and at or above it
-    in dark. A probe that reported "below floor" for everything would satisfy
-    the first assertion and fail the second, so the pair together is what
-    proves the number is a measurement rather than a foregone conclusion.
+    Literal RATHER THAN the live tokens, and that is the change this fixture
+    exists to record: it used to inject `var(--ink-quiet)` on `var(--ground)`,
+    which WAS the 4.27:1 pair OSV1-009 recorded. The contrast lane then closed
+    OSV1-009 by moving `--ink-quiet` (#7c8ba0 -> #596473), and the same
+    injection measured 5.36:1 -- above the floor. A bad half whose defect
+    disappears when the product is fixed was never naming a defect; Freeze 4
+    asks for a fixture that fails the check BY CONSTRUCTION.
+
+    The CONTROL is injected in the same act: `#1b2430` on the same ground,
+    13.96:1. Both are asserted, in opposite directions, in BOTH themes -- a
+    probe that reported "below floor" for everything would satisfy the first
+    assertion and fail the second, so the pair together is what proves the
+    number is a measurement rather than a foregone conclusion. (The control
+    used to be the same token pair measured in dark, which only worked while
+    the pair's verdict was theme-dependent; a literal pair is theme-independent
+    by construction, which is exactly why it cannot follow a fix around.)
     """
-    scores: dict[str, list[float]] = {}
+    scores: dict[str, dict[str, list[float]]] = {}
     for theme in THEMES:
         page = context_factory(calm_app).new_page()
         goto(page, calm_app, calm_app.url("L0"), theme=theme)
         page.evaluate(_probe.INJECT_BELOW_FLOOR_PAIR_JS)
         page.wait_for_timeout(80)
         contrast = page.evaluate(_probe.TEXT_CONTRAST_JS)
+
+        def _ratios(marker: str, scored=contrast["scored"]) -> list[float]:
+            return [float(e["ratio"]) for e in scored if marker in e["path"]]
+
         path = artifacts.write(
             check="perception.floors",
-            clause="Core 7 / Conformance 4 (bad half: recorded --ink-quiet/--ground pair)",
+            clause="Core 7 / Conformance 4 (bad half: literal below-floor ink pair)",
             scenario=f"bad-low-contrast/L0/{theme}",
             browser=browser_info,
             measurement=contrast,
             headline={
-                "min_ratio": min(
-                    (
-                        float(e["ratio"])
-                        for e in contrast["scored"]
-                        if "wt-bad-half-low-contrast" in e["path"]
-                    ),
-                    default=-1.0,
-                ),
+                "min_ratio": min(_ratios("wt-bad-half-low-contrast"), default=-1.0),
+                "control_ratio": min(_ratios("wt-bad-half-contrast-control"), default=-1.0),
             },
         )
         m = _artifacts.read(path)["measurement"]
         injected = [e for e in m["scored"] if "wt-bad-half-low-contrast" in e["path"]]
-        assert injected, (
-            f"the injected below-floor element was not scored at all in {theme}, so "
-            f"this bad half demonstrates nothing about the contrast probe."
+        control = [e for e in m["scored"] if "wt-bad-half-contrast-control" in e["path"]]
+        assert injected and control, (
+            f"the injected pair was not scored at all in {theme} "
+            f"({len(injected)} below-floor, {len(control)} control element(s) scored), "
+            f"so this bad half demonstrates nothing about the contrast probe."
         )
-        scores[theme] = [float(e["ratio"]) for e in injected]
+        scores[theme] = {
+            "injected": [float(e["ratio"]) for e in injected],
+            "control": [float(e["ratio"]) for e in control],
+        }
         page.close()
 
-    assert min(scores["light"]) < _probe.TEXT_CONTRAST_FLOOR, (
-        "the Conformance 4 contrast bad half did NOT discriminate: the recorded "
-        f"--ink-quiet/--ground pair scored {scores['light']} in light mode, at or "
-        f"above the {_probe.TEXT_CONTRAST_FLOOR}:1 floor."
-    )
-    assert min(scores["dark"]) >= _probe.TEXT_CONTRAST_FLOOR, (
-        "the contrast probe reported the SAME token pair below the floor in dark "
-        f"({scores['dark']}) as well as light ({scores['light']}). OSV1-009 records "
-        f"this pair as a light-mode failure only -- a probe that fails it in both "
-        f"themes is not measuring the render, and the good halves above rest on it."
-    )
+    for theme in THEMES:
+        assert min(scores[theme]["injected"]) < _probe.TEXT_CONTRAST_FLOOR, (
+            "the Conformance 4 contrast bad half did NOT discriminate: the literal "
+            f"below-floor pair scored {scores[theme]['injected']} in {theme}, at or "
+            f"above the {_probe.TEXT_CONTRAST_FLOOR}:1 floor."
+        )
+        assert min(scores[theme]["control"]) >= _probe.TEXT_CONTRAST_FLOOR, (
+            f"the contrast probe reported the CONTROL pair -- a literal 13.96:1 -- "
+            f"below the floor in {theme} ({scores[theme]['control']}). A probe that "
+            f"says no to everything demonstrates nothing, and every good half in "
+            f"Conformance 4 rests on it."
+        )
 
 
 # ===========================================================================
