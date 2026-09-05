@@ -1063,8 +1063,13 @@ def test_row_osv1_023() -> None:
 
 
 def test_row_osv1_024() -> None:
-    """Conformance 5 pin: the fixture exists and discriminates, and its GOOD
-    half is still deferred against OSV1-001."""
+    """Conformance 5 CONFORMS: the fixture exists, discriminates, and its GOOD
+    half runs UNDEFERRED against the rebuilt hero (OSV1-001 closed 2026-09-05).
+
+    Flipped at highway wave-1 integration: the hero lane closed OSV1-001 and the
+    orchestrator removed the kit's xfail(strict) deferral in the same change; the
+    good half now passes on the real L0 (kit run: 38 passed / 4 xfailed).
+    """
     kit = _kit_source()
     assert "check_hero_velocity_and_counts" in _kit_defs(kit), (
         f"OSV1-024 (Conformance 5): {TIER_A_KIT} no longer implements "
@@ -1074,16 +1079,14 @@ def test_row_osv1_024() -> None:
         "OSV1-024 (Conformance 5): the fixture no longer ships a bad half -- a fixture "
         "that cannot be watched failing is a claim (Freeze 4)."
     )
-    assert "OSV1-001" in _kit_deferred_rows(kit, "test_hero_velocity_and_counts"), (
-        "OSV1-024 (Conformance 5) PIN BROKE THE RIGHT WAY: the good half is no longer "
-        "deferred against OSV1-001. If the hero now carries velocity with its window "
-        "and all four counts, flip OSV1-001 AND this row and retarget both probes in "
-        "the same change (work_item_pipeline-ujy)."
+    assert not _kit_deferred_rows(kit, "test_hero_velocity_and_counts"), (
+        "OSV1-024 (Conformance 5) REGRESSION: the good half is deferred again -- a "
+        "Conformance row cannot read CONFORMS while its good half carries an xfail. "
+        "Either the hero regressed (re-open OSV1-001) or the marker is stale."
     )
-    assert row("OSV1-001")["disposition"] in PINNING_DISPOSITIONS, (
-        "OSV1-024 (Conformance 5) PIN BROKE THE RIGHT WAY: OSV1-001 is no longer red, "
-        "so Conformance 5's good half should now pass against a conforming hero. "
-        "Re-derive this row from the PASSING pair, never from the fixture's presence."
+    assert row("OSV1-001")["disposition"] == "CONFORMS", (
+        "OSV1-024 (Conformance 5) REGRESSION: OSV1-001 is red again, so Conformance 5's "
+        "good half cannot pass against the shipped hero. Re-derive both rows together."
     )
     assert contains(
         OPERATOR_CONTRACT_PATH,
@@ -1260,8 +1263,8 @@ def test_row_osv1_031() -> None:
         "to CONFORMS and retarget this probe to assert no Core row is red "
         "(work_item_pipeline-umm)."
     )
-    assert len(red) == 9, (
-        f"OSV1-031 (Freeze 5): pinned 9 red Core-carrying rows, observed {len(red)}: "
+    assert len(red) == 7, (
+        f"OSV1-031 (Freeze 5): pinned 7 red Core-carrying rows, observed {len(red)}: "
         f"{red}. Movement in either direction means this gate's tally changed -- update "
         f"the pin and the row's notes in the same change. (Was 10 at seed; OSV1-009 "
         f"went green 2026-09-04, work_item_pipeline-sxh.)"

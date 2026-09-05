@@ -1961,14 +1961,14 @@
 
 - id: OSV1-024
   title: >-
-    Conformance 5 (hero composition) -- fixture exists and discriminates, good
-    half deferred against OSV1-001
+    Conformance 5 (hero composition) -- fixture exists, discriminates, and its
+    good half passes against the rebuilt hero
   contract:
     file: contracts/operator-surface.v1.md
     clause: Conformance 5
     quote: |
       **Test location:** `tests/conformance/operator_surface/test_tier_a.py` (Core 1).
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-c1a
   assertion:
     kind: probe
@@ -1998,6 +1998,11 @@
     half passes against a conforming hero. The probe therefore asserts both
     facts -- the fixture is present with its pair, and OSV1-001 is still red --
     so flipping either one alone fails loudly.
+    FLIPPED GAP -> CONFORMS 2026-09-05 at highway wave-1 integration (orchestrator): the hero lane closed OSV1-001
+    (L0 hero = velocity over a stated window + in-flight/blocked/needs-attention/open counts) and the kit's good half
+    `test_hero_velocity_and_counts` runs undeferred and PASSES on the real L0 (tier-a kit: 38 passed / 4 xfailed); the
+    three bad halves still fail as designed. Re-derived from the PASSING pair, not from the fixture's presence. Probe now
+    asserts the regression direction: good half stays undeferred and OSV1-001 stays CONFORMS.
 
 - id: OSV1-025
   title: >-
@@ -2235,7 +2240,7 @@
     failure.
 
 - id: OSV1-031
-  title: Freeze 5 -- 9 of the 19 Core-carrying rows read VIOLATION or GAP
+  title: Freeze 5 -- 7 of the 19 Core-carrying rows read VIOLATION or GAP
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 5
@@ -2300,6 +2305,7 @@
     measurement; OSV1-012, whose kit also landed, went RED-der rather than
     green. The three remaining GAP rows are GAP precisely because they ARE
     assertable and simply are not asserted yet -- all three need a browser.
+    RE-PINNED 2026-09-05 at highway wave-1 integration (orchestrator): the contrast lane flipped OSV1-009, the hero lane flipped OSV1-001, and the tier-a-kit lane flipped OSV1-004 in the same wave, each re-deriving its row from a real measurement; both the hero and tier-a-kit lanes had independently re-pinned this count to 9 against their own base, so the union is 7. Remaining red: 003, 005, 008, 010, 012, 015, 016. core10 (015/016) and the browser kit (003/008/010) are in flight.
 
 - id: OSV1-032
   title: >-

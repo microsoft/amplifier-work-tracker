@@ -633,6 +633,19 @@ def _mo031_a_red_core_row_goes_green(w: World) -> None:
     )
 
 
+def _mo024_the_hero_good_half_is_deferred_again(w: World) -> None:
+    """REGRESSION: someone re-adds the xfail(strict) deferral to Conformance 5's
+    good half while the row still reads CONFORMS -- a green Conformance row whose
+    fixture no longer runs is exactly the claim-without-check Freeze 4 forbids.
+    """
+    w.replace(
+        _support.REPO_ROOT / TIER_A_KIT,
+        "def test_hero_velocity_and_counts(calm_dataset) -> None:",
+        '@pytest.mark.xfail(strict=True, reason="OSV1-001 regressed")\n'
+        "def test_hero_velocity_and_counts(calm_dataset) -> None:",
+    )
+
+
 def _mo025_the_literal_style_row_goes_green(w: World) -> None:
     """FIXED: OSV1-005 closes, so Conformance 6's deferred good half should now
     pass -- and this row must be re-derived from the PASSING pair."""
@@ -877,8 +890,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-024",
-        "OSV1-001 closes, so Conformance 5's deferred good half should now pass",
-        _mo031_a_red_core_row_goes_green,
+        "Conformance 5's good half is deferred again behind an xfail naming OSV1-001",
+        _mo024_the_hero_good_half_is_deferred_again,
     ),
     Mutation(
         "OSV1-025",
