@@ -540,8 +540,8 @@ EXEMPTION_REGISTER: frozenset[str] = frozenset(
         "webtheme.py:4197",  # {style}               -- axis ruler numeral offset
         "webtheme.py:4216",  # left:{_grad_x(f):.1f}px -- graduation tick offset
         "webtheme.py:4223",  # width:{px}px          -- age bar length
-        "widgets.py:837",  # width:{pct}%            -- status-mix segment (hatched)
-        "widgets.py:839",  # width:{pct}%            -- status-mix segment
+        "widgets.py:866",  # width:{pct}%            -- status-mix segment (hatched)
+        "widgets.py:868",  # width:{pct}%            -- status-mix segment
     }
 )
 
@@ -876,31 +876,66 @@ def test_row_osv1_011() -> None:
 
 
 def test_row_osv1_012() -> None:
-    """Core 8 VIOLATION pin: two widget renderers still have no empty branch,
-    and the kit's two `calm.keeps_slot` halves are still deferred against this
-    row.
+    """Core 8 CONFORMS: every widget that can render empty keeps its slot AND
+    says so, and the kit's two `calm.keeps_slot` halves are no longer deferred.
 
-    Pinned on the RENDERERS rather than on a rendered page, because that is
-    what an in-process probe can see: `render_attention_queue` and
-    `render_agents_panel` return their container unconditionally, so an empty
-    one is a slot with nothing in it. Giving either an empty branch flips this
-    pin -- which is the fix landing.
+    RETARGETED 2026-09-05 (work_item_pipeline-aad) from the VIOLATION pin. The
+    pin asserted the ABSENCE of an empty branch in two renderers; this asserts
+    the presence of the sentence in all three, plus the sentence's own register
+    (no numeral, no exclamation) -- because "grew an empty branch" and "says
+    something calm in it" are different facts and only the second is the
+    clause.
+
+    Asserted on the RENDERERS rather than on a rendered page, because that is
+    what an in-process probe can see. The rendered proof is the Tier-A kit's
+    own `calm.keeps_slot` pair, whose deferral this probe now forbids.
     """
-    for func in ("render_attention_queue", "render_agents_panel"):
+    sentences = {
+        "render_attention_queue": "No item needs you right now.",
+        "render_agents_panel": "No agent has held an item in this project yet.",
+        "render_status_breakdown": "No items to break down yet.",
+    }
+    for func, sentence in sentences.items():
         body = _widgets_function(func)
-        assert "if not data[" not in body, (
-            f"OSV1-012 (Core 8) PIN BROKE THE RIGHT WAY: `{func}` now has an empty "
-            f"branch. If it emits the empty SENTENCE Core 8 requires, re-run the "
-            f"Tier-A kit's `calm.keeps_slot` halves, flip OSV1-012 to CONFORMS, delete "
-            f"their xfail markers and retarget this probe -- all in the same change "
-            f"(work_item_pipeline-c1a)."
+        assert "_empty_note(" in body, (
+            f"OSV1-012 (Core 8) REGRESSION: `{func}` no longer routes its empty case "
+            f"through `_empty_note`. A widget with nothing to show keeps its slot AND "
+            f"says so in a sentence -- an empty container is the defect this row closed."
         )
+        assert sentence in body, (
+            f"OSV1-012 (Core 8) REGRESSION: `{func}`'s empty sentence is gone or "
+            f"changed. Expected {sentence!r}. If the wording moved deliberately, "
+            f"re-derive this row from a re-run of the Tier-A kit's `calm.keeps_slot` "
+            f"halves rather than editing this string to match."
+        )
+        assert "!" not in sentence and not any(ch.isdigit() for ch in sentence), (
+            f"OSV1-012 (Core 8) REGRESSION: `{func}`'s empty sentence acquired a "
+            f"numeral or an exclamation. The calm state is STATED, never celebrated -- "
+            f"a triumphant zero is what this clause forbids."
+        )
+    assert contains(WIDGETS, 'class="empty-note"'), (
+        "OSV1-012 (Core 8) REGRESSION: `_empty_note` no longer emits `.empty-note`. "
+        "That class is where the slot's `min-height` lives (webtheme.py) -- without "
+        "it an empty widget collapses instead of keeping its slot."
+    )
+    theme = read(WEBTHEME)
+    assert ".empty-note{" in theme, (
+        "OSV1-012 (Core 8) REGRESSION: the `.empty-note` rule is gone from the token "
+        "module. Keeping the slot is the half of this clause that is about geometry, "
+        "not words."
+    )
+    empty_rule = theme.split(".empty-note{", 1)[1].split("}", 1)[0]
+    assert "min-height" in empty_rule, (
+        f"OSV1-012 (Core 8) REGRESSION: `.empty-note` no longer sets a `min-height`, "
+        f"so an empty widget collapses to nothing instead of keeping its slot. The "
+        f"rule now reads: {empty_rule.strip()!r}"
+    )
     kit = _kit_source()
     for test_name in ("test_calm_keeps_slot", "test_calm_keeps_slot_l1"):
-        assert "OSV1-012" in _kit_deferred_rows(kit, test_name), (
-            f"OSV1-012 (Core 8) PIN BROKE THE RIGHT WAY: the kit's `{test_name}` is no "
-            f"longer deferred against this row. A passing good half is the fix -- flip "
-            f"the row in the same change."
+        assert not _kit_deferred_rows(kit, test_name), (
+            f"OSV1-012 (Core 8) REGRESSION: the kit's `{test_name}` is deferred behind "
+            f"an xfail again. This row reads CONFORMS off that half PASSING; a deferred "
+            f"good half means it should not."
         )
     assert contains(WIDGETS, '"All clear"'), (
         "OSV1-012 (Core 8): the calm headline 'All clear' is gone. Calm must stay "
@@ -1579,24 +1614,39 @@ def test_row_osv1_025() -> None:
 
 
 def test_row_osv1_026() -> None:
-    """Conformance 7 pin: the two-render fixture exists and discriminates, and
-    its GOOD halves are still deferred against OSV1-012."""
+    """Conformance 7 CONFORMS: the two-render fixture discriminates AND both of
+    its GOOD halves pass, on L0 and on L1.
+
+    RETARGETED 2026-09-05 (work_item_pipeline-aad) from the GAP pin, which
+    asserted the good halves were DEFERRED. A Conformance row is about a
+    discriminating fixture, and a fixture whose good half has never been seen
+    to pass is half a fixture -- so this now asserts the deferral is GONE and
+    the row it was deferred against is green. Both bad halves are still
+    asserted: flipping this row must not spend them.
+    """
     kit = _kit_source()
     assert "check_calm_keeps_slot" in _kit_defs(kit), (
         f"OSV1-026 (Conformance 7): {TIER_A_KIT} no longer implements "
         f"`calm.keeps_slot` at the location the contract names."
     )
+    for good_half in ("test_calm_keeps_slot", "test_calm_keeps_slot_l1"):
+        assert good_half in _kit_defs(kit), (
+            f"OSV1-026 (Conformance 7) REGRESSION: the kit's `{good_half}` is gone. "
+            f"Conformance 7 names L0 AND L1, and this row reads CONFORMS off BOTH "
+            f"halves passing."
+        )
+        assert not _kit_deferred_rows(kit, good_half), (
+            f"OSV1-026 (Conformance 7) REGRESSION: `{good_half}` is deferred behind an "
+            f"xfail again. This row is green because the good halves PASS -- a "
+            f"deferred half means it should not be."
+        )
     assert _kit_bad_halves(kit, "test_calm_keeps_slot"), (
         "OSV1-026 (Conformance 7): the fixture no longer ships a bad half (Freeze 4)."
     )
-    assert "OSV1-012" in _kit_deferred_rows(kit, "test_calm_keeps_slot"), (
-        "OSV1-026 (Conformance 7) PIN BROKE THE RIGHT WAY: the good half is no longer "
-        "deferred against OSV1-012. Flip OSV1-012 AND this row and retarget both "
-        "probes in the same change (work_item_pipeline-c1a)."
-    )
-    assert row("OSV1-012")["disposition"] in PINNING_DISPOSITIONS, (
-        "OSV1-026 (Conformance 7) PIN BROKE THE RIGHT WAY: OSV1-012 is no longer red, "
-        "so Conformance 7's good halves should now pass. Re-derive from the PASSING pair."
+    assert row("OSV1-012")["disposition"] not in PINNING_DISPOSITIONS, (
+        "OSV1-026 (Conformance 7) REGRESSION: OSV1-012 went red again, so Conformance "
+        "7's good halves cannot be passing. These two rows move together -- re-derive "
+        "both from a re-run of the pair."
     )
     assert contains(
         OPERATOR_CONTRACT_PATH, "a render that drops empty widgets, or renders a hero-scale `0`"
@@ -1937,14 +1987,15 @@ def test_row_osv1_031() -> None:
         "to CONFORMS and retarget this probe to assert no Core row is red "
         "(work_item_pipeline-umm)."
     )
-    assert len(red) == 4, (
-        f"OSV1-031 (Freeze 5): pinned 4 red Core-carrying rows, observed {len(red)}: "
+    assert len(red) == 3, (
+        f"OSV1-031 (Freeze 5): pinned 3 red Core-carrying rows, observed {len(red)}: "
         f"{red}. Movement in either direction means this gate's tally changed -- update "
         f"the pin and the row's notes in the same change. (10 at seed; OSV1-009 went "
         f"green 2026-09-04, work_item_pipeline-sxh; OSV1-015 and -016 went green "
         f"2026-09-04, work_item_pipeline-8vv and -dg3; OSV1-001 and OSV1-004 went green "
         f"2026-09-05, work_item_pipeline-ujy and the Tier-A kit; OSV1-005 went green "
-        f"2026-09-05, work_item_pipeline-np3.)"
+        f"2026-09-05, work_item_pipeline-np3; OSV1-012 went green 2026-09-05, "
+        f"work_item_pipeline-aad.)"
     )
     assert {r["id"] for r in core_rows if r["disposition"] == "NOT-ASSERTABLE"} == {
         "OSV1-018",
