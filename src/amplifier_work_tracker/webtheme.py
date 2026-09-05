@@ -4479,13 +4479,27 @@ tr.attn-row.is-blocked{background:var(--blocked-surface);
      that -- so STATE ("this is today", "this is the watch band", "this label
      carries a value rather than an axis tick") rides a data attribute the
      stylesheet selects on instead of being conflated into the same
-     attribute. */
-.val-label[data-today],.axis-label[data-today]{fill:var(--brand-cyan-ink);font-weight:600}
-.zero-stub{fill:var(--ink-quiet)}
-.zero-stub[data-watch]{fill:var(--watch)}
-.axis-label[data-val]{fill:var(--ink-primary);font-weight:600}
-.axis-label[data-watch]{fill:var(--watch)}
-.axis-label[data-val][data-watch]{fill:var(--watch);font-weight:600}
+     attribute.
+
+     EVERY SELECTOR HERE IS SCOPED THROUGH `.svg-chart`, and that is
+     load-bearing rather than tidy. The chart ink these rules replace used to
+     be INLINE, which outranks every stylesheet rule; a bare
+     `.axis-label[data-watch]` (0,2,0) does NOT -- it loses to the existing
+     `.wt-observatory .svg-chart .axis-label{fill:var(--ink-tertiary)}`
+     (0,3,0), so the watch band, the value labels and today's tick all
+     silently reverted to tertiary ink when the inline styles were removed.
+     Measured, not reasoned: the Tier-B sweep read 182 fewer `--watch` px on
+     a dark L1. `.svg-chart` restores the specificity the inline attribute
+     used to buy, WITHOUT depending on `.wt-observatory` being an ancestor
+     (the browse surface renders the same charts). */
+.svg-chart .val-label{fill:var(--ink-tertiary)}
+.svg-chart .val-label[data-today],
+.svg-chart .axis-label[data-today]{fill:var(--brand-cyan-ink);font-weight:600}
+.svg-chart .zero-stub{fill:var(--ink-quiet)}
+.svg-chart .zero-stub[data-watch]{fill:var(--watch)}
+.svg-chart .axis-label[data-val]{fill:var(--ink-primary);font-weight:600}
+.svg-chart .axis-label[data-watch]{fill:var(--watch)}
+.svg-chart .axis-label[data-val][data-watch]{fill:var(--watch);font-weight:600}
 """
 
 CSS = CSS + "\n" + SINGLE_SOURCE_CSS

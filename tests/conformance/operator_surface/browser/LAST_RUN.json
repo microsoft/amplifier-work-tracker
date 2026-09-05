@@ -27,7 +27,7 @@
         "blocked": 0,
         "pixels_swept": 2813440,
         "retired_amber": 0,
-        "watch": 5318
+        "watch": 5229
       },
       "bad-alarm-fixture/L0/dark": {
         "alarm": 0,
@@ -48,7 +48,7 @@
         "blocked": 0,
         "pixels_swept": 2813440,
         "retired_amber": 16681,
-        "watch": 5116
+        "watch": 5047
       },
       "calm/L0/dark": {
         "alarm": 0,
@@ -62,7 +62,7 @@
         "blocked": 0,
         "pixels_swept": 2813440,
         "retired_amber": 0,
-        "watch": 5259
+        "watch": 5168
       },
       "calm/L1/dark": {
         "alarm": 0,
@@ -76,7 +76,7 @@
         "blocked": 97,
         "pixels_swept": 3792640,
         "retired_amber": 0,
-        "watch": 6449
+        "watch": 6443
       }
     },
     "kit.pinned_browser": {
@@ -392,6 +392,6 @@
       }
     }
   },
-  "recorded_at": "2026-09-05T10:35:48Z",
+  "recorded_at": "2026-09-05T11:55:58Z",
   "schema": "operator-surface-tier-b/1"
 }

@@ -1937,13 +1937,14 @@ def test_row_osv1_031() -> None:
         "to CONFORMS and retarget this probe to assert no Core row is red "
         "(work_item_pipeline-umm)."
     )
-    assert len(red) == 6, (
-        f"OSV1-031 (Freeze 5): pinned 6 red Core-carrying rows, observed {len(red)}: "
+    assert len(red) == 4, (
+        f"OSV1-031 (Freeze 5): pinned 4 red Core-carrying rows, observed {len(red)}: "
         f"{red}. Movement in either direction means this gate's tally changed -- update "
         f"the pin and the row's notes in the same change. (10 at seed; OSV1-009 went "
-        f"green 2026-09-04, work_item_pipeline-sxh; OSV1-001 went green 2026-09-05, "
-        f"work_item_pipeline-ujy; OSV1-005 went green 2026-09-05, "
-        f"work_item_pipeline-np3.)"
+        f"green 2026-09-04, work_item_pipeline-sxh; OSV1-015 and -016 went green "
+        f"2026-09-04, work_item_pipeline-8vv and -dg3; OSV1-001 and OSV1-004 went green "
+        f"2026-09-05, work_item_pipeline-ujy and the Tier-A kit; OSV1-005 went green "
+        f"2026-09-05, work_item_pipeline-np3.)"
     )
     assert {r["id"] for r in core_rows if r["disposition"] == "NOT-ASSERTABLE"} == {
         "OSV1-018",

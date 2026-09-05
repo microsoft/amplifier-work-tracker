@@ -1121,6 +1121,30 @@
     The contract's own named specimen (`style="color:#D9A253"`) is already
     exactly that, and Conformance 6's bad half (OSV1-025) already runs it.
 
+    RE-RECORDED 2026-09-05 at highway wave-3 integration, on the union tree,
+    same pinned chromium 148.0.7778.0 / playwright 1.60.0. EVERY NUMBER THIS
+    ROW ASSERTS IS UNCHANGED -- L0 clean 0/0 in both themes, L1 0 `--alarm`
+    and 97 `--blocked` in both, swept areas identical, and the three
+    discrimination arms still read 10 531 / 264 / 16 681. The visual-truth
+    lane changed classes, not the calm page's status pixels.
+
+    WHAT DID MOVE, recorded because a re-record that only reports "no change"
+    is not a measurement: the `--watch` bucket, which this sweep collects and
+    Core 2 deliberately does NOT score. It fell 1 161 -> 979 px on a dark L1
+    on the first union recording -- a real regression the lane's chart-ink
+    migration introduced through a CSS-specificity trap (see OSV1-005's own
+    notes) -- and reads 1 161 again after the repair, byte-identical to the
+    pre-lane value.
+
+    HONEST LIMIT ON REPRODUCIBILITY, recorded rather than smoothed: the run
+    was repeated on this tree, and 290 of the 294 recorded fields are
+    byte-identical between runs -- including every field any row asserts. The
+    four that are not are the LIGHT-theme `--watch` counts, which jitter by up
+    to ~90 px on ~5 200 (under 2%) run to run, consistent with antialiasing at
+    the sweep's 8/255 hue tolerance. Nothing reads them. They are recorded as
+    observed; if a row ever wants to assert one, it must first pin down that
+    jitter rather than inherit it.
+
 - id: OSV1-004
   title: state is never colour-only -- measured on rendered L0/L1/L2, and it holds
   contract:
@@ -1263,16 +1287,42 @@
     it is recorded here rather than fixed, because changing the rule would
     change what BOTH halves measure and belongs in one change of its own.
 
-    ONE RENDERED BEHAVIOUR CHANGED, and it is reported rather than folded in.
-    The Blocked KPI card's icon carried its alarm ink as an INLINE style, and
-    an inline style outranks every stylesheet rule -- including
+    ONE RENDERED BEHAVIOUR CHANGED ON PURPOSE, and it is reported rather than
+    folded in. The Blocked KPI card's icon carried its alarm ink as an INLINE
+    style, and an inline style outranks every stylesheet rule -- including
     `.wt-observatory .kpi-card.is-blocked.is-zero .k .icon{color:var(--ink-quiet)}`,
     which exists precisely so that "0 blocked" stops reading as alarm-red. That
     rule had never been able to win. With the ink moved to `.icon.ic-blocked`
     the is-zero rule now applies, so a calm screen paints one fewer alarm-
     coloured pixel. That is the direction Core 2 asks for ("zero `--alarm`
     pixels on a calm screen"), and it is a change in rendered output, so it is
-    named here. No other rendered output moved except spacing, per the 4px
+    named here. HONEST SCALE, added at integration: the icon is small enough
+    and antialiased enough that the Tier-B sweep measures NO change in the
+    scored buckets -- a calm L0 read 0 `--alarm` and 0 `--blocked` both before
+    and after. The cascade fix is real and readable in the stylesheet; the
+    pixel claim is "one fewer", not "measurably fewer".
+
+    A SECOND RENDERED CHANGE WAS FOUND AT INTEGRATION AND WAS A REGRESSION --
+    the same cascade trap, in the other direction, and the reason this section
+    no longer says "no other rendered output moved". Moving the chart ink out
+    of `chartsvg.py`'s inline `style=` into `.axis-label[data-watch]` /
+    `[data-val]` / `[data-today]` (specificity 0,2,0) put it BEHIND the
+    pre-existing `.wt-observatory .svg-chart .axis-label{fill:var(--ink-tertiary)}`
+    (0,3,0), which an inline attribute had always outranked. The watch band's
+    axis labels, the histogram's value labels and the velocity chart's
+    today tick therefore stopped painting their own ink, and `.val-label` lost
+    its default fill entirely (SVG falls back to black -- invisible on the dark
+    ground). MEASURED, not reasoned: the Tier-B re-record on the union tree read
+    979 `--watch` px on a dark L1 against 1 161 before. Repaired by scoping
+    every chart-ink selector through `.svg-chart` (>= 0,3,0, and later in the
+    cascade), and the re-recorded sweep reads 1 161 again -- byte-identical to
+    the pre-lane value. Guarded by two new discriminating tests in
+    `tests/unit/test_chartsvg.py`
+    (`test_chart_state_ink_outranks_the_generic_axis_label_rule`,
+    `test_every_chart_label_kind_has_a_default_ink`), each demonstrated failing
+    against the pre-fix stylesheet. Nothing else in the sweep moved.
+
+    Apart from those two, no rendered output moved except spacing, per the 4px
     snap above.
 
     NOT DONE HERE: `style=` is not gone -- 55 inline attributes remain, 47 of
@@ -2618,18 +2668,25 @@
 
     NOT WHAT THIS ROW ASSERTS, recorded so a future reader does not widen it:
     Freeze 4 asks that every fixture's BAD half has been run and caught its
-    defect. It does not ask that every GOOD half passes. Conformance 6 and 7
-    still carry `xfail(strict)` good halves against the open product defects
-    OSV1-005 and OSV1-012, and those two rows (OSV1-025, OSV1-026) stay red for
-    exactly that reason. A strict xfail is a check that RUNS -- the deferral is
-    visible, the demonstration is not missing.
+    defect. It does not ask that every GOOD half passes. A strict xfail is a
+    check that RUNS -- the deferral is visible, the demonstration is not
+    missing.
+
+    UPDATED 2026-09-05 at highway wave-3 integration: Conformance 6's good half
+    is no longer deferred. The visual-truth lane closed OSV1-005, deleted the
+    `xfail(strict)` marker naming it, and OSV1-025 flipped GAP -> CONFORMS in
+    the same change. Conformance 7 (`calm.keeps_slot`, two good halves) is now
+    the ONLY deferred pair in the kit, against the still-open OSV1-012, and
+    OSV1-026 stays red for exactly that reason. This row's own disposition does
+    not move: its subject is the bad halves, all of which still run and still
+    catch their defects.
 
     THE HOUSE PRECEDENT this follows: the custody family's CCV1-023 recorded
     discrimination by REVERTING each fix in turn and observing exactly the
     matching bad half go red while every good half stayed green.
 - id: OSV1-031
   title: >-
-    Freeze 5 -- 5 of the 19 Core-carrying rows are still red, and all five are
+    Freeze 5 -- 4 of the 19 Core-carrying rows are still red, and all four are
     now MEASURED VIOLATIONs (no Core row is an unasserted GAP any more)
   contract:
     file: contracts/operator-surface.v1.md
@@ -2688,23 +2745,15 @@
     measurement (see its own notes and the tests named there), not flipped
     because a file appeared.
 
-    TALLY MOVED 2026-09-05, RE-MEASURED FROM THE LEDGER RATHER THAN FROM THE
-    PRECEDING PARAGRAPHS -- which had drifted: the entry above says "nine red
-    now" and then lists OSV1-004 and OSV1-009 among them, both of which its own
-    earlier paragraphs record as CONFORMS. The observed red set on this change,
-    computed by the probe, is SIX: OSV1-003, -008, -010, -012, -015, -016.
-    Two flips account for the difference from the (correct) count of seven this
-    branch inherited:
+    THE VISUAL-TRUTH LANE COUNTED SIX on its own pre-integration base
+    (work_item_pipeline-np3), where OSV1-015 and -016 were still red and the
+    browser tier did not exist. That count is SUPERSEDED by the wave-3 re-count
+    at the end of this row; it is left recorded rather than deleted because the
+    flip it carried is real and is the reason the tally moved:
       OSV1-005 VIOLATION -> CONFORMS (work_item_pipeline-np3): zero literal
                   inline sites and zero literal `<style>`-block declarations
                   remain. Re-derived from the re-run census, not from a file
                   appearing -- see OSV1-005's own before/after numbers.
-      (and the inherited seven already reflected OSV1-001 going green on
-      2026-09-05, work_item_pipeline-ujy.)
-    Pinned count moved 9 -> 6 in this change. THREE, not one, because the pin
-    was ALREADY red on this branch's base at seven: the hero lane flipped
-    OSV1-001 without moving this tally with it. That is the defect this row
-    exists to catch, and it is recorded rather than quietly absorbed.
 
     THE FAILURE MODE THIS ROW EXISTS TO CATCH: a GAP row whose only defect is
     "the kit is not built" being flipped to CONFORMS because a file now exists,
@@ -2743,6 +2792,24 @@
                         measured failure, which is the only honest kind of red
     Five red. Freeze 5 is met when all five are green and the two
     NOT-ASSERTABLE rows still name their cadence.
+
+    RE-COUNTED 2026-09-05 at highway wave-3 integration (orchestrator), FOUR
+    RED, computed by the probe against the union tree rather than transcribed
+    from any lane's own paragraph. ONE flip moves it: OSV1-005 (Core 4)
+    VIOLATION -> CONFORMS, the visual-truth lane (work_item_pipeline-np3),
+    re-derived from the census RE-RUN on this tree -- 0 literal inline sites
+    (66 on the base), 0 literal `<style>`-block declarations (40 on the base),
+    register 23 -> 8. The pin moves 5 -> 4, not 5 -> 6: the lane measured its
+    own base, where OSV1-015/-016 were still red and the browser tier did not
+    exist, and this integration re-measures rather than adopting that number.
+    The tally is now:
+      CONFORMS 13       OSV1-001, -002, -004, -005, -006, -007, -009, -011,
+                        -013, -014, -015, -016, -017
+      NOT-ASSERTABLE 2  OSV1-018 (Core 12), OSV1-019 (Core 13) -- unchanged
+      VIOLATION 4       OSV1-003, -008, -010, -012
+      GAP 0             every Core clause is still ASSERTED
+    Four red, every one of them a MEASURED failure. Freeze 5 is met when all
+    four are green and the two NOT-ASSERTABLE rows still name their cadence.
 
 - id: OSV1-032
   title: >-
