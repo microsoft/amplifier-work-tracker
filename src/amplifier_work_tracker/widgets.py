@@ -1296,3 +1296,111 @@ _register_observatory(
         description="Per-project holder rows with custody freshness.",
     )
 )
+
+
+# ---------------------------------------------------------------------------
+# 11. velocity-hero -- L0's Core 1 hero region
+# ---------------------------------------------------------------------------
+#
+# Appended at the END of this module ON PURPOSE, below every
+# `_register_observatory` call above, rather than slotted beside its
+# `verdict-hero`/`kpi-strip` siblings in sections 1-2. The ledger's Core 4
+# exemption register (`ledger/checks/test_operator_rows.py`, row OSV1-006)
+# pins computed-geometry inline-style sites by `file:line` -- widgets.py:704,
+# :831, :834, :1110 -- and this lane owns row OSV1-001 only. Inserting
+# upstream would silently move three registered sites and break a row this
+# change has no business touching; appending moves nothing.
+#
+# For the same reason `VelocityHeroData`/`render_velocity_hero` are absent
+# from this module's `__all__` (line ~50, far above widgets.py:704): adding
+# two names there would shift all four registered sites by two. Nothing
+# depends on that list -- every consumer reaches this module as `from . import
+# widgets as WD`, never `import *` -- so the omission costs nothing but is
+# stated here rather than left to be discovered. Fold both names in when the
+# register next moves for its own reasons (work_item_pipeline-np3, OSV1-005/006).
+
+
+class VelocityHeroData(TypedDict):
+    """L0 Mission Control's hero region (`contracts/operator-surface.v1.md`
+    Core 1: "The L0 hero region carries throughput over a stated window,
+    presented together with the counts an operator acts on").
+
+    The LEADING figure is fleet velocity: `velocity_value` items resolved,
+    `velocity_noun` naming what was counted (`"resolved"`), and
+    `velocity_window` STATING the window in text (`"last 24h"`). The window
+    is a field, never implied by the figure's position -- Core 1 requires it
+    stated, and an operator reading "115" with no window learns nothing.
+
+    `counts` is the four counts Core 1 names -- in flight (held), blocked,
+    needs attention, open/ready -- rendered through `render_kpi_strip` so
+    they keep the shipped `.kpi-card` vocabulary (label, value, hover
+    chevron, the Blocked card's `.is-blocked`/`.is-zero` treatment) INSIDE
+    this region rather than as a separate strip below it. Every card carries
+    a text label, so no count is encoded by colour alone (Core 3).
+
+    `headline`/`detail_html` are the composed verdict (see `verdict_line`),
+    demoted from headline act to a caption beside the figure: the sentence
+    still reads, it just no longer displaces the hero. `detail_html` is
+    rendered UNESCAPED (it legitimately carries `<b>`/`<a>` markup).
+    """
+
+    state: VerdictState
+    eyebrow: str
+    velocity_value: int
+    velocity_noun: str
+    velocity_window: str
+    headline: str
+    detail_html: str
+    counts: list[KpiCard]
+
+
+def render_velocity_hero(data: VelocityHeroData) -> str:
+    """Render L0's Core 1 hero region: velocity figure + stated window, the
+    verdict as a caption, and the four named counts adjacent in the SAME
+    panel. References icon ids `#i-alert-triangle`, `#i-check-circle`,
+    `#i-clock` (plus whatever each count card asks for) -- the page shell's
+    sprite must define all of them.
+
+    Calm is REPORTED, never celebrated (Core 8). Nothing here scales with
+    its value: a `0` velocity figure renders at exactly the size and weight
+    a `115` does, still labelled, still stating its window; a `0` count
+    renders at the same scale as its siblings, still labelled. There is no
+    triumphant-zero variant and no slot that collapses when a number goes to
+    zero, so the region does not reflow between calm and alarm.
+
+    `role="status"` marks the region as a live region: the 20 s body-swap
+    (`_AUTO_REFRESH_MS`) replaces this panel's content in place, and Core 6
+    requires the announcement that swap produces to survive it.
+    """
+    icon = _HERO_ICON[data["state"]]
+    counts_html = render_kpi_strip(KpiStripData(cards=data["counts"]))
+    return (
+        f'<div class="glass-panel strong rim-glow hero hero-velocity is-{data["state"]}"'
+        ' role="status">'
+        f'<div class="eyebrow2">{_esc(data["eyebrow"])}</div>'
+        '<div class="hero-lead">'
+        '<div class="hero-figure">'
+        f'<span class="figv">{int(data["velocity_value"])}</span>'
+        f'<span class="figk">{_esc(data["velocity_noun"])}'
+        f'<span class="figwin">{_esc(data["velocity_window"])}</span></span>'
+        "</div>"
+        '<div class="hero-caption">'
+        f'<div class="verdict"><span class="icon"><svg><use href="#{icon}"/></svg></span> '
+        f"{_esc(data['headline'])}</div>"
+        f'<div class="detail">{data["detail_html"]}</div>'
+        "</div>"
+        "</div>"
+        f"{counts_html}"
+        "</div>"
+    )
+
+
+_register_observatory(
+    ObservatoryWidget(
+        id="velocity-hero",
+        title="Fleet velocity",
+        size=WidgetSize.FULL,
+        render=render_velocity_hero,
+        description="Throughput over a stated window plus the four counts an operator acts on.",
+    )
+)

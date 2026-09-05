@@ -145,52 +145,80 @@ def test_row_osv1_000() -> None:
 
 
 def test_row_osv1_001() -> None:
-    """Core 1 VIOLATION pin: the L0 hero is a verdict, and velocity is a chart.
+    """Core 1 CONFORMS: the L0 hero LEADS with fleet velocity over a stated
+    window, and the four counts an operator acts on sit in that same region.
 
-    Three separable facts, asserted separately so a partial fix cannot pass a
-    single blunt check: the hero renderer emits no figure and no count; L0
-    builds its hero from the verdict path; and the KPI strip carries the five
-    shipped keys with NO needs-attention key among them.
+    RETARGETED 2026-09-04. This probe used to be the VIOLATION pin -- it
+    asserted the hero was a verdict line, that velocity was a chart two
+    regions below, and that the KPI strip carried five keys with no
+    needs-attention count among them. That behaviour moved TOWARD the clause
+    (VIOLATION-MOVEMENT), so the row flipped to CONFORMS and this probe was
+    pointed at the fixed shape in the same change. Flip direction is now
+    REGRESSION: this going red means the repo moved back AWAY from Core 1.
+
+    Three separable facts, asserted separately so a partial regression cannot
+    slip past a single blunt check:
+      1. the renderer emits a velocity FIGURE and STATES its window -- a bare
+         number with no window is the half-fix Core 1 does not accept;
+      2. L0 builds its hero from that renderer, with exactly the four counts
+         the clause names, each carrying a text LABEL (Core 3);
+      3. the counts are composed INTO the hero region, not into a separate
+         strip below it -- which is precisely where they used to live.
     """
     hero = read(WIDGETS)
-    start = hero.index("def render_verdict_hero")
-    body = hero[start : start + 1400]
-    assert 'class="verdict"' in body and 'class="eyebrow2"' in body, (
-        "OSV1-001 (Core 1): `render_verdict_hero` no longer emits the verdict/eyebrow "
-        "shape this pin was written against -- the hero moved. Re-measure the row."
+    start = hero.index("def render_velocity_hero")
+    body = hero[start : start + 1800]
+    assert 'class="figv"' in body, (
+        "OSV1-001 (Core 1) REGRESSION: `render_velocity_hero` no longer emits the "
+        "velocity figure. Core 1's hero IS that throughput reading -- without it the "
+        "region is a verdict line again, which is the defect this row closed."
     )
-    assert "velocity" not in body.lower(), (
-        "OSV1-001 (Core 1) PIN BROKE THE RIGHT WAY: the hero renderer now mentions "
-        "velocity. If the hero really carries throughput over a stated window plus the "
-        "four counts, flip OSV1-001 to CONFORMS and retarget this probe at the fixed "
-        "shape IN THE SAME CHANGE (work_item_pipeline-ujy). A passing pin is not "
-        "conformance; only the retargeted probe is."
+    assert 'class="figwin"' in body and "velocity_window" in body, (
+        "OSV1-001 (Core 1) REGRESSION: the hero's throughput figure no longer states "
+        'the window it covers. Core 1 says "throughput over a STATED window" -- an '
+        "operator reading a bare number learns nothing from it."
+    )
+    assert "render_kpi_strip(" in body, (
+        "OSV1-001 (Core 1) REGRESSION: the hero renderer no longer composes the counts "
+        "strip itself. If the route places one below the hero again, the counts have "
+        "left the hero REGION, which is what Core 1 requires them to be inside."
+    )
+    assert 'role="status"' in body, (
+        "OSV1-001 (Core 1): the hero stopped being a live region. The 20s body-swap "
+        'replaces this panel in place (Core 6) -- without `role="status"` that '
+        "replacement announces nothing."
     )
 
     app = read(WEBAPP)
-    assert "hero_html = WD.render_verdict_hero(" in app, (
-        "OSV1-001 (Core 1): L0 no longer builds its hero from `render_verdict_hero`. "
-        "That is the fix landing -- re-derive the row."
+    assert "hero_html = WD.render_velocity_hero(" in app, (
+        "OSV1-001 (Core 1) REGRESSION: L0 no longer builds its hero from "
+        "`render_velocity_hero`. Re-derive the row before changing this."
     )
 
-    # The shipped KPI strip: five keys, and `needs attention` is not one of them.
-    kpi = app[app.index("kpi_html = WD.render_kpi_strip(") :][:2200]
-    shipped = set(re.findall(r'key="([a-z_0-9]+)"', kpi))
-    assert shipped == {"agents", "held", "ready", "blocked", "resolved24h"}, (
-        f"OSV1-001 (Core 1): the L0 KPI strip's keys moved -- pinned "
-        f"{{agents, held, ready, blocked, resolved24h}}, observed {sorted(shipped)}. "
-        f"If a needs-attention count was added, that is the fix landing "
-        f"(work_item_pipeline-ujy): flip the row and retarget this probe."
+    # The four counts Core 1 names, read off the hero's own construction --
+    # bounded to it, so a label somewhere else on the page cannot stand in for
+    # one that is missing here.
+    call = app[
+        app.index("hero_counts = [") : app.index("velocity_data = _workspace_velocity_data(")
+    ]
+    labels = set(re.findall(r'label="([^"]+)"', call))
+    assert labels == {"In flight (held)", "Blocked", "Needs attention", "Open / ready"}, (
+        f"OSV1-001 (Core 1): the L0 hero's counts moved -- Core 1 names FOUR (in flight "
+        f"(held), blocked, needs attention, open/ready); observed {sorted(labels)}. "
+        f"`Needs attention` is the one that was absent anywhere at seed; losing it "
+        f"again is the original defect returning."
     )
-    # Matched on the card LABELS, not on the word "attention": the Blocked card
-    # already links to `#attention-queue`, so a substring check would be
-    # satisfied by an href and assert nothing about a count.
-    labels = set(re.findall(r'label="([^"]+)"', kpi))
-    assert labels == {"Agents active now", "Held", "Ready", "Blocked", "Resolved 24h"}, (
-        f"OSV1-001 (Core 1): the KPI strip's card labels moved -- pinned the five "
-        f"shipped ones, observed {sorted(labels)}. Core 1 names FOUR counts an operator "
-        f"acts on; `needs attention` was the one absent at seed. If it was added, that "
-        f"is the fix landing (work_item_pipeline-ujy) -- re-derive the row."
+    assert "velocity_window=" in call and "velocity_value=" in call, (
+        "OSV1-001 (Core 1): L0 stopped passing a velocity figure and/or its window to "
+        "the hero. Both halves are the clause."
+    )
+
+    # No second strip survives below the hero: the route holds no separate
+    # `kpi_html` fragment to interpolate under it any more.
+    assert "kpi_html" not in app, (
+        "OSV1-001 (Core 1) REGRESSION: a separate KPI-strip fragment is back in the L0 "
+        "route. The counts belong INSIDE the hero region (`render_velocity_hero` "
+        "composes them); a strip below it is the shape this row closed."
     )
 
 
@@ -1002,8 +1030,8 @@ def test_row_osv1_031() -> None:
         "to CONFORMS and retarget this probe to assert no Core row is red "
         "(work_item_pipeline-umm)."
     )
-    assert len(red) == 10, (
-        f"OSV1-031 (Freeze 5): pinned 10 red Core-carrying rows, observed {len(red)}: "
+    assert len(red) == 9, (
+        f"OSV1-031 (Freeze 5): pinned 9 red Core-carrying rows, observed {len(red)}: "
         f"{red}. Movement in either direction means this gate's tally changed -- update "
         f"the pin and the row's notes in the same change."
     )

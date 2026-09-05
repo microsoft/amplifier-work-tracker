@@ -931,50 +931,72 @@
     different families.
 
 - id: OSV1-001
-  title: the L0 hero is a verdict line, not fleet velocity with the counts that matter
+  title: the L0 hero leads with fleet velocity and carries the four counts that matter
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 1
     quote: |
       The L0 hero region carries throughput over a stated window, presented together with the
       counts an operator acts on: in flight (held), blocked, needs attention, and open/ready.
-  disposition: VIOLATION
+  disposition: CONFORMS
   work: work_item_pipeline-ujy
   assertion:
     kind: probe
     ref: test_row_osv1_001
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED 2026-09-04 from VIOLATION (VIOLATION-MOVEMENT: the pinning probe went
+    red because the behaviour moved TOWARD the clause). The probe was retargeted
+    at the fixed shape in the same change, and its mutations rewritten to
+    reinstate each half of the closed defect. Flip direction is now REGRESSION.
 
-    MEASURED 2026-09-04 against 4aaee50, not taken from the Phase-0 brief:
-      webapp.py:4602    the hero is `WD.render_verdict_hero(VerdictHeroData(...))`
-      widgets.py:637-663  that renderer emits `<div class="glass-panel strong
-                        rim-glow hero is-{state}">` carrying an eyebrow, a
-                        verdict headline, a detail line, and an OPTIONAL
-                        `meta_row`. L0 passes no `meta_row`, so the hero
-                        carries no figure and no count at all.
-      webapp.py:4611-4641  a SEPARATE kpi-strip below the hero: five cards keyed
-                        agents / held / ready / blocked / resolved_24h.
-      webapp.py:4647    velocity is `_velocity_chart_shell_html(title=
-                        "Environment velocity", ...)` -- a CHART, two regions
-                        below the hero, not a hero figure.
-    Against the clause: throughput-in-the-hero ABSENT; held / blocked /
-    open-ready present as KPI cards but not in the hero; NEEDS ATTENTION absent
-    as a count anywhere in either region (the ranked "Needs you" section is at
-    webapp.py:4676 and its length is never surfaced as a count); and two cards
-    the clause does not name (agents active, resolved 24h) occupy the strip.
+    MEASURED 2026-09-04 against the change that closed it:
+      widgets.py:1323-1396  `render_velocity_hero(VelocityHeroData)` -- one panel,
+                        `<div class="glass-panel strong rim-glow hero hero-velocity
+                        is-{state}" role="status">`, carrying: the velocity figure
+                        (`<span class="figv">`), the window STATED beside it
+                        (`<span class="figwin">last 24h</span>`), the verdict
+                        demoted to a `.hero-caption`, and the counts strip
+                        composed INSIDE the same div (it calls `render_kpi_strip`
+                        itself rather than leaving the route to place one below).
+      webapp.py:4611-4642  L0 builds that hero, with exactly the four counts Core 1
+                        names: "In flight (held)" (held_total), "Blocked"
+                        (blocked_total), "Needs attention" (len(attention_rows_raw)
+                        -- the ranked queue's own length, which was the count
+                        ABSENT anywhere at seed), "Open / ready" (ready_total).
+      webapp.py:4741     the body no longer interpolates a separate `{kpi_html}`
+                        section: there is exactly ONE `.kpi-strip` on the page and
+                        it is inside the hero region.
+    Against the clause: throughput-in-the-hero PRESENT with its window stated;
+    all four named counts PRESENT in the same region, each with a text label
+    (Core 3) and a numeral. "Resolved 24h" is no longer a card because it is the
+    figure; the agents-active reading it displaced survives in the verdict caption
+    ("N agents are moving ...") and in the "Agents now" section.
 
-    OPEN READING, RETURNED TO THE ROOT AND NOT DECIDED BY THIS RECONCILE:
-    whether the shipped KPI strip is part of "the L0 hero region", i.e. whether
-    held/blocked/ready already satisfy the counts half in part. The disposition
-    does not turn on it -- the throughput half is unsatisfied on either
-    reading -- but the size of the remaining work does.
+    THE OPEN READING THE SEED RETURNED TO THE ROOT -- whether the shipped KPI strip
+    counted as part of "the L0 hero region" -- is now MOOT rather than decided: the
+    strip is composed into the hero panel itself, so it is part of the region on
+    either reading. The root ruling recorded on work_item_pipeline-ujy is what this
+    change followed.
+
+    Rendered evidence, both fixtures, asserted by test:
+      tests/unit/test_observatory_widgets.py
+        test_render_velocity_hero_leads_with_the_figure_and_states_its_window
+        test_render_velocity_hero_carries_all_four_named_counts_in_the_same_region
+        test_render_velocity_hero_every_count_carries_a_text_label_and_a_numeral
+        test_render_velocity_hero_empty_fixture_reports_zero_it_never_celebrates_it
+        test_render_velocity_hero_blocked_zero_goes_quiet_not_alarm_red
+        test_render_velocity_hero_is_a_live_region_for_the_body_swap
+      tests/integration/test_observatory_web.py
+        test_l0_hero_leads_with_fleet_velocity_over_a_stated_window
+        test_l0_hero_carries_the_four_named_counts_and_no_strip_survives_below_it
+        test_l0_hero_on_an_all_empty_fleet_reports_zero_without_celebrating_it
 
     Core 1 overrode a recorded in-code invariant, which the contract's own
     Changelog quotes: webapp.py:37-44 states the hero is the AGE of the oldest
     unclaimed item, never a count. The owner weighed that and chose
-    observability; the concern behind it survives as Core 8 (OSV1-012). See
+    observability; the concern behind it survives as Core 8 (OSV1-012), and this
+    composition honours it -- nothing scales with its value, so a zero is
+    reported at its siblings' scale with its label, never celebrated. See
     OSV1-033 -- one of those Changelog quotes does not verify against its
     cited source.
 
@@ -2084,7 +2106,7 @@
     failure.
 
 - id: OSV1-031
-  title: Freeze 5 -- 10 of the 19 Core-carrying rows read VIOLATION or GAP
+  title: Freeze 5 -- 9 of the 19 Core-carrying rows read VIOLATION or GAP
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 5
@@ -2114,6 +2136,15 @@
       GAP 5             OSV1-003, -004, -008, -010, -012
     Ten red. Freeze 5 is met when all ten are green and the two NOT-ASSERTABLE
     rows still name their cadence.
+
+    TALLY MOVED 2026-09-04: OSV1-001 (Core 1) flipped VIOLATION -> CONFORMS
+    when the L0 hero was rebuilt to lead with fleet velocity and carry the four
+    counts. Nine red now -- OSV1-003, -004, -005, -008, -009, -010, -012, -015,
+    -016 -- and the probe's pinned count moved 10 -> 9 with it. This is the
+    tally this gate exists to track, not a re-derivation of any other row: no
+    other disposition changed, and OSV1-001 was re-derived from real
+    measurement (see its own notes and the tests named there), not flipped
+    because a file appeared.
 
     THE FAILURE MODE THIS ROW EXISTS TO CATCH: a GAP row whose only defect is
     "the kit is not built" being flipped to CONFORMS because a file now exists,

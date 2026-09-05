@@ -381,14 +381,26 @@ def _mo000_operator_contract_moved(w: World) -> None:
     w.append(OPERATOR_CONTRACT_PATH, "\n<!-- a governed clause moved under the ledger -->\n")
 
 
-def _mo001_hero_gains_the_missing_count(w: World) -> None:
-    """FIXED: the needs-attention count Core 1 names joins the strip."""
+def _mo001_the_needs_attention_count_is_dropped_again(w: World) -> None:
+    """REGRESSION: the count that was absent ANYWHERE at seed goes missing from
+    the L0 hero again -- the exact half of the defect this row closed.
+
+    The CARD stays, so the strip still renders four of them: only the reading
+    it carries reverts to one Core 1 does not name. A probe that counted cards
+    instead of naming them would sail straight past this.
+    """
+    w.replace(WEBAPP, 'label="Needs attention",', 'label="Agents active now",')
+
+
+def _mo001b_the_hero_figure_stops_stating_its_window(w: World) -> None:
+    """REGRESSION: the throughput figure survives but its window does not --
+    the OTHER half of the clause ("throughput over a STATED window"), and the
+    partial fix that would otherwise pass for conformance.
+    """
     w.replace(
-        WEBAPP,
-        'WD.KpiCard(key="ready", label="Ready", value=ready_total, href="#fleet"),',
-        'WD.KpiCard(key="attention", label="Needs attention", value=0, href="#x"),\n'
-        "                    "
-        'WD.KpiCard(key="ready", label="Ready", value=ready_total, href="#fleet"),',
+        WIDGETS,
+        'f\'<span class="figwin">{_esc(data["velocity_window"])}</span></span>\'',
+        '"</span>"',
     )
 
 
@@ -586,8 +598,8 @@ def _mo031_a_red_core_row_goes_green(w: World) -> None:
     """
     w.replace(
         ROWS_PATH,
-        "  disposition: VIOLATION\n  work: work_item_pipeline-ujy",
-        "  disposition: CONFORMS\n  work: work_item_pipeline-ujy",
+        "  disposition: VIOLATION\n  work: work_item_pipeline-8vv",
+        "  disposition: CONFORMS\n  work: work_item_pipeline-8vv",
     )
 
 
@@ -707,8 +719,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-001",
-        "the missing needs-attention count joins the L0 strip",
-        _mo001_hero_gains_the_missing_count,
+        "the needs-attention count is dropped from the L0 hero again",
+        _mo001_the_needs_attention_count_is_dropped_again,
+    ),
+    Mutation(
+        "OSV1-001",
+        "the hero keeps its throughput figure but stops stating the window it covers",
+        _mo001b_the_hero_figure_stops_stating_its_window,
     ),
     Mutation(
         "OSV1-002",

@@ -4178,6 +4178,90 @@ def state_html(kind: str, label: str) -> str:
     return f'<span class="state {cls}"><span class="sq"></span>{_esc(label)}</span>'
 
 
+# ===========================================================================
+# L0 hero region -- operator-surface.v1 Core 1
+# ===========================================================================
+#
+# Rules for `widgets.render_velocity_hero`'s composition: the velocity figure
+# and its stated window, the verdict demoted to a caption beside it, and the
+# four named counts (the existing `.kpi-strip`/`.kpi-card` vocabulary, reused
+# verbatim) pulled INSIDE the hero panel instead of sitting in a separate
+# strip below it.
+#
+# APPENDED HERE, below this module's rendering helpers, rather than added to
+# `OBSERVATORY_CSS` where it naturally belongs. Two reasons, both concrete:
+# the goal for this lane forbids restructuring the token blocks above (a
+# concurrent lane is editing the light-mode `--ink-quiet` tokens), and the
+# ledger's Core 4 exemption register pins computed-geometry inline-style sites
+# in THIS file by line -- webtheme.py:4120, :4139, :4146 (row OSV1-006, which
+# this lane does not own). Inserting anywhere above them moves all three.
+# `CSS = CSS + ...` is the same append `OBSERVATORY_CSS` already uses at the
+# end of its own block, and `page()` reads `CSS` at call time, so ordering
+# below the helpers changes nothing at render time.
+#
+# Every value below reaches a token or an existing class -- no literal hue is
+# introduced (Core 2's three status hues stay the closed set), and nothing here
+# grows or shrinks with a number (Core 8: a `0` is reported at the same scale
+# as a `115`, never celebrated and never collapsed away).
+L0_HERO_CSS = r"""
+/* -- the hero's leading act: fleet velocity, with its window STATED -- */
+.wt-observatory .hero-velocity{gap:var(--space-4)}
+.wt-observatory .hero-velocity .hero-lead{
+  display:flex;align-items:baseline;gap:var(--space-6);flex-wrap:wrap;
+}
+.wt-observatory .hero-velocity .hero-figure{
+  display:flex;align-items:baseline;gap:var(--space-3);flex:0 0 auto;
+}
+/* The one numeral this surface renders at hero scale. Core 9's `calm.keeps_
+   slot` check names this exemption explicitly ("no numeral renders at hero
+   scale OUTSIDE the Core 1 hero"), so the size is deliberate here and
+   nowhere else. Fixed size/weight: a zero gets exactly this treatment. */
+.wt-observatory .hero-velocity .figv{
+  font-family:var(--font-mono);font-size:3.25rem;font-weight:700;line-height:1;
+  color:var(--ink-primary);font-variant-numeric:tabular-nums;letter-spacing:-.02em;
+}
+.wt-observatory .hero-velocity .figk{
+  display:flex;flex-direction:column;gap:2px;
+  font-size:.8125rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--ink-secondary);
+}
+/* The window text. Never decorative -- it is the half of the figure that
+   makes it mean anything, so it stays at --ink-tertiary (legible), never
+   --ink-quiet (reserved for true decoration). */
+.wt-observatory .hero-velocity .figwin{
+  font-family:var(--font-sans);font-size:.75rem;font-weight:500;text-transform:none;
+  letter-spacing:normal;color:var(--ink-tertiary);
+}
+/* The verdict sentence, demoted from headline act to caption: same
+   `.verdict`/`.detail` vocabulary, one step down from --text-display-size so
+   the figure leads and nothing else displaces it (Core 1). The type scale
+   above declares display/section-label/body and no intermediate "title"
+   step; adding one would mean editing the token block this lane must not
+   restructure, so the step sits here with the rest of this composition. */
+.wt-observatory .hero-velocity .hero-caption{flex:1 1 320px;min-width:0}
+.wt-observatory .hero-velocity .hero-caption .verdict{
+  font-size:1.25rem;font-weight:600;line-height:1.3;
+}
+/* -- the four named counts, composed INTO the hero (not a strip below) -- */
+.wt-observatory .hero-velocity .kpi-strip{
+  grid-template-columns:repeat(4,1fr);margin-bottom:0;
+}
+/* Glass-on-glass: these cards already sit inside a `.glass-panel.strong`
+   hero, so they drop to the plain row fill every nested card uses rather
+   than doubling the strong panel treatment on top of itself. */
+.wt-observatory .hero-velocity .kpi-card{
+  background:var(--glass-fill);padding:var(--space-4);
+}
+.wt-observatory .hero-velocity .kpi-card:hover{background:var(--glass-fill-row-hover)}
+.wt-observatory .hero-velocity .kpi-card .v{font-size:1.5rem}
+@media (max-width:760px){
+  .wt-observatory .hero-velocity .kpi-strip{grid-template-columns:repeat(2,1fr)}
+}
+"""
+
+CSS = CSS + "\n" + L0_HERO_CSS
+
+
 __all__ = [
     "CSS",
     "ICONS",
