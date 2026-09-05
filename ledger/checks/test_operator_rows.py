@@ -637,71 +637,102 @@ def test_row_osv1_007() -> None:
 
 
 #: Live regions present BEFORE the forced swap, per level, as the 2026-09-05
-#: re-recorded run measures them. L0 renders exactly ONE since the hero
-#: rebuild landed (`widgets.py:1379`, the verdict hero's `role="status"`); L1
-#: still renders none. Pinned per level rather than as a single number,
-#: because the two levels answer Core 6's announcement half differently and a
-#: shared pin would let one move under the other.
-_LIVE_REGIONS_BEFORE_SWAP = {"L0": 1, "L1": 0}
+#: RE-RECORDED run measures them, after the Core 6 fix.
+#:
+#: L0 renders TWO: the verdict hero's `role="status"` (`widgets.py:1379`) and
+#: the persistent `#wt-live` region the fix added (`webapp.py`'s
+#: `_live_region_html`). L1 renders ONE -- it had NONE before the fix, which is
+#: why Core 6's announcement half failed there one step earlier than on L0.
+#: Pinned per level rather than as a single number, because the two levels
+#: reach the clause differently and a shared pin would let one move under the
+#: other.
+_LIVE_REGIONS_BEFORE_SWAP = {"L0": 2, "L1": 1}
 
 
 def test_row_osv1_008() -> None:
-    """Core 6 VIOLATION pin: one of four survivals holds, RE-READ from the run.
+    """Core 6 CONFORMS: all four named survivals hold, RE-READ from the run.
 
-    Pinned in BOTH directions per survival, because they are separable and a
-    fix to any one of them is progress this row must record rather than
-    absorb.
+    RETARGETED from the VIOLATION pin (work_item_pipeline-v3m, 2026-09-05).
+    The pin froze the wrong shape -- one of four survivals holding -- and it
+    broke the right way when the fix landed. What it asserts now is the
+    conforming shape, still pinned per survival, because they are separable
+    mechanisms and a regression in any ONE of them is a regression this row
+    must catch rather than average away.
+
+    Every number is re-read from the kit's committed run summary
+    (`LAST_RUN.json`); this row never trusts the browser tier's own pass/fail
+    (Freeze 3 / Phase-1 ruling 6).
     """
     for level in ("L0", "L1"):
         m = tier_b("swap.survives", f"calm/{level}/dark")
         assert m["scroll_preserved"], (
-            f"OSV1-008 (Core 6): scroll offset stopped surviving the body-swap on "
-            f"{level}. That was the ONE of Core 6's four named survivals that held "
-            f"-- a regression."
+            f"OSV1-008 (Core 6) REGRESSION on {level}: scroll offset stopped "
+            f"surviving the body-swap. `restoreState`'s `window.scrollTo` runs "
+            f"LAST, after the disclosures are re-opened -- check nothing moved it "
+            f"back above them."
         )
-        assert not m["open_details_preserved"], (
-            f"OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY on {level}: an open "
-            f"`<details>` now survives the swap. Confirm it survives because the "
-            f"markup gained ids and `restoreState` reaches them, then re-derive "
-            f"this row (work_item_pipeline-qgo)."
+        assert m["open_details_preserved"], (
+            f"OSV1-008 (Core 6) REGRESSION on {level}: an open `<details>` stopped "
+            f"surviving the swap. `restoreState` records open disclosures by "
+            f"ORDINAL + class signature as well as by id -- the id path alone has "
+            f"ZERO targets on this surface, which is exactly how this used to fail."
         )
         assert m["details_with_id"] == 0, (
-            f"OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY on {level}: "
-            f"{m['details_with_id']} `<details>` now carry an id. `restoreState` "
-            f"only ever re-opens `details[id]`, so this is the mechanism acquiring "
-            f"its first targets -- re-derive from the new swap measurement."
+            f"OSV1-008 (Core 6) PIN MOVED on {level}: {m['details_with_id']} "
+            f"`<details>` now carry an id. That is not a regression -- it is the "
+            f"id path acquiring its first real targets -- but it changes WHICH "
+            f"mechanism is carrying the disclosure half, so re-derive this row "
+            f"and confirm the ordinal path is still exercised."
         )
-        assert not m["pause_control_preserved"], (
-            f"OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY on {level}: the pause "
-            f"CONTROL's state now survives the swap. Re-derive this row."
+        assert m["pause_control_preserved"], (
+            f"OSV1-008 (Core 6) REGRESSION on {level}: the pause CONTROL stopped "
+            f"surviving the swap -- a paused page shows itself as running again. "
+            f"The control is re-synchronised to `window.__wtRefreshPaused` after "
+            f"every swap (`restorePauseControl`); the operator reads the control, "
+            f"not the flag."
         )
         assert m["pause_flag_preserved"], (
-            f"OSV1-008 (Core 6): `window.__wtRefreshPaused` stopped surviving the "
-            f"swap on {level}. The flag living on `window` is why polling stays "
-            f"paused at all -- a regression."
+            f"OSV1-008 (Core 6) REGRESSION on {level}: `window.__wtRefreshPaused` "
+            f"stopped surviving the swap. The flag living on `window` is why "
+            f"polling stays paused at all."
         )
         assert m["live_regions_before"] == _LIVE_REGIONS_BEFORE_SWAP[level], (
             f"OSV1-008 (Core 6) PIN MOVED on {level}: the page renders "
             f"{m['live_regions_before']} live region(s) before the swap, pinned at "
             f"{_LIVE_REGIONS_BEFORE_SWAP[level]}. Movement in either direction "
             f"changes what Core 6's announcement half is even asking -- re-derive "
-            f"this row from the new swap measurement (work_item_pipeline-qgo)."
+            f"this row from the new swap measurement."
         )
-        assert m["marked_live_regions_after"] == 0, (
-            f"OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY on {level}: "
-            f"{m['marked_live_regions_after']} of the live region(s) tagged before "
-            f"the swap SURVIVED it. On L0 that is the announcement half closing -- "
-            f"re-derive this row from the new measurement."
+        assert m["marked_live_regions_after"] > 0, (
+            f"OSV1-008 (Core 6) REGRESSION on {level}: none of the "
+            f"{m['live_regions_before']} live region(s) tagged before the swap "
+            f"survived it. NODE IDENTITY is the reading that matters here: a "
+            f"region destroyed and rebuilt carrying the same sentence has still "
+            f"cut off whatever was being announced."
         )
-    assert count(WEBAPP, "aria-live") == 0 and count(WEBTHEME, "aria-live") == 0, (
-        "OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY: an `aria-live` region appeared "
-        "in the source. Re-derive this row from the Tier-B snapshot rather than "
-        "from its presence."
+        assert m["announcement_present_before"], (
+            f"OSV1-008 (Core 6) on {level}: the persistent region carried no text "
+            f"before the swap, so 'the announcement survived' is vacuous -- an "
+            f"empty region announces nothing whether it survives or not."
+        )
+        assert m["announcement_preserved"], (
+            f"OSV1-008 (Core 6) REGRESSION on {level}: the surviving region's "
+            f"announcement changed across the swap. The node survived but what it "
+            f"was saying did not."
+        )
+    assert count(WEBAPP, "aria-live") == 2, (
+        f"OSV1-008 (Core 6) PIN MOVED: `aria-live` occurs "
+        f"{count(WEBAPP, 'aria-live')} time(s) in webapp.py, pinned at 2 (the "
+        f"`_live_region_html` markup and its own docstring). This row's "
+        f"announcement half rests on there being exactly ONE persistent region "
+        f"per polling level; a second declaration site means a second region, "
+        f"and only one of them is the node the poller carries across the swap."
     )
     assert contains(WIDGETS, ' role="status">'), (
-        'OSV1-008 (Core 6): the verdict hero\'s `role="status"` region is gone -- '
-        "that is the ONE live region L0 renders, and the thing the swap destroys. "
-        "Re-derive this row (and OSV1-001's hero rebuild) from a fresh run."
+        'OSV1-008 (Core 6): the verdict hero\'s `role="status"` region is gone. '
+        "It is not the region the swap preserves -- `#wt-live` is -- but it IS "
+        "one of the two L0 renders, so losing it moves `live_regions_before` and "
+        "invalidates the pin above."
     )
 
 
@@ -1488,6 +1519,14 @@ def test_row_osv1_022() -> None:
     Two of them, because the contract's literal bad half does not discriminate
     on scroll here (a synchronous whole-body replacement preserves the offset
     by itself on chromium 148); the reflow variant does. Both are re-read.
+
+    RE-DERIVED 2026-09-05 alongside OSV1-008 (work_item_pipeline-v3m), exactly
+    as this probe's own message instructed. The good half's disclosure reading
+    flipped false -> true when Core 6 was fixed; what this row is about is that
+    the bad halves still CATCH what they exist to catch, so the good-half pin
+    is now stated as a DIFFERENCE from the bad half rather than as a fixed
+    value -- a bad half that reads the same as the good one demonstrates
+    nothing whichever way both read.
     """
     assert _exists(TIER_B_KIT), (
         f"OSV1-022 (Conformance 3): {TIER_B_KIT} is gone -- the fixture this row "
@@ -1507,10 +1546,15 @@ def test_row_osv1_022() -> None:
         "unproven."
     )
     good = tier_b("swap.survives", "calm/L0/dark")
-    assert good["scroll_preserved"] and not good["open_details_preserved"], (
+    assert good["scroll_preserved"] and good["open_details_preserved"], (
         "OSV1-022 (Conformance 3): the good half's own outcome moved (scroll "
         f"{good['scroll_preserved']}, disclosures {good['open_details_preserved']}) "
         f"-- re-derive this row and OSV1-008 together."
+    )
+    assert good["open_details_preserved"] != naive["open_details_preserved"], (
+        "OSV1-022 (Conformance 3): the good half and the literal bad half now "
+        "report the SAME disclosure outcome. A bad half that cannot be told apart "
+        "from the good one demonstrates nothing, whichever way both happen to read."
     )
     assert contains(WEBTHEME, "document.body.innerHTML = doc.body.innerHTML"), (
         "OSV1-022 (Conformance 3): the whole-body innerHTML swap is gone. That IS the "

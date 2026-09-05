@@ -584,6 +584,20 @@ def _swap_record(artifacts, browser_info, *, scenario, clause, before, after, ar
             "pause_flag_preserved": after["pause_flag"] == before["pause_flag"],
             "live_regions_before": before["live_region_count"],
             "marked_live_regions_after": after["surviving_marked_live_regions"],
+            # NODE IDENTITY above, TEXT here -- see `_probe.SWAP_STATE_JS`'s
+            # own note for why one without the other is not a reading.
+            #
+            # Recorded as BOOLEANS, not as the sentence itself: the fixture's
+            # project name is randomly generated per run and appears in L1's
+            # announcement, so the raw text is not reproducible across two runs
+            # and would make `LAST_RUN.json` -- the committed summary the
+            # ledger re-reads -- churn on every recording. The full text stays
+            # in `measurement.before/after.live_message`, which is what the
+            # assertions below compare.
+            "announcement_present_before": bool(before["live_message"]),
+            "announcement_preserved": (
+                bool(before["live_message"]) and after["live_message"] == before["live_message"]
+            ),
             "details_with_id": before["details_with_id"],
         },
     )
@@ -646,14 +660,18 @@ def test_swap_preserves_scroll_offset(request, level):
     )
 
 
-@known_violation(
-    "OSV1-008",
-    "`restoreState` only re-opens `details[id]`, and NO `<details>` on this "
-    "surface carries an id -- the help popover, the activity feed and the actions "
-    "drawer are all id-less, so the restore mechanism has zero targets",
-)
 @pytest.mark.parametrize("level", ["L0", "L1"])
 def test_swap_preserves_open_disclosures(request, level):
+    """Core 6's second named survival.
+
+    Was a known violation until 2026-09-05: `restoreState` re-opened only
+    `details[id]`, and NO `<details>` on this surface carries an id (the help
+    popover, the activity feed and the actions drawer are all id-less), so the
+    restore mechanism had ZERO targets and an open disclosure closed on every
+    20-second poll. It now records open `<details>` by ORDINAL + class
+    signature as well as by id -- the same key this kit's own snapshot uses,
+    for the same measured reason -- and the marker is gone.
+    """
     record = request.getfixturevalue(f"swap_{level.lower()}")
     m = record["measurement"]
     assert m["before"]["open_details"], (
@@ -667,21 +685,18 @@ def test_swap_preserves_open_disclosures(request, level):
     )
 
 
-@known_violation(
-    "OSV1-008",
-    "the flag survives on `window` but the control does not: the server "
-    're-renders `#refreshToggle` at aria-pressed="false" (webapp.py:3549) and '
-    "nothing re-applies the flag to it, so a paused page shows itself as running",
-)
 @pytest.mark.parametrize("level", ["L0", "L1"])
 def test_swap_preserves_the_pause_control(request, level):
     """The pause CONTROL's state, not just the flag behind it.
 
     Core 6 names "the pause control's state", and an operator reads the
-    control, not `window.__wtRefreshPaused`. Both are recorded in the artifact
-    so the split outcome is legible: the flag lives on `window` and survives;
-    the button is re-rendered by the server at `aria-pressed="false"`
-    (webapp.py:3549) and nothing re-applies the flag to it.
+    control, not `window.__wtRefreshPaused`. Both are still recorded in the
+    artifact, because they are two different things that used to disagree: the
+    flag lives on `window` and always survived, while the button came back
+    server-rendered at `aria-pressed="false"` every tick and nothing
+    re-applied the flag -- a paused page showed itself as running. Fixed
+    2026-09-05: `restoreState` re-synchronises the control to the flag after
+    every swap, so the artifact now shows both halves agreeing.
     """
     record = request.getfixturevalue(f"swap_{level.lower()}")
     m = record["measurement"]
@@ -698,15 +713,6 @@ def test_swap_preserves_the_pause_control(request, level):
     )
 
 
-@known_violation(
-    "OSV1-008",
-    "L0 now renders exactly ONE live region -- the rebuilt verdict hero's "
-    "`role=status` (widgets.py:1379) -- and the body-swap destroys it: 0 of the 1 "
-    "tagged node survives, and the page comes back with a fresh, empty region. On "
-    "L1 the clause still fails one step earlier: no live region renders at all "
-    "(`aria-live` has zero occurrences in `src/`), so nothing is ever announced "
-    "across the swap. Re-measured 2026-09-05 on the merged tree",
-)
 @pytest.mark.parametrize("level", ["L0", "L1"])
 def test_swap_preserves_a_pending_announcement(request, level):
     """Core 6's fourth named survival.
@@ -717,7 +723,17 @@ def test_swap_preserves_a_pending_announcement(request, level):
     Measured by tagging every live region BEFORE the swap and counting how
     many tagged nodes survive it. A whole-body `innerHTML` replacement
     destroys them all and builds fresh, empty ones -- which is precisely the
-    Conformance 3 bad half, and precisely what the shipped surface does.
+    Conformance 3 bad half, and precisely what the shipped surface did until
+    2026-09-05: L0 rendered exactly one region (the verdict hero's
+    `role="status"`, widgets.py:1379) and 0 of the 1 tagged node survived; L1
+    rendered none at all, so nothing was ever announced there.
+
+    Fixed by adding ONE persistent region per polling level (`#wt-live`,
+    webapp.py's `_live_region_html`) that the poller DETACHES before the swap
+    and re-attaches after -- so the node itself survives, tag and all -- and
+    by giving L1 a region it never had. The hero's own `role="status"` is
+    still destroyed and rebuilt; the count of survivors, not of regions, is
+    what this asserts.
     """
     record = request.getfixturevalue(f"swap_{level.lower()}")
     m = record["measurement"]
@@ -736,6 +752,18 @@ def test_swap_preserves_a_pending_announcement(request, level):
         f"({m['after']['surviving_marked_live_regions']} of the tagged nodes "
         f"survived); the page now carries "
         f"{m['after']['live_region_count']} fresh region(s) with nothing announced."
+    )
+    assert m["before"]["live_message"], (
+        f"{level}: the persistent region (`#wt-live`) carried no text before the "
+        f"swap, so 'the announcement survived' would be vacuously true -- an "
+        f"empty region announces nothing whether it survives or not."
+    )
+    assert m["after"]["live_message"] == m["before"]["live_message"], (
+        f"swap.survives FAILED on {level}: the surviving region's announcement "
+        f"changed across the swap, {m['before']['live_message']!r} -> "
+        f"{m['after']['live_message']!r}. The node survived but what it was "
+        f"saying did not, which an operator hears as the announcement being "
+        f"cut off and replaced."
     )
 
 
@@ -786,6 +814,15 @@ def test_naive_replacement_loses_the_open_disclosure(
         "the Conformance 3 bad half did NOT discriminate on disclosures: a naive "
         "whole-body replacement with no restore left "
         f"{m['after']['open_details']} open, the same as before the swap."
+    )
+    assert m["after"]["surviving_marked_live_regions"] == 0, (
+        "the Conformance 3 bad half did NOT discriminate on the announcement: a "
+        "naive whole-body replacement with no capture/restore left "
+        f"{m['after']['surviving_marked_live_regions']} of the tagged live "
+        f"region(s) alive. Node identity is the whole reading here -- note that "
+        f"the TEXT does come back ({m['after']['live_message']!r}), because the "
+        f"server re-renders the same sentence into a brand-new region; a check "
+        f"that only compared text would call this survival."
     )
 
 

@@ -3737,6 +3737,17 @@ def search_js(
 """
 
 
+#: The id of the ONE persistent live region a polling page may render.
+#:
+#: Declared here, in the token module, rather than spelled as a literal in
+#: each view: `auto_refresh_js` below is the only code that carries the node
+#: across the body-swap, and a view whose id drifted from the poller's would
+#: fail SILENTLY -- the region would still render, still be announced once,
+#: and simply be destroyed and rebuilt empty on every tick, which is exactly
+#: the defect Core 6 names and exactly the defect nobody can see.
+LIVE_REGION_ID = "wt-live"
+
+
 def auto_refresh_js(interval_ms: int) -> str:
     """A self-polling monitor: every `interval_ms`, silently re-fetch the
     CURRENT page and swap `document.body` in place -- refreshing hero
@@ -3782,16 +3793,49 @@ def auto_refresh_js(interval_ms: int) -> str:
 
     STATE SURVIVAL ACROSS THE SWAP (wt-v4 Observatory build-phase
     requirement -- GAUNTLET-SYNTHESIS.md's "State survival across the
-    ~20s auto-refresh body-swap"): before replacing `document.body`, every
-    currently-OPEN `<details id="...">` element (the fleet's dormant-
-    projects disclosure, the activity feed, a help popover -- ANY
-    `<details>` this app gives a stable `id`) is recorded by id, and
-    `window.scrollY` is captured. After the swap, each recorded id's
-    `<details>` (if the fresh markup still has one with that id) is
-    re-opened, and the page is scrolled back to the captured position. A
-    page with no `<details id="...">` at all (every page before wt-v4)
-    records an empty list and restores nothing beyond the pre-existing
-    scroll behaviour -- a pure addition, nothing observable changes there.
+    ~20s auto-refresh body-swap"; contracts/operator-surface.v1.md Core 6).
+    FOUR things survive, and each is restored by its own mechanism:
+
+      SCROLL      `window.scrollY` is captured before the swap and
+                  re-applied last, after the disclosures are re-opened --
+                  opening one changes the document height, so scrolling
+                  first would land at a clamped offset.
+
+      DISCLOSURES every currently-OPEN `<details>` is recorded TWICE: by
+                  `id` where it has one, and by ORDINAL + class signature
+                  where it does not. The id path alone was measured to
+                  have ZERO targets on the shipped surface -- the help
+                  popover, the activity feed and the actions drawer are
+                  all id-less, so an open disclosure closed on every
+                  20-second poll (ledger row OSV1-008). The ordinal key is
+                  what actually reaches them; the id key is kept because it
+                  survives a re-ORDER, which the ordinal key cannot.
+
+      PAUSE       `window.__wtRefreshPaused` survives by itself (a body
+                  swap never replaces `window`), but the CONTROL comes back
+                  server-rendered at `aria-pressed="false"` every tick --
+                  so a paused page showed itself as running. After the swap
+                  the control is re-synchronised to the flag, which is the
+                  live truth. Where the page ships its own toggle
+                  (`wtToggleRefresh`, webapp.py's `_OBSERVATORY_THEME_JS`)
+                  that function does it, so the button's label, icon and
+                  title vocabulary stays declared in exactly one place;
+                  without it the `aria-pressed` attribute alone is set.
+
+      ANNOUNCEMENT a page may render ONE persistent live region,
+                  `#wt-live` (see webapp.py's `_live_region_html`). It is
+                  DETACHED before `document.body.innerHTML` is written and
+                  re-attached in place of the server's fresh copy
+                  afterwards, so the NODE ITSELF survives -- an assistive
+                  technology's pending announcement is not destroyed and
+                  re-created empty. Its text is then updated only if the
+                  fresh render actually says something different, so a
+                  screen reader hears a real state change and not a
+                  re-announcement of the same sentence every 20 seconds.
+
+    A page with none of these (every page before wt-v4) records empty
+    lists and restores nothing beyond the pre-existing scroll behaviour --
+    a pure addition, nothing observable changes there.
 
     Every script tag in the freshly-swapped body is re-created (not left
     as inert markup -- `.innerHTML` never executes the `<script>` tags it
@@ -3827,18 +3871,50 @@ def auto_refresh_js(interval_ms: int) -> str:
       d.classList.add('refreshed');
     }});
   }}
+  function detailsKey(d, i){{
+    return i + ':' + (typeof d.className==='string' ? d.className.trim() : '');
+  }}
   function captureState(){{
-    var openIds=[];
-    document.querySelectorAll('details[id]').forEach(function(d){{
-      if(d.open) openIds.push(d.id);
-    }});
-    return {{openIds:openIds, scrollY:window.scrollY}};
+    var openIds=[], openKeys=[];
+    var all=document.querySelectorAll('details');
+    for(var i=0;i<all.length;i++){{
+      if(!all[i].open) continue;
+      openKeys.push(detailsKey(all[i], i));
+      if(all[i].id) openIds.push(all[i].id);
+    }}
+    return {{openIds:openIds, openKeys:openKeys, scrollY:window.scrollY}};
+  }}
+  function detachLiveRegion(){{
+    var el=document.getElementById('{LIVE_REGION_ID}');
+    if(el) el.remove();
+    return el;
+  }}
+  function restoreLiveRegion(kept){{
+    if(!kept) return;
+    var fresh=document.getElementById('{LIVE_REGION_ID}');
+    var message=fresh ? fresh.textContent : kept.textContent;
+    if(fresh && fresh.parentNode) fresh.replaceWith(kept);
+    else document.body.appendChild(kept);
+    if(message !== kept.textContent) kept.textContent = message;
+  }}
+  function restorePauseControl(){{
+    var btn=document.getElementById('refreshToggle');
+    if(!btn) return;
+    var paused=!!window.__wtRefreshPaused;
+    if((btn.getAttribute('aria-pressed')==='true') === paused) return;
+    if(typeof window.wtToggleRefresh==='function'){{ window.wtToggleRefresh(); return; }}
+    btn.setAttribute('aria-pressed', String(paused));
   }}
   function restoreState(state){{
     state.openIds.forEach(function(id){{
       var d=document.getElementById(id);
       if(d && d.tagName==='DETAILS') d.open=true;
     }});
+    var all=document.querySelectorAll('details');
+    for(var i=0;i<all.length;i++){{
+      if(state.openKeys.indexOf(detailsKey(all[i], i))>=0) all[i].open=true;
+    }}
+    restorePauseControl();
     window.scrollTo(0, state.scrollY);
   }}
   function tick(){{
@@ -3852,6 +3928,7 @@ def auto_refresh_js(interval_ms: int) -> str:
         if(!html) return;
         var doc=new DOMParser().parseFromString(html, 'text/html');
         if(!doc.body) return;
+        var kept=detachLiveRegion();
         document.body.innerHTML = doc.body.innerHTML;
         var scripts=[].slice.call(document.body.querySelectorAll('script'));
         scripts.forEach(function(old){{
@@ -3859,6 +3936,7 @@ def auto_refresh_js(interval_ms: int) -> str:
           s.textContent = old.textContent;
           old.replaceWith(s);
         }});
+        restoreLiveRegion(kept);
         restoreState(state);
         pulse();
       }})
@@ -4480,6 +4558,19 @@ tr.attn-row.is-blocked{background:var(--blocked-surface);
 .confirm-note{padding:0 var(--space-5) var(--space-4);color:var(--ink-tertiary);
   font-size:.8125rem}
 
+/* ---------- the persistent live region (Core 6) ----------
+   Announced, never drawn. The sighted operator already reads the verdict
+   hero; repeating it as a visible strip would add a second, redundant
+   headline to a surface whose whole discipline is that calm is REPORTED,
+   not decorated. So this is the standard screen-reader-only recipe --
+   1x1 and clipped rather than `display:none`/`visibility:hidden`, both of
+   which would remove it from the accessibility tree and silence the very
+   announcement it exists to carry. Kept in the flow at 1x1 with no layout
+   participation (`position:absolute`), so it cannot shift a single pixel
+   of what is painted. */
+.wt-live{position:absolute;top:0;left:0;width:1px;height:1px;margin:0;padding:0;
+  overflow:hidden;white-space:nowrap;clip-path:inset(50%);border:0}
+
 /* ---------- observatory widgets ---------- */
 .icon.ic-blocked{color:var(--blocked)}
 .feed-item .dot .icon{width:.7em;height:.7em}
@@ -4667,6 +4758,7 @@ def trust_style_tag() -> str:
 __all__ = [
     "CSS",
     "ICONS",
+    "LIVE_REGION_ID",
     "TOKENS_CSS",
     "TRACK_W",
     "TRUST_CSS",

@@ -1531,7 +1531,7 @@
          kit would close the residue.
 
 - id: OSV1-008
-  title: one of Core 6's four named survivals holds; the other three do not
+  title: all four of Core 6's named survivals hold, on L0 and on L1
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 6
@@ -1539,78 +1539,95 @@
       Scroll position, every open `<details>`, and the pause control's state survive that swap,
       and an assistive-technology announcement pending at the moment of the swap is not silently
       destroyed by it.
-  disposition: VIOLATION
-  work: work_item_pipeline-qgo
+  disposition: CONFORMS
+  work: work_item_pipeline-v3m
   assertion:
     kind: probe
     ref: test_row_osv1_008
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    RE-DERIVED 2026-09-05, VIOLATION -> CONFORMS (work_item_pipeline-v3m). The
+    pin broke the right way: the probe froze the wrong shape (one survival of
+    four), the fix landed, and the frozen assertions went red. Retargeted in
+    the same change to assert the CONFORMING shape, still per survival.
 
-    RE-DERIVED 2026-09-05, GAP -> VIOLATION. At seed this row recorded source
-    shape as HYPOTHESES for a browser run to confirm or refute. The run has
-    happened.
-
-    MEASURED IN A REAL BROWSER 2026-09-05 -- chromium 148.0.7778.0 via the
+    RE-MEASURED IN A REAL BROWSER 2026-09-05 -- chromium 148.0.7778.0 via the
     pinned playwright 1.60.0, against a live app on an ephemeral loopback port
-    over the isolated dolt fixture. Every number below is re-read by this
-    row's probe from `tests/conformance/operator_surface/browser/LAST_RUN.json`,
-    the kit's committed run summary; the probe never trusts the browser tier's
-    own pass/fail (Freeze 3 / Phase-1 ruling 6).
+    over the isolated dolt fixture, RE-RECORDED on this tree and re-run twice
+    with every asserted field byte-identical. Every number is re-read by this
+    row's probe from `tests/conformance/operator_surface/browser/LAST_RUN.json`;
+    the probe never trusts the browser tier's own pass/fail (Freeze 3 /
+    Phase-1 ruling 6).
 
     THE RESULT, L0 and L1, scrolled 400px, one `<details>` opened, the poll
-    paused, the surface's own poller forced through one tick:
-      scroll offset      PRESERVED      (`restoreState`'s `window.scrollTo`)
-      open `<details>`   LOST           hypothesis REFUTED in practice
-      pause control      LOST           hypothesis CONFIRMED
-      announcement       NOTHING TO LOSE  hypothesis CONFIRMED, and worse
-    One of four holds.
+    paused, an announcement pending, the surface's own poller forced through
+    one tick -- BEFORE -> AFTER:
+      scroll offset      PRESERVED   -> PRESERVED    (unchanged; it always held)
+      open `<details>`   LOST        -> PRESERVED
+      pause control      LOST        -> PRESERVED
+      announcement       DESTROYED   -> PRESERVED    (L0 0-of-1 survivors ->
+                         1-of-2; L1 had no region at all -> 1-of-1)
+    Four of four, both levels.
 
-    THE DISCLOSURE HALF IS WORSE THAN THE SEED THOUGHT. The seed recorded that
-    `restoreState` restores open `details[id]`, and read that as an
-    implementation being present. Measured in the render, the mechanism has
-    ZERO TARGETS: no `<details>` on L0, L1 or L2 carries an id at all (help
-    popover, activity feed, actions drawer -- all id-less; `details_with_id`
-    is 0 in the run summary). An open disclosure therefore closes on every
-    20-second poll.
+    THE DISCLOSURE HALF. `restoreState` re-opened only `details[id]`, and NO
+    `<details>` on this surface carries an id (help popover, activity feed,
+    actions drawer -- all id-less; `details_with_id` is still 0), so the
+    mechanism had ZERO TARGETS and an open disclosure closed on every
+    20-second poll. It now records open disclosures by ORDINAL + class
+    signature as well as by id -- the same key this kit's own snapshot uses,
+    chosen for the same measured reason. The id path is kept because it
+    survives a RE-ORDER, which the ordinal key cannot; `details_with_id` stays
+    pinned at 0 so the day the markup gains ids, this row is re-derived rather
+    than silently switching mechanisms.
 
-    THE PAUSE CONTROL, exactly as the seed predicted: `window.__wtRefreshPaused`
-    survives (it lives on `window`, which a body swap never replaces) but the
-    button is re-rendered by the server at `aria-pressed="false"`
-    (webapp.py:3549) and nothing re-applies the flag. A paused page shows
-    itself as running. The run records both halves separately
-    (`pause_flag_preserved: true`, `pause_control_preserved: false`) because
-    an operator reads the control, not the flag.
+    THE PAUSE CONTROL. `window.__wtRefreshPaused` always survived (it lives on
+    `window`, which a body swap never replaces) but the button came back
+    server-rendered at `aria-pressed="false"` every tick and nothing
+    re-applied the flag -- a paused page showed itself as running.
+    `restorePauseControl` now re-synchronises the control to the flag after
+    every swap, delegating to the page's own `wtToggleRefresh` where it exists
+    so the button's label, icon and title vocabulary stays declared in exactly
+    one place. The run records both halves separately
+    (`pause_flag_preserved` and `pause_control_preserved`, both true now)
+    because an operator reads the control, not the flag.
 
-    THE ANNOUNCEMENT HALF, RE-DERIVED 2026-09-05 on the merged tree -- it now
-    fails one step LATER on L0, and the same step earlier on L1:
-      L0  `live_regions_before` 0 -> 1. The rebuilt verdict hero renders a
-          `role="status"` region (widgets.py:1379, OSV1-001's wave-1 work),
-          so there IS an announcement now -- and the body-swap destroys it:
-          `marked_live_regions_after` is 0 of 1. The tagged node does not
-          survive; the page comes back with a fresh, empty region.
-      L1  `live_regions_before` is still 0 -- no live region renders at all,
-          so there remains nothing for the swap to destroy and nothing for the
-          operator to hear.
-    `aria-live` still has zero occurrences in `src/`; the L0 region is a
-    `role="status"`, and `role="alert"` (webapp.py:1211, :4213) still does not
-    render on a calm page. The row's probe pins both levels separately, and
-    pins the SURVIVAL at 0, so a fix that carries the region across the swap
-    goes red here.
+    THE ANNOUNCEMENT HALF, and why the fix is a NODE and not a message. A
+    whole-body `innerHTML` replacement destroys every live region inside it
+    and the server renders fresh, empty ones -- measured on the verdict hero's
+    own `role="status"`: 0 of the 1 tagged node survived. L1 failed one step
+    earlier still: it rendered NO live region at all. The fix adds exactly one
+    persistent region per polling level, `#wt-live` (webapp.py's
+    `_live_region_html`, id shared with the poller via `T.LIVE_REGION_ID`),
+    which `auto_refresh_js` DETACHES before the swap and re-attaches in place
+    of the server's fresh copy afterwards. Its text is updated only when the
+    fresh render actually says something different, so a screen reader hears a
+    real state change rather than the same sentence every 20 seconds. The hero's
+    own `role="status"` is still destroyed and rebuilt -- that is why
+    `live_regions_before` is 2 on L0 and `marked_live_regions_after` is 1, not
+    2, and why the row pins the count of SURVIVORS rather than of regions.
+    `aria-live` went from zero occurrences in `src/` to exactly one declaration
+    site, pinned.
 
-    WHAT THIS ROW SAID BEFORE, left standing because it was true when it was
-    measured: "THE ANNOUNCEMENT HALF HAS NOTHING TO PRESERVE: live_regions_before
-    is 0 ... the clause fails one step earlier than the swap." That reading was
-    taken before the hero rebuild landed.
+    NODE IDENTITY IS THE READING, NOT TEXT. The kit records both
+    (`marked_live_regions_after` and `announcement_preserved`) because text
+    alone does not discriminate: the naive-replacement bad half destroys the
+    region and the server re-renders the SAME sentence into a brand-new one,
+    so a check comparing only text would call that survival. The bad half is
+    RUN and asserted to lose node identity (0 survivors) while its text comes
+    back -- which is exactly the trap named.
 
     THE KIT DOES NOT MEASURE THIS VACUOUSLY. A forced tick whose fetch quietly
     fails leaves the page untouched, and an untouched page "preserves"
     everything; the kit plants a sentinel node before the swap and refuses to
-    measure until it is gone. That guard caught exactly this: chromium marks a
-    page that is not the front page of its window as hidden, the poller's
-    first guard is `document.hidden`, and the first version of these numbers
-    was taken from a page nothing had swapped.
+    measure until it is gone. That guard caught exactly this once already:
+    chromium marks a page that is not the front page of its window as hidden,
+    the poller's first guard is `document.hidden`, and the first version of
+    these numbers was taken from a page nothing had swapped.
+
+    WHAT THIS ROW SAID BEFORE, left standing because it was true when it was
+    measured: "One of four holds ... THE DISCLOSURE HALF IS WORSE THAN THE SEED
+    THOUGHT ... the mechanism has ZERO TARGETS ... THE ANNOUNCEMENT HALF ...
+    `marked_live_regions_after` is 0 of 1 ... L1 `live_regions_before` is still
+    0." Those readings are superseded by the run above, not deleted.
 - id: OSV1-009
   title: every declared token pair clears its floor -- 4.5:1 text, 3:1 non-text, both themes
   contract:
@@ -2981,6 +2998,24 @@
     RE-COUNTED 2026-09-05 at highway wave-4 integration (orchestrator): the calm-pixels lane flipped OSV1-003 and the
     empty-states lane flipped OSV1-012 in the same wave, each re-pinning this count to 3 against its own tree; the union
     is 2. Remaining red Core rows: OSV1-008 (Core 6, swap) and OSV1-010 (Core 7, rendered floors) -- both in flight.
+
+    RE-PINNED 2026-09-05 by the swap-survives lane (work_item_pipeline-v3m),
+    THREE RED. ONE flip moves it: OSV1-008 (Core 6) VIOLATION -> CONFORMS,
+    re-derived from a Tier-B run RE-RECORDED on this lane's own tree -- all
+    four of Core 6's named survivals now hold on BOTH L0 and L1
+    (`scroll_preserved`, `open_details_preserved`, `pause_control_preserved`,
+    `marked_live_regions_after` 1 of 2 on L0 and 1 of 1 on L1). The count
+    below is what THIS lane's tree measures; the orchestrator re-counts on the
+    union, and this pin is expected to move again if a sibling lane flips a
+    Core row in the same wave.
+    The tally is now:
+      CONFORMS 14       OSV1-001, -002, -004, -005, -006, -007, -008, -009,
+                        -011, -013, -014, -015, -016, -017
+      NOT-ASSERTABLE 2  OSV1-018 (Core 12), OSV1-019 (Core 13) -- unchanged
+      VIOLATION 3       OSV1-003, -010, -012
+      GAP 0             every Core clause is still ASSERTED
+    Three red, every one of them a MEASURED failure. Freeze 5 is met when all
+    three are green and the two NOT-ASSERTABLE rows still name their cadence.
 
 - id: OSV1-032
   title: >-
