@@ -401,15 +401,20 @@ def test_row_osv1_003() -> None:
             f"`--blocked` on a calm page, re-derive this row from the new sweep "
             f"(work_item_pipeline-qgo)."
         )
-    assert contains(WEBPWA, "background:#0D0D0C;color:#F2EEE6"), (
-        "OSV1-003 (Core 2): the retired palette at webpwa.py:121-122 is gone. That is "
-        "the Conformance 1 bad fixture's specimen and a Core 4 violation closing "
-        "(OSV1-005) -- re-derive both rows."
+    # THE PALETTE SPECIMENS CLOSED 2026-09-05 (work_item_pipeline-np3, OSV1-005).
+    # This row's own VIOLATION is unchanged -- a calm L1 still paints `--blocked`,
+    # which is what the recorded sweep above measures. But the two specimens it
+    # also named are gone from the tree, so they are asserted from the OTHER side
+    # now: a pin that a defect is still present would be a false pin, and silently
+    # deleting the assertions would lose the only in-process guard that the
+    # retired palette does not come back.
+    assert not contains(WEBPWA, "#0D0D0C"), (
+        "OSV1-003 (Core 2) REGRESSION: the retired pre-blend-3 ground is back in "
+        "webpwa.py's offline body. Core 4 (OSV1-005) closed it on 2026-09-05."
     )
-    assert contains(WEBTRUST, "--amber:#D9A253"), (
-        "OSV1-003 (Core 2): webtrust.py's retired `--amber:#D9A253` is gone -- the "
-        "hardcoded amber outside the token set that Conformance 1's bad half "
-        "reinstates. Re-derive this row and OSV1-005's note."
+    assert not contains(WEBTRUST, "#D9A253"), (
+        "OSV1-003 (Core 2) REGRESSION: webtrust.py hardcodes the retired amber again. "
+        "It consumes `webtheme.trust_style_tag()` now -- see OSV1-005."
     )
 
 
@@ -453,84 +458,67 @@ def test_row_osv1_004() -> None:
 
 
 def test_row_osv1_005() -> None:
-    """Core 4 VIOLATION pin: the literal-style census, RE-RUN here.
+    """Core 4 CONFORMS: the literal-style census, RE-RUN here, reads ZERO.
 
-    The count is computed, never transcribed, so this pin cannot drift away
-    from the tree. Two named specimens are asserted individually as well, so
-    that migrating the 44 easy `margin-top` sites while leaving the retired
-    palette in place does not look like progress the row did not make.
+    FLIPPED 2026-09-05 from VIOLATION (VIOLATION-MOVEMENT: the pin went red
+    because the tree moved TOWARD the clause). Flip direction is now
+    REGRESSION -- this probe asserts the invariant, and the mutations
+    reinstate each half of the closed defect.
 
-    TWO HALVES since the 2026-09-04 DRAFT true-up widened Core 4: the inline
-    `style=` attribute census, and the `<style>`-BLOCK census the widening
-    made reachable. They are pinned separately so that fixing one while
-    leaving the other is progress the row records rather than a flip it did
-    not earn.
+    BOTH HALVES, still measured separately, because they close for different
+    reasons and can regress independently: the inline `style=` attribute
+    census, and the `<style>`-BLOCK census the 2026-09-04 true-up made
+    reachable. The counts are COMPUTED here, never transcribed, so this row
+    cannot drift away from the tree.
     """
     literal = style_sites_in(LITERAL)
-    assert len(literal) == 66, (
-        f"OSV1-005 (Core 4) CENSUS MOVED: pinned 66 inline `style=` sites carrying a "
-        f"literal colour, font, or size; observed {len(literal)}.\n"
-        f"  If FEWER: the migration is under way -- update the pinned count (or flip "
-        f"the row to CONFORMS at zero) and retarget this probe IN THE SAME CHANGE "
-        f"(work_item_pipeline-np3). A passing pin is not conformance.\n"
-        f"  If MORE: a new literal site landed. That is a regression against a clause "
-        f"that tolerates zero.\n"
+    assert literal == [], (
+        f"OSV1-005 (Core 4) REGRESSION: {len(literal)} inline `style=` site(s) carry "
+        f"a literal colour, font, or size. Core 4 tolerates zero.\n"
+        f"  The fix is never a new inline value: add a class or a token to "
+        f"`webtheme.py` (the token module Core 4 names) and reference it.\n"
         f"  observed: {literal}"
     )
-    assert "webpwa.py:121" in literal, (
-        "OSV1-005 (Core 4): webpwa.py:121's retired-palette inline body is no longer "
-        "counted as a literal site -- the worst specimen in the census. Re-derive."
-    )
-    assert "webbrowse.py:814" in literal, (
-        "OSV1-005 (Core 4): webbrowse.py:814's textarea (literal font-size, max-width "
-        "and padding) is no longer counted. Re-derive."
-    )
-    total = len(inline_style_sites())
-    assert total == 137, (
-        f"OSV1-005 (Core 4): the total inline `style=` population moved from 137 to "
-        f"{total}. Neither direction is neutral -- re-run the census and re-derive "
-        f"both OSV1-005 and OSV1-006."
-    )
-
-    # --- the `<style>`-block half, reachable since the 2026-09-04 true-up ---
-    blocks = [(f, ln) for f, ln, _css in style_blocks_outside_token_module()]
-    assert blocks == [("webtrust.py", 256)], (
-        f"OSV1-005 (Core 4): the population of `<style>` blocks OUTSIDE the token "
-        f"module moved -- pinned exactly one, `webtrust.py:256` (the `_CSS` constant "
-        f"embedded at webtrust.py:374), observed {blocks}.\n"
-        f"  If GONE: webtrust.py now imports the token CSS -- that is the fix landing "
-        f"(work_item_pipeline-np3). Flip the block half of this row and retarget IN "
-        f"THE SAME CHANGE.\n"
-        f"  If MORE: a second module started shipping its own stylesheet, which is "
-        f"the defect Core 4 was widened to reach."
-    )
     block_literals = style_block_literal_sites()
-    assert len(block_literals) == 40, (
-        f"OSV1-005 (Core 4) `<style>`-BLOCK CENSUS MOVED: pinned 40 literal "
-        f"colour/font/size declarations inside a `<style>` block outside the token "
-        f"module; observed {len(block_literals)}.\n"
-        f"  If FEWER: the migration is under way -- update the pinned count (or flip "
-        f"the row to CONFORMS at zero on BOTH halves) and retarget this probe IN THE "
-        f"SAME CHANGE (work_item_pipeline-np3). A passing pin is not conformance.\n"
-        f"  If MORE: a new literal declaration landed in a page-local stylesheet.\n"
+    assert block_literals == [], (
+        f"OSV1-005 (Core 4) REGRESSION: {len(block_literals)} literal colour/font/size "
+        f"declaration(s) in a `<style>` block OUTSIDE the token module. A page-local "
+        f"stylesheet is a second source of visual truth -- the exact defect the "
+        f"2026-09-04 true-up widened this clause to reach.\n"
         f"  observed: {[f'{f}:{n} {d}' for f, n, d, _r in block_literals]}"
     )
-    palette = sorted(d for f, n, d, _r in block_literals if n in (258, 259))
-    assert palette == [
-        "--amber:#D9A253",
-        "--ground:#0D0D0C",
-        "--ink:#F2EEE6",
-        "--mid:#A6A199",
-        "--quiet:#9C978F",
-        "--raise:#151513",
-        "--rule-hi:#333330",
-        "--rule:#1F1F1D",
-    ], (
-        f"OSV1-005 (Core 4): the retired palette webtrust.py:258-259 hardcodes is no "
-        f"longer counted as literal -- observed {palette}. That block is the specimen "
-        f"the true-up widened Core 4 to reach, and the one Conformance 1's bad half "
-        f"reinstates. If it was tokenised, that is the fix landing: re-derive this row "
-        f"and OSV1-003 (work_item_pipeline-np3)."
+    blocks = [f"{f}:{ln}" for f, ln, _css in style_blocks_outside_token_module()]
+    assert blocks == [], (
+        f"OSV1-005 (Core 4): a module outside the token module started shipping a "
+        f"`<style>` block again: {blocks}.\n"
+        f"  This is not YET a Core 4 violation on its own -- the clause forbids "
+        f"literal colour/font/size INSIDE such a block, and the assertion above is "
+        f"what measures that. It is asserted here because zero is the shape this row "
+        f"was flipped on (`webtrust.py` now consumes `webtheme.trust_style_tag()`), "
+        f"and a page-local sheet reappearing is how the literal count comes back."
+    )
+    total = len(inline_style_sites())
+    assert total == 55, (
+        f"OSV1-005 (Core 4): the total inline `style=` population moved from 55 to "
+        f"{total}. Neither direction is neutral -- a DECREASE is convergent (Backlogged "
+        f"2 wants zero inline `style=` at all) and welcome, but it must be recorded "
+        f"here and in OSV1-006's register in the same change; an INCREASE is a new "
+        f"inline site whose bucket nobody has looked at. Re-run the census and "
+        f"re-derive both rows."
+    )
+    # The two specimens this row pinned by name while it was red -- asserted
+    # from the OTHER side now, so the fix cannot be silently undone.
+    assert not contains(WEBPWA, "background:#0D0D0C"), (
+        "OSV1-005 (Core 4) REGRESSION: webpwa.py's offline body carries the retired "
+        "pre-blend-3 ground again. It was the worst specimen in this census -- a "
+        "palette three generations stale, in a document that only ever renders when "
+        "the network is down, so nobody sees the drift."
+    )
+    assert contains(WEBTRUST, "T.trust_style_tag()"), (
+        "OSV1-005 (Core 4) REGRESSION: webtrust.py no longer emits the token module's "
+        "own style tag. It is the plain-HTTP trust page: it must stay SELF-CONTAINED "
+        "(inlined, never fetched), and `webtheme.TRUST_CSS` is how it gets the live "
+        "tokens inlined without re-declaring a palette of its own."
     )
 
 
@@ -546,29 +534,14 @@ def test_row_osv1_005() -> None:
 #: that as the failure to avoid, because two censuses disagree silently.
 EXEMPTION_REGISTER: frozenset[str] = frozenset(
     {
-        "chartsvg.py:268",
-        "chartsvg.py:464",
-        "chartsvg.py:488",
-        "webapp.py:1122",
-        "webapp.py:1144",
-        "webapp.py:1709",
-        "webapp.py:1711",
-        "webapp.py:1829",
-        "webapp.py:1832",
-        "webapp.py:2101",
-        "webapp.py:2142",
-        "webapp.py:2266",
-        "webapp.py:2572",
-        "webapp.py:3376",
-        "webapp.py:4421",
-        "webapp.py:4936",
-        "webtheme.py:4185",
-        "webtheme.py:4204",
-        "webtheme.py:4211",
-        "widgets.py:704",
-        "widgets.py:831",
-        "widgets.py:834",
-        "widgets.py:1110",
+        "webapp.py:1127",  # flex:{n} 1 0            -- state-bar segment ratio
+        "webapp.py:1823",  # width:{today_w}px       -- throughput bar, today
+        "webapp.py:1826",  # width:{prior_w}px       -- throughput bar, prior 6d
+        "webtheme.py:4197",  # {style}               -- axis ruler numeral offset
+        "webtheme.py:4216",  # left:{_grad_x(f):.1f}px -- graduation tick offset
+        "webtheme.py:4223",  # width:{px}px          -- age bar length
+        "widgets.py:837",  # width:{pct}%            -- status-mix segment (hatched)
+        "widgets.py:839",  # width:{pct}%            -- status-mix segment
     }
 )
 
@@ -1589,14 +1562,16 @@ def test_row_osv1_025() -> None:
         "register. ONE census, ONE register (Phase-1 ruling Need 2) -- a second copy "
         "disagrees with this one, silently."
     )
-    assert "OSV1-005" in _kit_deferred_rows(kit, "test_visual_single_source"), (
-        "OSV1-025 (Conformance 6) PIN BROKE THE RIGHT WAY: the good half is no longer "
-        "deferred against OSV1-005. Flip OSV1-005 AND this row and retarget both "
-        "probes in the same change (work_item_pipeline-np3)."
+    assert not _kit_deferred_rows(kit, "test_visual_single_source"), (
+        "OSV1-025 (Conformance 6) REGRESSION: Conformance 6's good half is deferred "
+        "again. This row is green because the pair PASSES -- the bad half reports the "
+        'contract\'s own `style="color:#D9A253"` specimen and an unregistered computed '
+        "site, and the good half passes over the real `src/` tree."
     )
-    assert row("OSV1-005")["disposition"] in PINNING_DISPOSITIONS, (
-        "OSV1-025 (Conformance 6) PIN BROKE THE RIGHT WAY: OSV1-005 is no longer red, "
-        "so Conformance 6's good half should now pass. Re-derive from the PASSING pair."
+    assert row("OSV1-005")["disposition"] not in PINNING_DISPOSITIONS, (
+        "OSV1-025 (Conformance 6) REGRESSION: OSV1-005 is red again, so Conformance 6 "
+        "is no longer demonstrated end-to-end. These two move together by "
+        "construction -- re-derive both."
     )
     assert contains(OPERATOR_CONTRACT_PATH, 'style="color:#D9A253"'), (
         "OSV1-025: Conformance 6's named bad specimen moved in the contract -- re-review the row."
@@ -1962,11 +1937,14 @@ def test_row_osv1_031() -> None:
         "to CONFORMS and retarget this probe to assert no Core row is red "
         "(work_item_pipeline-umm)."
     )
-    assert len(red) == 5, (
-        f"OSV1-031 (Freeze 5): pinned 5 red Core-carrying rows, observed {len(red)}: "
+    assert len(red) == 4, (
+        f"OSV1-031 (Freeze 5): pinned 4 red Core-carrying rows, observed {len(red)}: "
         f"{red}. Movement in either direction means this gate's tally changed -- update "
-        f"the pin and the row's notes in the same change. (Was 10 at seed; OSV1-009 "
-        f"went green 2026-09-04, work_item_pipeline-sxh.)"
+        f"the pin and the row's notes in the same change. (10 at seed; OSV1-009 went "
+        f"green 2026-09-04, work_item_pipeline-sxh; OSV1-015 and -016 went green "
+        f"2026-09-04, work_item_pipeline-8vv and -dg3; OSV1-001 and OSV1-004 went green "
+        f"2026-09-05, work_item_pipeline-ujy and the Tier-A kit; OSV1-005 went green "
+        f"2026-09-05, work_item_pipeline-np3.)"
     )
     assert {r["id"] for r in core_rows if r["disposition"] == "NOT-ASSERTABLE"} == {
         "OSV1-018",
@@ -1979,34 +1957,37 @@ def test_row_osv1_031() -> None:
 
 
 def test_row_osv1_032() -> None:
-    """Freeze 6 pin: the register is enumerated, but literal sites remain.
+    """Freeze 6 CONFORMS: the register is enumerated AND no literal site remains.
 
-    Freeze 6's "no literal colour, font, or size site remaining" reads through
-    Core 4, so the 2026-09-04 true-up widened what "site" means here too: an
-    inline `style=` attribute OR a declaration in a `<style>` block outside the
-    token module. Both halves are pinned separately -- migrating all 66 inline
-    sites while leaving webtrust.py's page-local stylesheet in place must NOT
-    read as this gate closing.
+    FLIPPED 2026-09-05 from GAP (VIOLATION-MOVEMENT). Freeze 6's second
+    conjunct -- "no literal colour, font, or size site remaining" -- reads
+    through Core 4, so the 2026-09-04 true-up made "site" mean BOTH an inline
+    `style=` attribute and a declaration in a `<style>` block outside the token
+    module. Both are now zero, so both conjuncts hold and this gate closes.
+
+    Still asserted as two separate halves: the failure mode this row exists to
+    prevent is stamping a Freeze gate on a green inline census while a
+    page-local stylesheet quietly hardcodes a palette. That failure mode does
+    not go away because the count reached zero once.
     """
     literal = style_sites_in(LITERAL)
-    assert literal, (
-        "OSV1-032 (Freeze 6) PIN BROKE THE RIGHT WAY (inline half): zero literal "
-        "colour/font/size INLINE sites remain. If the `<style>`-block half below is "
-        "also at zero, both of Freeze 6's conjuncts now hold -- flip OSV1-032 (and "
-        "OSV1-005) to CONFORMS and retarget both probes IN THE SAME CHANGE "
-        "(work_item_pipeline-np3). Note that a register at zero also fires Backlogged "
-        "2's promotion trigger."
+    assert literal == [], (
+        f"OSV1-032 (Freeze 6) REGRESSION (inline half): {len(literal)} literal "
+        f"colour/font/size inline site(s) are back, so Freeze 6's second conjunct no "
+        f"longer holds: {literal}. See OSV1-005, which owns the census."
     )
-    assert style_block_literal_sites(), (
-        "OSV1-032 (Freeze 6) PIN BROKE THE RIGHT WAY (`<style>`-block half): zero "
-        "literal colour/font/size declarations remain in any `<style>` block outside "
-        "the token module. That is webtrust.py's retired palette closing -- the half "
-        "Core 4's frozen text could not reach until the 2026-09-04 true-up. Re-derive "
-        "this row and OSV1-005 in the same change (work_item_pipeline-np3)."
+    block_literals = style_block_literal_sites()
+    assert block_literals == [], (
+        f"OSV1-032 (Freeze 6) REGRESSION (`<style>`-block half): "
+        f"{len(block_literals)} literal declaration(s) are back in a page-local "
+        f"stylesheet. See OSV1-005, which owns that census too."
     )
-    assert len(style_sites_in("COMPUTED")) == 23, (
-        "OSV1-032 (Freeze 6): the enumerated half moved -- see OSV1-006, which owns "
-        "the register itself."
+    computed = style_sites_in("COMPUTED")
+    assert len(computed) == 8, (
+        f"OSV1-032 (Freeze 6): the enumerated half moved -- 8 computed-geometry sites "
+        f"were enumerated when this gate closed, observed {len(computed)}. See "
+        f"OSV1-006, which owns the register itself; a DECREASE is convergent and "
+        f"welcome, and AT ZERO it fires Backlogged 2's promotion trigger."
     )
 
 

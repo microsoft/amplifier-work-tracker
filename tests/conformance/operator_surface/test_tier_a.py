@@ -25,7 +25,6 @@ Two clauses do not hold on today's code, and each has an open `ledger/` row
 saying so. Their good halves are `pytest.mark.xfail(strict=True)` with the row
 id in the reason -- never `skip`, never deleted:
 
-    visual.single_source      OSV1-005  66 literal inline sites + 40 in blocks
     calm.keeps_slot           OSV1-012  an empty widget keeps its slot but
                                         says nothing
     antigoals.enforced        OSV1-015  `_oldest_ready_item` calls `bd.list`
@@ -550,12 +549,6 @@ def test_visual_single_source_bad_half_the_register_is_the_ledgers_own() -> None
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="OSV1-005 (Core 4): 66 inline `style=` sites and 40 `<style>`-block "
-    "declarations still carry a literal colour, font or size. Flip the row and "
-    "delete this marker in the same change.",
-)
 def test_visual_single_source() -> None:
     """Conformance 6's GOOD half: a static pass over `src/` plus the register."""
     problems = check_visual_single_source()

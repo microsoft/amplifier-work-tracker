@@ -63,6 +63,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.responses import Response
 
+from . import webtheme as T
 from . import webtls as WT
 
 # ---------------------------------------------------------------------------
@@ -246,60 +247,28 @@ def _build_mobileconfig(ca_cert_path: Path) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Page rendering -- self-contained inline CSS (never imports `webtheme.CSS`;
-# this is a separate tiny app, deliberately independent of the dashboard's
-# own module graph). Colors are the same "J-editorial-dark" tokens as the
-# dashboard (`webtheme.py`'s `:root`), copied here as plain values rather
-# than shared, so this module has zero import-time dependency on webapp.py.
+# Page rendering. This module ships NO stylesheet of its own.
+#
+# It used to: an inline stylesheet block right here re-declaring the whole
+# role set (--ground / --raise / --ink / --mid / --quiet / --amber / --rule /
+# --rule-hi) as its own literal near-black-and-warm-amber values -- the
+# retired pre-blend-3 palette -- explicitly so it would not have to import
+# `webtheme`. That independence bought one import edge and cost a second
+# source of visual truth, which then drifted three palette generations behind
+# the live `--color-ground:#05070f` without anyone noticing. operator-surface.v1
+# Core 4 forbids exactly that -- a stylesheet block outside the token module.
+#
+# The sheet now lives in `webtheme.TRUST_CSS`, composed from the SAME
+# `TOKENS_CSS` the dashboard uses, and `webtheme.trust_style_tag()` emits the
+# whole style element -- so there is no stylesheet, and no style tag, anywhere
+# in this file. `webtheme` is a leaf module (stdlib only, no FastAPI,
+# no `webapp`), so importing it costs this app nothing at import time.
+#
+# The page stays SELF-CONTAINED, which it must: the sheet is INLINED into the
+# document, never fetched. A device reading this page has not installed the CA
+# yet -- an external asset link would be a broken fetch at the worst possible
+# moment.
 # ---------------------------------------------------------------------------
-
-_CSS = """
-:root{
-  --ground:#0D0D0C; --raise:#151513; --ink:#F2EEE6; --mid:#A6A199;
-  --quiet:#9C978F; --amber:#D9A253; --rule:#1F1F1D; --rule-hi:#333330;
-}
-*{box-sizing:border-box}
-body{
-  background:var(--ground); color:var(--ink); margin:0; padding:52px 24px 80px;
-  font-family:'Helvetica Neue',Arial,sans-serif; line-height:1.55;
-}
-main{max-width:640px;margin:0 auto}
-h1{
-  font-family:Georgia,'Bodoni Moda',serif; font-weight:500; font-size:32px;
-  margin:0 0 10px; color:var(--ink);
-}
-p{margin:0 0 14px}
-p.subtle{color:var(--mid)}
-p.lead{color:var(--ink); font-size:16px; margin:18px 0}
-code{
-  font-family:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
-  background:var(--raise); color:var(--amber); padding:2px 6px; border-radius:4px;
-  font-size:0.88em; word-break:break-all;
-}
-.btn{
-  display:inline-block; background:var(--amber); color:var(--ground) !important;
-  font-weight:600; padding:12px 22px; border-radius:6px; text-decoration:none;
-  margin:6px 10px 6px 0; font-size:15px;
-}
-.btn.secondary{background:transparent; color:var(--amber) !important; border:1px solid var(--amber)}
-.formsec{
-  border:1px solid var(--rule-hi); border-radius:8px; padding:18px 20px; margin-top:20px;
-  background:var(--raise);
-}
-.formsec.highlight{border-color:var(--amber)}
-.flegend{
-  font-size:12px; text-transform:uppercase; letter-spacing:0.06em; color:var(--quiet);
-  display:block; margin-bottom:6px;
-}
-details{color:var(--mid); margin-top:16px}
-details summary{cursor:pointer; color:var(--amber); margin-bottom:8px}
-details .formsec{margin-top:10px}
-.url-box{
-  background:var(--raise); border:1px solid var(--rule); border-radius:6px;
-  padding:12px 16px; word-break:break-all; font-family:ui-monospace,Menlo,monospace;
-  font-size:14px; color:var(--ink);
-}
-"""
 
 
 def _esc(value: object) -> str:
@@ -323,7 +292,7 @@ def _ca_install_section(*, os_hint: str) -> str:
     <div class="formsec highlight">
       <span class="flegend">Detected: {_esc(primary_label)}</span>
       <p class="subtle">{primary_instr}</p>
-      <p style="margin-top:14px">
+      <p class="mt-4">
         <a class="btn" href="/ca.crt">Download CA certificate</a>
         {mobileconfig_btn}
       </p>
@@ -340,7 +309,7 @@ def _trust_page_html(
 ) -> str:
     https_url = f"https://{hostname}:{https_port}/"
     continue_btn = (
-        f'<p style="margin-top:20px"><a class="btn" href="{_esc(https_url)}">'
+        f'<p class="mt-5"><a class="btn" href="{_esc(https_url)}">'
         "Continue to the app &rarr;</a></p>"
     )
 
@@ -371,7 +340,7 @@ def _trust_page_html(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Trust this server &middot; amplifier-work-tracker</title>
-<style>{_CSS}</style>
+{T.trust_style_tag()}
 </head>
 <body>
   <main>
@@ -379,7 +348,7 @@ def _trust_page_html(
     <p class="subtle">Install this certificate to trust <code>{_esc(hostname)}</code> on this
       device. This is a one-time step per device &mdash; not per visit.</p>
     {body}
-    <p class="subtle" style="margin-top:32px">On another device? Open this same page there:</p>
+    <p class="subtle mt-8">On another device? Open this same page there:</p>
     <p class="url-box">{_esc(request_url)}</p>
   </main>
 </body>

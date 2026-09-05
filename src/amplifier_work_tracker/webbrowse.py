@@ -564,8 +564,7 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
         )
         truncation = f"{note_html}{pagination_html}" if note_html or pagination_html else ""
         empty_html = (
-            '<div class="empty-state" style="padding:2rem 0;text-align:center;'
-            'color:var(--ink-tertiary)">No items match this filter.</div>'
+            '<div class="empty-state centered">No items match this filter.</div>'
             if not shown
             else ""
         )
@@ -644,8 +643,8 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
           <div class="glass-panel chart-card">
             <div class="items-toolbar">
               {tabs_html}
-              <form method="get" action="/projects/{quote(name)}" class="search-input"
-                    style="min-width:180px;max-width:220px">
+              <form method="get" action="/projects/{quote(name)}"
+                    class="search-input compact">
                 <input type="hidden" name="status" value="{_esc(status)}">
                 <span class="icon"><svg><use href="#i-search"/></svg></span>
                 <input type="search" name="q" placeholder="Filter\u2026" aria-label="Filter items"
@@ -715,7 +714,7 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
             # is an ADDITIONAL, clearly-marked block below it, never a
             # rewrite of what was actually published.
             corrected_badge = (
-                '<span class="chip" style="margin-left:8px" '
+                '<span class="chip ml-2" '
                 'title="the resolution below has been corrected -- see Errata">'
                 "corrected</span>"
                 if item.corrected
@@ -724,7 +723,7 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
             errata_html = ""
             if item.errata:
                 rows = "".join(
-                    f'<div style="margin-top:6px"><span class="v mono">{_esc(e.at)}'
+                    f'<div class="mt-2"><span class="v mono">{_esc(e.at)}'
                     f' \u00b7 {_esc(e.by)}</span><div class="blink">{_esc(e.text)}</div></div>'
                     for e in item.errata
                 )
@@ -811,33 +810,21 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
                 class="prose" style="margin-top:var(--space-2)">
             <label for="title" class="eyebrow">Title</label>
             <textarea id="title" name="title" required rows="2"
-                      style="width:100%;max-width:900px;font-family:var(--font-sans);
-                      font-size:1rem;color:var(--ink-primary);background:var(--glass-fill);
-                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
-                      padding:.5rem .75rem">{_esc(item.title)}</textarea>
+                      class="field-textarea title">{_esc(item.title)}</textarea>
             <h4>Description</h4>
             <textarea name="description" rows="6" placeholder="No description provided."
-                      style="width:100%;max-width:900px;font-family:var(--font-sans);
-                      font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
-                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
-                      padding:.75rem 1rem">{_esc(item.description or "")}</textarea>
+                      class="field-textarea">{_esc(item.description or "")}</textarea>
             <h4>Acceptance criteria</h4>
             <textarea name="acceptance" rows="4" placeholder="No acceptance criteria provided."
-                      style="width:100%;max-width:900px;font-family:var(--font-sans);
-                      font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
-                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
-                      padding:.75rem 1rem">{_esc(item.acceptance or "")}</textarea>
+                      class="field-textarea">{_esc(item.acceptance or "")}</textarea>
             <h4>Design notes</h4>
             <textarea name="design" rows="4" placeholder="No design notes provided."
-                      style="width:100%;max-width:900px;font-family:var(--font-sans);
-                      font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
-                      border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
-                      padding:.75rem 1rem">{_esc(item.design or "")}</textarea>
-            <p class="field-hint" style="color:var(--ink-tertiary);font-size:.8125rem">
+                      class="field-textarea">{_esc(item.design or "")}</textarea>
+            <p class="field-hint">
               Title/description/acceptance/design are editable here and persist on Save.
               Status, holder and timestamps are lifecycle facts -- they change only
               through claim/resolve.</p>
-            <button type="submit" class="action-btn" style="margin-top:.3rem">Save changes</button>
+            <button type="submit" class="action-btn mt-1">Save changes</button>
           </form>
         </div>
         """
@@ -862,14 +849,11 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
             # and the confirm dialog side by side.
             actions_html = f"""
             <div class="actions-drawer" open>
-              <div style="padding:var(--space-4) var(--space-5);display:flex;
-                   align-items:center;gap:var(--space-3);font-weight:600;
-                   color:var(--ink-primary);font-size:.875rem">
+              <div class="confirm-head">
                 <span class="icon" style="color:var(--ink-tertiary)">
                   <svg><use href="#i-check-circle"/></svg></span> Resolve {_esc(item.id)}?
               </div>
-              <div style="padding:0 var(--space-5) var(--space-4);color:var(--ink-tertiary);
-                   font-size:.8125rem">This closes the item. This cannot be undone.</div>
+              <div class="confirm-note">This closes the item. This cannot be undone.</div>
               <form method="post"
                     action="/projects/{quote(name)}/items/{quote(item.id)}/resolve"
                     style="padding:0 var(--space-5) var(--space-5);display:flex;
@@ -920,7 +904,7 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
             <div class="detail-title">
               <span class="id">{_esc(item.id)}</span> {_esc(item.title)}
               <span class="status-chip">
-                <span class="icon sm" style="margin-right:4px">
+                <span class="icon sm mr-1">
                   <svg><use href="#i-bot"/></svg></span>{_esc(item.status.upper())}</span>
             </div>
           </div>
@@ -938,8 +922,8 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
             <div class="field"><span class="k">Created</span>
               <span class="v mono">{_item_age_html(item.created_at)}</span></div>
           </div>
-          <div class="kv" style="margin-top:10px">{facts_kv}</div>
-          <div class="kv" style="margin-top:10px">{time_kv}</div>
+          <div class="kv mt-3">{facts_kv}</div>
+          <div class="kv mt-3">{time_kv}</div>
           {resolution_html}
           {blocker_status_html}
           {links_html}

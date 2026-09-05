@@ -16,6 +16,7 @@ import re
 import xml.etree.ElementTree as ET
 
 from amplifier_work_tracker import chartsvg as C
+from amplifier_work_tracker import webtheme as T
 
 # A raw hex/rgb colour literal -- the design-system firewall (widgets.py's
 # firewall_check) forbids this anywhere in widget-authored HTML; chartsvg's
@@ -437,13 +438,21 @@ def test_age_histogram_zero_bucket_draws_a_deliberate_stub_no_value_label() -> N
     zero_normal, nonzero, zero_watch = bars
     assert float(zero_normal.get("height", "")) == 2.0
     assert float(zero_normal.get("y", "")) == round(baseline_y - 2.0, 2)
-    assert "fill:var(--ink-quiet)" in (zero_normal.get("style") or "")
+    # The stub's fill is named ONCE, in the stylesheet -- the markup carries
+    # only what the element IS (`zero-stub`) and, for the watch band, its
+    # state. Both halves are asserted, or "it has the class" would pass with
+    # no rule behind it.
+    assert zero_normal.get("class") == "zero-stub"
+    assert zero_normal.get("data-watch") is None
+    assert ".svg-chart .zero-stub{fill:var(--ink-quiet)}" in T.CSS
 
     assert float(nonzero.get("height", "")) > 2.0
     assert nonzero.get("class") == "bar"
 
     assert float(zero_watch.get("height", "")) == 2.0
-    assert "fill:var(--watch)" in (zero_watch.get("style") or "")
+    assert zero_watch.get("class") == "zero-stub"
+    assert zero_watch.get("data-watch") == "1"
+    assert ".svg-chart .zero-stub[data-watch]{fill:var(--watch)}" in T.CSS
 
     value_labels = root.findall("text[@class='axis-label']")
     value_texts = [t.text for t in value_labels if t.text and t.text.isdigit()]
@@ -455,3 +464,104 @@ def test_age_histogram_zero_bucket_draws_a_deliberate_stub_no_value_label() -> N
     assert "0-1d" in axis_label_texts
     assert "2-3d" in axis_label_texts
     assert "7+d" in axis_label_texts
+
+
+# ===========================================================================
+# The chart ink used to be INLINE. Moving it to the stylesheet (Core 4,
+# OSV1-005) is only equivalent if the new rules WIN the cascade -- an inline
+# `style=` outranks every stylesheet rule, so a selector that merely exists is
+# not a replacement for one. The first form of that migration shipped
+# `.axis-label[data-watch]{fill:var(--watch)}` (0,2,0), which LOSES to the
+# pre-existing `.wt-observatory .svg-chart .axis-label{fill:var(--ink-tertiary)}`
+# (0,3,0): the watch band, the value labels and today's tick all silently
+# reverted to tertiary ink, and the Tier-B sweep measured 182 fewer `--watch`
+# pixels on a dark L1. These tests are the guard for that whole class of bug.
+# ===========================================================================
+
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+#: One `selector-list { declarations }` rule. Bodies never nest, so this also
+#: finds the rules inside an `@media` block (the at-rule itself never matches).
+_CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
+_FILL_DECL = re.compile(r"(?:^|;)\s*fill\s*:", re.MULTILINE)
+_TYPE_SELECTOR = re.compile(r"(?:^|[\s>+~])[a-zA-Z]")
+
+
+def _specificity(selector: str) -> tuple[int, int, int]:
+    """CSS specificity (ids, classes+attributes+pseudo-classes, type names).
+
+    Only the shapes this stylesheet actually uses are handled, and a selector
+    carrying a TYPE name is rejected rather than mis-scored -- a helper that
+    quietly returns the wrong number would make this whole file lie.
+    """
+    assert not _TYPE_SELECTOR.search(selector), (
+        f"{selector!r} carries a type selector; this helper only scores the "
+        f"class/attribute shapes the chart rules use. Extend it before using it."
+    )
+    ids = len(re.findall(r"#[\w-]+", selector))
+    classes = len(re.findall(r"\.[\w-]+", selector))
+    attrs = len(re.findall(r"\[[^\]]+\]", selector))
+    return (ids, classes + attrs, 0)
+
+
+def _fill_rules(css: str) -> list[tuple[str, int]]:
+    """(selector, offset) for every selector in a rule that declares `fill`."""
+    plain = _CSS_COMMENT.sub(" ", css)
+    out: list[tuple[str, int]] = []
+    for m in _CSS_RULE.finditer(plain):
+        if not _FILL_DECL.search(m.group(2)):
+            continue
+        for sel in m.group(1).split(","):
+            out.append((sel.strip(), m.start()))
+    return out
+
+
+def _wins(challenger: tuple[str, int], incumbent: tuple[str, int]) -> bool:
+    """Does `challenger` beat `incumbent` in the cascade? Higher specificity,
+    or equal specificity and declared later."""
+    c_sel, c_at = challenger
+    i_sel, i_at = incumbent
+    c, i = _specificity(c_sel), _specificity(i_sel)
+    return c > i or (c == i and c_at > i_at)
+
+
+def test_chart_state_ink_outranks_the_generic_axis_label_rule() -> None:
+    """Every `[data-*]` chart-ink rule must beat every unconditional rule that
+    also paints an `.axis-label` -- otherwise the state never renders."""
+    rules = _fill_rules(T.CSS)
+    axis = [r for r in rules if ".axis-label" in r[0]]
+    assert axis, "no rule paints `.axis-label` at all -- the chart ink is gone"
+
+    generic = [r for r in axis if "[data-" not in r[0]]
+    stateful = [r for r in axis if "[data-" in r[0]]
+    assert generic, (
+        "no unconditional `.axis-label` fill rule remains. That rule is the "
+        "trap these tests exist for; if it really went away, delete this test "
+        "deliberately rather than letting it pass vacuously."
+    )
+    assert stateful, "no stateful chart-ink rule found -- did the data attributes move?"
+
+    for challenger in stateful:
+        for incumbent in generic:
+            assert _wins(challenger, incumbent), (
+                f"`{challenger[0]}` {_specificity(challenger[0])} does NOT beat "
+                f"`{incumbent[0]}` {_specificity(incumbent[0])} in the cascade, so the "
+                f"state it encodes never paints. The ink it replaced was INLINE, which "
+                f"outranks everything -- scope the selector (e.g. through `.svg-chart`) "
+                f"rather than trusting declaration order alone."
+            )
+
+
+def test_every_chart_label_kind_has_a_default_ink() -> None:
+    """`.val-label` and `.zero-stub` carried their fill INLINE on every render.
+    Once that is removed, an SVG `<text>`/`<rect>` with no rule falls back to
+    the initial `fill:black` -- invisible on the dark ground -- so each kind
+    must keep an UNCONDITIONAL rule, not only its `[data-*]` states."""
+    rules = _fill_rules(T.CSS)
+    for kind in (".val-label", ".zero-stub", ".axis-label"):
+        unconditional = [r for r in rules if kind in r[0] and "[data-" not in r[0]]
+        assert unconditional, (
+            f"`{kind}` has no unconditional fill rule. Its ink used to be inline on "
+            f"every render; without a default the element falls back to the SVG "
+            f"initial value (black), which reads as invisible in dark mode and as a "
+            f"colour nobody chose in light."
+        )

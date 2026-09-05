@@ -20,6 +20,7 @@ pytest.importorskip("fastapi", reason="the 'web' extra is not installed")
 
 from amplifier_work_tracker import adapter as A  # noqa: E402
 from amplifier_work_tracker import webapp as W  # noqa: E402
+from amplifier_work_tracker import webtheme as T  # noqa: E402
 
 
 def _summary(name: str, **kwargs) -> A.ProjectSummary:
@@ -75,11 +76,23 @@ def test_state_legend_zero_count_shows_real_number_not_hidden():
 
 
 def test_state_legend_nonzero_states_use_their_dedicated_fill():
+    """Each slot carries its own fill CLASS, and the stylesheet resolves that
+    class to the intended token.
+
+    Asserted in BOTH halves on purpose. The fill used to be an inline
+    `background:var(--...)` this test could read straight off the markup;
+    after the Core 4 migration the markup carries only a class name, so a
+    class-only assertion would pass just as happily if webtheme declared
+    nothing at all. The second half is what keeps this test about COLOUR.
+    """
     counts = {"ready": 1, "held": 1, "blocked": 1, "deferred": 1, "resolved": 1}
     html = W._state_legend_html(counts)  # noqa: SLF001
-    assert "var(--st-ready)" in html
-    assert "var(--amber)" in html  # held reuses the app-wide attention hue
-    assert "var(--crimson)" in html  # blocked reuses the app-wide escalation hue
+    for key in ("ready", "held", "blocked", "deferred", "resolved"):
+        assert f'class="sw fill-{key}"' in html
+    assert ".sw.fill-ready{background:var(--st-ready)}" in T.CSS
+    # held reuses the app-wide attention hue; blocked the escalation hue
+    assert ".sw.fill-held{background:var(--amber)}" in T.CSS
+    assert ".sw.fill-blocked{background:var(--crimson)}" in T.CSS
 
 
 # ------------------------------------------------------- alarm floor width
@@ -91,7 +104,7 @@ def test_state_bar_calm_zero_alarm_states_have_no_min_width_floor():
     held/blocked/deferred segment)."""
     counts = {"ready": 5, "held": 0, "blocked": 0, "deferred": 0, "resolved": 3}
     html = W._state_bar_html(counts)  # noqa: SLF001
-    assert "min-width" not in html
+    assert "alarm-floor" not in html
 
 
 def test_state_bar_tiny_held_count_among_huge_total_still_gets_alarm_floor():
@@ -100,18 +113,22 @@ def test_state_bar_tiny_held_count_among_huge_total_still_gets_alarm_floor():
     near-invisible) sliver -- it must carry the alarm floor width."""
     counts = {"ready": 998, "held": 1, "blocked": 0, "deferred": 0, "resolved": 1}
     html = W._state_bar_html(counts)  # noqa: SLF001
-    assert f"flex:1 1 0;background:var(--amber);min-width:{W._ALARM_MIN_PX}px" in html  # noqa: SLF001
+    assert '<i class="fill-held alarm-floor" style="flex:1 1 0">' in html
+    # ... and the floor is a REAL width, declared once in the stylesheet --
+    # without this half the assertion above is only about a class name.
+    assert ".sbar i.alarm-floor{min-width:16px}" in T.CSS
     # the calm ready/resolved segments never get the floor -- they are not
     # alarm states and routinely carry large real counts of their own.
-    assert "flex:998 1 0;background:var(--st-ready)" in html
-    assert "min-width" not in html.split("var(--st-ready)")[1].split("<i")[0]
+    assert '<i class="fill-ready" style="flex:998 1 0">' in html
+    assert "alarm-floor" not in html.split('class="fill-ready"')[1].split("<i")[0]
 
 
 def test_state_bar_blocked_and_deferred_also_get_the_alarm_floor():
     counts = {"ready": 1, "held": 0, "blocked": 2, "deferred": 3, "resolved": 0}
     html = W._state_bar_html(counts)  # noqa: SLF001
-    assert f"flex:2 1 0;background:var(--crimson);min-width:{W._ALARM_MIN_PX}px" in html  # noqa: SLF001
-    assert f"flex:3 1 0;background:var(--st-deferred);min-width:{W._ALARM_MIN_PX}px" in html  # noqa: SLF001
+    assert '<i class="fill-blocked alarm-floor" style="flex:2 1 0">' in html
+    assert '<i class="fill-deferred alarm-floor" style="flex:3 1 0">' in html
+    assert ".sbar i.alarm-floor{min-width:16px}" in T.CSS
 
 
 # ------------------------------------------------------------- sort order
@@ -259,7 +276,7 @@ def test_workspace_composition_zero_total_never_divides_by_zero():
 def test_dashboard_row_broken_project_is_unmissable_alarm_row():
     s = A.ProjectSummary(name="brokenq", status="ERROR: database unreachable")
     html = W._dashboard_row(s)  # noqa: SLF001
-    assert 'class="alarm"' in html
+    assert 'class="alarm attn-row is-blocked"' in html
     assert 'colspan="5"' in html
     assert "Broken" in html
 
@@ -283,14 +300,20 @@ def test_dashboard_row_calm_project_has_no_alarm_styling():
     background noise on every row."""
     s = _summary("calmq", total=10, ready=10)
     html = W._dashboard_row(s)  # noqa: SLF001
-    assert "box-shadow" not in html
+    assert "attn-row" not in html
     assert "healthy" in html  # data-t search key still names the calm state
 
 
 def test_dashboard_row_held_item_flags_the_row_amber():
     s = _summary("heldq", total=5, ready=4, held=1)
     html = W._dashboard_row(s)  # noqa: SLF001
-    assert "box-shadow:inset 4px 0 0 var(--amber)" in html
+    assert 'class="attn-row"' in html
+    # the class is only half the claim -- the stylesheet is where the accent
+    # and its tint are actually declared, and they must travel together.
+    assert (
+        "tr.attn-row{background:var(--alarm-surface);"
+        "box-shadow:inset 4px 0 0 var(--amber)}" in T.CSS
+    )
     assert "held" in html.split('data-t="')[1].split('"')[0]
 
 
@@ -300,14 +323,14 @@ def test_dashboard_row_blocked_item_flags_the_row_crimson_outranking_held():
     `_state_bar_html`'s own hue assignment)."""
     s = _summary("stuckq", total=5, ready=3, held=1, blocked=1)
     html = W._dashboard_row(s)  # noqa: SLF001
-    assert "box-shadow:inset 4px 0 0 var(--crimson)" in html
-    assert "var(--amber)" not in html.split("box-shadow")[0][-40:]
+    assert 'class="attn-row is-blocked"' in html
+    assert "box-shadow:inset 4px 0 0 var(--crimson)}" in T.CSS
 
 
 def test_dashboard_row_deferred_item_also_flags_the_row():
     s = _summary("deferredq", total=5, ready=4, deferred=1)
     html = W._dashboard_row(s)  # noqa: SLF001
-    assert "box-shadow:inset 4px 0 0 var(--amber)" in html
+    assert 'class="attn-row"' in html
     assert "deferred" in html.split('data-t="')[1].split('"')[0]
 
 

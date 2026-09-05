@@ -421,12 +421,22 @@ def _mo002_alias_becomes_a_bespoke_hue(w: World) -> None:
     w.replace(WEBTHEME, "--amber:var(--alarm);", "--amber:#D9A253;")
 
 
-def _mo003_retired_palette_removed(w: World) -> None:
-    """FIXED: the specimen a calm pixel sweep would catch is tokenised."""
+def _mo003b_the_retired_palette_returns(w: World) -> None:
+    """The retired pre-blend-3 ground comes back to webpwa.py's offline body.
+
+    DIRECTION NOTE, stated rather than hidden: OSV1-003's declared direction is
+    VIOLATION-MOVEMENT (it is still VIOLATION -- a calm L1 still paints
+    `--blocked`, which `_mo003_the_calm_page_stops_painting_blocked` is the
+    counterfactual for). This mutation pushes the OTHER way, and it is here on
+    purpose: the row's two palette specimens
+    CLOSED on 2026-09-05 (OSV1-005), so its probe stopped pinning them as
+    present and started guarding that they stay gone. A guard nobody has
+    watched fail is a guard that might assert nothing.
+    """
     w.replace(
         WEBPWA,
-        "background:#0D0D0C;color:#F2EEE6;",
-        "background:var(--color-ground);color:var(--ink-primary);",
+        '\'<meta name="color-scheme" content="dark light">\' +',
+        "'<body style=\"background:#0D0D0C;color:#F2EEE6\">' +",
     )
 
 
@@ -438,39 +448,31 @@ def _mo004_a_status_loses_its_word(w: World) -> None:
     w.replace(WEBBROWSE, '"open": "READY",', '"open": "",')
 
 
-def _mo005_the_worst_literal_site_is_migrated(w: World) -> None:
-    """FIXED (partially): the retired-palette inline body is tokenised, so the
-    census drops from 66 to 65 and the named specimen leaves the bucket.
+_LITERAL_INLINE_SITE = "\n_LEDGER_MUTATION = '<i style=\"color:#D9A253\"></i>'\n"
+#: A page-local stylesheet, exactly the shape webtrust.py used to ship: its own
+#: `:root` re-declaring role tokens as literal hexes.
+_PAGE_LOCAL_SHEET = (
+    '\n_LEDGER_MUTATION_CSS = "<style>:root{--ground:#0D0D0C;--amber:#D9A253}</style>"\n'
+)
 
-    BOTH halves of that one site must go: it carries a literal COLOUR pair AND
-    a literal `font:16px`/`padding:32px`. Replacing only the palette left the
-    site in the LITERAL bucket and the count unchanged at 66 -- the harness
-    caught that as a non-discriminating mutation, which is what it is for.
+
+def _mo005_a_literal_inline_site_returns(w: World) -> None:
+    """REGRESSION: one inline `style=` attribute carries a literal colour again.
+
+    Core 4 tolerates ZERO, so a single site is the whole defect -- which is why
+    this mutation is one line rather than a re-creation of the 66 the row
+    closed.
     """
-    w.replace(
-        WEBPWA,
-        "background:#0D0D0C;color:#F2EEE6;",
-        "background:var(--color-ground);color:var(--ink-primary);",
-    )
-    w.replace(WEBPWA, "font:16px -apple-system,sans-serif;padding:32px;", "")
+    w.append(WIDGETS, _LITERAL_INLINE_SITE)
 
 
-def _mo005b_the_page_local_palette_goes(w: World) -> None:
-    """FIXED (the OTHER half): webtrust.py's page-local `<style>` block stops
-    declaring its own retired palette -- the eight literal colour declarations
-    at webtrust.py:258-259 go, as they would if the module imported the token
-    CSS instead of copying it.
-
-    This is the half Core 4's frozen text could not reach until the 2026-09-04
-    DRAFT true-up widened it, so it gets its OWN mutation: `_mo005_...` proves
-    the INLINE bucket discriminates and says nothing about a `<style>` block.
+def _mo005b_a_page_local_stylesheet_returns(w: World) -> None:
+    """REGRESSION: a module outside the token module ships its own stylesheet
+    again, re-declaring role tokens as literal hexes -- the second-source-of-
+    visual-truth defect the 2026-09-04 true-up widened Core 4 to reach, and the
+    one webtrust.py held for three palette generations without anyone noticing.
     """
-    w.replace(
-        WEBTRUST,
-        "  --ground:#0D0D0C; --raise:#151513; --ink:#F2EEE6; --mid:#A6A199;\n"
-        "  --quiet:#9C978F; --amber:#D9A253; --rule:#1F1F1D; --rule-hi:#333330;\n",
-        "",
-    )
+    w.append(WEBTRUST, _PAGE_LOCAL_SHEET)
 
 
 _UNREGISTERED_SITE = "\n_LEDGER_MUTATION = f'<div style=\"height:{0}px\"></div>'\n"
@@ -870,13 +872,27 @@ def _mo024_the_hero_good_half_is_deferred_again(w: World) -> None:
     )
 
 
-def _mo025_the_literal_style_row_goes_green(w: World) -> None:
-    """FIXED: OSV1-005 closes, so Conformance 6's deferred good half should now
-    pass -- and this row must be re-derived from the PASSING pair."""
+def _mo024_the_hero_row_goes_red_again(w: World) -> None:
+    """REGRESSION: OSV1-001 reopens, so Conformance 5 is no longer demonstrated
+    end-to-end. The two move together by construction, and this proves
+    OSV1-024's probe still notices when its partner row does not agree."""
     w.replace(
         ROWS_PATH,
-        "  disposition: VIOLATION\n  work: work_item_pipeline-np3",
-        "  disposition: CONFORMS\n  work: work_item_pipeline-np3",
+        "  disposition: CONFORMS\n  work: work_item_pipeline-ujy",
+        "  disposition: VIOLATION\n  work: work_item_pipeline-ujy",
+    )
+
+
+def _mo025_the_literal_style_row_goes_red_again(w: World) -> None:
+    """REGRESSION: OSV1-005 reopens, so Conformance 6 is no longer demonstrated
+    end-to-end. Anchored on the row's own probe ref, because `work_item_
+    pipeline-np3` now names TWO green rows (OSV1-005 and OSV1-032)."""
+    w.replace(
+        ROWS_PATH,
+        "  disposition: CONFORMS\n  work: work_item_pipeline-np3\n"
+        "  assertion:\n    kind: probe\n    ref: test_row_osv1_005",
+        "  disposition: VIOLATION\n  work: work_item_pipeline-np3\n"
+        "  assertion:\n    kind: probe\n    ref: test_row_osv1_005",
     )
 
 
@@ -891,11 +907,16 @@ def _mo026_the_empty_slot_row_goes_green(w: World) -> None:
 
 
 def _mo032_the_register_grows(w: World) -> None:
-    """Freeze 6's enumerated half moves. NOTE, honestly: the OTHER half (zero
-    literal sites remaining) is not simulable in memory -- it would mean
-    rewriting 66 real sites -- so this mutation proves the enumerated half
-    only. OSV1-005's own mutation is what proves the LITERAL bucket
-    discriminates.
+    """Freeze 6's enumerated half moves: an inline computed-geometry site that
+    is not on the register appears.
+
+    THE HONEST NOTE THIS CARRIED AT SEED IS NOW OBSOLETE, and saying so is part
+    of the record: while the row was GAP, its other half ("no literal site
+    remaining") could not be simulated in memory, because simulating the FIXED
+    world meant rewriting 66 real sites. Now that the row is CONFORMS the
+    direction reversed -- reinstating ONE literal site is the whole defect --
+    so both halves get their own mutation below and this row's evidence is no
+    longer partial.
     """
     w.append(WIDGETS, _UNREGISTERED_SITE)
 
@@ -1026,8 +1047,10 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-003",
-        "the retired palette a calm sweep would catch is tokenised away",
-        _mo003_retired_palette_removed,
+        "the retired pre-blend-3 palette comes back to webpwa.py's offline body "
+        "(the specimen this row pinned as PRESENT until OSV1-005 closed it, now "
+        "guarded from the other side)",
+        _mo003b_the_retired_palette_returns,
     ),
     Mutation(
         "OSV1-004",
@@ -1036,15 +1059,16 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-005",
-        "the worst literal INLINE site is migrated (census 66 -> 65)",
-        _mo005_the_worst_literal_site_is_migrated,
+        "one inline `style=` attribute carries a literal colour again (Core 4 "
+        "tolerates zero, so one site is the whole defect)",
+        _mo005_a_literal_inline_site_returns,
     ),
     Mutation(
         "OSV1-005",
-        "webtrust.py's page-local `<style>` block stops declaring its own retired "
-        "palette (block census 40 -> 32) -- the half Core 4 could not reach before "
-        "the 2026-09-04 true-up",
-        _mo005b_the_page_local_palette_goes,
+        "a module outside the token module ships its own stylesheet again, "
+        "re-declaring role tokens as literal hexes -- the second-source-of-visual-"
+        "truth half Core 4 could not reach before the 2026-09-04 true-up",
+        _mo005b_a_page_local_stylesheet_returns,
     ),
     Mutation(
         "OSV1-006",
@@ -1175,9 +1199,14 @@ MUTATIONS: tuple[Mutation, ...] = (
         _mo024_the_hero_good_half_is_deferred_again,
     ),
     Mutation(
+        "OSV1-024",
+        "OSV1-001 reopens, so Conformance 5 is no longer demonstrated end-to-end",
+        _mo024_the_hero_row_goes_red_again,
+    ),
+    Mutation(
         "OSV1-025",
-        "OSV1-005 closes, so Conformance 6's deferred good half should now pass",
-        _mo025_the_literal_style_row_goes_green,
+        "OSV1-005 reopens, so Conformance 6 is no longer demonstrated end-to-end",
+        _mo025_the_literal_style_row_goes_red_again,
     ),
     Mutation(
         "OSV1-026",
@@ -1223,9 +1252,21 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-032",
-        "the exemption register grows (the zero-literal half is not in-memory simulable "
-        "-- OSV1-005's mutation is what proves the LITERAL bucket discriminates)",
+        "the exemption register grows (Freeze 6's enumerated half)",
         _mo032_the_register_grows,
+    ),
+    Mutation(
+        "OSV1-032",
+        "a literal inline site returns (Freeze 6's second conjunct, inline half -- "
+        "simulable now that the row is green; it was not while simulating the FIX "
+        "meant rewriting 66 real sites)",
+        _mo005_a_literal_inline_site_returns,
+    ),
+    Mutation(
+        "OSV1-032",
+        "a page-local stylesheet returns with literal declarations (Freeze 6's "
+        "second conjunct, `<style>`-block half)",
+        _mo005b_a_page_local_stylesheet_returns,
     ),
     Mutation(
         "OSV1-033",

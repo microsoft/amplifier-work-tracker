@@ -85,8 +85,21 @@ _MANIFEST: dict[str, object] = {
 MANIFEST_JSON = json.dumps(_MANIFEST)
 
 # Ported verbatim in behaviour from muxplex's own sw.js (see this module's
-# docstring). Colours match webtheme.CSS's --ground/--ink; text matches the
-# task's own wording for the offline notice.
+# docstring). Text matches the task's own wording for the offline notice.
+#
+# THE OFFLINE NOTICE CARRIES NO COLOURS, FONT OR SIZE OF ITS OWN, and that is
+# deliberate rather than an omission (operator-surface.v1 Core 4, ledger row
+# OSV1-005). It used to: a literal near-black ground and off-white ink written
+# straight into a `style=` attribute here -- a palette three generations behind
+# the live `--color-ground`, which nobody noticed precisely because this
+# document only ever renders when the network is down. That is the structural
+# trap: this response is produced with NO stylesheet reachable (there is no
+# cache, by design, two paragraphs up), so any styling it carries can only ever
+# be a SECOND, unverifiable copy of the visual truth. It therefore carries
+# none, and asks the user agent for the app's colour scheme instead --
+# `<meta name="color-scheme" content="dark light">` makes the browser paint its
+# own dark ground and light ink, honouring the reader's system preference
+# without this file naming a single value.
 SERVICE_WORKER_JS = r"""// amplifier-work-tracker -- minimal service worker.
 //
 // Exists ONLY to satisfy Chrome's install-PROMPT requirement (the "Add to
@@ -118,9 +131,11 @@ self.addEventListener('fetch', function (event) {
     fetch(event.request).catch(function () {
       return new Response(
         '<!doctype html><meta charset="utf-8">' +
-          '<body style="background:#0D0D0C;color:#F2EEE6;' +
-          'font:16px -apple-system,sans-serif;padding:32px;text-align:center">' +
-          "Can't reach the work tracker right now &mdash; check your connection.</body>",
+          '<meta name="color-scheme" content="dark light">' +
+          '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+          '<body><p>' +
+          "Can't reach the work tracker right now &mdash; check your connection." +
+          '</p></body>',
         { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
       );
     })

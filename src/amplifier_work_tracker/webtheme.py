@@ -84,7 +84,14 @@ import html
 # re-architecture; `webapp.py` needed zero structural changes as a result.
 # ---------------------------------------------------------------------------
 
-CSS = r"""
+#: THE TOKEN BLOCK -- the one place a literal colour, font, or size is not a
+#: defect but the definition (operator-surface.v1 Core 4 names this module by
+#: name). Split out of `CSS` as its own constant so a page that must be
+#: SELF-CONTAINED and cannot afford the whole dashboard stylesheet -- the
+#: plain-HTTP trust-bootstrap page, `TRUST_CSS` below -- can consume the live
+#: tokens instead of hardcoding a second, drifting copy of them. `CSS` is
+#: this block plus everything that follows, byte-for-byte as before.
+TOKENS_CSS = r"""
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 /*
   ---------------------------------------------------------------------------
@@ -467,7 +474,11 @@ CSS = r"""
   --brand-cyan-ink:#22d3ee;
   --brand-purple-ink:#c084fc;
 }
+"""
 
+CSS = (
+    TOKENS_CSS
+    + r"""
 /* -- AFFORDANCE GRAMMAR (one documented convention) ----------------------
    Three signals of "clickable" were in use (a trailing chevron, bold-amber
    text, and a lone underline). Consolidated to ONE rule, enforced by the
@@ -2177,6 +2188,7 @@ table.tbl{border-collapse:separate;border-spacing:0 6px;margin-top:-6px}
   .dot.on{animation:none;opacity:1}
 }
 """
+)
 
 # ---------------------------------------------------------------------------
 # wt-v4 "Observatory" component CSS (Lane B: obs-widgets) -- extracted
@@ -4327,10 +4339,264 @@ L0_HERO_CSS = r"""
 CSS = CSS + "\n" + L0_HERO_CSS
 
 
+# ---------------------------------------------------------------------------
+# ONE SOURCE OF VISUAL TRUTH -- the utility + component layer that absorbed the
+# inline literals (operator-surface.v1 Core 4; ledger rows OSV1-005/OSV1-032).
+#
+# Every rule below is a value that USED to sit in an inline `style=` attribute
+# in webapp.py / webbrowse.py / webtrust.py / widgets.py / chartsvg.py. It is
+# deliberately LAST in the cascade, so a utility beats the component rule it
+# replaces on equal specificity without needing `!important` -- exactly the
+# priority the inline attribute used to buy, bought once, here.
+#
+# SPACING IS ON THE 4px SCALE. Every migrated `margin-top:Npx` literal was
+# snapped to the nearest `--space-*` step, ties rounding UP -- ONE documented
+# rule, applied uniformly: 6->8, 10->12, 14->16, 18->20, 22->24, 30->32, and
+# `.3rem`->4px. Maximum drift is 2px. That drift is the point of Core 4: the
+# scale decides the value, not whoever last typed a number into an attribute.
+# ---------------------------------------------------------------------------
+
+SINGLE_SOURCE_CSS = r"""
+/* ---------- spacing utilities (the 4px --space-* scale) ---------- */
+.mt-1{margin-top:var(--space-1)}
+.mt-2{margin-top:var(--space-2)}
+.mt-3{margin-top:var(--space-3)}
+.mt-4{margin-top:var(--space-4)}
+.mt-5{margin-top:var(--space-5)}
+.mt-6{margin-top:var(--space-6)}
+.mt-8{margin-top:var(--space-8)}
+.ml-2{margin-left:var(--space-2)}
+.mr-1{margin-right:var(--space-1)}
+
+/* ---------- measures ---------- */
+.u-measure{max-width:640px}
+.u-measure-sm{max-width:560px}
+.form-narrow{max-width:340px}
+
+/* ---------- page headings (was three copies of one `heading_style`
+     string built in webapp.py: `_setup_body`, the login page, and the
+     remove-project confirm) ---------- */
+h1.page-h1{font-family:var(--sans);font-size:24px;font-weight:500;color:var(--ink);
+  margin:var(--space-5) 0 var(--space-1)}
+h1.page-h1.roomy{margin-bottom:var(--space-4)}
+
+/* ---------- ready-queue age histogram (webapp `_heartbeat_html`) ---------- */
+.hist-seg{flex:1 1 0;min-width:0;display:flex;align-items:flex-end;gap:2px;
+  overflow:hidden;padding:0 8px}
+.hist-ax{flex:1 1 0;min-width:0;display:flex;flex-direction:column;
+  align-items:center;gap:3px;padding:0 8px}
+.hist-seg.divided,.hist-ax.divided{border-left:1px solid var(--rule)}
+.hist-axis{display:flex;margin-top:var(--space-2)}
+.hist-day{font-family:var(--sans);font-size:10px;font-weight:500;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--dim);white-space:nowrap}
+.hist-num{font-family:var(--sans);font-size:14px;font-weight:500;line-height:1;
+  color:var(--mid)}
+.hist-num.hot{color:var(--amber)}
+/* the per-band tick heights, which used to be interpolated per element from
+   webapp's `_BUCKET_HEIGHT`; the band class was already on every tick. */
+.ticks .tick{flex:0 0 3px}
+.ticks .tick.t0{height:12px}
+.ticks .tick.t1{height:22px}
+.ticks .tick.t2{height:34px}
+.ticks .tick.t3{height:44px}
+
+/* ---------- workspace state bar + its legend (webapp `_state_bar_html`
+     / `_state_legend_html`): the fill per state, keyed by the state slot
+     rather than interpolated from a Python dict of token names ---------- */
+.sbar i.fill-ready{background:var(--st-ready)}
+.sbar i.fill-held{background:var(--amber)}
+.sbar i.fill-blocked{background:var(--crimson)}
+.sbar i.fill-deferred{background:var(--st-deferred)}
+.sbar i.fill-resolved{background:var(--st-resolved)}
+.sbar i.alarm-floor{min-width:16px}
+.sw.fill-ready{background:var(--st-ready)}
+.sw.fill-held{background:var(--amber)}
+.sw.fill-blocked{background:var(--crimson)}
+.sw.fill-deferred{background:var(--st-deferred)}
+.sw.fill-resolved{background:var(--st-resolved)}
+.sw.fill-empty{background:var(--st-empty)}
+
+/* ---------- fleet rows and project hero in an attention/blocked state ------
+     Two states, two classes -- the accent and its tint always travel
+     together, so they can never be paired wrongly by a caller. */
+tr.attn-row{background:var(--alarm-surface);box-shadow:inset 4px 0 0 var(--amber)}
+tr.attn-row.is-blocked{background:var(--blocked-surface);
+  box-shadow:inset 4px 0 0 var(--crimson)}
+.hero-alarm{border-left:4px solid var(--amber);background:var(--alarm-surface);
+  padding:var(--space-5) var(--space-6);max-width:640px}
+.hero-alarm.is-broken{border-left-color:var(--crimson);background:var(--blocked-surface)}
+.hero-alarm .eyebrow{color:var(--amber)}
+.hero-alarm.is-broken .eyebrow{color:var(--crimson)}
+
+/* ---------- project hero: the oldest unclaimed item's attribution ------- */
+.said.u-measure-sm{max-width:560px}
+.said .who{display:flex;gap:var(--space-2);align-items:baseline;flex-wrap:wrap}
+.said .who .id{color:var(--dim);font-weight:400;letter-spacing:.04em}
+.said a.what{display:inline-block;max-width:100%;overflow-wrap:anywhere}
+.beat.grow{min-width:260px;flex:1 1 260px}
+
+/* ---------- item detail / setup page bits ---------- */
+.eyebrow.section-head{display:block;margin-top:var(--space-8)}
+.u-alarm{color:var(--amber)}
+.rec-badge{color:var(--amber);font-weight:700;text-transform:none;letter-spacing:normal}
+.rec-mark{color:var(--amber);font-weight:700}
+.flash ul.flash-list{margin:var(--space-2) 0 0;padding-left:var(--space-6)}
+.content-block.mono-measure{font-family:var(--mono,ui-monospace,SFMono-Regular,'SF Mono',
+  Menlo,Consolas,'Liberation Mono',monospace);max-width:90ch}
+
+/* ---------- browse app (webbrowse) ---------- */
+.empty-state.centered{padding:2rem 0;text-align:center;color:var(--ink-tertiary)}
+.search-input.compact{min-width:180px;max-width:220px}
+.field-textarea{width:100%;max-width:900px;font-family:var(--font-sans);
+  font-size:.9375rem;color:var(--ink-primary);background:var(--glass-fill);
+  border:1px solid var(--glass-hairline-soft);border-radius:var(--radius-sm);
+  padding:.75rem 1rem}
+.field-textarea.title{font-size:1rem;padding:.5rem .75rem}
+.prose .field-hint{color:var(--ink-tertiary);font-size:.8125rem}
+.confirm-head{padding:var(--space-4) var(--space-5);display:flex;align-items:center;
+  gap:var(--space-3);font-weight:600;color:var(--ink-primary);font-size:.875rem}
+.confirm-note{padding:0 var(--space-5) var(--space-4);color:var(--ink-tertiary);
+  font-size:.8125rem}
+
+/* ---------- observatory widgets ---------- */
+.icon.ic-blocked{color:var(--blocked)}
+.feed-item .dot .icon{width:.7em;height:.7em}
+.feed-details summary .note{font-weight:400;margin-left:var(--space-2)}
+.status-mix span.mix-resolved{background:var(--ink-quiet)}
+.status-mix span.mix-ready{background:var(--ink-secondary)}
+.status-mix span.mix-held{background:var(--brand-cyan-ink)}
+.status-mix span.mix-intake{background:var(--ink-tertiary)}
+.status-mix span.mix-blocked{background:var(--blocked)}
+.sw.mix-resolved{background:var(--ink-quiet)}
+.sw.mix-ready{background:var(--ink-secondary)}
+.sw.mix-held{background:var(--brand-cyan-ink)}
+.sw.mix-intake{background:var(--ink-tertiary)}
+.sw.mix-blocked{background:var(--blocked)}
+
+/* ---------- SVG charts (chartsvg) --------------------------------------
+     In the charts a `class` names WHAT an element is (bar / val-label /
+     axis-label / zero-stub) -- the chart structure tests read it as exactly
+     that -- so STATE ("this is today", "this is the watch band", "this label
+     carries a value rather than an axis tick") rides a data attribute the
+     stylesheet selects on instead of being conflated into the same
+     attribute.
+
+     EVERY SELECTOR HERE IS SCOPED THROUGH `.svg-chart`, and that is
+     load-bearing rather than tidy. The chart ink these rules replace used to
+     be INLINE, which outranks every stylesheet rule; a bare
+     `.axis-label[data-watch]` (0,2,0) does NOT -- it loses to the existing
+     `.wt-observatory .svg-chart .axis-label{fill:var(--ink-tertiary)}`
+     (0,3,0), so the watch band, the value labels and today's tick all
+     silently reverted to tertiary ink when the inline styles were removed.
+     Measured, not reasoned: the Tier-B sweep read 182 fewer `--watch` px on
+     a dark L1. `.svg-chart` restores the specificity the inline attribute
+     used to buy, WITHOUT depending on `.wt-observatory` being an ancestor
+     (the browse surface renders the same charts). */
+.svg-chart .val-label{fill:var(--ink-tertiary)}
+.svg-chart .val-label[data-today],
+.svg-chart .axis-label[data-today]{fill:var(--brand-cyan-ink);font-weight:600}
+.svg-chart .zero-stub{fill:var(--ink-quiet)}
+.svg-chart .zero-stub[data-watch]{fill:var(--watch)}
+.svg-chart .axis-label[data-val]{fill:var(--ink-primary);font-weight:600}
+.svg-chart .axis-label[data-watch]{fill:var(--watch)}
+.svg-chart .axis-label[data-val][data-watch]{fill:var(--watch);font-weight:600}
+"""
+
+CSS = CSS + "\n" + SINGLE_SOURCE_CSS
+
+
+# ---------------------------------------------------------------------------
+# TRUST-PAGE STYLESHEET -- the plain-HTTP trust-bootstrap page's own sheet.
+#
+# It lives HERE, in the token module, rather than in `webtrust.py`, and that is
+# the whole point: it used to be a page-local stylesheet in `webtrust.py` that
+# re-declared the whole role set (--ground / --ink / --amber / ...) as its own
+# literal near-black-and-warm-amber values -- the retired pre-blend-3 palette,
+# a second source of visual truth that had silently drifted three generations
+# behind the live `--color-ground:#05070f`. Core 4 forbids exactly that.
+# Composed from `TOKENS_CSS` so the trust page renders
+# the LIVE palette, in both schemes, and can never drift again.
+#
+# Still SELF-CONTAINED, which the page requires: this is inlined into the
+# document, never fetched. A device that has not yet installed the CA is
+# reading this page over plain HTTP precisely because nothing else is
+# reachable yet; an external stylesheet link would be a broken asset at the
+# worst possible moment. `TOKENS_CSS` is the token block ONLY (~10 KB), not
+# the whole dashboard sheet.
+# ---------------------------------------------------------------------------
+
+TRUST_CSS = (
+    TOKENS_CSS
+    + r"""
+body{
+  background:var(--ground); color:var(--ink); margin:0;
+  padding:var(--space-12) var(--space-6) var(--space-16);
+  font-family:var(--sans); line-height:1.55;
+}
+main{max-width:640px;margin:0 auto}
+h1{
+  font-family:var(--serif); font-weight:500; font-size:var(--text-display-size);
+  line-height:var(--text-display-line); margin:0 0 var(--space-3); color:var(--ink);
+}
+p{margin:0 0 var(--space-4)}
+p.subtle{color:var(--mid)}
+p.lead{color:var(--ink); font-size:var(--text-body-size); margin:var(--space-5) 0}
+code{
+  font-family:var(--mono); background:var(--raise); color:var(--amber);
+  padding:2px 6px; border-radius:var(--radius-sm);
+  font-size:0.88em; word-break:break-all;
+}
+.btn{
+  display:inline-block; background:var(--amber); color:var(--ink-on-ground-inverse) !important;
+  font-weight:var(--text-section-label-weight); padding:var(--space-3) var(--space-6);
+  border-radius:var(--radius-pill); text-decoration:none;
+  margin:var(--space-2) var(--space-3) var(--space-2) 0; font-size:var(--text-body-size);
+}
+.btn.secondary{background:transparent; color:var(--amber) !important;
+  border:1px solid var(--amber)}
+.formsec{
+  border:1px solid var(--rule-hi); border-radius:var(--radius-md);
+  padding:var(--space-5); margin-top:var(--space-5); background:var(--raise);
+}
+.formsec.highlight{border-color:var(--amber)}
+.flegend{
+  font-size:var(--text-section-label-size); text-transform:uppercase;
+  letter-spacing:var(--text-section-label-spacing); color:var(--quiet);
+  font-weight:var(--text-section-label-weight);
+  display:block; margin-bottom:var(--space-2);
+}
+details{color:var(--mid); margin-top:var(--space-4)}
+details summary{cursor:pointer; color:var(--amber); margin-bottom:var(--space-2)}
+details .formsec{margin-top:var(--space-3)}
+.url-box{
+  background:var(--raise); border:1px solid var(--rule); border-radius:var(--radius-sm);
+  padding:var(--space-3) var(--space-4); word-break:break-all;
+  font-family:var(--mono); font-size:var(--text-body-size); color:var(--ink);
+}
+.mt-4{margin-top:var(--space-4)}
+.mt-5{margin-top:var(--space-5)}
+.mt-8{margin-top:var(--space-8)}
+"""
+)
+
+
+def trust_style_tag() -> str:
+    """The trust page's complete `<style>` element.
+
+    The TAG is emitted from this module, not from `webtrust.py`, so that
+    `webtrust.py` ships no stylesheet of its own at all -- Core 4's rule is
+    about where visual truth LIVES, and after this change there is exactly
+    one place it lives for both apps.
+    """
+    return "<style>" + TRUST_CSS + "</style>"
+
+
 __all__ = [
     "CSS",
     "ICONS",
+    "TOKENS_CSS",
     "TRACK_W",
+    "TRUST_CSS",
     "age_band_class",
     "age_cell_html",
     "age_short",
@@ -4346,4 +4612,5 @@ __all__ = [
     "state_html",
     "statusbar",
     "top_bar",
+    "trust_style_tag",
 ]
