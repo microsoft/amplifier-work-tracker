@@ -379,28 +379,51 @@ def test_row_osv1_002() -> None:
 
 
 def test_row_osv1_003() -> None:
-    """Core 2 VIOLATION pin, RE-READ from the browser run's own numbers.
+    """Core 2 CONFORMS, RE-READ from the browser run's own numbers.
+
+    FLIPPED 2026-09-05 from VIOLATION (VIOLATION-MOVEMENT), so the direction
+    reverses with it: this used to PIN a calm L1 at 97 `--blocked` pixels, and
+    now asserts the INVARIANT the clause states. Flip direction is REGRESSION.
 
     Not "a file appeared" and not the browser tier's pass/fail: the calm sweep
-    wrote pixel counts, and this reads them back. L0 is clean in both themes;
-    L1 paints `--blocked` on a page with nothing blocked, and THAT is the
-    pinned violation.
+    wrote pixel counts and this reads them back off disk.
+
+    THE DISCRIMINATING ARM IS ASSERTED HERE TOO, and that is the point. "Zero
+    alarm pixels" is trivially satisfiable by a sweep that has stopped
+    measuring, so a green half that only reads zeroes is not evidence. The
+    genuinely-alarming fixture must still paint `--blocked`, and the alarming
+    L1 must still paint a reserved hue at all -- if either goes quiet, this row
+    is reading a blinded instrument, not a calm page.
     """
     for theme in ("dark", "light"):
-        clean = tier_b("calm.zero_alarm_pixels", f"calm/L0/{theme}")
-        assert clean["alarm"] == 0 and clean["blocked"] == 0, (
-            f"OSV1-003 (Core 2): a calm L0 in {theme} now paints "
-            f"{clean['alarm']} --alarm and {clean['blocked']} --blocked pixels. "
-            f"L0 was the CLEAN half of this row -- a regression, not progress."
-        )
-        dirty = tier_b("calm.zero_alarm_pixels", f"calm/L1/{theme}")
-        assert dirty["blocked"] == 97, (
-            f"OSV1-003 (Core 2) PIN MOVED: a calm L1 in {theme} painted "
-            f"{dirty['blocked']} --blocked pixels, pinned at 97. If the legend "
-            f"swatch, the live dot and the danger button stopped painting "
-            f"`--blocked` on a calm page, re-derive this row from the new sweep "
-            f"(work_item_pipeline-qgo)."
-        )
+        for level in ("L0", "L1"):
+            calm = tier_b("calm.zero_alarm_pixels", f"calm/{level}/{theme}")
+            assert calm["alarm"] == 0 and calm["blocked"] == 0, (
+                f"OSV1-003 (Core 2) REGRESSION: a calm {level} in {theme} paints "
+                f"{calm['alarm']} --alarm and {calm['blocked']} --blocked pixels "
+                f"across {calm['pixels_swept']} swept, with nothing held past TTL "
+                f"and nothing blocked. Core 2: that absence is what makes the alarm "
+                f"pop. L1 measured 97 --blocked until work_item_pipeline-a1o -- 81 "
+                f"from the status-donut legend's zero-count `span.sw.mix-blocked`, "
+                f"16 from the Blocked tab's `span.dot`; both keep their slot and "
+                f"drop the hue at zero now, so a non-zero reading here means one of "
+                f"them took its hue back or a new painter appeared."
+            )
+    alarming = tier_b("calm.zero_alarm_pixels", "bad-alarm-fixture/L0/dark")
+    assert alarming["blocked"] > 0, (
+        f"OSV1-003 (Core 2): the genuinely-alarming fixture painted "
+        f"{alarming['blocked']} --blocked pixels. The calm zeroes above are only "
+        f"evidence while this arm still discriminates -- a sweep that has stopped "
+        f"seeing the hue reports a calm page and an alarming one identically."
+    )
+    reserved = tier_b("alarm.reserved_hue", "alarm/L1/dark")
+    assert reserved["alarm"] > 0 or reserved["blocked"] > 0, (
+        f"OSV1-003 (Core 2): an L1 rendered WITH a blocked item painted "
+        f"{reserved['alarm']} --alarm and {reserved['blocked']} --blocked pixels. "
+        f"The fix that took this row green had to quiet the hue at ZERO only; if "
+        f"it also quieted it when the status is real, the absence no longer makes "
+        f"anything pop."
+    )
     # THE PALETTE SPECIMENS CLOSED 2026-09-05 (work_item_pipeline-np3, OSV1-005).
     # This row's own VIOLATION is unchanged -- a calm L1 still paints `--blocked`,
     # which is what the recorded sweep above measures. But the two specimens it
@@ -537,11 +560,17 @@ EXEMPTION_REGISTER: frozenset[str] = frozenset(
         "webapp.py:1127",  # flex:{n} 1 0            -- state-bar segment ratio
         "webapp.py:1823",  # width:{today_w}px       -- throughput bar, today
         "webapp.py:1826",  # width:{prior_w}px       -- throughput bar, prior 6d
-        "webtheme.py:4197",  # {style}               -- axis ruler numeral offset
-        "webtheme.py:4216",  # left:{_grad_x(f):.1f}px -- graduation tick offset
-        "webtheme.py:4223",  # width:{px}px          -- age bar length
-        "widgets.py:866",  # width:{pct}%            -- status-mix segment (hatched)
-        "widgets.py:868",  # width:{pct}%            -- status-mix segment
+        # +22 lines on 2026-09-05 (work_item_pipeline-a1o, was 4197/4216/4223):
+        # OSV1-003's fix inserted three commented CSS rules ABOVE them. The SITES
+        # are unchanged and the register did not GROW -- same eight, same three
+        # expressions -- but the pins are line numbers, so any edit higher in the
+        # file moves them. Re-pinned here rather than loosened: a register that
+        # stops naming an exact line stops being a register.
+        "webtheme.py:4219",  # {style}               -- axis ruler numeral offset
+        "webtheme.py:4238",  # left:{_grad_x(f):.1f}px -- graduation tick offset
+        "webtheme.py:4245",  # width:{px}px          -- age bar length
+        "widgets.py:837",  # width:{pct}%            -- status-mix segment (hatched)
+        "widgets.py:839",  # width:{pct}%            -- status-mix segment
     }
 )
 
@@ -1995,7 +2024,8 @@ def test_row_osv1_031() -> None:
         f"2026-09-04, work_item_pipeline-8vv and -dg3; OSV1-001 and OSV1-004 went green "
         f"2026-09-05, work_item_pipeline-ujy and the Tier-A kit; OSV1-005 went green "
         f"2026-09-05, work_item_pipeline-np3; OSV1-012 went green 2026-09-05, "
-        f"work_item_pipeline-aad.)"
+        f"work_item_pipeline-aad; OSV1-003 went green 2026-09-05, "
+        f"work_item_pipeline-a1o.)"
     )
     assert {r["id"] for r in core_rows if r["disposition"] == "NOT-ASSERTABLE"} == {
         "OSV1-018",
