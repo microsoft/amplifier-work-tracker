@@ -27,7 +27,7 @@
         "blocked": 0,
         "pixels_swept": 2813440,
         "retired_amber": 0,
-        "watch": 5229
+        "watch": 5215
       },
       "bad-alarm-fixture/L0/dark": {
         "alarm": 0,
@@ -48,7 +48,7 @@
         "blocked": 0,
         "pixels_swept": 2813440,
         "retired_amber": 16681,
-        "watch": 5047
+        "watch": 5074
       },
       "calm/L0/dark": {
         "alarm": 0,
@@ -62,7 +62,7 @@
         "blocked": 0,
         "pixels_swept": 2813440,
         "retired_amber": 0,
-        "watch": 5168
+        "watch": 5308
       },
       "calm/L1/dark": {
         "alarm": 0,
@@ -76,7 +76,7 @@
         "blocked": 97,
         "pixels_swept": 3792640,
         "retired_amber": 0,
-        "watch": 6443
+        "watch": 6412
       }
     },
     "kit.pinned_browser": {
@@ -111,7 +111,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 1280,
         "text_below_floor": 0,
-        "text_scored": 136
+        "text_scored": 137
       },
       "calm/L0/1280/light": {
         "client_width": 1280,
@@ -124,7 +124,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 1280,
         "text_below_floor": 0,
-        "text_scored": 136
+        "text_scored": 137
       },
       "calm/L0/430/dark": {
         "client_width": 430,
@@ -137,7 +137,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 430,
         "text_below_floor": 0,
-        "text_scored": 127
+        "text_scored": 128
       },
       "calm/L0/430/light": {
         "client_width": 430,
@@ -150,7 +150,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 430,
         "text_below_floor": 0,
-        "text_scored": 127
+        "text_scored": 128
       },
       "calm/L0/900/dark": {
         "client_width": 900,
@@ -163,7 +163,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 900,
         "text_below_floor": 0,
-        "text_scored": 136
+        "text_scored": 137
       },
       "calm/L0/900/light": {
         "client_width": 900,
@@ -176,7 +176,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 900,
         "text_below_floor": 0,
-        "text_scored": 136
+        "text_scored": 137
       },
       "calm/L1/1280/dark": {
         "client_width": 1280,
@@ -189,7 +189,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 1280,
         "text_below_floor": 3,
-        "text_scored": 183
+        "text_scored": 184
       },
       "calm/L1/1280/light": {
         "client_width": 1280,
@@ -202,7 +202,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 1280,
         "text_below_floor": 4,
-        "text_scored": 183
+        "text_scored": 184
       },
       "calm/L1/430/dark": {
         "client_width": 430,
@@ -215,7 +215,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 430,
         "text_below_floor": 3,
-        "text_scored": 177
+        "text_scored": 179
       },
       "calm/L1/430/light": {
         "client_width": 430,
@@ -228,7 +228,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 430,
         "text_below_floor": 4,
-        "text_scored": 178
+        "text_scored": 179
       },
       "calm/L1/900/dark": {
         "client_width": 900,
@@ -241,7 +241,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 900,
         "text_below_floor": 3,
-        "text_scored": 183
+        "text_scored": 184
       },
       "calm/L1/900/light": {
         "client_width": 900,
@@ -254,7 +254,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 900,
         "text_below_floor": 4,
-        "text_scored": 183
+        "text_scored": 184
       },
       "calm/L2/1280/dark": {
         "client_width": 1280,
@@ -355,8 +355,10 @@
     },
     "swap.survives": {
       "bad-naive-replacement-reflow/L0/dark": {
+        "announcement_present_before": true,
+        "announcement_preserved": true,
         "details_with_id": 0,
-        "live_regions_before": 1,
+        "live_regions_before": 2,
         "marked_live_regions_after": 0,
         "open_details_preserved": false,
         "pause_control_preserved": false,
@@ -364,8 +366,10 @@
         "scroll_preserved": false
       },
       "bad-naive-replacement/L0/dark": {
+        "announcement_present_before": true,
+        "announcement_preserved": true,
         "details_with_id": 0,
-        "live_regions_before": 1,
+        "live_regions_before": 2,
         "marked_live_regions_after": 0,
         "open_details_preserved": false,
         "pause_control_preserved": false,
@@ -373,25 +377,29 @@
         "scroll_preserved": true
       },
       "calm/L0/dark": {
+        "announcement_present_before": true,
+        "announcement_preserved": true,
         "details_with_id": 0,
-        "live_regions_before": 1,
-        "marked_live_regions_after": 0,
-        "open_details_preserved": false,
-        "pause_control_preserved": false,
+        "live_regions_before": 2,
+        "marked_live_regions_after": 1,
+        "open_details_preserved": true,
+        "pause_control_preserved": true,
         "pause_flag_preserved": true,
         "scroll_preserved": true
       },
       "calm/L1/dark": {
+        "announcement_present_before": true,
+        "announcement_preserved": true,
         "details_with_id": 0,
-        "live_regions_before": 0,
-        "marked_live_regions_after": 0,
-        "open_details_preserved": false,
-        "pause_control_preserved": false,
+        "live_regions_before": 1,
+        "marked_live_regions_after": 1,
+        "open_details_preserved": true,
+        "pause_control_preserved": true,
         "pause_flag_preserved": true,
         "scroll_preserved": true
       }
     }
   },
-  "recorded_at": "2026-09-05T11:55:58Z",
+  "recorded_at": "2026-09-05T22:29:37Z",
   "schema": "operator-surface-tier-b/1"
 }

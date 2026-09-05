@@ -473,6 +473,16 @@ SWAP_MARK_LIVE_REGIONS_JS = r"""
 
 #: The post/pre-swap DOM snapshot Conformance 3 asks for.
 #:
+#: The announcement half is read TWO ways, because one of them is not enough.
+#: `surviving_marked_live_regions` counts NODE IDENTITY -- how many of the
+#: regions tagged before the swap are still the same nodes afterwards -- and
+#: is the only reading that discriminates: a naive replacement destroys the
+#: region and the server renders a fresh one carrying the SAME sentence, so
+#: text alone would report survival for a region that was demolished
+#: mid-announcement. `live_message` reads the persistent region's text, which
+#: is what an operator actually hears; asserted together they say "the same
+#: node, still saying the same thing".
+#:
 #: `<details>` are keyed by ORDINAL + class signature, not by id: measured on
 #: the shipped surface, NO `<details>` on L0, L1 or L2 carries an id at all
 #: (help popover, activity feed, actions drawer -- all id-less), and
@@ -491,6 +501,12 @@ SWAP_STATE_JS = r"""
     if(d.open){ open.push(sig); if(d.id) byId.push(d.id); }
   }
   var live = document.querySelectorAll('[aria-live], [role=status], [role=alert], [role=log]');
+  var survivors = document.querySelectorAll('[data-wt-preswap]');
+  var survivorText = [];
+  for(var s = 0; s < survivors.length; s++){
+    survivorText.push((survivors[s].textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80));
+  }
+  var persistent = document.getElementById('wt-live');
   return {
     scroll_y: Math.round(window.scrollY),
     details_total: all.length,
@@ -500,7 +516,11 @@ SWAP_STATE_JS = r"""
     pause_flag: !!window.__wtRefreshPaused,
     pause_control_pressed: btn ? btn.getAttribute('aria-pressed') : null,
     live_region_count: live.length,
-    surviving_marked_live_regions: document.querySelectorAll('[data-wt-preswap]').length
+    surviving_marked_live_regions: survivors.length,
+    surviving_marked_live_region_texts: survivorText,
+    live_message: persistent
+      ? (persistent.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120)
+      : null
   };
 })()
 """

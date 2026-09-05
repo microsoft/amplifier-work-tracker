@@ -631,50 +631,97 @@ def _mo003_the_calm_page_stops_painting_blocked(w: World) -> None:
     )
 
 
-def _mo008_the_swap_starts_restoring_the_disclosure(w: World) -> None:
-    """FIXED: an open `<details>` survives the body-swap on L0."""
-    w.replace(
-        TIER_B_SUMMARY,
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
-        '        "marked_live_regions_after": 0,\n        "open_details_preserved": false,',
-        '"calm/L0/dark": {\n        "details_with_id": 2,\n        "live_regions_before": 1,\n'
-        '        "marked_live_regions_after": 0,\n        "open_details_preserved": true,',
-    )
+def _mo008_the_disclosure_stops_surviving(w: World) -> None:
+    """REGRESSION: an open `<details>` stops surviving the body-swap on L0.
 
-
-def _mo008_the_announcement_survives_the_swap(w: World) -> None:
-    """FIXED: the live region tagged before the swap SURVIVES it on L0.
-
-    Newly measurable since the hero rebuild: before it, L0 rendered no live
-    region at all and Core 6's announcement half had nothing to preserve. Now
-    there is exactly one (`role="status"`), the swap destroys it, and a fix
-    that carried it across would flip this half of the row.
+    Direction flipped 2026-09-05 with the row (work_item_pipeline-v3m):
+    OSV1-008 reads CONFORMS now, so the mutation that must be WATCHED FAILING
+    is the one that takes the survival away, not the one that grants it.
     """
     w.replace(
         TIER_B_SUMMARY,
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
-        '        "marked_live_regions_after": 0,',
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
-        '        "marked_live_regions_after": 1,',
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 1,\n'
+        '        "open_details_preserved": true,',
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 1,\n'
+        '        "open_details_preserved": false,',
     )
 
 
-def _mo008_the_pause_control_starts_surviving(w: World) -> None:
-    """FIXED: the pause CONTROL's own state survives the swap on L0.
+def _mo008_the_announcement_stops_surviving(w: World) -> None:
+    """REGRESSION: the live region tagged before the swap no longer survives it.
 
-    Separable from the disclosure half above, and pinned separately, because
-    the two are different fixes: one needs ids in the markup, the other needs
-    the re-rendered button to be re-synchronised with `window.__wtRefreshPaused`.
+    Separately watched from the text half below, and from the disclosure half
+    above, because they are three different mechanisms: node identity is what
+    the poller's detach/re-attach buys, and it is the only reading a
+    destroy-and-rebuild cannot fake.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 1,',
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 0,',
+    )
+
+
+def _mo008_the_announcement_text_changes(w: World) -> None:
+    """REGRESSION: the surviving region's text is replaced across the swap.
+
+    The node survives, so `marked_live_regions_after` still reads 1 -- and the
+    announcement is still cut off. This is the half a node-identity check alone
+    would miss, which is why the row asserts both.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,',
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": false,',
+    )
+
+
+def _mo008_the_pause_control_stops_surviving(w: World) -> None:
+    """REGRESSION: the pause CONTROL's own state stops surviving the swap on L0.
+
+    Separable from the disclosure half, and pinned separately, because the two
+    are different mechanisms: one re-opens disclosures by ordinal + id, the
+    other re-synchronises the re-rendered button with `window.__wtRefreshPaused`.
     A row that noticed only one of them would absorb the other silently.
     """
     w.replace(
         TIER_B_SUMMARY,
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
-        '        "marked_live_regions_after": 0,\n        "open_details_preserved": false,\n'
-        '        "pause_control_preserved": false,',
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
-        '        "marked_live_regions_after": 0,\n        "open_details_preserved": false,\n'
-        '        "pause_control_preserved": true,',
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 1,\n'
+        '        "open_details_preserved": true,\n        "pause_control_preserved": true,',
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 1,\n'
+        '        "open_details_preserved": true,\n        "pause_control_preserved": false,',
+    )
+
+
+def _mo008_l1_loses_its_live_region(w: World) -> None:
+    """REGRESSION: L1 goes back to rendering NO live region at all.
+
+    The state this row recorded before the fix, and the one that fails Core 6
+    one step EARLIER than the swap: with nothing rendered there is nothing to
+    destroy and nothing for the operator to hear.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L1/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 1,',
+        '"calm/L1/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 0,',
     )
 
 
@@ -794,11 +841,13 @@ def _mo022_the_swap_bad_half_stops_discriminating(w: World) -> None:
     Conformance 3's bad half no longer differs from the shipped poller."""
     w.replace(
         TIER_B_SUMMARY,
-        '"bad-naive-replacement/L0/dark": {\n        "details_with_id": 0,\n'
-        '        "live_regions_before": 1,\n        "marked_live_regions_after": 0,\n'
+        '"bad-naive-replacement/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 0,\n'
         '        "open_details_preserved": false,',
-        '"bad-naive-replacement/L0/dark": {\n        "details_with_id": 0,\n'
-        '        "live_regions_before": 1,\n        "marked_live_regions_after": 0,\n'
+        '"bad-naive-replacement/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 0,\n'
         '        "open_details_preserved": true,',
     )
 
@@ -1082,20 +1131,31 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-008",
-        "the browser measures an open `<details>` surviving the swap (the fix)",
-        _mo008_the_swap_starts_restoring_the_disclosure,
+        "the browser measures an open `<details>` no longer surviving the swap",
+        _mo008_the_disclosure_stops_surviving,
     ),
     Mutation(
         "OSV1-008",
-        "the browser measures the pause CONTROL surviving the swap (the fix)",
-        _mo008_the_pause_control_starts_surviving,
+        "the browser measures the pause CONTROL no longer surviving the swap",
+        _mo008_the_pause_control_stops_surviving,
     ),
     Mutation(
         "OSV1-008",
-        "the browser measures L0's live region surviving the swap (the fix, on the "
-        "half that only became measurable when the hero rebuild gave L0 a "
-        "`role=status` region to destroy)",
-        _mo008_the_announcement_survives_the_swap,
+        "the browser measures L0's tagged live region destroyed by the swap again "
+        "(node identity lost -- the reading a destroy-and-rebuild cannot fake)",
+        _mo008_the_announcement_stops_surviving,
+    ),
+    Mutation(
+        "OSV1-008",
+        "the surviving region's announcement is replaced across the swap (node kept, "
+        "sentence cut off -- the half a node-identity check alone would miss)",
+        _mo008_the_announcement_text_changes,
+    ),
+    Mutation(
+        "OSV1-008",
+        "L1 goes back to rendering no live region at all (Core 6's announcement half "
+        "failing one step earlier than the swap)",
+        _mo008_l1_loses_its_live_region,
     ),
     Mutation(
         "OSV1-009",

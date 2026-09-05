@@ -44,6 +44,7 @@ from amplifier_work_tracker.webapp import (
     _item_facts_kv_html,
     _item_held_chip_html,
     _item_time_kv_html,
+    _live_region_html,
     _not_found_body,
     _observatory_help_and_theme_html,
     _observatory_icon_sprite_html,
@@ -568,6 +569,11 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
             if not shown
             else ""
         )
+        # Core 6's announcement half. Composed OUTSIDE the body f-string
+        # below: `requires-python = ">=3.11"`, and 3.11 forbids a nested
+        # same-quoted f-string inside a `{...}` expression part -- the same
+        # real constraint `_EM_DASH` above exists for.
+        announce_html = _live_region_html(f"{name} status: {verdict['headline']}")
         tabs_html = _status_tabs_html(name, status, _status_tab_counts(summary))
         search_value = f' value="{_esc(q)}"' if q else ""
         manage_html = f"""
@@ -614,6 +620,7 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
         body = f"""
         {_observatory_icon_sprite_html()}
         <div class="container">
+        {announce_html}
         {_flash(request)}
         <div class="breadcrumb">{crumb}</div>
         <div class="section">{hero_html}</div>

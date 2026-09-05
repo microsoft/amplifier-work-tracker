@@ -3528,6 +3528,38 @@ wtApplyTheme(document.documentElement.getAttribute('data-theme') || 'dark');
 )
 
 
+def _live_region_html(message: str) -> str:
+    """The ONE persistent live region a self-polling Observatory page renders.
+
+    Core 6 asks that "an assistive-technology announcement pending at the
+    moment of the swap is not silently destroyed by it". The 20-second poll
+    replaces `document.body.innerHTML` wholesale, so ANY live region rendered
+    inside that body is destroyed and rebuilt empty every tick -- measured, on
+    the verdict hero's own `role="status"`: 0 of the 1 tagged node survived
+    (ledger row OSV1-008). A region that is rebuilt is a region that never
+    finishes announcing.
+
+    This one is different only because `T.auto_refresh_js` KNOWS it: it is
+    detached before the swap and re-attached afterwards, so the node survives
+    and its text changes only when the surface's own state changed. Hence the
+    shared `T.LIVE_REGION_ID` -- the poller and the view must name the same
+    node or the mechanism silently does nothing.
+
+    `aria-live="polite"` and not `assertive`: a monitor that interrupts is a
+    monitor nobody leaves running. `role="status"` is carried too, for the
+    assistive technologies that map the role rather than the attribute.
+
+    Screen-reader-only by design (see webtheme.py's `.wt-live`): `message` is
+    the verdict the hero already states in full, and a second visible copy
+    would be redundant ink on a surface whose discipline is that calm is
+    reported, never decorated.
+    """
+    return (
+        f'<p class="wt-live" id="{T.LIVE_REGION_ID}" role="status" '
+        f'aria-live="polite" aria-atomic="true">{_esc(message)}</p>'
+    )
+
+
 def _observatory_nav_extras_html(*, reconcile_html: str = "", extra_dt_dd: str = "") -> str:
     """The nav's Observatory-only chrome, appended after
     `_nav_actions_html`'s existing search/bell/+New: a LIVE auto-refresh
@@ -3553,6 +3585,15 @@ def _observatory_nav_extras_html(*, reconcile_html: str = "", extra_dt_dd: str =
         'title="This page polls for fresh data on an interval">'
         '<span class="icon sm"><svg><use href="#i-clock"/></svg></span>'
         '<span class="refresh-text">Refreshes 20s</span>'
+        # Server-rendered at `aria-pressed="false"` deliberately and
+        # permanently: the pause is a per-tab client-side flag
+        # (`window.__wtRefreshPaused`), and the server has no way to know it.
+        # What USED to be wrong is that nothing re-applied the flag after the
+        # body-swap re-rendered this button, so a paused page showed itself as
+        # running (Core 6 / OSV1-008). `T.auto_refresh_js`'s
+        # `restorePauseControl` now re-synchronises it to the flag after every
+        # swap, by calling `wtToggleRefresh` below -- so the label, icon and
+        # title vocabulary stays declared in exactly one place.
         '<button class="refresh-toggle" id="refreshToggle" aria-pressed="false" '
         'onclick="wtToggleRefresh()" title="Pause auto-refresh">'
         '<span class="icon sm" id="refreshIcon"><svg><use href="#i-pause"/></svg></span>'
@@ -4737,9 +4778,13 @@ def create_app(
             )
         )
 
+        # Core 6's announcement half. Composed outside the body f-string for
+        # the same reason `webbrowse.py`'s is -- see its comment.
+        announce_html = _live_region_html(f"Environment status: {verdict['headline']}")
         body = f"""
         {_observatory_icon_sprite_html()}
         <div class="container">
+        {announce_html}
         {_flash(request)}
         <div id="verdict-hero" class="section">{hero_html}</div>
         <div class="two-up section">
