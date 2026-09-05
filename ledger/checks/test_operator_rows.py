@@ -537,9 +537,13 @@ EXEMPTION_REGISTER: frozenset[str] = frozenset(
         "webapp.py:1127",  # flex:{n} 1 0            -- state-bar segment ratio
         "webapp.py:1823",  # width:{today_w}px       -- throughput bar, today
         "webapp.py:1826",  # width:{prior_w}px       -- throughput bar, prior 6d
-        "webtheme.py:4197",  # {style}               -- axis ruler numeral offset
-        "webtheme.py:4216",  # left:{_grad_x(f):.1f}px -- graduation tick offset
-        "webtheme.py:4223",  # width:{px}px          -- age bar length
+        # Re-anchored 2026-09-05 (work_item_pipeline-96f, OSV1-010): +82 lines
+        # each, the token-block comments the Core 7 rendered-floor fix added
+        # above them. Same three sites, same code, same reason -- a line-keyed
+        # register moves whenever anything above it does.
+        "webtheme.py:4279",  # {style}               -- axis ruler numeral offset
+        "webtheme.py:4298",  # left:{_grad_x(f):.1f}px -- graduation tick offset
+        "webtheme.py:4305",  # width:{px}px          -- age bar length
         "widgets.py:837",  # width:{pct}%            -- status-mix segment (hatched)
         "widgets.py:839",  # width:{pct}%            -- status-mix segment
     }
@@ -770,44 +774,107 @@ def test_row_osv1_009() -> None:
 
 
 def test_row_osv1_010() -> None:
-    """Core 7 VIOLATION pin (rendered half), RE-READ from the browser run.
+    """Core 7 CONFORMS (rendered half), RE-READ from the browser run.
 
-    Four floors, measured across 18 renders. Three fail and one passes, and
-    all four are pinned: a fix to any one is progress this row must record.
+    RETARGETED 2026-09-05 from the VIOLATION pin (work_item_pipeline-96f). The
+    pin froze three failing floors -- 7 text nodes below 4.5:1, 26 of 34
+    interactive controls under 44px on L0, and 16-23 non-text surfaces per
+    level below 3:1 -- and asserted the fourth (reduced motion) already passed.
+    All four are now asserted in the REGRESSION direction, over the recorded
+    run rather than the browser tier's own green (Freeze 3).
+
+    Swept over EVERY recorded render, not one scenario: three floors are
+    theme- and width-dependent (the light blocks are held in sync only by
+    comment, and 430px hides controls the wider viewports show), so reading a
+    single scenario would let seventeen others move unseen.
+
+    The ONE enumerated exemption -- the status-mix donut's backing ring, see
+    `_probe.NON_TEXT_EXEMPT_CLASSES` -- is asserted here too, by SIZE and by
+    WHERE it fires, so the allowance cannot quietly grow into the thing that
+    keeps the non-text arm green.
     """
-    l0 = tier_b("perception.floors", "calm/L0/1280/dark")
-    l1 = tier_b("perception.floors", "calm/L1/1280/dark")
-    l1_light = tier_b("perception.floors", "calm/L1/1280/light")
+    renders = {
+        scenario: headline
+        for scenario, headline in tier_b_summary()["checks"]["perception.floors"].items()
+        if scenario.startswith("calm/")
+    }
+    assert len(renders) == 18, (
+        f"OSV1-010 (Core 7): the recorded run sweeps {len(renders)} renders, not the "
+        f"18 (L0/L1/L2 x 430/900/1280 x dark/light) this clause names. A narrowed "
+        f"sweep is a narrowed claim -- re-derive."
+    )
 
-    assert l0["text_below_floor"] == 0, (
-        f"OSV1-010 (Core 7): L0 now has {l0['text_below_floor']} text elements below "
-        f"4.5:1. L0 was the CLEAN level for text contrast -- a regression."
+    text = {s: h["text_below_floor"] for s, h in sorted(renders.items()) if h["text_below_floor"]}
+    assert not text, (
+        f"OSV1-010 (Core 7) REGRESSION, text floor: {text} -- text below 4.5:1 against "
+        f"its own RENDERED background. Fix the TOKEN and in ALL FOUR declared blocks "
+        f"(the two light ones are held in sync only by comment); flat pair math "
+        f"clearing the floor is NOT sufficient here, which is what OSV1-009's honest "
+        f"limit records and what this row measured."
     )
-    assert l1["text_below_floor"] == 3 and l1_light["text_below_floor"] == 4, (
-        f"OSV1-010 (Core 7) PIN MOVED: L1 text below 4.5:1 measured "
-        f"{l1['text_below_floor']} dark / {l1_light['text_below_floor']} light, "
-        f"pinned at 3 / 4 (light was 5 before the contrast lane moved "
-        f"`--ink-quiet`). Movement in either direction means the render changed "
-        f"-- re-derive (work_item_pipeline-qgo)."
+
+    targets = {
+        s: f"{h['controls_below_44px']} of {h['controls']}"
+        for s, h in sorted(renders.items())
+        if h["controls_below_44px"]
+    }
+    assert not targets, (
+        f"OSV1-010 (Core 7) REGRESSION, target floor: {targets} -- interactive controls "
+        f"under 44px on their smaller side. The hit area is what has to reach --u; it "
+        f"need not be the visual size."
     )
-    assert l0["controls_below_44px"] == 26 and l0["controls"] == 34, (
-        f"OSV1-010 (Core 7) PIN MOVED: L0 measured {l0['controls_below_44px']} of "
-        f"{l0['controls']} interactive controls under 44px, pinned at 26 of 34 "
-        f"(35 before the hero rebuild replaced one control)."
+
+    non_text = {
+        s: f"{h['non_text_below_floor']} of {h['non_text_measured']}"
+        for s, h in sorted(renders.items())
+        if h["non_text_below_floor"]
+    }
+    assert not non_text, (
+        f"OSV1-010 (Core 7) REGRESSION, non-text floor: {non_text} -- control borders "
+        f"or icon strokes below 3:1. `--control-edge` is the token that carries an "
+        f"INTERACTIVE control's boundary; `--glass-hairline`/`-soft` are the "
+        f"decorative panel edges WCAG 1.4.11 exempts, and swapping one for the other "
+        f"is how this regresses."
     )
-    assert l0["non_text_below_floor"] > 0, (
-        "OSV1-010 (Core 7) PIN BROKE THE RIGHT WAY: every measured control border "
-        "and icon stroke on L0 now meets 3:1. Re-derive this row."
+
+    motion = {
+        s: h["running_animations_under_reduced_motion"]
+        for s, h in sorted(renders.items())
+        if h["running_animations_under_reduced_motion"]
+    }
+    assert not motion, (
+        f"OSV1-010 (Core 7) REGRESSION, reduced motion: {motion} animation(s) run "
+        f"under the preference. This floor passed before the other three were fixed "
+        f"and must not be traded for them -- see OSV1-011 for the kernel-rule half."
     )
-    assert l0["running_animations_under_reduced_motion"] == 0, (
-        f"OSV1-010 (Core 7): {l0['running_animations_under_reduced_motion']} "
-        f"animation(s) now run under `prefers-reduced-motion: reduce`. That floor "
-        f"PASSED at this measurement -- a regression, and Core 7's kernel-rule half "
-        f"(OSV1-011) with it."
+
+    # The exemption, asserted as a NUMBER and by WHERE it fires. L1 is the only
+    # level that draws a donut; an exemption appearing on L0 or L2, or a second
+    # one appearing on L1, means the allowance -- not the fix -- is what is
+    # keeping the non-text arm green.
+    exempt = {s: h["non_text_exempt_below_floor"] for s, h in sorted(renders.items())}
+    stray = {s: n for s, n in exempt.items() if n and "/L1/" not in s}
+    assert not stray, (
+        f"OSV1-010 (Core 7): the non-text exemption fired outside L1: {stray}. It "
+        f"covers the status-mix donut's backing ring and nothing else -- L0 and L2 "
+        f"draw no donut, so an entry there is the allowance spreading."
     )
+    grown = {s: n for s, n in exempt.items() if "/L1/" in s and n != 1}
+    assert not grown, (
+        f"OSV1-010 (Core 7): L1's non-text exemption is pinned at exactly 1 entry "
+        f"(`.donut-track`, 1.32:1 dark / 1.15:1 light -- the one BLOCKED residual "
+        f"this row records); observed {grown}. Growth here widens the floor instead "
+        f"of meeting it."
+    )
+
     assert contains(WEBTHEME, "--u:44px"), (
         "OSV1-010 (Core 7): the 44px target token is gone -- the thing the Tier-B "
         "bounding-box check exists to verify."
+    )
+    assert contains(WEBTHEME, "--control-edge:"), (
+        "OSV1-010 (Core 7): `--control-edge` is gone from the token block. It is the "
+        "token that took every interactive control's border from 1.24-1.60:1 to over "
+        "3:1 without dragging the decorative panel hairlines along with it."
     )
 
 
@@ -1937,14 +2004,15 @@ def test_row_osv1_031() -> None:
         "to CONFORMS and retarget this probe to assert no Core row is red "
         "(work_item_pipeline-umm)."
     )
-    assert len(red) == 4, (
-        f"OSV1-031 (Freeze 5): pinned 4 red Core-carrying rows, observed {len(red)}: "
+    assert len(red) == 3, (
+        f"OSV1-031 (Freeze 5): pinned 3 red Core-carrying rows, observed {len(red)}: "
         f"{red}. Movement in either direction means this gate's tally changed -- update "
         f"the pin and the row's notes in the same change. (10 at seed; OSV1-009 went "
         f"green 2026-09-04, work_item_pipeline-sxh; OSV1-015 and -016 went green "
         f"2026-09-04, work_item_pipeline-8vv and -dg3; OSV1-001 and OSV1-004 went green "
         f"2026-09-05, work_item_pipeline-ujy and the Tier-A kit; OSV1-005 went green "
-        f"2026-09-05, work_item_pipeline-np3.)"
+        f"2026-09-05, work_item_pipeline-np3; OSV1-010 went green 2026-09-05, "
+        f"work_item_pipeline-96f.)"
     )
     assert {r["id"] for r in core_rows if r["disposition"] == "NOT-ASSERTABLE"} == {
         "OSV1-018",

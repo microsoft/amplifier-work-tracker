@@ -1360,13 +1360,19 @@
       webapp.py:1127    flex:{n} 1 0              state-bar segment ratio
       webapp.py:1823    width:{today_w}px         throughput bar, today
       webapp.py:1826    width:{prior_w}px         throughput bar, prior 6 d
-      webtheme.py:4197  {style}                   axis ruler numeral offset
-      webtheme.py:4216  left:{_grad_x(f):.1f}px   graduation tick offset
-      webtheme.py:4223  width:{px}px              age bar length
+      webtheme.py:4279  {style}                   axis ruler numeral offset
+      webtheme.py:4298  left:{_grad_x(f):.1f}px   graduation tick offset
+      webtheme.py:4305  width:{px}px              age bar length
       widgets.py:837    width:{pct}%              status-mix segment (hatched)
       widgets.py:839    width:{pct}%              status-mix segment
     Every one is "a bar width, a chart offset" -- the clause's own gloss of what
     this exemption is FOR.
+
+    RE-ANCHORED 2026-09-05 (work_item_pipeline-96f): the three webtheme.py
+    sites moved +82 lines each (4197/4216/4223 -> 4279/4298/4305) when the
+    Core 7 rendered-floor fix added token-block comments above them. The
+    register did not GROW and no site changed -- a line-keyed register moves
+    whenever anything above it does, which is the cost of keying it that way.
 
     THE ROOT'S TRIAGE RULING WAS APPLIED, and it is what removed 15 sites. Two
     kinds were on the register that should not have been:
@@ -1595,7 +1601,7 @@
     necessary, never sufficient.
 
 - id: OSV1-010
-  title: rendered contrast, target boxes and a motion trace -- measured, three of four floors fail
+  title: rendered contrast, target boxes and a motion trace -- measured, all four floors met
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 7
@@ -1603,14 +1609,120 @@
       plus a browser run emitting computed contrast ratios, target bounding boxes, and a
       motion-preference trace at 430, 900, and 1280px in both themes; the orchestrator
       re-checks those numbers against the floors.
-  disposition: VIOLATION
-  work: work_item_pipeline-qgo
+  disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_osv1_010
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED 2026-09-05, VIOLATION -> CONFORMS (work_item_pipeline-96f). Was a
+    PINNING row; the probe now asserts the floors are MET, in the regression
+    direction, and the four Tier-B `xfail(strict)` markers that named this row
+    are gone from the kit. Every number below is re-read by this row's probe
+    from `tests/conformance/operator_surface/browser/LAST_RUN.json`, the kit's
+    committed run summary -- never from the browser tier's own pass/fail
+    (Freeze 3 / Phase-1 ruling 6), and never transcribed.
+
+    MEASURED IN A REAL BROWSER 2026-09-05 -- chromium 148.0.7778.0 via the
+    pinned playwright 1.60.0, against a live app on an ephemeral loopback port
+    over the isolated dolt fixture; 18 renders (L0/L1/L2 x 430/900/1280 x
+    dark/light), recorded TWICE with byte-identical values on every field this
+    row asserts.
+
+    ALL FOUR FLOORS, BEFORE -> AFTER:
+
+      TEXT CONTRAST (floor 4.5:1) -- 7 failing nodes -> 0, all 18 renders.
+        L0   0 of 136 -> 0 of 136   (was already clean; unmoved)
+        L1   3 of 183 dark, 4 of 183 light -> 0 / 0
+        L2   1 of 58 dark, 2 of 58 light   -> 0 / 0
+      Worst pair moved 3.13:1 -> 4.75:1. Fixed at the TOKEN, in all four
+      declared blocks: `--ink-quiet` #7c8798 -> #a1a8b5 (dark) and #596473 ->
+      #4e5764 (light), `--brand-cyan-ink` #0b6b80 -> #0a5e71 (light only;
+      dark's #22d3ee already read 6.29:1 there). No call site moved off a
+      token and no reading copy was relabelled decorative.
+
+      This is the HONEST LIMIT OSV1-009 recorded, closed by measurement. Those
+      same tokens cleared 4.5:1 as flat swatch pairs on the three declared
+      grounds; in the render they sat on glass-over-glass chip surfaces
+      (#383a40 dark, #ccd1db light) that flat pair math cannot model -- 3.13:1
+      on L1's `.status-chip.st-resolved`, 3.92:1 in light, 3.99:1 on
+      `.st-held`, 3.77/4.26:1 on L2's drawer count, 4.35:1 on
+      `.drawer-section label.eyebrow`. Each is now >= 4.75:1 on its own
+      rendered background. The ink ramp did NOT collapse to buy it:
+      `--ink-tertiary` reads 7.33:1 dark / 5.75:1 light on the same chip
+      surface, so quiet stays visibly the quieter step, which is what
+      OSV1-009's own distinctness assert forbids trading away.
+
+      TARGET SIZE (floor 44px) -- 26 of 34 controls on L0 -> 0 of 34, and 0 of
+      41 on L1 / 0 of 20 on L2, at every one of the three widths.
+        L0  26 of 34 at 900/1280, 16 of 34 at 430  -> 0
+        L1  22 of 41 (21 of 40 at 430)             -> 0
+        L2  11 of 20                               -> 0
+      The named offenders and what moved: the auto-refresh pause control
+      (26x26 -> --u), every nav icon-button, the theme toggle and the help
+      disclosure (34x34 -> --u), the window-range and status tabs (28px tall
+      -> min-height/min-width --u), the L0 activity-feed rows (37px -> --u),
+      the L1 items filter `<input type=search>` (181x19, the one field the
+      base `input[type=text]` rule never reached), the breadcrumb links
+      (19.5px), the brand wordmark (21px) and the identity links Setup/Logout
+      (11.5px). For the link-shaped ones the HIT AREA grew and the type did
+      not: `min-height`/`min-width: var(--u)` on an inline-flex box inside a
+      row that was already centred, so the 62px header keeps its height.
+      Inline links stay excluded per WCAG 2.5.8's own inline exception and the
+      excluded population is still emitted beside the scored one.
+
+      NON-TEXT CONTRAST (floor 3:1) -- 16 of 79 on L0 -> 0, in BOTH themes.
+        L0  16 of 79 dark, 16 of 79 light -> 0 / 0
+        L1  23 of 73 dark, 23 of 73 light -> 0 / 0 (one exemption, below)
+        L2  11 of 33 dark, 11 of 33 light -> 0 / 0
+      Fixed with ONE new token rather than by bumping a hairline:
+      `--control-edge` (rgba(255,255,255,.40) dark / rgba(11,18,32,.52)
+      light), applied to the border of an INTERACTIVE control only -- icon
+      buttons, the pause toggle, KPI cards, fleet/agents/agent/item rows, the
+      dormant disclosure, active window/status tabs, form fields, the drawer's
+      action buttons. `--glass-hairline`/`-soft` keep painting every
+      decorative panel edge unchanged, which is why a rim did not become a
+      stroke everywhere. Measured worst case after: 3.35:1 dark (#7c7d81 on
+      #2c2d34), 3.23:1 light (#707682 on #d5d9e3); the icon-button border this
+      row used to name at 1.27:1 now reads 3.53:1. Neutral by construction (a
+      white/ink alpha, no hue), so Core 2's status-hue firewall is untouched
+      and the calm sweep is unmoved.
+
+      REDUCED MOTION -- still PASSES at every level, width and theme: zero
+      animations run under an emulated `prefers-reduced-motion: reduce` once
+      the page is quiescent. Unmoved by this change and still asserted here
+      as well as by OSV1-011.
+
+      HORIZONTAL OVERFLOW -- still PASSES, and still recorded as WEAK
+      EVIDENCE: `scrollWidth == clientWidth` at all nine level/width pairs,
+      but `html`/`body` carry `overflow-x: clip` so that metric cannot move.
+      `elements_beyond_viewport` (border boxes past `clientWidth`, which
+      clipping cannot hide) is 0 everywhere INCLUDING 430px after the target-
+      size work -- the check that would have caught a header made too wide by
+      six 44px buttons.
+
+    THE ONE BLOCKED RESIDUAL, enumerated and machine-checked, never prose:
+    L1's status-mix donut BACKING RING (`.donut-track`, and its sibling
+    `.donut-hatch-gap`) measures 1.32:1 dark / 1.15:1 light against its card
+    and is EXEMPT, via `_probe.NON_TEXT_EXEMPT_CLASSES` -- a frozenset of two
+    class names, subtracted by `below_non_text_floor`, returned by
+    `exempt_below_non_text_floor`, counted in every render's headline as
+    `non_text_exempt_below_floor`, and pinned by its own kit test
+    (`test_the_non_text_exemption_stays_narrow`: exactly 1 entry on L1, 0 on
+    L0/L2, and it must still be below the floor or the exemption is deleted).
+
+    WHY BLOCKED rather than fixed, measured at the nearest passing colour
+    (#616367 dark, #808591 light -- the first step that clears 3:1 against
+    the card):
+      track vs. a --blocked arc     dark 3.64:1 -> 1.60:1   light 5.88:1 -> 2.25:1
+      track vs. an --ink-quiet arc  dark 5.73:1 -> 2.52:1   light 5.18:1 -> 1.98:1
+    i.e. the EMPTY ring would separate from a real status arc by LESS than the
+    3:1 the floor is asking for, and a five-status donut would read as six.
+    WCAG 1.4.11's graphical-object half covers "parts of graphics required to
+    understand the content"; the arcs are, the ground they sit on is not.
+    Meeting the floor here would make the chart say something false, which is
+    the documented hierarchy this exemption protects.
+
+    HISTORY, left rather than overwritten -- each was true when measured.
 
     RE-DERIVED 2026-09-05, GAP -> VIOLATION. The browser run this clause names
     now exists and emits exactly what the clause asks for -- computed contrast
@@ -2686,7 +2798,7 @@
     matching bad half go red while every good half stayed green.
 - id: OSV1-031
   title: >-
-    Freeze 5 -- 4 of the 19 Core-carrying rows are still red, and all four are
+    Freeze 5 -- 3 of the 19 Core-carrying rows are still red, and all three are
     now MEASURED VIOLATIONs (no Core row is an unasserted GAP any more)
   contract:
     file: contracts/operator-surface.v1.md
@@ -2810,6 +2922,28 @@
       GAP 0             every Core clause is still ASSERTED
     Four red, every one of them a MEASURED failure. Freeze 5 is met when all
     four are green and the two NOT-ASSERTABLE rows still name their cadence.
+
+    RE-PINNED 2026-09-05 by the rendered-floors lane (work_item_pipeline-96f),
+    THREE RED, counted by the probe on THIS lane's tree. ONE flip moves it:
+    OSV1-010 (Core 7, the Tier-B rendered half) VIOLATION -> CONFORMS, and it
+    is a re-derivation from a real chromium run of this tree, not a row flipped
+    because a kit file appeared -- the recording was made twice, byte-identical
+    on every field the row asserts, and its four Tier-B `xfail(strict)` markers
+    were deleted because they XPASSed. Text below 4.5:1 went 7 nodes -> 0,
+    controls under 44px 26 of 34 on L0 -> 0, non-text below 3:1 16 of 79 -> 0
+    in both themes, with ONE enumerated machine-checked exemption (the donut's
+    backing ring) recorded in OSV1-010's own notes and counted per render in
+    `LAST_RUN.json`.
+    The tally is now:
+      CONFORMS 14       OSV1-001, -002, -004, -005, -006, -007, -009, -010,
+                        -011, -013, -014, -015, -016, -017
+      NOT-ASSERTABLE 2  OSV1-018 (Core 12), OSV1-019 (Core 13) -- unchanged
+      VIOLATION 3       OSV1-003, -008, -012
+      GAP 0             every Core clause is still ASSERTED
+    Three red, every one of them a MEASURED failure. Freeze 5 is met when all
+    three are green and the two NOT-ASSERTABLE rows still name their cadence.
+    This lane counts only its own tree; two other lanes are in flight against
+    OSV1-003 and OSV1-012, so the orchestrator re-counts on the union.
 
 - id: OSV1-032
   title: >-
