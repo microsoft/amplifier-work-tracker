@@ -53,10 +53,13 @@ _BOUNDED_READS = frozenset(
     }
 )
 
-#: Helpers that make a listing call but are NOT reached from any route -- dead
-#: code, which the clause as written does not condemn. Each one is re-checked
-#: below to still BE dead: the exemption expires the moment it gains a caller.
-_UNREACHED_EXEMPTIONS = frozenset({("webapp.py", "_oldest_ready_item")})
+#: THERE IS NO EXEMPTION LIST any more, and that is the point. Until
+#: 2026-09-06 this module carried one entry -- `webapp._oldest_ready_item`, a
+#: limit-less `bd.list` in a function with zero callers -- with a test below
+#: that re-earned the exemption every run by proving it was still dead. The
+#: function was deleted (work_item_pipeline-zhv), so the exemption and its
+#: guard went with it rather than being left standing over an empty set, which
+#: would have passed forever while proving nothing.
 
 #: How deep the name-following goes. Matches the ledger's own route audit.
 _DEPTH = 4
@@ -228,25 +231,6 @@ def test_every_listing_call_reached_from_a_read_only_route_passes_a_finite_limit
         + "\n\nThis surface re-renders every 20 seconds; an unbounded read here runs "
         "three times a minute per open tab."
     )
-
-
-def test_the_exempted_uncapped_helpers_are_still_reached_by_nothing():
-    """The exemption list is not a permanent pardon.
-
-    `_oldest_ready_item` calls `bd.list(...)` with no limit at all and is
-    exempt above for ONE reason: nothing calls it, so it is not "reached from
-    a view". The instant it gains a caller that reason evaporates -- and this
-    test is what notices, rather than the audit quietly continuing to skip it.
-    """
-    for module_name, func_name in sorted(_UNREACHED_EXEMPTIONS):
-        source = (_SRC / module_name).read_text(encoding="utf-8")
-        occurrences = source.count(func_name)
-        assert occurrences == 1, (
-            f"{module_name}: `{func_name}` now appears {occurrences}x (its own "
-            f"definition plus {occurrences - 1} reference(s)). It makes an UNCAPPED "
-            f"adapter listing call and was exempt from the bound audit only because "
-            f"it was dead code. Give it an explicit limit, or delete it."
-        )
 
 
 # ------------------------------------------------------- the bound itself

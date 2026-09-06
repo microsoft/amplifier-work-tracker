@@ -2245,7 +2245,33 @@ no `docs/VISION.md` byte and no `contracts/custody-coordination.v1.md` byte was
 touched; `LAST_RUN.json` was neither regenerated nor edited; the live service
 was never contacted. No item was filed and none closed.
 
+## 2026-09-06 zhv
+
+- **Core 10's last residual is closed by deletion, not by argument.**
+  `work_item_pipeline-zhv` deleted the dead `webapp._oldest_ready_item`
+  (webapp.py:902–917, 16 lines, zero callers, an uncapped `bd.list`), so
+  `OSV1-015` no longer holds CONFORMS partly by a reachability argument;
+  `make test-conformance-a` went **41 passed / 1 xfailed → 42 passed / 0
+  xfailed / 0 XPASS / 0 failed**, the Tier-A good half `test_antigoals_enforced`
+  now runs undeferred, and **neither conformance kit carries a deferral**.
+  Disposition unchanged (CONFORMS). `test_row_osv1_015`'s two exemption
+  assertions are replaced by a stronger, name-free source-wide census
+  (`all_listing_calls()`: every listing call in the three route modules carries
+  an explicit finite limit — 4 of 4 measured); `OSV1-006`'s three webapp.py
+  register pins re-measured −16 (1127/1823/1826 → 1111/1807/1810), same eight
+  sites, register did not grow. Tier-B kit docstrings for Conformance 1 Bad,
+  3 Bad and 4 Good+Bad re-quoted to the post-RC-2 contract text (docstrings
+  only; no assertion changed). Residual, not fixed here and out of this lane's
+  scope: `OSV1-030`'s notes still say Tier-A's `test_antigoals_enforced` is
+  "the one remaining deferral in either kit" — true when written, false as of
+  this line.
+
 ## Changelog
+- **2026-09-06 — Core 10 residual closed (`work_item_pipeline-zhv`).** Dead
+  `webapp._oldest_ready_item` deleted; `OSV1-015` stays CONFORMS with its
+  exemption paragraph replaced by a dated note and its probe retargeted onto a
+  source-wide limit census; Tier-A runs 42 passed / 0 xfailed / 0 XPASS. See
+  §"2026-09-06 zhv".
 - **2026-09-06 — AMENDMENT, `contracts/operator-surface.v1.md` v2 applied to
   the LOCKED text, mandatory full re-review.** Owner's word, literal:
   *"Ratified"* — the sibling proposal `operator-surface.v2-candidate.md` was

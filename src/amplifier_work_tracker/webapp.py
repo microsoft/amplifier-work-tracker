@@ -899,22 +899,6 @@ def _global_oldest(summaries: list[A.ProjectSummary]) -> tuple[str, float] | Non
     return max(candidates, key=lambda c: c[1])
 
 
-def _oldest_ready_item(bd: A.Beads) -> A.Item | None:
-    """The single oldest ready (open, tagged `LANE_WORK`) item in one
-    project -- used only for the hero's attribution line (which real item
-    is the N-day-old one). One extra, project-scoped `bd list` call; never
-    a workspace-wide fan-out. Returns `None` (never a guess) if the project
-    can't be read or has no dated ready item."""
-    try:
-        items = bd.list(lane=A.LANE_WORK, status="open")
-    except A.BeadsError:
-        return None
-    dated = [i for i in items if i.created_at is not None]
-    if not dated:
-        return None
-    return min(dated, key=lambda i: i.created_at)  # type: ignore[arg-type,return-value]
-
-
 def _ledger_hero_html(ready_total: int | None, n_projects: int, burn_days: float | None) -> str:
     """The overview's restrained ready-count hero -- READY TO CLAIM, at
     `--fig-size-ledger` (62px), a deliberate 3.8x demotion from the
