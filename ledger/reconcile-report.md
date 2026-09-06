@@ -323,7 +323,41 @@ priority/kill gate.
 
 ---
 
-## 7. Freeze Bar status — BLOCKED
+## 7. Freeze Bar status — FROZEN (re-issued 2026-09-06)
+
+> **RE-ISSUED 2026-09-06.** The section below is the **SEED reading of
+> 2026-09-01** and is **superseded**; it is kept verbatim under §7a because a
+> narrative of record is not rewritten, only re-issued. It was the last section
+> of this report still carrying the SEED "BLOCKED" reading, while §1 had already
+> been re-issued and stamps its own §1a superseded — and the contract's Residual
+> Issues section delegates residual status *to this report*, so Freeze 1 read
+> FALSE at exactly the place the contract points. That was the Freeze 8 external
+> review's finding 4, and this re-issue is its fix.
+>
+> **The reading as of 2026-09-06, on this tree:** every Freeze Bar condition is
+> met and `contracts/custody-coordination.v1.md` is **FROZEN**. Condition by
+> condition, with what changed since the SEED reading:
+>
+> | # | Checklist item | Status 2026-09-06 |
+> |---|---|---|
+> | 1 | D-1, D-2, D-5 resolved or Backlogged with owner approval | **MET.** All three resolved and CONFORMS: D-1 → `CCV1-003` (closed by `work_item_pipeline-aih` — a failed custody step now compensates), D-2 → `CCV1-009` (closed by `work_item_pipeline-dn4` — the fence is keyed on custody identity, not status), D-5 → `CCV1-014` (verify-by-read-back). The contract now states this mapping inline, so the condition is readable from the repository alone. |
+> | 2 | D-6 recovery verb designed and implemented (or Backlogged with approval) | **MET — DISCHARGED, on the owner's word.** The SEED reading said "needs owner confirmation that this discharges the item rather than deferring it"; the owner's answer on 2026-09-06 was **discharge**. The verb is `work_release` / `Beads.release`'s pre-write `already_closed` branch, tested green at both layers (`tests/integration/test_phantom_conflict_recovery.py`, and Conformance 3's `test_fixture3_release_of_an_already_closed_held_item_clears_the_latch`). Backlog 3 stays Backlogged only for a further, distinct verb. |
+> | 3 | All four Conformance fixtures implemented, passing, executable via `make test` | **MET.** Fixtures 2/3/4 landed (`work_item_pipeline-qmj`) in `modules/tool-work-tracker/tests/test_conformance_fixtures.py`; Fixture 1 is at `tests/integration/test_phantom_conflict_recovery.py` with its tool-seam counterpart, and the contract's Test-location line now names both. Measured this run: **10 passed**. `CCV1-023` CONFORMS. |
+> | 4 | All check functions implemented and passing | **MET, and the clause now says what is true.** The SEED reading measured this against five `check_*()` names, three of which existed nowhere in the repository and two of which were doctor checks, not tests — the review's finding 2. §Checks was rewritten in the pre-lock true-up: each clause is carried by a ledger row and its probe or cited tests, run by `make test` and CI, with the five real `doctor` checks listed separately and honestly labelled. `pytest ledger/checks -q`: **60 passed**. |
+> | 5 | Test suite importable and run as part of CI | **MET.** `CCV1-022` closed (`work_item_pipeline-a7n`, PR #68): the tool module is installed editable into the one venv, `make test` aggregates its suite, and CI runs it as its own Tier-5 step. The clause's dead glob `tests/test_*.py` was replaced by the real path in the pre-lock true-up. |
+> | 6 | Every Core clause verified against actual code (grep/LSP, not paraphrase) | **MET.** Re-verified at the 2026-09-06 pre-lock re-check (§C2) and again at the true-up, where every **Machine check:** line was re-pointed at an artifact that actually exists. |
+> | 7 | Every quote a contiguous, whitespace-collapsed substring | **MET and mechanized** — tripwire 2, all 24 CCV1 rows, green after the three re-anchors. |
+> | 8 | PR review by an external reviewer (not the author) | **MET.** An independent session (not the author) reviewed the contract, ran the machinery itself green, and returned **REQUEST CHANGES** with nine findings and six nits. All are landed; the record is the contract's own `Freeze 8 record` Changelog entry. |
+> | 9 | Owner ratification and signature ("FROZEN" stamp) | **MET.** Owner's literal words, 2026-09-06: *"Yep, your recommendations are good, go for all."* Status moved DRAFT → FROZEN in one write, with its dated Changelog entry. |
+>
+> **Net: zero blockers.** The four the SEED reading named — `CCV1-003`,
+> `CCV1-009`, `CCV1-022`, `CCV1-023` — are all closed and CONFORMS, and the two
+> process items (8, 9) are discharged. See §"Lock 2026-09-06 —
+> custody-coordination.v1 FROZEN" below for the lock's own record.
+
+---
+
+### 7a. SEED reading, 2026-09-01 (history — superseded by §7 above)
 
 Against the contract's own checklist:
 
@@ -2806,7 +2840,223 @@ work-tracker item was claimed or resolved.
 
 ---
 
+## Lock 2026-09-06 — custody-coordination.v1 FROZEN
+
+> Re-issued after Freeze 8 pass 2 (REQUEST CHANGES, one blocker RC-10): the lock branch was rebuilt from the DRAFT true-up commit so the false sentence RC-2 had introduced at §Checks could be corrected while the file still read DRAFT; the lock was then applied again as one write and this hash re-computed. Nothing else in this section changes.
+
+The mandatory full re-review that a SYNC-hash change triggers, run twice in one
+lane because the custody contract moved twice: once for the **pre-lock DRAFT
+true-up** (the Freeze 8 external review's nine findings and six nits), and once
+for the **lock** itself.
+
+**Run:** 2026-09-06, branch `lane/custody-lock`, branched from `main` @ **`4c37b16`**.
+**Owner's act, in his own words:** *"Yep, your recommendations are good, go for
+all."* — one sentence answering four questions in order: ratify the custody
+pre-lock true-up; **discharge** custody Freeze 2; ratify
+`operator-surface.v3-candidate.md`; hold `docs/VISION.md` loosely.
+**Outcome in one line:** **`contracts/custody-coordination.v1.md` is FROZEN**,
+every Freeze Bar condition met, three quotes re-anchored, one probe retargeted,
+**zero dispositions changed**.
+
+---
+
+### K1. What was actually run (a self-report is not proof)
+
+| Command | Result | What it proves |
+|---|---|---|
+| `.venv/bin/python -m pytest ledger/checks -q` | **60 passed** | every row's quote verifies against the FROZEN bytes, every assertion ref resolves, the tripwires hold, both SYNC pins match |
+| `make ledger-mutate` | **69 / 69 proven, none unproven** | every probe still discriminates — including the retargeted `CCV1-023` and its rewritten mutation |
+| `.venv/bin/python -m pytest modules/tool-work-tracker/tests/test_conformance_fixtures.py -q` | **10 passed** | Freeze 3: all four Conformance fixtures implemented and PASSING, measured today rather than cited from a dated note |
+| `make test-conformance-a` | **0 failed / 0 XPASS** | the operator-surface Tier-A kit is unaffected by either write |
+| `ruff check ledger` + `ruff format --check ledger` | clean | the two probe-side edits are formatted like the rest |
+
+---
+
+### K2. What changed in the contract — two writes, in this order
+
+**Write 1 — the pre-lock DRAFT true-up** (text only; no `src/`, no `tests/`, no
+behaviour). RC-1: the nine **Machine check:** lines naming ids that existed
+nowhere in the repository (`claim.custody_indivisible`, `custody.one_strike`,
+`sweep.required_and_scheduled`, `fence.close_post_reclaim`,
+`recovery.discoverable`, `write.readback_verified`, `write.honest_failure`,
+`session.single_hold`, `claim.error_specificity`) now name the ledger row plus
+the probe or tests that actually carry the clause; the five lines that DO name a
+real `doctor` check say so and gain their row. RC-2: §Checks rewritten to what
+exists. RC-3: Freeze 1 maps D-1/-2/-5 to `CCV1-003`/`-009`/`-014` inline. RC-5:
+Freeze 2 discharged, naming `work_release`'s `already_closed` branch and its
+tests; Conformance 3 and Backlog 3 updated to match. RC-6: Core 1's `--quick`
+parenthetical corrected (speed, not a Freeze Bar dependency; §Freeze Bar, not a
+§Freeze Blockers that never existed). RC-7: Core 5's "(Backlogged feature)"
+struck. RC-8: Core 6 points at `CCV1-007`/`-008` and records that sweep
+observability shipped as `doctor`'s `sweeps.alive`. RC-9: TTL defined once with
+its value. Six nits: Freeze 5's dead glob; Conformance 1/2 "(current)" →
+"(pre-fix)"; Conformance 1's Test location given Conformance 2's two-path form;
+`custody.generation` dropped from Reserved; both cadence lines given a standing
+trigger; Backlog 1's trigger made observable. Plus three dated Changelog
+entries.
+
+**Write 2 — the lock, in ONE edit.** `**Status:** DRAFT` → `**Status:** FROZEN`
+and the dated Changelog entry recording the ratification, landed together:
+`git diff --stat` for that write is **2 insertions, 1 deletion**. The single
+write is not a style preference — `hooks-candidate-guard` refuses a write that
+stamps the status without adding, in the same write, the record of why it
+landed, because a half-frozen file cannot be repaired afterwards (every later
+edit that would add the record is refused, since by then the file reads locked).
+Verified by hitting exactly that refusal earlier in this lane on the archived
+v3 proposal, and re-issuing the two halves as one write.
+
+---
+
+### K3. Hashes, old → new
+
+| pinned file | before this lane | after true-up | after lock |
+|---|---|---|---|
+| `contracts/custody-coordination.v1.md` (`CCV1-000`, `OSV1-000`) | `ec4b736f8d…` | `67b903e77f…` | **`afb0d6522e…`** |
+| `contracts/operator-surface.v1.md` (`OSV1-000`) | `a1f304b11b…` | `b6f9dc58d8…` (v3 amendment) | unchanged |
+| `docs/VISION.md` (`CCV1-000`) | `f5eb400c79…` | unchanged | unchanged at the lock; **`87c02ae26d…`** after the hold-loosely line (§K8) |
+
+Both SYNC rows carry the identical custody hash, as they must — they watch the
+same file for different families. Every "unchanged" above was **recomputed**,
+never assumed.
+
+---
+
+### K4. Rows re-anchored: 3. Probe retargeted: 1. Dispositions changed: 0.
+
+All 24 CCV1 rows were walked against the new bytes. Three quotes anchored into
+text the true-up moved, and each was re-anchored to the SAME clause's surviving
+normative text — never to a different clause, and never by softening what the
+row reads:
+
+| row | clause | why the quote moved | where it now anchors |
+|---|---|---|---|
+| `CCV1-006` | Core 5 | the `(Backlogged feature)` parenthetical was struck (RC-7) | the same sentence, minus that parenthetical — the promise is identical word for word |
+| `CCV1-021` | Conformance: Checks | the whole subsection was rewritten (RC-2); both halves of the old sentence were false | the new sentence that states what this row's probe actually asserts — which also closes the review's complaint that the check tested LESS than the clause promised |
+| `CCV1-022` | Freeze 5 | the glob `tests/test_*.py` matched no file (nit 10) | the clause now names `modules/tool-work-tracker/tests/` outright, so this row's former silent reinterpretation is the contract's own word |
+
+One probe needed retargeting, and it was retargeted **in the same change as the
+text that moved**: `CCV1-023` part 5 asserts Conformance 1's Test-location line
+verbatim, that line gained its tool-seam path, so `test_row_ccv1_023` and its
+paired mutation `_m023_test_location_regresses` were updated together. The
+mutation still flips the probe red (`make ledger-mutate`: 69/69).
+
+**Tally unchanged: 22 CONFORMS / 2 NOT-ASSERTABLE / 0 VIOLATION / 0 GAP.** No
+disposition was re-decided by the lock — a lock records a state, it does not
+grant one. Every CCV1 row carries a dated `TRUE-UP + LOCK 2026-09-06` note
+naming what moved in its own clause.
+
+**The OSV1 family, re-reviewed because `OSV1-000` pins the custody file too:**
+zero OSV1 rows quote custody bytes at all — the boundary is a one-way citation,
+so `operator-surface.v1` cites `custody-coordination.v1.md Core 8` and `Core 14`
+by identifier and restates neither. Checked explicitly against the true-up's
+changed clauses rather than assumed. 0 re-anchored, 0 dispositions changed.
+
+---
+
+### K5. Freeze Bar 1–9 at the lock
+
+Conditions **1–7 by measurement** on this tree (§K1 above, and the pre-lock
+re-check's §C1–C3), **8 by the external PR review** recorded in the contract's
+own Changelog (an independent session, not the author; verdict REQUEST CHANGES →
+all nine findings and six nits landed), **9 by the owner's word**. §7 above was
+re-issued in this same change so the report's Freeze Bar section no longer
+contradicts the ledger — the review's finding 4.
+
+---
+
+### K6. Honest limits and residuals of this lock
+
+- **A lock is a record, not evidence.** Nothing in §K1 became more true because
+  the status word changed; the run is what it is, and it is dated.
+- **The ledger probes remain in-process source assertions.** They prove the
+  *shape* of the code, never its behaviour. What makes this run stronger than a
+  probe-only run is that the behavioural fixtures behind the shape assertions
+  were executed.
+- **Two clauses are NOT-ASSERTABLE and stay that way.** Core 13 and
+  NOT-ASSERTABLE 1 are about what an *agent* did in a session this repository
+  does not host. The lock does not strengthen them and does not pretend to.
+- **`CCV1-023`'s Fixture-1 half is still an existence check** — mitigated but
+  not closed by `CCV1-010`/`CCV1-014` indexing named tests inside that file.
+- **Residuals carried forward, unchanged by this lane** (both named at §C4 and
+  deliberately still out of scope): the seven `indexed` rows' `last_measured`
+  dates still read 2026-09-01/-05 although their cited tests ran green today;
+  and five rows still carry `assertion.kind: probe` with a named follow-up to
+  upgrade them to `indexed`. Both understate rather than overstate.
+- **`Conformance: Checks` remains the one unnumbered clause id** (§C4-7), still
+  a reported deviation in `ledger/checks/_support.py`, not a silent one. The
+  true-up rewrote that subsection's body but did not number its heading, which
+  would have been a change nobody asked for.
+
+---
+
+### K7. Files written by this lock
+
+| File | Change |
+|---|---|
+| `contracts/custody-coordination.v1.md` | the pre-lock true-up (write 1), then the lock — Status DRAFT → FROZEN plus its dated Changelog entry — in ONE write (write 2) |
+| `ledger/rows.yaml` | `CCV1-000` and `OSV1-000` re-hashed twice with full-re-review notes; three quotes re-anchored (`CCV1-006`, `-021`, `-022`); a dated `TRUE-UP + LOCK 2026-09-06` note on every one of the 24 CCV1 rows |
+| `ledger/checks/test_custody_rows.py` | `test_row_ccv1_023` part 5 retargeted to Conformance 1's new two-path Test-location line |
+| `ledger/checks/mutation_harness.py` | `_m023_test_location_regresses` rewritten to mutate that same new line, so the probe still has a counterfactual that flips it red |
+| `ledger/reconcile-report.md` | §7 re-issued (old reading preserved verbatim as §7a), this section (`K1`–`K7`), and a Changelog entry |
+
+**No other file was written by this lock.** No `src/` byte, no `tests/` byte
+outside `ledger/checks/`, no `modules/` byte, no `.github/` byte. No item was
+filed and none closed; no work-tracker item was claimed or resolved. The live
+service was never contacted and `:3308` was never written. The candidate guard
+was never bypassed: no `bash`, no `sed -i`, no emergency-unlock token.
+
+---
+
+### K8. `docs/VISION.md` — held loosely, not locked
+
+The fourth of the owner's four answers. The external reviewer's verdict on the
+vision was **HOLD LOOSELY**: it meets the bar — present tense, no dates, no
+"will", no roadmap, nothing falsifiable — but its Governing-contracts line
+points at contracts that were still moving. The owner's word was to hold it
+loosely, so **one line** was added under its Status line and nothing else:
+
+```
+**Hold loosely** — owner's word 2026-09-06 ("go for all", on the external reviewer's recommendation): the lock bar is met; left deliberately unlocked while its two governing contracts settle under lock; revisit at each `ledger/reconcile-report.md` re-check.
+```
+
+Its **Status stays DRAFT**. "Hold loosely" is a recorded decision *not* to lock;
+writing a FROZEN stamp or a freeze Changelog entry here would be a lock under
+another name, and would be the one thing the owner did not say. `CCV1-000`'s
+vision pin moves `f5eb400c79…` → `87c02ae26d…`, and the mandatory re-review was
+run for it too: **no CCV1 row quotes `docs/VISION.md` text at all** — verified
+against the single line that changed, which no row cites — so 0 rows
+re-anchored, 0 dispositions changed. `OSV1-000` pins the two contracts and not
+the vision, so the operator family is not disturbed by a vision change; one repo
+vision pinned twice would mean two rows racing to re-hash the same bytes.
+
+---
+
 ## Changelog
+- **2026-09-06 — VISION HELD LOOSELY (not locked), `docs/VISION.md`.** Owner's
+  word, same sentence as the lock: the reviewer's HOLD LOOSELY recommendation
+  accepted. One line added under the Status line recording that the lock bar is
+  met, that the vision is deliberately left unlocked while its two governing
+  contracts settle under lock, and that it is revisited at each re-check.
+  Status stays DRAFT on purpose. `CCV1-000` vision pin `f5eb400c79...` →
+  `87c02ae26d...`; full re-review performed — no CCV1 row quotes vision text,
+  so 0 re-anchored, 0 dispositions changed; `OSV1-000` untouched by it. See §K8.
+- **2026-09-06 — LOCKED, `contracts/custody-coordination.v1.md` DRAFT →
+  FROZEN.** Owner's literal words: *"Yep, your recommendations are good, go for
+  all."* Two writes in one lane: the pre-lock DRAFT true-up (the Freeze 8
+  external review's nine findings and six nits, including Freeze 2 **discharged**
+  by naming `work_release`'s `already_closed` branch), then the lock itself in
+  ONE edit — status stamp and dated Changelog entry together, because the guard
+  refuses a half-frozen file. `CCV1-000`/`OSV1-000` custody hash `ec4b736f8d...`
+  → `67b903e77f...` → `afb0d6522e...`. **Full re-review both times** (mandatory,
+  never a silent bump): 24 CCV1 rows walked, **3 quotes re-anchored** to
+  surviving normative text in the same clause (`CCV1-006`, `-021`, `-022`), **1
+  probe retargeted with its paired mutation** (`CCV1-023`), **0 dispositions
+  changed** (22 CONFORMS / 2 NOT-ASSERTABLE); 36 OSV1 rows walked, 0 re-anchored
+  — zero of them quote custody bytes. §7's SEED "BLOCKED" reading re-issued as
+  FROZEN with the old text preserved verbatim at §7a (the review's finding 4).
+  Gates: `pytest ledger/checks -q` 60 passed · `make ledger-mutate` 69/69 proven,
+  none unproven · Conformance fixtures 10 passed · `make test-conformance-a` 0
+  failed / 0 XPASS. See §K1–K7.
 - **2026-09-06 — AMENDMENT APPLIED, `contracts/operator-surface.v1.md`
   (FROZEN), v3.** One owner-ratified change (owner's literal words *"Yep, your
   recommendations are good, go for all."*): Backlogged 4's trigger citation

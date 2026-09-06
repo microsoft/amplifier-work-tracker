@@ -27,14 +27,69 @@
   contract:
     files:
       - file: contracts/custody-coordination.v1.md
-        sha256: 67b903e77fbbf35420679f2226cb29f6c574bafa9e7a702bed91d9cfa196b5d9
+        sha256: ccdd31a224271b1bb48368fb100ce77ee8d0866f51cdf7a1f73cdf295bdaa6dc
       - file: docs/VISION.md
-        sha256: f5eb400c79211d90980efec7b35120852a71efa78ace6106dacd25fb448d5013
+        sha256: 87c02ae26de438ee77b6f259a0f6d485cbfef17243ac1524bbf4dd991389a06b
   disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_ccv1_000
   notes: >
+    REHASHED 2026-09-06 (VISION hold-loosely record): `docs/VISION.md` gained
+    ONE line under its Status line and nothing else -- the owner's
+    hold-loosely word of 2026-09-06, taken on the external reviewer's
+    recommendation: the lock bar is met, but the vision is left deliberately
+    unlocked while its two governing contracts settle under lock, and is
+    revisited at each `ledger/reconcile-report.md` re-check. Its Status stays
+    DRAFT: "hold loosely" is a recorded decision NOT to lock, never a lock by
+    another name, so no FROZEN stamp and no Changelog freeze entry belong
+    here. VISION hash `f5eb400c79...` -> `87c02ae26d...`;
+    `contracts/custody-coordination.v1.md` re-hashed BYTE-FOR-BYTE on this run
+    and still `afb0d6522e...` -- the vision line did not reopen the contract.
+    FULL RE-REVIEW PERFORMED (mandatory, never a silent bump): all 24 CCV1
+    rows walked, and NO row quotes `docs/VISION.md` text at all -- verified
+    explicitly against the one line that changed, which no row cites, exactly
+    as at the 2026-09-04 vision re-hash. ZERO rows re-anchored, ZERO
+    dispositions changed. `contracts/operator-surface.v1.md` is deliberately
+    not pinned in this row and the OSV1 family is not disturbed by a vision
+    change: `OSV1-000` pins the two contracts, not the vision, so one repo
+    vision is never pinned twice.
+
+    REHASHED 2026-09-06 (THE LOCK): `contracts/custody-coordination.v1.md`
+    moved DRAFT -> FROZEN on the owner's word (Freeze 9; literal: "Yep, your
+    recommendations are good, go for all"). Custody hash `67b903e77f...` ->
+    `afb0d6522e...`; `docs/VISION.md` re-hashed BYTE-FOR-BYTE on this run and
+    still `f5eb400c...` at the moment of the lock -- the vision's own
+    hold-loosely line lands separately in this same lane and moves this pin
+    again, which is why it is recorded rather than assumed.
+
+    WHAT MOVED IN THE CONTRACT AT THE LOCK: exactly two lines, written in ONE
+    edit -- `**Status:** DRAFT` -> `**Status:** FROZEN`, and the dated
+    Changelog entry recording the ratification. That single-write discipline is
+    not a style preference: `hooks-candidate-guard` REFUSES a write that stamps
+    the status without adding the record of why it landed in the same write,
+    because a half-frozen file can never be repaired (every later edit that
+    would add the record is refused, since by then the file reads locked).
+    `git diff --stat` for the lock write: 2 insertions, 1 deletion.
+
+    FULL RE-REVIEW PERFORMED (mandatory on any hash change, never a silent
+    bump): all 24 CCV1 rows walked against the frozen bytes. ZERO quotes broke
+    at the lock write itself (it touched only the status line and the
+    Changelog, which no row quotes); the three re-anchors and the one probe
+    retarget belong to the DRAFT true-up recorded immediately below, and were
+    re-verified green here. Every CCV1 row carries a dated `TRUE-UP + LOCK
+    2026-09-06` note naming what moved in ITS clause. Dispositions unchanged
+    and deliberately not re-decided by the lock: 22 CONFORMS / 2
+    NOT-ASSERTABLE / 0 VIOLATION / 0 GAP.
+
+    FREEZE BAR, ALL NINE MET: 1-7 by measurement on this tree (see
+    `reconcile-report.md` sec.C3 and the Lock section), 8 by the external PR
+    review recorded in the contract's own Changelog (independent reviewer, not
+    the author; verdict REQUEST CHANGES -> fixes landed), 9 by the owner's word
+    above. From here this contract changes only by a sibling proposal
+    (`contracts/custody-coordination.v2-candidate.md`) carrying the target
+    line, the exact change, real evidence and what does not change.
+
     REHASHED 2026-09-06 (pre-lock DRAFT true-up): the owner-ratified true-up of
     the Freeze 8 external review's nine findings and six nits (owner's literal
     words "Yep, your recommendations are good, go for all"), applied to the
@@ -150,6 +205,16 @@
       - file: tests/integration/test_directed_claim.py
         name: test_claim_next_queue_path_is_unaffected_by_claim_item_existing
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 1's **Machine check:** line
+    was corrected -- `doctor --quick` skips `claim.atomic` /
+    `claim.directed_atomic` because they are the two slowest checks by a
+    wide margin, not for any Freeze Bar dependency, and the pointer now
+    names the section that exists (`Freeze Bar`; there is no `Freeze
+    Blockers`) -- and it now names this row. The clause BODY, which this row
+    quotes, did not move: the quote verifies unchanged against the new
+    bytes.
+
     Both claim primitives are single bd invocations -- `bd ready --label
     <lane> --claim` (queue) and `bd update <id> --claim` (directed); no
     read-then-write path exists above the seam, and `--claim` appears
@@ -182,6 +247,15 @@
       - file: tests/unit/test_custody_dead_holder.py
         name: test_ttl_staleness_still_wins_and_costs_no_pid_probe
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 2's **Machine check:** line
+    now says `custody.fresh_survives` is a real entry in `doctor`'s registry
+    and names this row. Separately, TTL is defined ONCE in the Core Clauses
+    preamble with its value (`CUSTODY_TTL_SECONDS`, 900s / 15min by default,
+    env-overridable) -- the review's finding 9, that a non-engineer could
+    not read Core 2/5/6 without it. Clause body unchanged; quote verifies
+    unchanged.
+
     `custody.reclaim_eligible` reaches "eligible" by exactly THREE routes,
     and total hold duration is never an input to any of them: a
     stale/absent last_seen (path 1), a DEAD HOLDER (path 2 -- the record
@@ -221,6 +295,15 @@
     kind: probe
     ref: test_row_ccv1_003
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 3's **Machine check:** line
+    no longer names `claim.custody_indivisible`, an id that existed nowhere
+    in this repository (review finding 1). It now names this row, its probe,
+    and the behavioural fixtures in `modules/tool-work-
+    tracker/tests/test_custody_atomic.py`. This row is also now cited inline
+    by Freeze 1 as D-1's carrier (review finding 3). Clause body unchanged;
+    quote verifies unchanged.
+
     CLOSED by work_item_pipeline-aih (was VIOLATION; the probe pinned the
     broken two-write shape). `work_claim` is still two writes, but the
     second one's failure now COMPENSATES: the just-claimed item is released
@@ -273,6 +356,15 @@
     kind: probe
     ref: test_row_ccv1_004
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 4's **Machine check:** line
+    no longer names `custody.one_strike`, an id that existed nowhere in this
+    repository (review finding 1). It now names this row and `CCV1-005`,
+    their probes, and the behavioural fixture
+    `test_background_renew_loop_generic_failure_does_not_clear_held` this
+    row's own notes already pointed at. Clause body unchanged; quote
+    verifies unchanged.
+
     HONEST LIMIT: this is a source-shape probe, not a behavioral fixture.
     The behavioral assertion exists -- modules/tool-work-tracker/tests/
     test_reap_recovery.py::test_background_renew_loop_generic_failure_does_
@@ -301,6 +393,13 @@
     kind: probe
     ref: test_row_ccv1_005
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 4's **Machine check:** line
+    now names this row explicitly as the one that carries the agent-facing
+    PROSE half of the clause (the code half is `CCV1-004`), replacing the
+    non-existent id `custody.one_strike`. Clause body unchanged; quote
+    verifies unchanged.
+
     Was GAP (doc drift, never a code defect): the skill said "you do not
     need to do anything to keep it fresh under normal operation" --
     inverted for exactly the failure Core 4 names. CORRECTED, both
@@ -335,6 +434,18 @@
       - file: tests/unit/test_custody.py
         name: test_reclaim_eligible_escalation_ceiling_exceeded
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): RE-ANCHORED. Core 5's body lost
+    its `(Backlogged feature)` parenthetical (review finding 7:
+    `should_notify` ships in `custody.py` and is consulted by the notify
+    sweep; what is Backlogged is Backlog 1's DIFFERENT, agent-facing
+    signal). This row's quote was re-anchored to the same clause's surviving
+    normative text -- the parenthetical is the only thing dropped, and the
+    promise the row reads is identical word for word. The **Machine check:**
+    line also gained this row's id and the note that
+    `custody.idle_not_exempt` is a real `doctor` entry. Disposition
+    unchanged (CONFORMS).
+
     The strongest-supported invariant in the surface: tool description,
     prose, code and vision all agree, and it is the one custody promise
     with a dedicated executable check (`custody.idle_not_exempt`) in
@@ -362,6 +473,14 @@
       - file: tests/unit/test_supervisor.py
         name: test_reap_and_notify_loops_use_independent_heartbeat_records
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 6's **Machine check:** line
+    no longer names `sweep.required_and_scheduled` (an id existing nowhere)
+    and no longer calls sweep observability Backlogged (review finding 8).
+    It now names this row and `CCV1-008`, and records that observability
+    shipped as `doctor`'s `sweeps.alive` -- which this row already credited.
+    Clause body unchanged; quote verifies unchanged.
+
     All three properties the clause names are covered: REQUIRED (the sweep
     is the only writer of reclaims), SCHEDULED (reap_loop at
     DEFAULT_REAP_INTERVAL_SECONDS), OBSERVABLE (a heartbeat written at
@@ -386,6 +505,13 @@
     kind: probe
     ref: test_row_ccv1_008
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 6's **Machine check:** line
+    was rewritten (see `CCV1-007`). The sentence this row quotes -- the TTL
+    is not self-enforcing -- did not move, and TTL now has a single
+    definition with its value in the Core Clauses preamble. Quote verifies
+    unchanged.
+
     Was GAP (doc drift, never a code defect): both agent-facing documents
     stated the release unconditionally ("15 minutes without a renewal
     releases the item back to the queue" / "An unrenewed 15-minute hold is
@@ -415,6 +541,17 @@
     kind: probe
     ref: test_row_ccv1_009
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 7's **Machine check:** line
+    no longer names `fence.close_post_reclaim`, an id existing nowhere
+    (review finding 1). It now names this row, its probe,
+    `tests/integration/test_post_reclaim_fence.py` and the tool-seam
+    attribution fixture -- and states in the contract itself why `doctor`'s
+    `resolve.fenced` is NOT this clause's check: it stages a takeover, so it
+    never reaches the released-but-not-yet-re-claimed state Core 7
+    explicitly covers. This row is also now cited inline by Freeze 1 as
+    D-2's carrier. Clause body unchanged; quote verifies unchanged.
+
     Closed by work_item_pipeline-dn4. The fence is no longer keyed on the
     item's status at all -- it is keyed on custody IDENTITY, so it reaches
     every post-reclaim state including the released-but-not-yet-re-claimed
@@ -513,6 +650,12 @@
       - file: tests/integration/test_phantom_conflict_recovery.py
         name: test_release_on_an_already_resolved_item_writes_nothing_and_reports_already_closed
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 8's **Machine check:** line
+    no longer names `recovery.discoverable`, an id existing nowhere (review
+    finding 1). It now names this row, the test it cites, and Conformance
+    3's tool-seam fixtures. Clause body unchanged; quote verifies unchanged.
+
     TRUE-UP -- the contract's "PARTIAL" annotation predates PR #63 (merge
     94f0b46). Both halves the clause names now exist: DISCOVERY is passive
     but real (a fenced loss clears self._held at the next renewal tick or
@@ -550,6 +693,15 @@
     kind: probe
     ref: test_row_ccv1_011
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 9's **Machine check:** line
+    now says `custody.fenced` is a real entry in `doctor`'s registry and
+    names this row and its probe. Separately, `custody.generation` was
+    REMOVED from the contract's Reserved section (review nit 12): listing it
+    as reserved/out-of-scope contradicted Core 9, which makes it normative.
+    That removal strengthens this row's clause rather than weakening it.
+    Clause body unchanged; quote verifies unchanged.
+
     Three guards pinned: renew fences on holder AND generation, take_custody
     fences on bd's own assignee, and generation always increments past
     whatever was there before (so a zombie's old generation can never match
@@ -573,6 +725,14 @@
     kind: probe
     ref: test_row_ccv1_012
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 10's **Machine check:**
+    line no longer names `write.readback_verified`, an id existing nowhere
+    (review finding 1). It now names this row and `CCV1-013`, their probes,
+    and `tests/integration/test_write_readback.py`. The TAIL of that line is
+    what this row quotes, and it was preserved verbatim: the quote verifies
+    unchanged.
+
     FIXED. `release` now routes its `bd update --status open --assignee ""`
     through the shared `_verified_write` helper, whose verify demands a
     contention-free read-back showing the item is no longer `held` -- on
@@ -604,6 +764,11 @@
     kind: probe
     ref: test_row_ccv1_013
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 10's **Machine check:**
+    line now names this row explicitly as the one carrying both claim paths
+    (see `CCV1-012`). Clause body unchanged; quote verifies unchanged.
+
     FIXED. `claim_item` and `claim_next` both route through
     `_verified_write` and both now RETURN the contention-free read-back
     rather than an Item parsed from the writing process's own stdout --
@@ -638,6 +803,14 @@
       - file: tests/integration/test_phantom_conflict_recovery.py
         name: test_release_verifies_by_readback_when_wrapper_reports_conflict_after_a_landed_release
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 11's **Machine check:**
+    line no longer names `write.honest_failure`, an id existing nowhere
+    (review finding 1); it now names this row (the measured one), `CCV1-015`
+    and `CCV1-016`. This row is also now cited inline by Freeze 1 as D-5's
+    carrier (review finding 3). Clause body unchanged; quote verifies
+    unchanged.
+
     TRUE-UP -- the contract calls Core 11 a VIOLATION and a Freeze blocker
     (residual D-5). That annotation predates PR #63 (merge 94f0b46, on
     main, deployed) and is now STALE for resolve/release. Fixed in three
@@ -664,6 +837,12 @@
     kind: probe
     ref: test_row_ccv1_015
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 11's **Machine check:**
+    line now names this row as the one asserting that EVERY item-level write
+    verb routes through the verifying helper (see `CCV1-014`). Clause body
+    unchanged; quote verifies unchanged.
+
     FIXED. One shared helper, `Beads._verified_write`, now carries the
     discipline for every item-level write verb: on a conflict-family
     failure (the wrapper's exhausted-retry raise, or a non-zero exit whose
@@ -701,6 +880,13 @@
     kind: probe
     ref: test_row_ccv1_016
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 11's **Machine check:**
+    line was rewritten to name real artifacts (see `CCV1-014`). The middle
+    of that line is what this row quotes -- a reported conflict error must
+    be accompanied by a readback that confirms the conflict -- and it was
+    preserved verbatim: the quote verifies unchanged.
+
     Was GAP -- doc drift DISCOVERED BY THIS RECONCILE, not on the ratified
     lane-work list, because the prose only became wrong when PR #63
     shipped: context/awareness.md stated as a database guarantee that the
@@ -731,6 +917,13 @@
     kind: probe
     ref: test_row_ccv1_017
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 12's **Machine check:**
+    line no longer names `session.single_hold`, an id existing nowhere
+    (review finding 1). It now names this row, its probe, and Conformance
+    4's fixtures -- the fixtures this row's own notes already recorded as
+    existing and measured. Clause body unchanged; quote verifies unchanged.
+
     Enforced before any bd call, naming the held item. HONEST LIMIT: this
     is a source-shape probe. STALE-NOTE FIX 2026-09-05
     (model_performance-c0e): this note used to say Conformance Fixture 4
@@ -769,6 +962,15 @@
     #8 and PR #11 each cite raw-bd escapes caused by a missing READ verb --
     "14 raw-bd calls across 6 sessions"). Reviewed at cadence: PR audit,
     per-session log audit, skill training. Ratified Call 7 (option A).
+  notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 13's **Reviewed at
+    cadence:** line gained a standing, observable trigger -- "and at each
+    `ledger/reconcile-report.md` re-check" (review nit 13, the same defect
+    operator-surface fixed at its RC-3). The clause body this row quotes did
+    not move, and the clause is still NOT-ASSERTABLE for the reason it
+    always was. The contract's Status moved DRAFT -> FROZEN in the same
+    lane; this row's disposition was not re-decided by that.
   assertion:
     kind: none
 
@@ -789,6 +991,13 @@
     substitutes guidance in this tool's vocabulary for raw bd/dolt advice),
     so an agent following its error messages is not LED around the seam --
     that mitigation is itself asserted elsewhere, not here.
+  notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): NOT-ASSERTABLE 1's **Reviewed at
+    cadence:** line gained the same standing trigger as Core 13's -- "and at
+    each `ledger/reconcile-report.md` re-check" (review nit 13). The clause
+    body this row quotes did not move; still NOT-ASSERTABLE, and the
+    contract's move to FROZEN did not re-decide that.
   assertion:
     kind: none
 
@@ -815,6 +1024,14 @@
       - file: tests/integration/test_directed_claim.py
         name: test_claim_item_succeeds_once_the_blocker_is_closed
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): Core 14's **Machine check:**
+    line no longer names `claim.error_specificity`, an id existing nowhere
+    (review finding 1). It now names this row and the four refusal tests it
+    cites by their subject (already held, not found, blocked by an open
+    dependency, and the claim succeeding once the blocker closes). Clause
+    body unchanged; quote verifies unchanged.
+
     All three named blockers are covered, plus the positive control (the
     refusal lifts once the blocker closes). Blocker-awareness on the
     directed path is OURS, not bd's -- measured against bd 1.1.2, `bd
@@ -835,6 +1052,22 @@
     kind: probe
     ref: test_row_ccv1_021
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): RE-ANCHORED. The `Checks`
+    subsection was rewritten (review finding 2). Both halves of the old
+    sentence were false: `check_readback_verified` / `check_fenced_close` /
+    `check_single_hold` existed NOWHERE in the repository, and the two that
+    do exist (`check_claim_atomic`, `check_custody_fresh_survives`) are
+    doctor checks in `src/amplifier_work_tracker/contract.py`, not pytest
+    tests in `ledger/checks/`. The new text states what is actually true and
+    what this probe actually asserts -- each clause is carried by a ledger
+    row, asserted by that row's probe or cited tests, and run by `make test`
+    and CI -- so the row no longer tests LESS than the clause promises,
+    which was the review's specific complaint about this row. Quote re-
+    anchored to that sentence; disposition unchanged (CONFORMS); the five
+    real doctor checks are now listed separately and honestly labelled as
+    operator checks, not tests.
+
     Made true by this SEED: `ledger/checks/` now exists, `make test` and
     `make test-ledger` collect it, and CI runs it as its own step. Before
     this change the clause described a directory that did not exist. The
@@ -857,6 +1090,16 @@
     kind: probe
     ref: test_row_ccv1_022
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): RE-ANCHORED. Freeze 5's glob
+    `tests/test_*.py` matched NO file in this repository (review nit 10),
+    and this row silently reinterpreted it as `modules/tool-work-
+    tracker/tests`. The clause now names that suite outright, so the
+    reinterpretation is the contract's own word rather than this row's.
+    Quote re-anchored to the new clause text; the probe's four assertions
+    (venv install, `test-module` target, `make test` aggregation, the CI
+    step) are unchanged and still green; disposition unchanged (CONFORMS).
+
     CLOSED by work_item_pipeline-a7n. Was VIOLATION (the Freeze blocker):
     `import amplifier_module_tool_work_tracker` raised ModuleNotFoundError
     in the repo venv, `make test` was `pytest tests ledger/checks -v`, and
@@ -898,6 +1141,19 @@
     kind: probe
     ref: test_row_ccv1_023
   notes: >
+    TRUE-UP + LOCK 2026-09-06 (owner's literal words "Yep, your
+    recommendations are good, go for all"): PROBE RETARGETED. Conformance
+    1's Test-location line gained its tool-seam path (`modules/tool-work-
+    tracker/tests/test_phantom_conflict_recovery.py`) alongside the adapter
+    one, giving it the two-path form Conformance 2 already had. Part 5 of
+    this probe asserts that line VERBATIM, so the probe and its paired
+    mutation `_m023_test_location_regresses` were updated together in the
+    SAME change, and the mutation still flips the probe red (`make ledger-
+    mutate`: 69/69 proven, none unproven). Conformance 1's `Bad behavior
+    (current)` also became `(pre-fix)`, matching Conformance 3 and 4. Freeze
+    3's own text -- what this row quotes -- did not move: the quote verifies
+    unchanged.
+
     Closed by work_item_pipeline-qmj. Was GAP: three of the four fixtures
     were not implemented-and-runnable. Now, fixture by fixture. FIXTURE 1
     (conflicted-but-landed close) already existed and still does, at
@@ -1019,12 +1275,24 @@
       - file: contracts/operator-surface.v1.md
         sha256: b6f9dc58d8807e31683a907368e0f02f7702f3fb43d12027e45bb3f5ea423be0
       - file: contracts/custody-coordination.v1.md
-        sha256: 67b903e77fbbf35420679f2226cb29f6c574bafa9e7a702bed91d9cfa196b5d9
+        sha256: ccdd31a224271b1bb48368fb100ce77ee8d0866f51cdf7a1f73cdf295bdaa6dc
   disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_osv1_000
   notes: >
+    REHASHED 2026-09-06 (custody LOCK): the custody contract moved DRAFT ->
+    FROZEN, so this row's second pin moved with it: `67b903e77f...` ->
+    `afb0d6522e...`, byte-identical to the value `CCV1-000` pins, as it must
+    be -- the two rows watch the same file for different families. The
+    operator hash did NOT move at the lock (`b6f9dc58d8...`, recomputed rather
+    than assumed). THE OSV1 RE-REVIEW THIS TRIGGERS: the lock write touched
+    only the custody contract's Status line and its Changelog, and ZERO OSV1
+    rows quote custody bytes at all (the boundary is a one-way citation --
+    `operator-surface.v1` cites `custody-coordination.v1.md Core 8` and
+    `Core 14` by identifier and restates neither). Checked, not assumed: 0
+    OSV1 rows re-anchored, 0 dispositions changed, all 36 quotes verify.
+
     REHASHED 2026-09-06 (custody pre-lock DRAFT true-up): this row pins BOTH
     contracts on purpose, so a custody amendment triggers the UX family's
     re-review too -- and it just did. Custody hash `ec4b736f8d...` ->
