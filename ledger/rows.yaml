@@ -2805,9 +2805,13 @@
     kind: probe
     ref: test_row_osv1_024
   notes: >
-    PINNING ROW -- the fixture exists and discriminates, but its GOOD half does
-    not pass, so the probe pins that deferral. A passing probe here is NOT
-    conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED GAP -> CONFORMS 2026-09-05 (highway wave-1 integration): Conformance 5's
+    GOOD half runs undeferred and PASSES on the real L0. Flip direction is now
+    REGRESSION (a re-deferral or a failing good half turns the probe red).
+    Prose trued up 2026-09-06 (work_item_pipeline-lvn); the pin text below is
+    kept as dated history. Was a PINNING row: "the fixture exists and discriminates,
+    but its GOOD half does not pass, so the probe pins that deferral. A passing
+    probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT."
 
     MEASURED 2026-09-05. `tests/conformance/operator_surface/test_tier_a.py`
     implements `hero.velocity_and_counts` at the location Conformance 5 names,
@@ -2850,9 +2854,13 @@
     kind: probe
     ref: test_row_osv1_025
   notes: >
-    PINNING ROW -- the fixture exists and discriminates, but its GOOD half does
-    not pass, so the probe pins that deferral. A passing probe here is NOT
-    conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED GAP -> CONFORMS 2026-09-05 (highway wave-3 integration, after OSV1-005 went green): Conformance 6's
+    GOOD half runs undeferred and PASSES against this ledger's register. Flip direction is now
+    REGRESSION (a re-deferral or a failing good half turns the probe red).
+    Prose trued up 2026-09-06 (work_item_pipeline-lvn); the pin text below is
+    kept as dated history. Was a PINNING row: "the fixture exists and discriminates,
+    but its GOOD half does not pass, so the probe pins that deferral. A passing
+    probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT."
 
     MEASURED 2026-09-05. `tests/conformance/operator_surface/test_tier_a.py`
     implements `visual.single_source` at the location Conformance 6 names:

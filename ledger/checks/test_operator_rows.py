@@ -1724,8 +1724,10 @@ def test_row_osv1_024() -> None:
 
 
 def test_row_osv1_025() -> None:
-    """Conformance 6 pin: the fixture exists, reads THIS ledger's register, and
-    its GOOD half is still deferred against OSV1-005."""
+    """Conformance 6, CONFORMS: the fixture exists, reads THIS ledger's register,
+    and its GOOD half runs undeferred and passes (flipped 2026-09-05 after OSV1-005
+    went green; direction REGRESSION). Docstring trued up 2026-09-06, lvn -- it used
+    to read "still deferred against OSV1-005", the opposite of the assertion below."""
     kit = _kit_source()
     assert "check_visual_single_source" in _kit_defs(kit), (
         f"OSV1-025 (Conformance 6): {TIER_A_KIT} no longer implements "
