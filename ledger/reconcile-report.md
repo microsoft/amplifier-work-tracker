@@ -2042,7 +2042,248 @@ this ledger closed. It could not, and it says so. What it did was hold them open
 touched; `LAST_RUN.json` was neither regenerated nor edited; the live service
 was never contacted. No item was filed and none closed.
 
+## Amendment 2026-09-06 — operator-surface v2 applied
+
+The mandatory full re-review that a SYNC-hash change triggers, run because the
+FROZEN contract moved: the six owner-ratified corrections in
+`contracts/operator-surface.v2-candidate.md`, plus one dated Changelog entry.
+
+**Run:** 2026-09-06, branch `lane/apply-v2`, branched from `main` @ **`37fba54`**.
+**Trigger:** `contracts/operator-surface.v1.md` changed, so `OSV1-000`'s pin
+failed. Under `LEDGER-FORMAT.md` sec.4 that mandates a **full ledger re-review,
+never a silent hash bump** — this section is that re-review's record.
+**Owner's act, in his own word:** *"Ratified"* — the owner ratified the sibling
+proposal as written, all six changes, no edits requested. The stamp is on the
+proposal itself (`Ratified by owner — 2026-09-06, literal word "Ratified".`),
+which is what let the write through: `hooks-candidate-guard` refuses an
+in-place edit of a locked contract unless a sibling `*.vN-candidate.md` names
+that contract in its `target:` field AND carries the ratified stamp. The
+candidate was stamped FIRST, then the contract was edited. **The guard was
+never bypassed** — no `bash`, no `sed -i`, no emergency-unlock token. This is
+the escape hatch working exactly as designed.
+
+**Outcome in one line:** **zero rows re-anchored, zero dispositions changed,
+zero drift in either direction** — the amendment is six text corrections that
+bring the contract into agreement with machinery that did not move.
+
+---
+
+### A1. What was actually run (a self-report is not proof)
+
+| Command | Result | What it proves |
+|---|---|---|
+| `.venv/bin/python -m pytest ledger/checks -q` | **60 passed** | every row's quote verifies against the NEW bytes, every assertion ref resolves, the tripwires hold, `OSV1-000`'s pin matches |
+| `make ledger-mutate` | **ALL mutations proven 69 / 69**; `UNPROVEN … (none)` | every probe was watched going red against a counterfactual; the denominator did not move because no probe was retargeted and no row flipped |
+| `make test-conformance-a` | **41 passed, 89 deselected, 1 xfailed** (0 failed, 0 xpassed) | the Tier-A kit still runs green; the one xfail is the named `OSV1-015` residual, unchanged |
+| `.venv/bin/ruff check ledger` / `ruff format --check ledger` | `All checks passed!` / `7 files already formatted` | — |
+
+**Tier-B was deliberately NOT re-run, for the same reason as the lock.**
+`git diff origin/main --name-only -- src tests` is **empty** on this branch, so
+the committed recording (`browser/LAST_RUN.json`, chromium 148.0.7778.0 /
+playwright 1.60.0) is still a recording *of this tree*, and every Tier-B-derived
+row re-reads exactly the numbers it read at `37fba54`. What changed is text a
+browser cannot see.
+
+### A2. What changed in the contract — six corrections, one Changelog entry
+
+Every one is a defect an **independent review of the LOCKED text** found and
+named (Freeze 9, `.amplifier/converge/operator-surface-freeze9-review.md`:
+pass-1 findings 4, 6, 7, 8, 9 and pass-2 note 1) — not a preference. Five make
+the contract say what the machinery already does; the sixth repairs triggers
+that cannot fire. Each was verified as a byte-exact, uniquely-occurring
+substring of the locked file before it was edited.
+
+**Change 1 — Core 1 promised a judgment nothing asserted.** The clause's second
+sentence ("Observability leads the page") is precisely the "leads" judgment
+Core 12 declares undecidable by any check, and `hero.velocity_and_counts`
+reaches presence only. The sentence is the owner's ratified intent, so it was
+routed, not dropped:
+
+```
+was:  **Machine check:** `hero.velocity_and_counts` — … and each of the four
+      named counts.
+now:  … and each of the four named counts. The check reaches presence only;
+      "leads" is not decided by it.
+      + **Reviewed at cadence:** the "leads" sentence is the judgment Core 12
+        names NOT-ASSERTABLE; it is carried by the same owner review of
+        L0/L1/L2, at each `ledger/reconcile-report.md` re-check.
+```
+
+**Change 2 — Core 4 stated the rule for shrinking the exemption register and
+was silent on growth.** The growth rule existed and was enforced, but lived only
+in `OSV1-006`'s notes — the same defect class the reviewer used to block RC-1
+before the lock ("a ledger note does not travel with a locked clause"). One
+appended sentence: *"Growth is not convergent: a new inline computed-geometry
+site absent from the register fails the check loudly, and adding it to the
+register is a deliberate, recorded act, never a silent one."*
+
+**Change 3 — Core 5's machine-check line under-described its own audit, twice.**
+"asserting the clause's first sentence" names a sentence with two halves and
+asserts only the first; and "reaches" became load-bearing in the clause at RC-1
+while the audit's bound was stated nowhere. The line now names the predicate
+inline and the bound: static, module-local, name-matched against the adapter's
+write verbs, bounded at depth 4, `_support.py:746-800` — and says plainly it
+does not reach the second promise. `OSV1-007`'s honest limit 2 now travels with
+the contract. Re-measured here: **30 routes, 22 read-only, 0 reaching a
+mutating adapter call**, and `route_audit()` does span lines 746–800 (`return
+audited` is 800).
+
+**Change 4 — "ENCODE gate" was used four times and defined nowhere,** which
+fails the contract's own "a non-engineer could understand it" bar. Core 12's
+cadence now defines it at first use — *"the authoring checkpoint at which the
+owner reads and ratifies drafted contract text, the event this contract's
+2026-09-04 Changelog entries record"* — and Core 13's points at that definition.
+Both machine-check lines are untouched; both clauses stay NOT-ASSERTABLE.
+
+**Change 5 — Core 2's evidence pointers had drifted +42 lines.** Freeze 7 binds
+quotations, not pointers, so the contract did not lie by its own bar — but it
+misled every reader who followed the citation. Re-anchored onto the same bytes,
+verified at both ends against the contract's seed commit `4aaee50`:
+
+| pointer | at `4aaee50` (when written) | at `37fba54` (today) |
+|---|---|---|
+| webtheme.py:169 | `  --alarm:#f59e0b;` | line 211, same bytes |
+| webtheme.py:188 | `  --watch-ink-on-surface:#d6def2;` | line 230, same bytes |
+| webtheme.py:1338 | `   marker + bold weight, never a bespoke third hue. */` | line 1430, same bytes |
+
+**Change 6 — two Backlogged triggers could not fire, and one figure was three
+orders of magnitude stale.** B4 fired on "the first reclaim the owner *missed*
+on screen" — by construction unobservable; it now fires on the owner
+**reporting** a reclaim they did not see. B6 fired on "the first
+alarm-to-acknowledgement measurement exists", which nothing in this repo
+produces and which Core 13 itself says has never been measured; it now fires on
+an interval **recorded by any means**, including the owner timing one by hand.
+Neither is easier in substance — both still need the real event — they are
+simply now observable. B2's Brief A quotation was **not** overwritten: it is a
+verbatim citation of an out-of-repo Phase-0 document, and rewriting the numbers
+inside the quotation marks would turn a true citation into a fabricated one. It
+is preserved byte-for-byte, dated *"at Phase 0"*, with this tree's measurement
+added beside it: **0 literal, 8 computed-geometry sites on the register**.
+
+### A3. The full re-review — 36 rows walked, 0 re-anchored
+
+`OSV1-000` rehashed for the operator contract only:
+`a467be2adca763734fdfb5aace44108ebb21a3d7f5c1663bf82d5eb95ee54c52` →
+`a1f304b11b17e6864298e68ba050d8781112545d4ea45d1a4e35ccd88bdc4d2f`.
+`contracts/custody-coordination.v1.md` re-hashed byte-for-byte on this run and
+still `ec4b736f…` — the boundary is a one-way citation, so the custody text was
+never opened.
+
+**Zero rows re-anchored, and that was measured rather than trusted.** The
+proposal predicted none; the check run here collapsed BOTH the old
+(`origin/main`) and the new contract text and tested all **35** quote-carrying
+rows against each. Every quote verifies byte-identically in **both** texts.
+That is the shape of the amendment: each change edits a machine-check, cadence
+or evidence line, or appends *after* the sentence a row quotes.
+
+**Zero dispositions changed.** Tally **33 CONFORMS / 3 NOT-ASSERTABLE / 0 GAP /
+0 VIOLATION**, unchanged. No clause changed tier, so Freeze 5's reading does
+not move: 19 Core-carrying rows, 17 CONFORMS + 2 NOT-ASSERTABLE, zero red.
+
+**A surviving quote is not a re-review, so twelve rows' notes were walked** and
+each carries a dated `v2 amendment applied 2026-09-06:` line:
+
+| row | clause | what the re-review found |
+|---|---|---|
+| `OSV1-001` | Core 1 | clause body byte-identical; the "leads" gap this row never covered is now routed to a named cadence |
+| `OSV1-002` / `-003` | Core 2 | evidence pointers only; this row's own `webtheme.py:169/172/186` measurements stay correct **as of `4aaee50`**, and the same declarations now sit at `:211/:214/:228` |
+| `OSV1-005` | Core 4 | quote is sentence 1, appended sentence follows sentence 3; census re-run — 55 inline sites, 47 TOKEN / 8 COMPUTED / 0 literal, 0 `<style>`-block literals |
+| `OSV1-006` | Core 4 | **this row's INCREASE rule moved into the clause**; register unchanged at the same 8 expressions |
+| `OSV1-007` | Core 5 | **honest limit 2 moved into the contract**; `route_audit()` and the probe untouched; 30/22/0 re-measured |
+| `OSV1-018` | Core 12 | cadence gained the "ENCODE gate" definition, and now also carries Core 1's "leads" sentence |
+| `OSV1-019` | Core 13 | cadence points at Core 12's definition; its promotion route (Backlogged 6) can now actually fire |
+| `OSV1-031` | Freeze 5 | re-verified: no tier changed, both NOT-ASSERTABLE cadences still named and now more locatable |
+| `OSV1-032` | Freeze 6 | both conjuncts re-measured; Backlogged 2's evidence now carries this row's current figure |
+| `OSV1-033` | Freeze 7 | **the amendment's named trap, and it was avoided** — see A4 |
+| `OSV1-035` | Reserved 1 | its cadence rests on "each ENCODE gate", a term that is now defined |
+
+### A4. The trap that was named in advance, and how it was avoided
+
+`test_row_osv1_033` asserts the **Changelog** cites exactly one in-repo file:
+`cited == {"webapp.py"}`, where a citation is any backticked
+`` `<file>.py:<line>` `` inside the `## Changelog` section. A ratifying entry
+that wrote `` `webtheme.py:211-230` `` in backticks would have taken `OSV1-033`
+red on a bookkeeping detail while nothing was actually wrong. The entry
+therefore describes Change 5 in prose and carries no `file.py:LINE` citation at
+all. Re-measured after the write, the Changelog's cited set is exactly
+`{webapp.py}`; the two `webapp.py:37-44` quotations are untouched and still
+verify. Core 2's re-anchored evidence line is outside the Changelog and carries
+no backticks, so it was never in this probe's reach.
+
+### A5. Honest limits and residuals of this amendment
+
+1. **`__init__.py:711` is still a dead pointer.** Backlogged 4's own citation
+   points into a file that is 9 lines long. It was deliberately left out of this
+   amendment: repairing it needs a ruling on what it was meant to point at, and
+   guessing a pointer is how the Change 5 defect was created in the first place.
+   **Returned as a need.**
+2. **The candidate's `**Status:**` line still reads `PROPOSED — awaiting the
+   owner's word`** while the file now carries the owner's ratified stamp. The
+   amendment brief scoped the candidate edit to the stamp line only, so that
+   line was not touched. Named here rather than fixed silently.
+3. **Two source-side findings remain open, both named in the proposal's "Not in
+   this proposal" list:** deleting the dead `_oldest_ready_item` (which would
+   retire `test_antigoals_enforced`'s `xfail(strict=True)` and restore Core 10's
+   unbounded-query conjunct), and kit docstrings still quoting pre-RC-2 wording.
+   Neither is contract text; neither was touched here.
+4. **`DESIGN-SYSTEM.md`'s pointers on Core 2's evidence line were not
+   re-measured.** That file is out-of-repo; nothing here can verify it, and this
+   amendment does not pretend otherwise.
+
+### A6. Files written by this amendment
+
+| File | Change |
+|---|---|
+| `contracts/operator-surface.v2-candidate.md` | the owner's ratified stamp, on the file's own designated stamp line — nothing else |
+| `contracts/operator-surface.v1.md` | the six ratified changes (nine hunks), each byte-exact from the candidate, plus one dated Changelog entry |
+| `ledger/rows.yaml` | `OSV1-000` rehashed + full-re-review notes; dated `v2 amendment applied` lines on `OSV1-001`, `-002`, `-003`, `-005`, `-006`, `-007`, `-018`, `-019`, `-031`, `-032`, `-033`, `-035` |
+| `ledger/reconcile-report.md` | this section (`A1`–`A6`) and a Changelog entry |
+
+**No other file was written.** `ledger/checks/` was NOT touched — no row needed
+re-anchoring, so no probe needed retargeting. No `src/` byte, no `tests/` byte,
+no `docs/VISION.md` byte and no `contracts/custody-coordination.v1.md` byte was
+touched; `LAST_RUN.json` was neither regenerated nor edited; the live service
+was never contacted. No item was filed and none closed.
+
 ## Changelog
+- **2026-09-06 — AMENDMENT, `contracts/operator-surface.v1.md` v2 applied to
+  the LOCKED text, mandatory full re-review.** Owner's word, literal:
+  *"Ratified"* — the sibling proposal `operator-surface.v2-candidate.md` was
+  ratified as written, all six changes, no edits requested. The candidate was
+  stamped first (`Ratified by owner — 2026-09-06 …`); that stamp is what let
+  `hooks-candidate-guard` pass the edits through, and **the guard was never
+  bypassed** — no `bash`, no `sed -i`, no emergency-unlock token. Six
+  corrections an independent review of the LOCKED text named (Freeze 9 pass-1
+  findings 4/6/7/8/9 and pass-2 note 1): **Core 1**'s "leads" judgment routed
+  to Core 12's review cadence, with the machine check now stating it reaches
+  presence only; **Core 4** gains the register-GROWTH rule that had lived only
+  in `OSV1-006`'s notes; **Core 5**'s machine-check line names its predicate
+  inline and the audit's bound (static, module-local, name-matched, depth 4)
+  and says plainly it does not reach the clause's second promise; **Core 12/13**
+  define "ENCODE gate" once at first use, a term used four times and defined at
+  none; **Core 2**'s two drifted evidence pointers re-anchored +42 lines onto
+  the same bytes; **Backlogged 2/4/6** triggers made observable, with Brief A's
+  out-of-repo quotation preserved byte-for-byte and dated rather than
+  overwritten. SYNC (`OSV1-000`) rehashed for the operator contract only
+  (`a467be2adc…` → `a1f304b11b…`); the custody contract's bytes are unchanged
+  and were re-verified, not assumed. Full re-review performed (never a silent
+  bump): 36 rows walked, **0 re-anchored** — measured by collapsing both the old
+  and new text and testing all 35 quote-carrying rows against each, not assumed
+  from the proposal's prediction — and **0 dispositions changed**. Tally stands
+  at **33 CONFORMS / 3 NOT-ASSERTABLE / 0 GAP / 0 VIOLATION**; no clause changed
+  tier, so Freeze 5 still reads met (19 Core rows: 17 CONFORMS + 2
+  NOT-ASSERTABLE, zero red). Twelve rows' notes walked and dated. `OSV1-033`'s
+  named trap avoided: the ratifying Changelog entry carries no backticked
+  `file.py:LINE`, so the Changelog's cited set is still exactly `{webapp.py}`.
+  Measured here, not transcribed: `pytest ledger/checks -q` **60 passed**;
+  `make ledger-mutate` **69/69, none unproven**; `make test-conformance-a`
+  **41 passed / 1 named xfail, 0 failed, 0 xpassed**; ruff clean. Tier-B
+  deliberately not re-run and the reason stated (§A1): `git diff origin/main --
+  src tests` is empty. Residuals returned rather than fixed silently (§A5):
+  Backlogged 4's dead `__init__.py:711` pointer, the candidate's `**Status:**`
+  line still reading PROPOSED, and two source-side findings. No `src/`, no
+  `tests/`, no `ledger/checks/`, no `docs/VISION.md` and no custody-contract
+  byte touched; the live service was never contacted.
 - **2026-09-05 — LOCK, `contracts/operator-surface.v1.md` FROZEN, mandatory
   full re-review.** Owner ratification and signature (Freeze 10), literal words
   *"Ok, do the freeze"* and *"looked, ratify."* Three owner-ratified pre-lock

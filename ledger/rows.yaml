@@ -961,7 +961,7 @@
   contract:
     files:
       - file: contracts/operator-surface.v1.md
-        sha256: a467be2adca763734fdfb5aace44108ebb21a3d7f5c1663bf82d5eb95ee54c52
+        sha256: a1f304b11b17e6864298e68ba050d8781112545d4ea45d1a4e35ccd88bdc4d2f
       - file: contracts/custody-coordination.v1.md
         sha256: ec4b736f8d6dca4ee3c29b6df8397a9d7b51d2eadd76965854e898924f529e1a
   disposition: CONFORMS
@@ -969,6 +969,84 @@
     kind: probe
     ref: test_row_osv1_000
   notes: >
+    REHASHED 2026-09-06: the owner-ratified v2 amendment (owner's literal word
+    "Ratified") applied to the LOCKED contract through the ratified sibling
+    proposal `contracts/operator-surface.v2-candidate.md`; full OSV1
+    re-review. Operator hash `a467be2adc...` -> `a1f304b11b...`;
+    `contracts/custody-coordination.v1.md` re-hashed BYTE-FOR-BYTE on this run
+    and still `ec4b736f...` -- the boundary is a one-way citation, so the
+    custody text was never opened.
+
+    WHAT MOVED IN THE CONTRACT: six sentence-level corrections an INDEPENDENT
+    review of the locked text (Freeze 9, pass-1 findings 4, 6, 7, 8, 9 and
+    pass-2 note 1) named, plus one dated Changelog entry. No clause changed
+    tier, no check was widened or narrowed, and nothing under `src/`,
+    `tests/` or `ledger/checks/` was edited.
+      (1) Core 1. The machine-check line now states its own reach ("The check
+          reaches presence only; "leads" is not decided by it."), and a new
+          **Reviewed at cadence:** line routes the clause's "leads" sentence
+          to the same owner review of L0/L1/L2 that Core 12 carries. The
+          clause body did not move, so OSV1-001's quote is untouched. Before,
+          Core 1 promised a judgment Core 12 declares undecidable and nothing
+          asserted it.
+      (2) Core 4. One appended sentence puts the register-GROWTH rule in the
+          clause: growth is NOT convergent, a new inline computed-geometry
+          site absent from the register fails the check loudly, and adding one
+          is a deliberate, recorded act. The rule already existed and was
+          already enforced -- but only in OSV1-006's notes, and a ledger note
+          does not travel with a locked clause.
+      (3) Core 5. The machine-check line names the predicate inline (of each
+          read-only `GET`/`HEAD` handler, that it reaches no mutating adapter
+          call) and the audit's BOUND (static, module-local, name-matched,
+          bounded at depth 4, `ledger/checks/_support.py:746-800`), and says
+          plainly that it does not reach the clause's second promise. What
+          `reads.never_write` asserts did not move; OSV1-007's honest limit 2
+          now travels with the contract.
+      (4) Core 12 and Core 13. "ENCODE gate" -- used four times, defined
+          nowhere -- is defined once at first use in Core 12's cadence, and
+          Core 13's cadence points at that definition. Both machine-check
+          lines are untouched, so OSV1-018's and OSV1-019's quotes are; both
+          clauses stay NOT-ASSERTABLE.
+      (5) Core 2. The evidence line's two drifted `webtheme.py` pointers are
+          re-anchored +42 lines (169-188 -> 211-230, 1338 -> 1430) onto the
+          same bytes, verified at both ends against the seed commit 4aaee50.
+          No clause text, no machine check, no tier.
+      (6) Backlogged 2, 4 and 6. B4's and B6's triggers are restated as
+          something a person can OBSERVE (the owner reporting a reclaim they
+          did not see; an interval recorded by any means) rather than a missed
+          thing and a measurement nothing produces. B2's Brief A quotation is
+          preserved BYTE-FOR-BYTE and dated "at Phase 0", with this tree's
+          measurement (0 literal, 8 computed-geometry) added beside it rather
+          than written inside the quotation marks.
+      Plus one dated Changelog entry recording the amendment. Status stays
+      FROZEN: this is a v1 amendment through the guard's ratified-proposal
+      escape hatch, not a v2 authoring.
+
+    FULL RE-REVIEW PERFORMED (mandatory on any hash change, never a silent
+    bump). All 36 OSV1 rows walked against the new bytes:
+      * ROWS RE-ANCHORED: 0 -- checked, not assumed, by collapsing BOTH the
+        old (`origin/main`) and the new contract text and testing all 35
+        quote-carrying rows against each. Every quote verifies byte-identically
+        in BOTH texts. The proposal predicted zero and it was measured rather
+        than trusted: each of the six changes edits a machine-check, cadence or
+        evidence line, or appends after the sentence a row quotes.
+      * DISPOSITIONS CHANGED: 0. Tally 33 CONFORMS / 3 NOT-ASSERTABLE / 0 GAP /
+        0 VIOLATION, unchanged. No clause changed tier, so Freeze 5's reading
+        does not move either.
+      * NOTES RE-REVIEWED, not merely left standing: OSV1-001, -002, -003,
+        -005, -006, -007, -018, -019, -031, -032, -033 and -035 each carry a
+        dated line for this amendment. A surviving quote is not a re-review,
+        and three of them (OSV1-006's INCREASE rule, OSV1-007's honest limit 2,
+        OSV1-033's out-of-repo B2 paragraph) describe precisely the text these
+        changes moved into the contract.
+      * EVERY OTHER DISPOSITION RE-VERIFIED AGAINST THE TREE, not assumed: this
+        branch changes the contract, the ratified proposal and `ledger/` only
+        (`git diff origin/main --stat`), so no row's subject code moved and no
+        Tier-B number was re-measured -- every browser-derived row still reads
+        the same committed recording. `pytest ledger/checks -q` 60 passed;
+        `make ledger-mutate` 69/69 proven, zero unproven -- the denominator did
+        not move, because no probe was retargeted and no row flipped.
+
     REHASHED 2026-09-05: the FROZEN stamp + true-up #2; full OSV1 re-review.
     Owner ratification and signature (Freeze 10), literal words "Ok, do the
     freeze" and "looked, ratify." Status moves DRAFT -> FROZEN. Operator hash
@@ -1202,6 +1280,17 @@
     OSV1-033 -- one of those Changelog quotes does not verify against its
     cited source.
 
+    v2 amendment applied 2026-09-06: Core 1's machine-check line now states its
+    own reach ("The check reaches presence only; "leads" is not decided by
+    it."), and the clause gains a **Reviewed at cadence:** line routing its
+    "leads" sentence to the same owner review of L0/L1/L2 that Core 12 carries
+    (OSV1-018). Nothing this row asserts moved: the clause BODY -- which is
+    what this row quotes -- is byte-identical, `hero.velocity_and_counts` was
+    not touched, the tier stays A and the disposition stays CONFORMS. What
+    changed is honesty about the gap this row never covered: the "leads"
+    judgment is now explicitly carried by a named cadence instead of sitting
+    in a locked clause with nothing asserting it.
+
 - id: OSV1-002
   title: the token set declares exactly three status hues and no bespoke fourth
   contract:
@@ -1237,6 +1326,17 @@
     hue painted OUTSIDE the token system is not visible to it -- that is Core 4
     (OSV1-005, which measured 66 such inline sites and now measures zero) and
     the calm-pixel sweep (OSV1-003).
+
+    v2 amendment applied 2026-09-06: Core 2's EVIDENCE line was re-anchored --
+    `webtheme.py:169-188` -> `:211-230` and `webtheme.py:1338` -> `:1430`, the
+    same +42 drift at both ends, verified byte-for-byte against the seed commit
+    4aaee50. That drift is why the measurements recorded above still name
+    `webtheme.py:169/172/186`: they are dated 2026-09-04 against 4aaee50 and
+    are correct AS OF that commit. On this tree the same three declarations sit
+    at `--alarm:211`, `--blocked:214`, `--watch:228`, inside the `RESERVED
+    STATUS` block at `:210-231`. No clause text, no machine check and no tier
+    moved, so this row's quote and disposition (CONFORMS) are untouched;
+    `palette.status_hue_set` re-ran green.
 
 - id: OSV1-003
   title: a calm L0 and L1 both paint zero --alarm and zero --blocked pixels, in both themes
@@ -1456,6 +1556,13 @@
     observed; if a row ever wants to assert one, it must first pin down that
     jitter rather than inherit it.
 
+    v2 amendment applied 2026-09-06: the only Core 2 text that moved is the
+    EVIDENCE line's two `webtheme.py` pointers (`:169-188` -> `:211-230`,
+    `:1338` -> `:1430`; see OSV1-002). This row reads the rendered half --
+    `calm.zero_alarm_pixels` -- and neither the clause sentence it quotes nor
+    the check it re-reads was touched, so no Tier-B recording was re-made and
+    every number above stands as recorded. Disposition unchanged (CONFORMS).
+
 - id: OSV1-004
   title: state is never colour-only -- measured on rendered L0/L1/L2, and it holds
   contract:
@@ -1641,6 +1748,19 @@
     `overflow-wrap:anywhere`) which Core 4 permits, and 8 computed-geometry.
     Backlogged 2 ("no inline `style=` at all") is not claimed by this row.
 
+    v2 amendment applied 2026-09-06: Core 4's clause gained ONE appended
+    sentence -- "Growth is not convergent: a new inline computed-geometry site
+    absent from the register fails the check loudly, and adding it to the
+    register is a deliberate, recorded act, never a silent one." The clause
+    previously stated the rule for SHRINKING the register and was silent on
+    growth, while the growth rule lived only in OSV1-006's notes. Nothing this
+    row measures moved: this row's quote is the clause's FIRST sentence (the
+    literal-colour/font/size prohibition), the appended sentence follows the
+    third, `visual.single_source` is unchanged, the tier stays A and the
+    disposition stays CONFORMS. The census above (55 inline sites: 47 TOKEN, 8
+    COMPUTED, 0 literal; 0 `<style>`-block literals) was re-run on this tree at
+    the amendment and did not move.
+
 - id: OSV1-006
   title: every computed-geometry inline site is on the ledger's exemption register
   contract:
@@ -1751,6 +1871,24 @@
     all"), which is an owner amendment, not a silent win. It is not zero: 8
     remain, and each is a length or a ratio that genuinely depends on data.
 
+    v2 amendment applied 2026-09-06, and it moves THIS row's rule into the
+    contract. The INCREASE rule recorded in these notes -- "A DECREASE is
+    convergent (shrink the register, let the ledger confirm). An INCREASE -- a
+    new inline computed site not listed here -- fails the probe loudly" --
+    lived only here, and a ledger note does not travel with a locked clause.
+    Core 4 now carries it: "Growth is not convergent: a new inline
+    computed-geometry site absent from the register fails the check loudly, and
+    adding it to the register is a deliberate, recorded act, never a silent
+    one." The clause and this row now say the same thing in both places. The
+    PROBE did not change and neither did the register: the census was re-run at
+    the amendment and reads 55 inline sites -- 47 TOKEN, 8 COMPUTED, 0 literal
+    -- with `style_block_literal_sites()` at 0, the same eight expressions as
+    before. This row's quote (Core 4's SECOND sentence) is byte-identical; the
+    appended sentence follows the third. Disposition unchanged (CONFORMS).
+    Backlogged 2's trigger -- the register reaching zero -- is untouched; the
+    amendment only dated its Brief A figure and added this tree's measurement
+    beside it.
+
 - id: OSV1-007
   title: no GET handler reaches a mutating adapter call
   contract:
@@ -1810,6 +1948,27 @@
          reached through a callable passed in from another module would not be
          seen. No such path exists today; a rendered-route check in the Tier-A
          kit would close the residue.
+
+    v2 amendment applied 2026-09-06, and it moves HONEST LIMIT 2 into the
+    contract -- the post-lock proposal the true-up #2 note above said would be
+    needed. Core 5's machine-check line was "a route audit over every
+    registered handler, asserting the clause's first sentence against each
+    read-only one"; it now names the predicate INLINE (of each read-only
+    `GET`/`HEAD` handler, that it reaches no mutating adapter call), names the
+    audit's BOUND (static, module-local, name-matched against the adapter's
+    write verbs, bounded at depth 4, `ledger/checks/_support.py:746-800`), and
+    says plainly that it does NOT reach the clause's second promise, that
+    writes happen only through `POST`. Two things this closes: "the clause's
+    first sentence" has two halves and the audit asserts only the first; and
+    "reaches" became load-bearing in the clause at RC-1 while its bound was
+    stated nowhere in the contract. NOTHING THIS ROW MEASURES MOVED:
+    `route_audit()` and `test_row_osv1_007` were not touched, the clause BODY
+    -- which is what this row quotes -- is byte-identical including the
+    `GET /auth/logout` exception, the tier stays A, and the re-run on this tree
+    still reads 30 routes / 22 read-only / ZERO reaching a mutating adapter
+    call. Disposition unchanged (CONFORMS). HONEST LIMIT 2 remains a real limit
+    on what the audit sees; what changed is that a reader of the locked contract
+    can now see it too.
 
 - id: OSV1-008
   title: all four of Core 6's named survivals hold, on L0 and on L1
@@ -2650,6 +2809,21 @@
     recurring occasion to carry it. Note the cadence is discharged by the same
     owner look Freeze 8 requires (OSV1-034, CONFORMS as of 2026-09-05), so the
     two travel together.
+
+    v2 amendment applied 2026-09-06, TWO changes reach this clause and neither
+    moves what this row asserts. (a) Core 12's cadence line now DEFINES "ENCODE
+    gate" at its first use -- "the authoring checkpoint at which the owner reads
+    and ratifies drafted contract text, the event this contract's 2026-09-04
+    Changelog entries record" -- closing a term used four times in the contract
+    and defined at none of them, which failed the "a non-engineer could
+    understand it" bar. (b) Core 1's "leads" sentence is now routed HERE: its
+    new **Reviewed at cadence:** line says the judgment is carried by the same
+    owner review of L0/L1/L2 at each `ledger/reconcile-report.md` re-check, so
+    this cadence now carries two clauses' worth of "leads" judgment rather than
+    one. Core 12's MACHINE-CHECK line -- which is what this row quotes -- is
+    byte-identical, the clause stays NOT-ASSERTABLE, `assertion.kind: none` is
+    unchanged, and RC-3's standing trigger survives verbatim inside the
+    lengthened sentence.
   assertion:
     kind: none
 
@@ -2679,6 +2853,24 @@
     to stay NOT-ASSERTABLE forever. No instrumentation exists in the repo today
     (measured 2026-09-04: no time-to-notice or time-to-act metric is recorded
     anywhere in `src/`).
+
+    v2 amendment applied 2026-09-06, TWO changes reach this row's clause and
+    its promotion route, and neither moves what this row asserts. (a) Core 13's
+    cadence line now reads "at each ENCODE gate (defined in Core 12)", so the
+    term this cadence depends on is resolvable by a reader. (b) Backlogged 6's
+    TRIGGER -- the promotion route named above -- was "the first
+    alarm-to-acknowledgement measurement exists", which nothing in this repo
+    produces and which this very clause says has never been measured: as
+    written it could only be satisfied by the instrumentation its own clause
+    would govern. It now reads "an alarm-to-acknowledgement interval is
+    recorded by any means -- instrumentation, a log, or the owner timing one by
+    hand." That is not an EASIER trigger in substance -- a real interval is
+    still required -- it is an OBSERVABLE one, so this row's job (keep the
+    question standing until an instrument exists) now has a route that can
+    actually fire. Core 13's machine-check line, which this row quotes, is
+    byte-identical; the clause stays NOT-ASSERTABLE with `assertion.kind:
+    none`; RC-3's standing trigger survives verbatim; and no number was
+    invented, which is the failure this row exists to prevent.
   assertion:
     kind: none
 
@@ -3624,6 +3816,22 @@
     attestation. Freeze 5 green + Freeze 8 red is the honest state of the
     family today.
 
+    v2 amendment applied 2026-09-06, and Freeze 5's reading does NOT move. No
+    clause changed tier: Core 1, 4 and 5 stay Tier A and CONFORMS; Core 12 and
+    13 stay NOT-ASSERTABLE and both still name their review cadence in the
+    contract, which is Freeze 5's second limb -- Core 12's cadence gained the
+    definition of "ENCODE gate" and Core 13's now points at it, so both cadences
+    became MORE locatable, not less. The one new **Reviewed at cadence:** line
+    in the family sits on Core 1, a Tier-A CONFORMS clause, and does not make
+    Core 1 NOT-ASSERTABLE: it routes one SENTENCE of that clause (the "leads"
+    judgment, which no check ever reached) to Core 12's existing cadence, while
+    `hero.velocity_and_counts` keeps asserting everything it asserted before.
+    Tally re-verified against the rows on this tree, not assumed: CONFORMS 17 /
+    NOT-ASSERTABLE 2 / VIOLATION 0 / GAP 0 across the 19 Core-carrying rows.
+    Zero red. (The stale paragraph above about OSV1-034 being GAP is history
+    from before the 2026-09-05 flip; it is left standing as the record of what
+    was true when it was written, and OSV1-034 has read CONFORMS since.)
+
 - id: OSV1-032
   title: >-
     Freeze 6 -- the exemption register is complete and no literal colour, font
@@ -3665,6 +3873,22 @@
     register being COMPLETE is a stronger statement than the census being
     CURRENT, and a future reader stamping FROZEN reads this row, not the census
     row.
+
+    v2 amendment applied 2026-09-06: Freeze 6's own text did not move, so this
+    row's quote and disposition (CONFORMS) are untouched, and both conjuncts
+    were re-measured rather than assumed -- 55 inline sites (47 TOKEN, 8
+    COMPUTED, 0 literal) and `style_block_literal_sites()` at 0. Two amendment
+    changes touch what this row reads. Core 4 now states the register-GROWTH
+    rule in the clause itself (see OSV1-005/-006), which is the rule this gate
+    depends on to stay closed once stamped: "complete" is only meaningful if a
+    new unregistered site fails loudly, and that is now a contract sentence
+    rather than only a ledger note. And Backlogged 2's evidence now carries
+    THIS row's measurement beside Brief A's Phase-0 figure -- Brief A's "137
+    `style=` occurrences, 134 of them outside `webtheme.py`" is preserved
+    byte-for-byte and dated "at Phase 0", with "measured 2026-09-06 on this
+    tree: 0 literal, 8 computed-geometry sites on the register" added after it.
+    A reader following Backlogged 2's trigger now sees the current number
+    instead of a three-orders-of-magnitude-stale one.
 
 - id: OSV1-033
   title: Freeze 7 -- every quotation citing an in-repo file verifies against it
@@ -3738,6 +3962,27 @@
     branch -- the branch may not write to the live tracker -- so it needs
     closing by hand; the `work` field is dropped here because a CONFORMS row
     carrying a live work ref would read as unfinished business.
+
+    v2 amendment applied 2026-09-06, and conjunct 3 above was the amendment's
+    named TRAP. The Changelog gained one dated entry recording the amendment,
+    and this row asserts `webapp.py` is the only in-repo file the Changelog
+    cites; a backticked `webtheme.py:211-230` in that entry would have taken
+    this row red on a bookkeeping detail while nothing was actually wrong. The
+    entry therefore describes Change 5 in PROSE and carries no `file.py:LINE`
+    citation at all -- re-measured after the write, the Changelog's cited set
+    is exactly {`webapp.py`}. The two `webapp.py:37-44` quotations are
+    untouched and still verify, and neither the contract nor `webapp.py`
+    acquired the `**`-emphasised form. THE OUT-OF-REPO HONEST LIMIT ABOVE
+    CHANGED SHAPE, not substance: Brief A's B2 quotation is still quoted
+    byte-for-byte in Backlogged 2 -- rewriting the numbers inside the quotation
+    marks would have turned a true citation into a fabricated one, since Brief
+    A does not say "0 and 8" -- but the line now dates it "at Phase 0" and adds
+    this tree's own measurement (0 literal, 8 computed-geometry) beside it. So
+    the limit stands exactly as written: CONFORMS here still means "every
+    quotation citing an in-repo file verifies", never "every string in this
+    contract has been checked". Disposition unchanged (CONFORMS); Core 2's
+    re-anchored evidence line carries no backticks and lives outside the
+    Changelog, so it is out of this probe's reach either way.
 
 - id: OSV1-034
   title: Freeze 8 -- the owner's rendered-page look is recorded in the Changelog
@@ -3859,5 +4104,20 @@
     claims. REVIEWED AT CADENCE: at each ENCODE gate, together with the other
     Reserved namespaces; on trigger, `cli-json.v1` is authored as its own
     contract and taken through the Freeze Bar, and does not enter this one.
+
+    v2 amendment applied 2026-09-06: Reserved 1's own text did not move, so
+    this row's quote, justification and disposition (NOT-ASSERTABLE,
+    `assertion.kind: none`) are untouched. One thing this row DEPENDS ON became
+    legible: the cadence named just above is "at each ENCODE gate", and the
+    amendment defines that term at its first use in Core 12 -- "the authoring
+    checkpoint at which the owner reads and ratifies drafted contract text".
+    Until now a reader of this justification could not resolve the event this
+    row's cadence rests on. RECORDED FOR THE BACKLOGGED SECTION, which has no
+    rows of its own by design (rows.yaml preamble: "Backlogged and Reserved get
+    NO rows -- they are not promises -- except Reserved 1"): the amendment
+    restated Backlogged 4's and Backlogged 6's triggers as observable events
+    and dated Backlogged 2's Brief A figure. No row quotes any of those three
+    lines, so nothing re-anchored; B2's consequences are carried by
+    OSV1-005/-006/-032 and B6's by OSV1-019, each noted there.
   assertion:
     kind: none
