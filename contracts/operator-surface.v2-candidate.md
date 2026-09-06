@@ -502,10 +502,11 @@ A stamp written anywhere else, or with anything in front of it on the line, will
 `contracts/operator-surface.v1.md`. If the answer is **declined** or **later**, write that word
 instead — the guard will simply not open the file, which is the correct outcome.
 
-Owner's word: ______
+Owner's word:
 
 <!-- stamp line — the owner writes on the blank line below this comment; leave it blank otherwise -->
 
+Ratified by owner — 2026-09-06, literal word "Ratified".
 
 <!-- end stamp line -->
 

@@ -18,9 +18,11 @@ These are the frozen invariants of the operator surface. Each carries a machine 
 
 The L0 hero region carries throughput over a stated window, presented together with the counts an operator acts on: in flight (held), blocked, needs attention, and open/ready. Observability leads the page; no other figure displaces the hero.
 
-**Machine check:** `hero.velocity_and_counts` — the rendered L0 hero region contains a velocity figure with its window stated, and each of the four named counts.
+**Machine check:** `hero.velocity_and_counts` — the rendered L0 hero region contains a velocity figure with its window stated, and each of the four named counts. The check reaches presence only; "leads" is not decided by it.
 
 **Tier:** A
+
+**Reviewed at cadence:** the "leads" sentence is the judgment Core 12 names NOT-ASSERTABLE; it is carried by the same owner review of L0/L1/L2, at each `ledger/reconcile-report.md` re-check.
 
 *(Brief A §1, webapp.py:4602, webapp.py:4611-4641, webapp.py:4647)*
 
@@ -34,7 +36,7 @@ The token set defines exactly three status hues — `--alarm`, `--blocked`, `--w
 
 **Tier:** A and B
 
-*(Brief A §2, webtheme.py:169-188, webtheme.py:1338; Brief B §5, DESIGN-SYSTEM.md:63-64, DESIGN-SYSTEM.md:66-68)*
+*(Brief A §2, webtheme.py:211-230, webtheme.py:1430; Brief B §5, DESIGN-SYSTEM.md:63-64, DESIGN-SYSTEM.md:66-68)*
 
 ---
 
@@ -52,7 +54,7 @@ Every element carrying a state carries it in text as well as hue — a status ch
 
 ### Core 4: One source of visual truth
 
-Literal colour, font, or size in an inline `style=` attribute, or in a `<style>` block outside the token module (`webtheme.py`'s token block), is a violation; zero are tolerated. Computed geometry in an inline `style=` — a bar width, a chart offset — is permitted only for sites enumerated on the exemption register. The register lives in `ledger/`, not in this contract, so that shrinking it is a convergent change requiring no amendment.
+Literal colour, font, or size in an inline `style=` attribute, or in a `<style>` block outside the token module (`webtheme.py`'s token block), is a violation; zero are tolerated. Computed geometry in an inline `style=` — a bar width, a chart offset — is permitted only for sites enumerated on the exemption register. The register lives in `ledger/`, not in this contract, so that shrinking it is a convergent change requiring no amendment. Growth is not convergent: a new inline computed-geometry site absent from the register fails the check loudly, and adding it to the register is a deliberate, recorded act, never a silent one.
 
 **Machine check:** `visual.single_source` — zero inline `style=` attributes carrying a literal colour, font, or size anywhere in `src/`; every inline `style=` site carrying computed geometry appears on the ledger's exemption register; and zero literal colour/font/size declarations in any `<style>` block outside the token module.
 
@@ -66,7 +68,7 @@ Literal colour, font, or size in an inline `style=` attribute, or in a `<style>`
 
 No `GET` handler reaches a mutating adapter call; the surface may poll itself aggressively and writes work-tracker state only through explicit operator actions, which are `POST`. The one named exception: `GET /auth/logout` clears the session cookie.
 
-**Machine check:** `reads.never_write` — a route audit over every registered handler, asserting the clause's first sentence against each read-only one.
+**Machine check:** `reads.never_write` — a route audit over every registered handler, asserting of each read-only (`GET`/`HEAD`) one that it reaches no mutating adapter call. The audit is static, module-local, name-matched against the adapter's write verbs, and bounded at depth 4 (`ledger/checks/_support.py:746-800`); it does not reach the clause's second promise, that writes happen only through `POST`.
 
 **Tier:** A
 
@@ -154,7 +156,7 @@ A page's leading content is what the operator came to see, not a form to fill in
 
 **Tier:** NOT-ASSERTABLE
 
-**Reviewed at cadence:** owner review of L0/L1/L2 at each ENCODE gate and before any Freeze stamp, and at each `ledger/reconcile-report.md` re-check.
+**Reviewed at cadence:** owner review of L0/L1/L2 at each ENCODE gate — the authoring checkpoint at which the owner reads and ratifies drafted contract text, the event this contract's 2026-09-04 Changelog entries record — and before any Freeze stamp, and at each `ledger/reconcile-report.md` re-check.
 
 *(Brief B §5, wt-v4-observatory/BRIEF.md:82-88)*
 
@@ -168,7 +170,7 @@ The surface exists so the time between an alarm appearing and the operator ackno
 
 **Tier:** NOT-ASSERTABLE
 
-**Reviewed at cadence:** owner review at each ENCODE gate and at each `ledger/reconcile-report.md` re-check; promoted by Backlogged 6.
+**Reviewed at cadence:** owner review at each ENCODE gate (defined in Core 12) and at each `ledger/reconcile-report.md` re-check; promoted by Backlogged 6.
 
 *(Brief B §6, wt-v2-poa.md:242-244, wt-v4-observatory/BRIEF.md:109-118)*
 
@@ -190,7 +192,7 @@ Gloss, gradient, and glass belong to the chrome vocabulary — a panel may be gl
 
 Every inline `style=` attribute is a violation, computed geometry included.
 
-**Trigger:** the exemption register named in Core 4 reaches zero. *(Brief A §2, "137 `style=` occurrences, 134 of them outside `webtheme.py`")*
+**Trigger:** the exemption register named in Core 4 reaches zero. *(Brief A §2, at Phase 0: "137 `style=` occurrences, 134 of them outside `webtheme.py`"; measured 2026-09-06 on this tree: 0 literal, 8 computed-geometry sites on the register)*
 
 ---
 
@@ -206,7 +208,7 @@ A `supersedes` edge is rendered as its own relation rather than falling into the
 
 A custody loss is legible to the operator on the web surface, not only through the agent tool result described by `contracts/custody-coordination.v1.md Core 8`.
 
-**Trigger:** the first reclaim the owner missed on screen. *(Brief A §3, `__init__.py:711`)*
+**Trigger:** the owner reports a reclaim they did not see on the web surface. *(Brief A §3, `__init__.py:711`)*
 
 ---
 
@@ -222,7 +224,7 @@ The push channel broadens past the custody-TTL breach frozen in Core 11.
 
 Core 13's outcome acquires an asserted threshold and a probe.
 
-**Trigger:** the first alarm-to-acknowledgement measurement exists. *(Brief B §6, wt-v2-poa.md:242-244)*
+**Trigger:** an alarm-to-acknowledgement interval is recorded by any means — instrumentation, a log, or the owner timing one by hand. *(Brief B §6, wt-v2-poa.md:242-244)*
 
 ---
 
@@ -378,6 +380,7 @@ Before this contract moves from DRAFT to FROZEN, all of the following conditions
 
 ## Changelog
 
+- **2026-09-06 — v2 amendment, owner-ratified ("Ratified"):** six wording fixes from the Freeze 9 external review applied via the ratified sibling proposal operator-surface.v2-candidate.md: Core 1 "leads" routed to Core 12's review cadence; Core 4 gains the register-growth sentence; Core 5's machine-check line names its predicate and bound; Core 12/13 define "ENCODE gate"; Core 2's evidence citations re-anchored; Backlogged 2/4/6 triggers made observable. Status remains FROZEN.
 - **2026-09-05 — FROZEN.** Owner ratification and signature (Freeze 10): owner's literal words "Ok, do the freeze" and "looked, ratify." Status moves DRAFT → FROZEN. From this entry on, this file changes only by a sibling proposal (`operator-surface.v2-candidate.md`) carrying the target line, the exact change, real evidence, and what does not change; `hooks-candidate-guard` refuses in-place edits.
 - **2026-09-05 — Freeze 8 record (ratification input, never a machine check):** the owner looked at the rendered L0 (Mission Control), L1 (Project Observatory) and L2 (Item Detail) at 430, 900 and 1280px in both themes — the eighteen captures from the pinned-browser run (chromium 148.0.7778.0 / playwright 1.60.0) on main @ d039b32 — and said "looked".
 - **2026-09-05 — DRAFT true-up #2, owner-ratified ("ratify."):** the three pre-lock fixes from the Freeze 9 external review (independent reviewer, not the author; verdict REQUEST CHANGES → approve once landed): RC-1 Core 5 reworded to what `reads.never_write` asserts, naming `GET /auth/logout`'s cookie clear as the one exception; RC-2 Conformance 1/3/4 halves reworded to the measured defects (hue outside the token set; disclosure + live-region node identity; element-level overflow past `clientWidth`); RC-3 Core 12/13 cadences gain a standing trigger at each reconcile re-check. Six lower findings deferred to post-lock proposals.
