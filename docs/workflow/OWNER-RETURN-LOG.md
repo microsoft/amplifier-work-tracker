@@ -35,3 +35,15 @@ One entry per return of the intent steward (clock-stamped) or per unprompted bri
 **Needs you.** Four words, each answerable in one: **ratify** the custody pre-lock true-up (the external review's nine text fixes — listed in the reply); **ratify** operator-surface v3 (one citation); **hold loosely** or **lock** for docs/VISION.md (the reviewer recommends hold loosely until the custody contract is locked, so its governing-contracts line changes once); and for custody Freeze 2, **discharge** (work_release's already-closed branch is the D-6 recovery verb, tested) or **defer**.
 
 **Anything quietly broken.** I found and closed a second hole in the lock: the ratified v2 proposal I left beside the frozen contract after applying it kept the guard's escape hatch open, so an in-place edit of the locked contract was permitted in-session for the past day (CI's hash row still caught any that would have landed; none did) — it is archived now under contracts/applied/, the hatch reads closed, and the upstream defect is filed as converge-wu3y.
+
+## 2026-09-06 18:19 - they came back with the words: "your recommendations are good, go for all" (ratify true-up · discharge · ratify v3 · hold loosely)
+
+**Time away.** About two hours since "go for all"; one lane ran in it and landed, and I redid its last step once.
+
+**Finished.** All four words are applied and on one branch now heading to main: the custody contract carries the reviewer's nine fixes and six nits, names its recovery verb with your word "discharge", and is locked — I re-ran the ledger (60 passed), the mutation harness (69/69), the Tier-A kit (42/0) and the custody fixtures (10 passed) myself and the file's hash matches the ledger's pin; the operator-surface v3 citation fix is applied through the sanctioned path with its proposal archived so the guard's hatch is shut behind it; VISION.md records "hold loosely" with your word and a revisit trigger; the independent reviewer read the final diff and approved (pass 3).
+
+**Stuck.** Nothing stopped; the upstream guard fix (amplifier-bundle-converge PR #59) still waits on a maintainer's review.
+
+**Needs you.** Nothing — no call is open for this repository.
+
+**Anything quietly broken.** The lane's own lock had a defect the reviewer caught before merge: the rewording of §Checks it did for you introduced a false sentence ("there is no check_* function namespace" — there are 44, as doctor checks), and because the file was already stamped FROZEN on the lane's branch I rebuilt the branch from the pre-lock commit, fixed the sentence while the text still read DRAFT, and locked again in one write — nothing false reached main, and the reconcile report records the re-issue; two post-lock proposal candidates the reviewer noted (Freeze 4's wording; "listed below" naming 5 of 32 checks) are queued for a v2 proposal, not silently absorbed.
