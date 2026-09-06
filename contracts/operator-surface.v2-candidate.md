@@ -6,7 +6,7 @@ target: contracts/operator-surface.v1.md
 
 **Date:** 2026-09-06
 **Author:** agent:converge-manager via proposal-drafter
-**Status:** PROPOSED — awaiting the owner's word
+**Status:** RATIFIED by owner 2026-09-06 ("Ratified") — applied to operator-surface.v1.md via PR #90 (main a8951bd)
 **Against:** `contracts/operator-surface.v1.md`, Status FROZEN, `main` @ `279a6ef`
 **Evidence source:** `.amplifier/converge/operator-surface-freeze9-review.md` — the Freeze 9
 external review (independent reviewer, not the author): pass-1 findings 4, 6, 7, 8 and 9, and

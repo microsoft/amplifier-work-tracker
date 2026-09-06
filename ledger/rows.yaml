@@ -3569,6 +3569,12 @@
     THE HOUSE PRECEDENT this follows: the custody family's CCV1-023 recorded
     discrimination by REVERTING each fix in turn and observing exactly the
     matching bad half go red while every good half stayed green.
+    TRUED UP 2026-09-06 (integration of work_item_pipeline-zhv): the sentence above calling
+    Tier-A's `test_antigoals_enforced` "THE ONE REMAINING DEFERRAL IN EITHER KIT" was true
+    when written and is false as of this commit -- the dead `_oldest_ready_item` is deleted
+    and both kits now carry ZERO xfail markers (Tier-A 42 passed / 0 xfailed). Kept as dated
+    history; the probe never asserted the claim, so nothing was red.
+
 - id: OSV1-031
   title: >-
     Freeze 5 -- every Core clause reads CONFORMS or NOT-ASSERTABLE
