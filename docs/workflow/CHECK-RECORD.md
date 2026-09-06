@@ -12,3 +12,14 @@ One entry per integration, written by the MANAGER session in its own commit (nev
   - `sha256sum contracts/operator-surface.v1.md` = a1f304b11b17… == OSV1-000's operator-surface pin (custody pin ec4b736f… unchanged)
   - Status line still `**Status:** FROZEN`; candidate carries "Ratified by owner — 2026-09-06"; Changelog head is the v2 amendment entry; 12 rows carry the dated amendment note; OSV1 33 CONFORMS / 3 NOT-ASSERTABLE.
 - Contract reading after re-run: operator-surface.v1 **Kept** (every Core clause CONFORMS or NOT-ASSERTABLE with cadence); custody-coordination.v1 **Kept** (CCV1 rows unchanged).
+
+## 2026-09-06 14:34 UTC — merge of lane/zhv (Core 10 residual)
+- Covers: merge commit 9c6c4f7 on `converge/zhv-core10-residual` = main a8951bd + lane/zhv 0debd81 (one lane; no pair gate needed), plus manager repair commit 0e9086c (OSV1-030 prose, candidate Status line, docs/workflow).
+- Ran, in this session, on the merged tree:
+  - `grep -rn _oldest_ready_item src` → no occurrence (0 definitions, 0 calls); the earlier "2" was a counting artefact of `grep -rc` summing, re-measured with `-rn`
+  - `.venv/bin/python -m pytest ledger/checks -q` → 60 passed
+  - `make ledger-mutate` → ALL mutations proven 69 / 69; UNPROVEN: (none)
+  - `pytest tests/conformance/operator_surface/test_tier_a.py -q` → **42 passed, 0 xfailed** (was 41 / 1)
+  - `.venv/bin/pyright src tests` → 0 errors; `ruff check src tests ledger` → All checks passed!
+  - `sha256sum contracts/operator-surface.v1.md` a1f304b1… == OSV1-000 pin; contract untouched by the lane (confirmed by diff)
+- Contract reading after re-run: operator-surface.v1 **Kept** — both conformance kits now carry zero xfail markers; custody-coordination.v1 **Kept**.
