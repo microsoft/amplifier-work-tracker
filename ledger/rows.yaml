@@ -2653,14 +2653,44 @@
     covers the truncation note; both were confirmed to go red against
     `limit=0` and against a removed `limit=` before this row was flipped.
 
-    THE OTHER UNCAPPED CALL, AND WHY IT IS STILL NOT SCORED: webapp.py:909,
-    inside `_oldest_ready_item`, calls `bd.list(lane=A.LANE_WORK,
-    status="open")` with no `limit` at all -- but the function has ZERO
-    callers (the only occurrence of the name in `src/` is its own definition).
-    Dead code is not "reached from a view", so the check as written does not
-    condemn it. Unchanged from seed, and the probe still re-earns that
-    exemption every run by proving the function is still uncalled -- the
-    instant it gains a caller, this row goes red.
+    THE OTHER UNCAPPED CALL IS GONE -- 2026-09-06, work_item_pipeline-zhv.
+    From seed until this date this row carried a named residual: webapp.py:909,
+    inside `_oldest_ready_item`, called `bd.list(lane=A.LANE_WORK,
+    status="open")` with no `limit` at all. It was never scored, because the
+    function had ZERO callers and dead code is not "reached from a view", and
+    the probe re-earned that exemption every run by proving it was still
+    uncalled. The dead function was deleted instead (webapp.py:902-917, 16
+    lines; grep confirmed one occurrence in `src/`, its own definition, before
+    the deletion and none after). Disposition does not move: it was CONFORMS
+    before and is CONFORMS now -- what changed is that the clause no longer
+    holds by a reachability ARGUMENT anywhere in these three modules.
+
+    WHAT THE DELETION BOUGHT, measured on this tree:
+      * `make test-conformance-a` 42 passed, 0 xfailed, 0 XPASS, 0 failed (was
+        41 passed / 1 xfailed). The Tier-A good half `test_antigoals_enforced`
+        was the LAST deferral in either kit; its `xfail(strict=True)` named
+        this residual by name and is deleted, in this same change, exactly as
+        the marker's own reason instructed.
+      * This probe's two exemption assertions went with the function they
+        guarded and are replaced by something STRONGER and name-free:
+        `all_listing_calls()`, a source-wide census of webapp.py/webbrowse.py/
+        webtrust.py requiring an explicit finite limit on EVERY listing call,
+        reached or not. Measured population: webapp.py:3848
+        (`attention_items_from_rows`), webapp.py:4743 (`recent_activity_feed`),
+        webbrowse.py:412 (`bd.list`), webbrowse.py:719 (`bd.activity`) -- all
+        four explicit, zero unbounded. The reachability audit is unchanged and
+        still runs first; this is the second pass that leaves no limit-less
+        call for a reachability argument to excuse.
+      * Product-side, `tests/unit/test_view_query_bounds.py` lost its
+        `_UNREACHED_EXEMPTIONS` register and the test that re-earned it, rather
+        than keeping a guard that iterates an empty set -- which would pass
+        forever while proving nothing.
+
+    KNOCK-ON, recorded because it is a line-number pin and not a re-derivation:
+    deleting 16 lines above them moved OSV1-006's three webapp.py register
+    entries by -16 (1127/1823/1826 -> 1111/1807/1810). Re-measured from the
+    census, not transcribed; same eight sites, same three expressions, the
+    register did not grow.
 
 - id: OSV1-016
   title: the theme choice is persisted in localStorage and applied at first paint

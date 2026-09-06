@@ -557,9 +557,17 @@ def test_row_osv1_005() -> None:
 #: that as the failure to avoid, because two censuses disagree silently.
 EXEMPTION_REGISTER: frozenset[str] = frozenset(
     {
-        "webapp.py:1127",  # flex:{n} 1 0            -- state-bar segment ratio
-        "webapp.py:1823",  # width:{today_w}px       -- throughput bar, today
-        "webapp.py:1826",  # width:{prior_w}px       -- throughput bar, prior 6d
+        "webapp.py:1111",  # flex:{n} 1 0            -- state-bar segment ratio
+        "webapp.py:1807",  # width:{today_w}px       -- throughput bar, today
+        "webapp.py:1810",  # width:{prior_w}px       -- throughput bar, prior 6d
+        # -16 lines on 2026-09-06 (was 1127/1823/1826), the SECOND re-pin of the
+        # same three sites and for the same reason as the +182 note below: an
+        # edit higher in webapp.py moves a line-number pin. work_item_pipeline-zhv
+        # deleted the 16-line dead `_oldest_ready_item` (webapp.py:902-917), which
+        # sits above all three. RE-MEASURED, not transcribed: the census observed
+        # exactly {webapp.py:1111, 1807, 1810} and 16 is exactly the deletion, so
+        # all three are accounted for and none is a NEW site. Same eight sites,
+        # same three expressions -- the register did not grow.
         # +182 lines on 2026-09-05 at the wave-4 union (was 4197/4216/4223 on
         # main @065da04), and RE-MEASURED here rather than transcribed from any
         # lane: three lanes each inserted CSS ABOVE these three sites in the same
@@ -1183,11 +1191,15 @@ _BOUNDED_READS = frozenset(
     }
 )
 
-#: A helper that makes an unbounded listing call but is reached by NO route.
-#: Dead code is not "reached from a view", so the clause as written does not
-#: condemn it -- but the exemption is re-earned every run below, by proving it
-#: is still dead.
-_UNREACHED_UNCAPPED = ("_oldest_ready_item", WEBAPP)
+#: THE UNREACHED-UNCAPPED EXEMPTION IS GONE as of 2026-09-06. It named one
+#: helper -- `webapp._oldest_ready_item`, an unbounded listing call reached by
+#: no route -- and this probe re-earned it every run by proving the function
+#: was still dead. work_item_pipeline-zhv deleted the function, so there is
+#: nothing left to exempt and nothing left to re-earn. What replaced those two
+#: assertions is STRONGER and carries no name: the census below now runs over
+#: EVERY listing call in the route modules, reached or not, and requires an
+#: explicit limit on all of them -- so a future dead-code exemption has to be
+#: argued for rather than inherited.
 
 
 def _module_int_constants(path) -> dict[str, int]:  # type: ignore[no-untyped-def]
@@ -1299,6 +1311,30 @@ def view_listing_calls() -> list[tuple[str, int, str, object]]:
     return found
 
 
+def all_listing_calls() -> list[tuple[str, int, object]]:
+    """`(module, line, limit)` for EVERY listing call in the route modules --
+    reached from a view or not.
+
+    The census `view_listing_calls` cannot be: it scores what a GET handler
+    reaches, which is what Core 10's own wording asks, and that is precisely
+    why a limit-less call in dead code slipped past it for two waves. This
+    reading has no reachability step to argue with, so it also has no
+    exemption to re-earn.
+    """
+    found: list[tuple[str, int, object]] = []
+    for path in ROUTE_MODULES:
+        tree = ast.parse(read(path))
+        consts = _module_int_constants(path)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _BOUNDED_READS
+            ):
+                found.append((path.name, node.lineno, _limit_passed(node, consts)))
+    return found
+
+
 def test_row_osv1_015() -> None:
     """Core 10 CONFORMS: every adapter listing call a read-only route reaches
     passes an explicit, finite limit -- MEASURED here, not asserted from a
@@ -1312,6 +1348,13 @@ def test_row_osv1_015() -> None:
     `limit=0` is bd's own "unlimited" (`adapter.Beads.list`'s docstring says
     so outright) and an omitted `limit` leaves bd's default in place
     implicitly -- the clause asks for an EXPLICIT bound, so both are failures.
+
+    RETARGETED AGAIN 2026-09-06 (work_item_pipeline-zhv). The two assertions
+    that re-earned the `_oldest_ready_item` exemption every run are gone with
+    the function they guarded, replaced by `all_listing_calls()`: a source-wide
+    census of the route modules that requires an explicit limit on EVERY
+    listing call, reached or not. Strictly stronger than what it replaced, and
+    it names no function -- an exemption cannot be inherited from it.
     """
     calls = view_listing_calls()
     assert any(m == "webbrowse.py" and h == "project_view" for m, _, h, _ in calls), (
@@ -1328,16 +1371,23 @@ def test_row_osv1_015() -> None:
         + "\n This surface re-renders every 20 seconds; an unbounded read here runs "
         "three times a minute per open tab."
     )
-    name, module = _UNREACHED_UNCAPPED
-    app = read(module)
-    assert app.count(name) == 1, (
-        f"OSV1-015 (Core 10): `{name}` now has {app.count(name) - 1} caller(s). It "
-        f"calls `bd.list(...)` with NO limit at all -- being reached by nothing was "
-        f"the only reason it did not violate this clause. Give it a bound or delete it."
+    everything = all_listing_calls()
+    assert everything, (
+        f"OSV1-015 (Core 10): the source-wide census now matches NO listing call at "
+        f"all in {[p.name for p in ROUTE_MODULES]} -- a census that finds nothing "
+        f"passes forever while proving nothing. Re-derive this row."
     )
-    assert contains(WEBAPP, 'items = bd.list(lane=A.LANE_WORK, status="open")'), (
-        "OSV1-015 (Core 10): the uncapped `bd.list` in `_oldest_ready_item` is gone -- "
-        "welcome, and the row's exemption just changed. Re-derive."
+    unbounded = [c for c in everything if c[2] is None or (isinstance(c[2], int) and c[2] <= 0)]
+    assert not unbounded, (
+        "OSV1-015 (Core 10): a listing call in a route module passes no explicit, "
+        "finite limit:\n  "
+        + "\n  ".join(f"{m}:{ln} -> limit={lim!r}" for m, ln, lim in unbounded)
+        + "\n\nThis is the STRONGER reading, adopted 2026-09-06 when "
+        "work_item_pipeline-zhv deleted `_oldest_ready_item`. Reachability is what "
+        "Core 10's own wording scores, and it is asserted above; this second pass "
+        "asserts there is no limit-less call left for a reachability argument to "
+        "excuse. If a new one is genuinely unreachable, do not re-open an exemption "
+        "here -- bound it or delete it."
     )
 
 

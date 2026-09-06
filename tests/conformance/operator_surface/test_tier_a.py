@@ -21,17 +21,18 @@ returning one string per violation. Two tests wrap each one:
 
 ## `xfail(strict=True)` is a ledger row, never a skip
 
-One clause does not hold on today's code, and it has an open `ledger/` row
-saying so. Its good half is `pytest.mark.xfail(strict=True)` with the row id
-in the reason -- never `skip`, never deleted:
+Where a clause does not hold on today's code and an open `ledger/` row says
+so, that check's good half is `pytest.mark.xfail(strict=True)` with the row id
+in the reason -- never `skip`, never deleted. `strict=True` is load-bearing:
+when the fix lands the test XPASSes, which FAILS the run. That failure is the
+instruction -- delete the marker and flip the row, in the same change.
 
-    antigoals.enforced        OSV1-015  `_oldest_ready_item` calls `bd.list`
-                                        with no limit (the row's own recorded
-                                        residual -- see the marker's reason)
-
-`strict=True` is load-bearing: when the fix lands the test XPASSes, which
-FAILS the run. That failure is the instruction -- delete the marker and flip
-the row, in the same change.
+**This kit carries no deferral as of 2026-09-06.** The last one was
+`test_antigoals_enforced`, against OSV1-015's recorded residual (a limit-less
+`bd.list` in the caller-less `webapp._oldest_ready_item`); the dead function
+was deleted in work_item_pipeline-zhv and the marker went with it. The
+mechanism is documented here, not retired -- the next honestly-red row has an
+obvious place to put its marker.
 
 ## One census, one register
 
@@ -1105,19 +1106,21 @@ def test_antigoals_enforced_bad_half_state_that_dies_on_refresh() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="OSV1-015 (Core 10) records the residual this good half still sees: "
-    "`_oldest_ready_item` (webapp.py:909) calls `bd.list` with no limit at all. "
-    "The row reads CONFORMS because that function has NO callers and the clause "
-    "scores calls `reached from a view`; this kit's Core 10 reading is "
-    "source-wide and has no reachability analysis, so it still reports the call. "
-    "Delete the dead function (or teach this check reachability, one census) and "
-    "the marker goes with it. The two defects this marker used to name are both "
-    "CLOSED: `limit=0` (OSV1-015, work_item_pipeline-8vv) and the theme dying on "
-    "refresh (OSV1-016, work_item_pipeline-dg3).",
-)
 def test_antigoals_enforced() -> None:
+    """GOOD half of Core 10, undeferred since 2026-09-06.
+
+    WAS `xfail(strict=True)` against OSV1-015's recorded residual: a
+    limit-less `bd.list` in `webapp._oldest_ready_item`, a function with
+    zero callers. The row read CONFORMS because the clause scores calls
+    `reached from a view` and dead code is reached by nothing; this kit's
+    census is source-wide and has no reachability analysis, so it went on
+    reporting the call. work_item_pipeline-zhv deleted the dead function,
+    which is the resolution the marker itself named -- so the good half now
+    runs on the real manifest and the real `src/`, and the marker is gone.
+    The two defects it used to name were already CLOSED: `limit=0`
+    (OSV1-015, work_item_pipeline-8vv) and the theme dying on refresh
+    (OSV1-016, work_item_pipeline-dg3).
+    """
     problems = check_antigoals_enforced(S.read(S.PYPROJECT))
     assert not problems, "Core 10 (`antigoals.enforced`):\n  " + "\n  ".join(problems)
 
