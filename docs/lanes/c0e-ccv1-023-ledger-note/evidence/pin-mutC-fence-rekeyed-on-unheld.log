@@ -1,0 +1,472 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ test_post_reap_refusal_originates_below_the_session_latch ___________
+
+project = 'reapprojc990544696'
+
+    @pytest.mark.asyncio
+    async def test_post_reap_refusal_originates_below_the_session_latch(project):
+        """MECHANISM PIN for the test directly above -- ledger rows CCV1-009
+        (Core 7) and CCV1-023 (Freeze 3), work item `model_performance-c0e`.
+    
+        The test above asserts THAT the post-reap resolve is refused. It does
+        not assert WHERE the refusal comes from, and the ledger once recorded
+        the wrong answer: CCV1-023's seeded note said this fixture "asserts the
+        TOOL-layer refusal (which passes via the session latch)". The session
+        latch is not a fence -- after a reap it still names the item, so it
+        passes the call straight THROUGH. The refusal is the ADAPTER's
+        custody-identity fence (`resolve_outcome`'s `elif cust_holder == who
+        and current.holder != who`, PR #68 / b3fac1e).
+    
+        Prose cannot hold that distinction still, so this pins it executably.
+        Each assertion below fails under a different regression:
+    
+          1. the latch still names the item at the moment of the refused call
+             -- if the refusal ever moves UP into the latch, this is the first
+             thing that has to change, and it changes here first;
+          2. the ADAPTER refuses on its own, with no `WorkTrackerSession` in
+             the picture at all -- delete the fence branch and this raises
+             nothing (measured: the close then LANDS, `success=True`);
+          3. the refusal the tool surfaces is the fence's wording, not the
+             latch's -- a latch-sourced refusal would say "did not claim";
+          4. the other half of Core 7, at the same site: an integrator's plain
+             close of that same unheld item still succeeds in one call. A fence
+             keyed on "the item is unheld" rather than on custody IDENTITY
+             would pass 1-3 and fail here.
+        """
+        add_session = WorkTrackerSession({"actor": _unique("adder")})
+        added = await add_session.add(project, "mechanism-pin item", acceptance="n/a")
+        assert added.success is True
+    
+        session = WorkTrackerSession({"actor": _unique("stale")})
+        claimed = await session.claim(project)
+        assert claimed.success is True
+        item_id = claimed.output["claimed"]  # type: ignore[index]
+    
+        assert _force_reap(session, project)["reclaimed_count"] == 1
+    
+        # 1. The latch is NOT the fence: it still names this very item, so
+        #    `resolve`'s own `held.item_id != item_id` gate cannot refuse.
+        held = session._held  # noqa: SLF001 -- test-only reach
+        assert held is not None, "the latch was cleared before the resolve was even attempted"
+        assert held.item_id == item_id
+        stale_actor = held.actor
+    
+        bd = session._project(project)  # noqa: SLF001
+        after_reap = bd.get(item_id)
+        assert after_reap.status == "open"
+        assert after_reap.holder is None
+    
+        # 2. The adapter refuses by itself -- no session, no latch.
+        with pytest.raises(A.FencedError) as exc:
+            bd.resolve(item_id, "closing after the reap, straight at the adapter", actor=stale_actor)
+        assert "not held by this session" in str(exc.value)
+        assert bd.get(item_id).status == "open", "the fenced call must not have written anything"
+    
+        # 3. What the tool surfaces is the FENCE's text, not the latch's.
+        refused = await session.resolve(item_id, "trying to close after being reclaimed")
+        assert refused.success is False
+        message = str(refused.output)
+        assert "custody names" in message, (
+            f"the refusal no longer carries the adapter fence's wording: {message!r}"
+        )
+        assert "did not claim" not in message, (
+            "the refusal is now the SESSION LATCH's -- the mechanism this row's note "
+            f"says is not the one operating: {message!r}"
+        )
+    
+        # 4. Core 7's other half, same item, same state: everyone who is not the
+        #    stale holder is exactly as unfenced as before.
+>       integrator = bd.resolve(item_id, "closed out by the integrator", actor=_unique("integrator"))
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+modules/tool-work-tracker/tests/test_reap_recovery.py:170: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <amplifier_work_tracker.adapter.Beads object at 0xf768185ce930>
+item_id = 'reapprojc990544696-3xg', reason = 'closed out by the integrator'
+actor = 'integrator690d135eb9'
+
+    def resolve(self, item_id: str, reason: str, *, actor: str | None = None) -> Item:
+        """Close an item and VERIFY the write landed -- the `Item`-returning
+        projection of `resolve_outcome`, which every existing caller already
+        uses and which is unchanged for them.
+    
+        A pure one-line projection ON PURPOSE: two entry points to one
+        operation can only stay honest if one of them cannot hold logic of
+        its own to drift with. Callers that need to distinguish "I wrote
+        this resolution just now" from "this identical resolution was
+        already stored" (the CLI, `work_resolve`) call `resolve_outcome`
+        directly for its `idempotent` flag.
+        """
+>       return self.resolve_outcome(item_id, reason, actor=actor).item
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/amplifier_work_tracker/adapter.py:4077: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <amplifier_work_tracker.adapter.Beads object at 0xf768185ce930>
+item_id = 'reapprojc990544696-3xg', reason = 'closed out by the integrator'
+actor = 'integrator690d135eb9'
+
+    def resolve_outcome(
+        self, item_id: str, reason: str, *, actor: str | None = None
+    ) -> ResolveOutcome:
+        """Close an item and VERIFY the write landed. Exit code is not proof.
+    
+        WHAT "LANDED" MEANS: the item stores the TEXT THIS CALL SENT --
+        not merely that the item is closed. Comparing status alone was the
+        measured defect (work_tracker item model_performance-uma): a
+        resolve against an already-closed item exited 0 and echoed the OLD
+        text back as if it were the new one, silently discarding a
+        correction. `resolve` is checked against `_resolution_landed` at
+        BOTH places it decides that question -- the normal post-write
+        readback AND the contended path below -- because a caller on the
+        contended path is precisely the one least able to reason about
+        what actually happened.
+    
+        THE RULE, on a target that is ALREADY resolved (checked BEFORE any
+        write, so "NOTHING WAS WRITTEN" is literally true):
+    
+          - text IDENTICAL (after `_norm_resolution`) -> success,
+            `idempotent=True`, no write attempted. This carve-out is
+            required, not a softening: the shipped contention contract
+            sells resolve's no-op as RETRY SAFETY, and a retry re-sends
+            the identical string. A blanket error would fail a legitimate
+            retry of a write that did land, and tell its caller their
+            resolve failed when it succeeded.
+          - text DIFFERS -> `BeadsError` (`_divergent_resolution_error`),
+            nothing written, the remedy (`reopen`) named as a runnable
+            command. Correcting a published record is a deliberate,
+            audited transition -- never an invisible side effect of a call
+            the caller believes is idempotent.
+    
+        Resolving an OPEN item is unchanged, byte for byte.
+    
+        FENCED in every state a caller can no longer legitimately close
+        from -- but the fence is keyed on WHO the custody record names,
+        never on the item's status alone. Both halves matter, and each one
+        was, at some point, a measured bug:
+    
+        HALF ONE -- an integrator's plain resolve must stay a single call.
+        Resolving an item nobody currently holds (open/blocked/deferred/
+        resolved), even one filed or last held by someone else entirely,
+        needs no fence and no override. The fence used to fire on custody
+        metadata ALONE, so a STALE record from a hold that ended long ago
+        kept naming a "current holder" who held nothing, refusing an
+        integrator's close of someone else's already-unheld report
+        (work_tracker item 79t, PR #51). Anyone who is not the session that
+        record names is exactly as unfenced as before.
+    
+        HALF TWO -- the stale holder itself is refused in EVERY
+        post-reclaim state, including the released-but-not-yet-re-claimed
+        one (contract `custody-coordination.v1` Core 7; ledger row
+        CCV1-009; work_tracker item pipeline-dn4). 79t's fix reached for
+        the item's status as its discriminator (`status == "held"`), which
+        reinstated the very bug the fence exists to close: `reap` does not
+        leave a reclaimed item `held` -- `supervisor.reap_project` calls
+        `release`, which puts it back to `open` and clears bd's assignee --
+        so the one state the fence is FOR was the one state it skipped, and
+        the stale holder's close landed with exit 0 and no refusal
+        anywhere. Status was never the right question; custody identity is.
+    
+        Hence the three checks below, in the order they can be answered:
+    
+          - held, with a custody record: that record is authoritative over
+            bd's own assignee, because a reclaim CLEARS the assignee rather
+            than reassigning it -- "no current holder" and "never held at
+            all" look identical in bd, and only the custody record can tell
+            them apart. Refuse unless BOTH name this caller.
+          - held, no custody record: fall back to bd's assignee alone --
+            enough to catch a live takeover by another session.
+          - NOT held, but the custody record still names this caller: this
+            session's hold ended without this session closing the item --
+            reclaimed by `reap`, or handed back by `release`, which are
+            indistinguishable by construction (see `agent_stats`, which
+            documents why). Either way it does not hold the item now, and
+            its close is refused.
+    
+        A custody record is deliberately left in place across a reclaim, so
+        it can still answer "who held this last" -- that is what makes the
+        third check possible at all. The `current.holder != who` guard on
+        it is what keeps a holder's own already-landed close re-attemptable
+        (a resolved item retains its assignee, so a wedged session
+        confirming its own close is never mistaken for a reclaimed one --
+        see this method's verify-by-read-back branch below).
+    
+        Every refusal names the real holder and the recovery: re-claim the
+        item, or wait for `reap` to reclaim a stale hold.
+        """
+        who = actor or self._actor
+        # ONE pre-write read serves every precondition below -- the
+        # custody fence, THEN the already-resolved rule -- so both are
+        # decided before the `bd close` write is even attempted (see the
+        # "NOTHING WAS WRITTEN" promise above). Deliberately tolerant of a
+        # read failure when no actor is given, so an item that does not
+        # exist still surfaces through bd's own `close` error exactly as
+        # before -- this method must not newly re-diagnose "not found".
+        try:
+            current: Item | None = self.get(item_id)
+        except BeadsError:
+            if who:
+                raise
+            current = None
+        if who and current is not None:
+            cust = current.meta.get(C.CUSTODY_KEY) if isinstance(current.meta, dict) else None
+            cust_holder = cust.get("holder") if isinstance(cust, dict) else None
+            if current.status == "held":
+                if cust_holder:
+                    if current.holder != who or cust_holder != who:
+                        raise FencedError(
+                            f"refusing to close {item_id}: current holder is "
+                            f"{current.holder!r} (custody holder {cust_holder!r}), "
+                            f"not {who!r}. Your claim was reclaimed while you were away."
+                        )
+                elif current.holder and current.holder != who:
+                    raise FencedError(
+                        f"refusing to close {item_id}: it is held by {current.holder!r}, "
+                        f"not {who!r}. Your claim was reclaimed while you were away."
+                    )
+            elif current.holder != who:
+>               raise FencedError(
+                    f"refusing to close {item_id}: not held by this session -- custody "
+                    f"names {who!r} as its last holder, but the item is now "
+                    f"{current.status!r} with no current holder. Your claim was "
+                    f"reclaimed (or released) while you were away. Re-claim it first, "
+                    f"then resolve."
+                )
+E               amplifier_work_tracker.adapter.FencedError: refusing to close reapprojc990544696-3xg: not held by this session -- custody names 'integrator690d135eb9' as its last holder, but the item is now 'open' with no current holder. Your claim was reclaimed (or released) while you were away. Re-claim it first, then resolve.
+
+src/amplifier_work_tracker/adapter.py:4198: FencedError
+---------------------------- Captured stdout setup -----------------------------
+Starting server with Config HP="127.0.0.1:49421"|T="28800000"|R="false"|L="info"
+---------------------------- Captured stderr setup -----------------------------
+time="2026-09-05T18:55:25-07:00" level=info msg="Creating root@localhost superuser"
+time="2026-09-05T18:55:25-07:00" level=info msg="Server ready. Accepting connections."
+time="2026-09-05T18:55:25-07:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-09-05T18:55:25-07:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-09-05T18:55:25-07:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-09-05T18:55:25-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-09-05T18:55:25-07:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-09-05T18:55:25-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-09-05T18:55:25-07:00" level=info msg=ConnectionClosed connectionID=2
+time="2026-09-05T18:55:25-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-09-05T18:55:25-07:00" level=info msg=ConnectionClosed connectionID=3
+time="2026-09-05T18:55:25-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-09-05T18:55:25-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+time="2026-09-05T18:55:25-07:00" level=info msg=ConnectionClosed connectionID=4
+time="2026-09-05T18:55:25-07:00" level=warning msg="error running query" connectTime="2026-09-05 18:55:25.539908345 -0700 PDT m=+0.519863963" connectionDb=reapprojc990544696 connectionID=5 error="table not found: schema_migrations" queryTime="2026-09-05 18:55:25.541159733 -0700 PDT m=+0.521115335"
+time="2026-09-05T18:55:25-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=6
+time="2026-09-05T18:55:25-07:00" level=warning msg="error running query" connectTime="2026-09-05 18:55:25.541490261 -0700 PDT m=+0.521445863" connectionDb=reapprojc990544696 connectionID=6 error="table not found: schema_migrations" queryTime="2026-09-05 18:55:25.542169395 -0700 PDT m=+0.522124997"
+time="2026-09-05T18:55:25-07:00" level=warning msg="error running query" connectTime="2026-09-05 18:55:25.541490261 -0700 PDT m=+0.521445863" connectionDb=reapprojc990544696 connectionID=6 error="table not found: schema_migrations" queryTime="2026-09-05 18:55:25.543739743 -0700 PDT m=+0.523695377"
+time="2026-09-05T18:55:25-07:00" level=warning msg="error running query" connectTime="2026-09-05 18:55:25.541490261 -0700 PDT m=+0.521445863" connectionDb=reapprojc990544696 connectionID=6 error="table not found: schema_migrations" queryTime="2026-09-05 18:55:25.545502826 -0700 PDT m=+0.525458428"
+time="2026-09-05T18:55:27-07:00" level=warning msg="error running query" connectTime="2026-09-05 18:55:25.541490261 -0700 PDT m=+0.521445863" connectionDb=reapprojc990544696 connectionID=6 error="table not found: ignored_schema_migrations" queryTime="2026-09-05 18:55:27.043897067 -0700 PDT m=+2.023852669"
+time="2026-09-05T18:55:27-07:00" level=info msg=ConnectionClosed connectionID=6
+time="2026-09-05T18:55:27-07:00" level=info msg=ConnectionClosed connectionID=5
+time="2026-09-05T18:55:27-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=7
+time="2026-09-05T18:55:27-07:00" level=info msg=ConnectionClosed connectionID=7
+time="2026-09-05T18:55:27-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8
+time="2026-09-05T18:55:27-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=9
+time="2026-09-05T18:55:27-07:00" level=info msg=ConnectionClosed connectionID=8
+time="2026-09-05T18:55:27-07:00" level=info msg=ConnectionClosed connectionID=9
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=10
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=10
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=11
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=12
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=11
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=12
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=13
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=13
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=14
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=15
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=14
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=15
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=16
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=16
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=17
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=17
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=18
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=18
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=19
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=19
+----------------------------- Captured stdout call -----------------------------
+
+----------------------------- Captured stderr call -----------------------------
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=20
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=20
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=21
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=21
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=22
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=23
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=22
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=24
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=24
+time="2026-09-05T18:55:28-07:00" level=warning msg="error running query" connectTime="2026-09-05 18:55:28.639499994 -0700 PDT m=+3.619455580" connectionDb=reapprojc990544696 connectionID=23 error="backup 'backup_export' not found" queryTime="2026-09-05 18:55:28.731943028 -0700 PDT m=+3.711898630"
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=23
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=25
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=25
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=26
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=26
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=27
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=27
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=28
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=28
+time="2026-09-05T18:55:28-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=29
+time="2026-09-05T18:55:28-07:00" level=info msg=ConnectionClosed connectionID=29
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=30
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=30
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=31
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=32
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=31
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=32
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=33
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=33
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=34
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=34
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=35
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=35
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=36
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=36
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=37
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=37
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=38
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=38
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=39
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=39
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=40
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=40
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=41
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=41
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=42
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=42
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=43
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=43
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=44
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=44
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=45
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=45
+time="2026-09-05T18:55:29-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=46
+time="2026-09-05T18:55:29-07:00" level=info msg=ConnectionClosed connectionID=46
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=47
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=47
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=48
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=49
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=48
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=50
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=50
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=49
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=51
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=51
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=52
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=52
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=53
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=53
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=54
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=54
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=55
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=55
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=56
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=56
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=57
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=57
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=58
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=58
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=59
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=59
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=60
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=60
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=61
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=61
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=62
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=62
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=63
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=63
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=64
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=64
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=65
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=66
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=65
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=67
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=67
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=66
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=68
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=68
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=69
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=69
+time="2026-09-05T18:55:30-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=70
+time="2026-09-05T18:55:30-07:00" level=info msg=ConnectionClosed connectionID=70
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=71
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=71
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=72
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=72
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=73
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=73
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=74
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=74
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=75
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=75
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=76
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=76
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=77
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=77
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=78
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=78
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=79
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=79
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=80
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=80
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=81
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=81
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=82
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=82
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=83
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=83
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=84
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=84
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=85
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=85
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=86
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=86
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=87
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=87
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=88
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=88
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=89
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=89
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=90
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=90
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=91
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=91
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=92
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=92
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=93
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=93
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=94
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=94
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=95
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=95
+time="2026-09-05T18:55:31-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=96
+time="2026-09-05T18:55:31-07:00" level=info msg=ConnectionClosed connectionID=96
+time="2026-09-05T18:55:32-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=97
+time="2026-09-05T18:55:32-07:00" level=info msg=ConnectionClosed connectionID=97
+------------------------------ Captured log call -------------------------------
+ERROR    amplifier_work_tracker.webpush:webpush.py:435 ntfy alarm unexpected failure for reclaimed reapprojc990544696-3xg: asyncio.run() cannot be called from a running event loop
+--------------------------- Captured stderr teardown ---------------------------
+time="2026-09-05T18:55:32-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=98
+time="2026-09-05T18:55:32-07:00" level=info msg="stats stopped: context canceled"
+time="2026-09-05T18:55:32-07:00" level=info msg=ConnectionClosed connectionID=98
+time="2026-09-05T18:55:32-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=99
+time="2026-09-05T18:55:32-07:00" level=info msg=ConnectionClosed connectionID=99
+time="2026-09-05T18:55:32-07:00" level=info msg="Server closing listener. No longer accepting connections."
+time="2026-09-05T18:55:32-07:00" level=info msg="stats stopped: context canceled"
+=============================== warnings summary ===============================
+modules/tool-work-tracker/tests/test_reap_recovery.py::test_post_reap_refusal_originates_below_the_session_latch
+  /home/bkrabach/dev/hw-model-performance/lanes/c0e-ccv1-023-ledger-note/amplifier-work-tracker/.venv/lib/python3.12/site-packages/_pytest/stash.py:108: RuntimeWarning: coroutine 'alarm_for_reclaimed_item' was never awaited
+    del self._storage[key]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED modules/tool-work-tracker/tests/test_reap_recovery.py::test_post_reap_refusal_originates_below_the_session_latch
+1 failed, 1 warning in 7.19s

@@ -95,6 +95,83 @@ async def test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_cl
 
 
 @pytest.mark.asyncio
+async def test_post_reap_refusal_originates_below_the_session_latch(project):
+    """MECHANISM PIN for the test directly above -- ledger rows CCV1-009
+    (Core 7) and CCV1-023 (Freeze 3), work item `model_performance-c0e`.
+
+    The test above asserts THAT the post-reap resolve is refused. It does
+    not assert WHERE the refusal comes from, and the ledger once recorded
+    the wrong answer: CCV1-023's seeded note said this fixture "asserts the
+    TOOL-layer refusal (which passes via the session latch)". The session
+    latch is not a fence -- after a reap it still names the item, so it
+    passes the call straight THROUGH. The refusal is the ADAPTER's
+    custody-identity fence (`resolve_outcome`'s `elif cust_holder == who
+    and current.holder != who`, PR #68 / b3fac1e).
+
+    Prose cannot hold that distinction still, so this pins it executably.
+    Each assertion below fails under a different regression:
+
+      1. the latch still names the item at the moment of the refused call
+         -- if the refusal ever moves UP into the latch, this is the first
+         thing that has to change, and it changes here first;
+      2. the ADAPTER refuses on its own, with no `WorkTrackerSession` in
+         the picture at all -- delete the fence branch and this raises
+         nothing (measured: the close then LANDS, `success=True`);
+      3. the refusal the tool surfaces is the fence's wording, not the
+         latch's -- a latch-sourced refusal would say "did not claim";
+      4. the other half of Core 7, at the same site: an integrator's plain
+         close of that same unheld item still succeeds in one call. A fence
+         keyed on "the item is unheld" rather than on custody IDENTITY
+         would pass 1-3 and fail here.
+    """
+    add_session = WorkTrackerSession({"actor": _unique("adder")})
+    added = await add_session.add(project, "mechanism-pin item", acceptance="n/a")
+    assert added.success is True
+
+    session = WorkTrackerSession({"actor": _unique("stale")})
+    claimed = await session.claim(project)
+    assert claimed.success is True
+    item_id = claimed.output["claimed"]  # type: ignore[index]
+
+    assert _force_reap(session, project)["reclaimed_count"] == 1
+
+    # 1. The latch is NOT the fence: it still names this very item, so
+    #    `resolve`'s own `held.item_id != item_id` gate cannot refuse.
+    held = session._held  # noqa: SLF001 -- test-only reach
+    assert held is not None, "the latch was cleared before the resolve was even attempted"
+    assert held.item_id == item_id
+    stale_actor = held.actor
+
+    bd = session._project(project)  # noqa: SLF001
+    after_reap = bd.get(item_id)
+    assert after_reap.status == "open"
+    assert after_reap.holder is None
+
+    # 2. The adapter refuses by itself -- no session, no latch.
+    with pytest.raises(A.FencedError) as exc:
+        bd.resolve(item_id, "closing after the reap, straight at the adapter", actor=stale_actor)
+    assert "not held by this session" in str(exc.value)
+    assert bd.get(item_id).status == "open", "the fenced call must not have written anything"
+
+    # 3. What the tool surfaces is the FENCE's text, not the latch's.
+    refused = await session.resolve(item_id, "trying to close after being reclaimed")
+    assert refused.success is False
+    message = str(refused.output)
+    assert "custody names" in message, (
+        f"the refusal no longer carries the adapter fence's wording: {message!r}"
+    )
+    assert "did not claim" not in message, (
+        "the refusal is now the SESSION LATCH's -- the mechanism this row's note "
+        f"says is not the one operating: {message!r}"
+    )
+
+    # 4. Core 7's other half, same item, same state: everyone who is not the
+    #    stale holder is exactly as unfenced as before.
+    integrator = bd.resolve(item_id, "closed out by the integrator", actor=_unique("integrator"))
+    assert integrator.status == "resolved"
+
+
+@pytest.mark.asyncio
 async def test_explicit_declare_refusal_after_reap_clears_held_and_allows_new_claim(project):
     """Same trigger path, via `work_declare` instead of `work_resolve` --
     both refusal sites had the identical self-poisoning gap."""

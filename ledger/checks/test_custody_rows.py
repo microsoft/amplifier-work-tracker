@@ -325,6 +325,27 @@ def test_row_ccv1_009() -> None:
             f"measured together, or a fix to one silently trades away the other"
         )
 
+    # 4. The MECHANISM pin (model_performance-c0e). This row's notes -- and
+    #    CCV1-023's -- now assert WHERE the post-reap refusal comes from:
+    #    this fence, below the tool layer's session latch. A note that
+    #    misattributes why a conformance fixture passes is worse than no
+    #    note (CCV1-023 carried exactly that misattribution from its SEED),
+    #    so the claim is pinned by a runnable fixture rather than left as
+    #    prose, and the ledger notices if that fixture disappears.
+    mechanism_pin = REPO_ROOT / "modules" / "tool-work-tracker" / "tests" / "test_reap_recovery.py"
+    assert mechanism_pin.exists(), (
+        "Core 7: modules/tool-work-tracker/tests/test_reap_recovery.py is gone -- the "
+        "tool-seam side of this fence, and the pin on which layer refuses, went with it"
+    )
+    assert "test_post_reap_refusal_originates_below_the_session_latch" in function_names(
+        mechanism_pin
+    ), (
+        "Core 7: test_post_reap_refusal_originates_below_the_session_latch is gone. That "
+        "fixture is the only executable assertion that the refusal comes from the ADAPTER "
+        "fence and not from WorkTrackerSession's own latch -- the exact attribution "
+        "CCV1-023's seeded note got backwards, and which nothing else would catch."
+    )
+
 
 # --------------------------------------------------------------- CCV1-011
 

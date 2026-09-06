@@ -1,0 +1,51 @@
+.venv/bin/python -m pytest -m integration tests/integration -v
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- /home/bkrabach/dev/hw-model-performance/lanes/c0e-ccv1-023-ledger-note/amplifier-work-tracker/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/bkrabach/dev/hw-model-performance/lanes/c0e-ccv1-023-ledger-note/amplifier-work-tracker
+configfile: pyproject.toml
+plugins: anyio-4.15.1, asyncio-1.4.0, amplifier-core-1.6.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 396 items
+
+tests/integration/test_blocker_chain_and_activity.py::test_get_with_links_reports_full_blocker_detail PASSED [  0%]
+tests/integration/test_blocker_chain_and_activity.py::test_get_with_links_blocking_clears_once_blocker_resolved PASSED [  0%]
+tests/integration/test_blocker_chain_and_activity.py::test_get_with_links_reports_discovered_from_both_directions PASSED [  0%]
+tests/integration/test_blocker_chain_and_activity.py::test_get_with_links_blocks_inverse_is_present_but_lean PASSED [  1%]
+tests/integration/test_blocker_chain_and_activity.py::test_activity_reports_created_claimed_commented_and_resolved PASSED [  1%]
+tests/integration/test_blocker_chain_and_activity.py::test_activity_on_a_fresh_item_is_just_created PASSED [  1%]
+tests/integration/test_blocker_chain_and_activity.py::test_activity_is_read_only_and_does_not_touch_status_or_holder PASSED [  1%]
+tests/integration/test_contention_hardening.py::test_project_summary_survives_concurrent_writes PASSED [  2%]
+tests/integration/test_contention_hardening.py::test_20_concurrent_resolves_land_cleanly_with_zero_caller_spacing PASSED [  2%]
+tests/integration/test_contention_hardening.py::test_reported_write_failures_never_silently_land PASSED [  2%]
+tests/integration/test_contract_assumptions.py::test_bd_version_is_within_the_supported_window PASSED [  2%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[capabilities] PASSED [  3%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[read.unavailable_not_absent] PASSED [  3%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[resolve.fenced] PASSED [  3%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[resolve.divergent_text_refused] PASSED [  3%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[resolve.identical_text_idempotent] PASSED [  4%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[reopen.reopens] PASSED [  4%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[reopen.clears_closed_at] PASSED [  4%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[reopen.close_reason_disposition] PASSED [  4%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[reopen.emits_event] PASSED [  5%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[defer.refuses_resolved] PASSED [  5%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[block.refuses_resolved] PASSED [  5%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[release.reopens_unresolved] PASSED [  5%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[claim.subcommand] PASSED [  6%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[claim.atomic] PASSED [  6%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[claim.directed_atomic] PASSED [  6%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[link.nonblocking] PASSED [  6%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[list.includes_closed] PASSED [  7%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[list.status_filter_includes_closed] PASSED [  7%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[show.dependents] PASSED [  7%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[read.no_mutation] PASSED [  7%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[resolution.readable] PASSED [  8%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[timestamps.readable] PASSED [  8%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[metadata.roundtrip] PASSED [  8%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[project.name_rules] PASSED [  8%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[custody.fresh_survives] PASSED [  9%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[custody.stale_reclaimed] PASSED [  9%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[custody.idle_not_exempt] PASSED [  9%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[custody.fenced] PASSED [  9%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[project.removal] PASSED [ 10%]
+tests/integration/test_contract_assumptions.py::test_contract_assumption_holds[project.create_atomic] 

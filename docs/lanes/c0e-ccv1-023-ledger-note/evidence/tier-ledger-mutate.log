@@ -1,0 +1,161 @@
+.venv/bin/python -m ledger.checks.mutation_harness
+LEDGER MUTATION HARNESS -- discriminating-power evidence
+Each probe is run against a counterfactual repo and must go RED.
+Injection only: no product-code edit, no subprocess, nothing written to the repo.
+
+PINNING PROBES  (row is red; probe pins the CURRENT non-conformant shape;
+                 counterfactual = the FIXED behaviour)
+  [PROVEN ] OSV1-034  VIOLATION-MOVEMENT  (GAP)
+             test_row_osv1_034 :: a Changelog entry records the owner's rendered-page look
+
+CONFORMANCE PROBES  (row is green; probe asserts the invariant;
+                     counterfactual = the known-wrong shape it forbids)
+  [PROVEN ] CCV1-000  LEDGER-INTEGRITY  (CONFORMS)
+             test_row_ccv1_000 :: the governed contract moved under the pinned hash
+  [PROVEN ] CCV1-003  REGRESSION  (CONFORMS)
+             test_row_ccv1_003 :: the failed-custody arm returns a bare failure again (no compensating release)
+  [PROVEN ] CCV1-004  REGRESSION  (CONFORMS)
+             test_row_ccv1_004 :: a failed renewal no longer stops the loop (retry returns)
+  [PROVEN ] CCV1-005  REGRESSION  (CONFORMS)
+             test_row_ccv1_005 :: the custody-keeps-itself-fresh reassurance returns to the skill
+  [PROVEN ] CCV1-008  REGRESSION  (CONFORMS)
+             test_row_ccv1_008 :: awareness.md states the TTL release as automatic again
+  [PROVEN ] CCV1-009  REGRESSION  (CONFORMS)
+             test_row_ccv1_009 :: the close fence is re-gated on item status (the original post-reclaim gap)
+  [PROVEN ] CCV1-011  REGRESSION  (CONFORMS)
+             test_row_ccv1_011 :: renewal fences on holder only -- a zombie's generation matches again
+  [PROVEN ] CCV1-012  REGRESSION  (CONFORMS)
+             test_row_ccv1_012 :: release reports its outcome from the exit code, not the read-back
+  [PROVEN ] CCV1-013  REGRESSION  (CONFORMS)
+             test_row_ccv1_013 :: claim_item returns an Item parsed from the writing process's own stdout
+  [PROVEN ] CCV1-015  REGRESSION  (CONFORMS)
+             test_row_ccv1_015 :: _verified_write stops verifying the SUCCESS path
+  [PROVEN ] CCV1-016  REGRESSION  (CONFORMS)
+             test_row_ccv1_016 :: the transaction-was-aborted guarantee Incident B disproved returns to the prose
+  [PROVEN ] CCV1-017  REGRESSION  (CONFORMS)
+             test_row_ccv1_017 :: the single-hold refusal is removed from the tool seam
+  [PROVEN ] CCV1-021  REGRESSION  (CONFORMS)
+             test_row_ccv1_021 :: `make test` stops collecting ledger/checks
+  [PROVEN ] CCV1-022  REGRESSION  (CONFORMS)
+             test_row_ccv1_022 :: CI stops installing the tool module editable (suite runs in nothing again)
+  [PROVEN ] CCV1-023  REGRESSION  (CONFORMS)
+             test_row_ccv1_023 :: the contract's corrected Fixture 1 Test-location line regresses to the stale path
+  [PROVEN ] OSV1-000  LEDGER-INTEGRITY  (CONFORMS)
+             test_row_osv1_000 :: a governed contract moved under the pinned hash
+  [PROVEN ] OSV1-001  REGRESSION  (CONFORMS)
+             test_row_osv1_001 :: the hero keeps its throughput figure but stops stating the window it covers
+  [PROVEN ] OSV1-001  REGRESSION  (CONFORMS)
+             test_row_osv1_001 :: the needs-attention count is dropped from the L0 hero again
+  [PROVEN ] OSV1-002  REGRESSION  (CONFORMS)
+             test_row_osv1_002 :: the --amber alias acquires its own literal value (a bespoke fourth status hue)
+  [PROVEN ] OSV1-003  REGRESSION  (CONFORMS)
+             test_row_osv1_003 :: the browser measures a calm L1 painting --blocked again (97 px, the pre-fix reading)
+  [PROVEN ] OSV1-003  REGRESSION  (CONFORMS)
+             test_row_osv1_003 :: the retired pre-blend-3 palette comes back to webpwa.py's offline body (the specimen this row pinned as PRESENT until OSV1-005 closed it, now guarded from the other side)
+  [PROVEN ] OSV1-003  REGRESSION  (CONFORMS)
+             test_row_osv1_003 :: the sweep goes blind: the genuinely-alarming fixture reports 0 --blocked where it measured 264, so the row's calm zeroes stop being evidence
+  [PROVEN ] OSV1-004  REGRESSION  (CONFORMS)
+             test_row_osv1_004 :: a status chip loses its word and carries only a class
+  [PROVEN ] OSV1-005  REGRESSION  (CONFORMS)
+             test_row_osv1_005 :: a module outside the token module ships its own stylesheet again, re-declaring role tokens as literal hexes -- the second-source-of-visual-truth half Core 4 could not reach before the 2026-09-04 true-up
+  [PROVEN ] OSV1-005  REGRESSION  (CONFORMS)
+             test_row_osv1_005 :: one inline `style=` attribute carries a literal colour again (Core 4 tolerates zero, so one site is the whole defect)
+  [PROVEN ] OSV1-006  REGRESSION  (CONFORMS)
+             test_row_osv1_006 :: an inline computed-geometry site appears that nobody registered
+  [PROVEN ] OSV1-007  REGRESSION  (CONFORMS)
+             test_row_osv1_007 :: the L1 GET view acquires a mutating adapter call
+  [PROVEN ] OSV1-008  REGRESSION  (CONFORMS)
+             test_row_osv1_008 :: L1 goes back to rendering no live region at all (Core 6's announcement half failing one step earlier than the swap)
+  [PROVEN ] OSV1-008  REGRESSION  (CONFORMS)
+             test_row_osv1_008 :: the browser measures L0's tagged live region destroyed by the swap again (node identity lost -- the reading a destroy-and-rebuild cannot fake)
+  [PROVEN ] OSV1-008  REGRESSION  (CONFORMS)
+             test_row_osv1_008 :: the browser measures an open `<details>` no longer surviving the swap
+  [PROVEN ] OSV1-008  REGRESSION  (CONFORMS)
+             test_row_osv1_008 :: the browser measures the pause CONTROL no longer surviving the swap
+  [PROVEN ] OSV1-008  REGRESSION  (CONFORMS)
+             test_row_osv1_008 :: the surviving region's announcement is replaced across the swap (node kept, sentence cut off -- the half a node-identity check alone would miss)
+  [PROVEN ] OSV1-009  REGRESSION  (CONFORMS)
+             test_row_osv1_009 :: --ink-quiet falls back below the text floor in the :root[data-theme="light"] block
+  [PROVEN ] OSV1-009  REGRESSION  (CONFORMS)
+             test_row_osv1_009 :: --ink-quiet falls back below the text floor in the prefers-color-scheme light block
+  [PROVEN ] OSV1-010  REGRESSION  (CONFORMS)
+             test_row_osv1_010 :: the browser measures one interactive control back under 44px on a swept render
+  [PROVEN ] OSV1-010  REGRESSION  (CONFORMS)
+             test_row_osv1_010 :: the one enumerated non-text exemption grows to cover more than the donut track
+  [PROVEN ] OSV1-011  REGRESSION  (CONFORMS)
+             test_row_osv1_011 :: reduced motion becomes per-widget opt-in (a second @media block)
+  [PROVEN ] OSV1-011  REGRESSION  (CONFORMS)
+             test_row_osv1_011 :: the browser measures an animation still RUNNING under the preference on a swept render, while the stylesheet still says the right thing
+  [PROVEN ] OSV1-012  REGRESSION  (CONFORMS)
+             test_row_osv1_012 :: the empty attention queue goes back to a bare container -- slot, no sentence
+  [PROVEN ] OSV1-012  REGRESSION  (CONFORMS)
+             test_row_osv1_012 :: the sentence survives but `.empty-note` stops holding a box, so the slot collapses
+  [PROVEN ] OSV1-013  REGRESSION  (CONFORMS)
+             test_row_osv1_013 :: the manifest declares a template engine
+  [PROVEN ] OSV1-014  REGRESSION  (CONFORMS)
+             test_row_osv1_014 :: the manifest declares a charting library
+  [PROVEN ] OSV1-015  REGRESSION  (CONFORMS)
+             test_row_osv1_015 :: the L1 view's bounded query goes unbounded again
+  [PROVEN ] OSV1-016  REGRESSION  (CONFORMS)
+             test_row_osv1_016 :: the first-paint resolver leaves <head>, so the stored theme is never applied
+  [PROVEN ] OSV1-016  REGRESSION  (CONFORMS)
+             test_row_osv1_016 :: the theme choice stops surviving a refresh
+  [PROVEN ] OSV1-017  REGRESSION  (CONFORMS)
+             test_row_osv1_017 :: the push channel acquires a second call site
+  [PROVEN ] OSV1-020  REGRESSION  (CONFORMS)
+             test_row_osv1_020 :: Conformance 1's injected-alarm-chip bad half stops catching its defect
+  [PROVEN ] OSV1-021  REGRESSION  (CONFORMS)
+             test_row_osv1_021 :: Conformance 2's Tier-A good half is deferred again behind an xfail
+  [PROVEN ] OSV1-021  REGRESSION  (CONFORMS)
+             test_row_osv1_021 :: a rendered status chip loses its word (the Tier-B half)
+  [PROVEN ] OSV1-022  REGRESSION  (CONFORMS)
+             test_row_osv1_022 :: Conformance 3's naive-replacement bad half stops losing the open disclosure
+  [PROVEN ] OSV1-022  REGRESSION  (CONFORMS)
+             test_row_osv1_022 :: the whole-body innerHTML swap (the bad fixture's own premise) changes shape
+  [PROVEN ] OSV1-023  REGRESSION  (CONFORMS)
+             test_row_osv1_023 :: Conformance 4's contrast bad half loses its dark-mode control
+  [PROVEN ] OSV1-023  REGRESSION  (CONFORMS)
+             test_row_osv1_023 :: a swept breakpoint disappears from the stylesheet
+  [PROVEN ] OSV1-024  REGRESSION  (CONFORMS)
+             test_row_osv1_024 :: Conformance 5's good half is deferred again behind an xfail naming OSV1-001
+  [PROVEN ] OSV1-024  REGRESSION  (CONFORMS)
+             test_row_osv1_024 :: OSV1-001 reopens, so Conformance 5 is no longer demonstrated end-to-end
+  [PROVEN ] OSV1-025  REGRESSION  (CONFORMS)
+             test_row_osv1_025 :: OSV1-005 reopens, so Conformance 6 is no longer demonstrated end-to-end
+  [PROVEN ] OSV1-026  REGRESSION  (CONFORMS)
+             test_row_osv1_026 :: Conformance 7's L1 good half is deferred again behind an xfail naming OSV1-012
+  [PROVEN ] OSV1-026  REGRESSION  (CONFORMS)
+             test_row_osv1_026 :: OSV1-012 reopens, so Conformance 7 is no longer demonstrated end-to-end
+  [PROVEN ] OSV1-027  REGRESSION  (CONFORMS)
+             test_row_osv1_027 :: CI stops running the Tier-A kit (the 'runs in a gate' half)
+  [PROVEN ] OSV1-028  REGRESSION  (CONFORMS)
+             test_row_osv1_028 :: the manifest's chromium pin moves while the recorded numbers stay behind
+  [PROVEN ] OSV1-029  REGRESSION  (CONFORMS)
+             test_row_osv1_029 :: the Tier-B kit stops reading its own artifacts back before asserting
+  [PROVEN ] OSV1-030  REGRESSION  (CONFORMS)
+             test_row_osv1_030 :: Conformance 4's contrast bad half borrows the LIVE token pair again, so its defect goes back to following the product's own fixes around
+  [PROVEN ] OSV1-030  REGRESSION  (CONFORMS)
+             test_row_osv1_030 :: a re-recorded run shows one of the fourteen fixture arms measuring at or above the floor it is supposed to fail
+  [PROVEN ] OSV1-031  REGRESSION  (CONFORMS)
+             test_row_osv1_031 :: a green Core-carrying row (OSV1-008) goes back to VIOLATION, so Freeze 5's condition stops holding under a Freeze row that still reads CONFORMS
+  [PROVEN ] OSV1-032  REGRESSION  (CONFORMS)
+             test_row_osv1_032 :: a literal inline site returns (Freeze 6's second conjunct, inline half -- simulable now that the row is green; it was not while simulating the FIX meant rewriting 66 real sites)
+  [PROVEN ] OSV1-032  REGRESSION  (CONFORMS)
+             test_row_osv1_032 :: a page-local stylesheet returns with literal declarations (Freeze 6's second conjunct, `<style>`-block half)
+  [PROVEN ] OSV1-032  REGRESSION  (CONFORMS)
+             test_row_osv1_032 :: the exemption register grows (Freeze 6's enumerated half)
+  [PROVEN ] OSV1-033  REGRESSION  (CONFORMS)
+             test_row_osv1_033 :: the corrected Changelog quotation re-acquires the markdown emphasis that broke Freeze 7 at seed
+
+DENOMINATOR (this is the record)
+  pinning mutations       proven 1 / 1
+  pinning probes covered  proven 1 / 1
+  conformance mutations   proven 68 / 68
+  ALL mutations           proven 69 / 69
+
+UNPROVEN, named with reason
+  (none)
+
+Flip direction for every pinning probe above: VIOLATION-MOVEMENT.
+A pinning probe going red means the behaviour moved TOWARD the contract:
+update the row to CONFORMS and retarget the probe in the SAME change.
