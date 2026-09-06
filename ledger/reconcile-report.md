@@ -2266,7 +2266,449 @@ was never contacted. No item was filed and none closed.
   "the one remaining deferral in either kit" — true when written, false as of
   this line.
 
+## Re-check 2026-09-06 — custody-coordination.v1 Freeze Bar reading
+
+The pre-lock evidence run for `contracts/custody-coordination.v1.md` (Status
+**DRAFT**). This section produces the evidence; it does **not** produce the lock.
+The lock is the owner's word plus a separate one-write edit, exactly as
+`operator-surface.v1`'s was.
+
+**Run:** 2026-09-06, branch `lane/custody-freeze-prep`, branched from `main` @
+**`86cd375`** (`HEAD` and `origin/main` identical at start of run).
+**Trigger:** none — no hash moved. This is a **scheduled pre-lock re-check**, run
+because the owner intends to lock the contract next and a lock must not rest on a
+remembered audit.
+**Ledger before:** 24 CCV1 rows = 22 CONFORMS / 2 NOT-ASSERTABLE / 0 GAP / 0 VIOLATION.
+**Ledger after:** **unchanged** — 22 CONFORMS / 2 NOT-ASSERTABLE / 0 GAP / 0 VIOLATION.
+**Dispositions changed: 0. Quotes re-anchored: 0. Rows edited: 1 (a title, `CCV1-009` — §C2).**
+
+**Outcome in one line:** **everything a machine can check is green**, in both
+directions; the three conditions still open are the two human ones (Freeze 8, Freeze 9)
+and one owner word on Freeze 2 — plus seven **pre-lock candidates** in the contract's
+own text (§C4), listed here and deliberately **not** fixed.
+
+---
+
+### C1. What was actually run (a self-report is not proof)
+
+Every figure below was produced on this tree in this lane. Nothing is transcribed from
+a previous section.
+
+| Command | Result | What it proves |
+|---|---|---|
+| `.venv/bin/python -m pytest ledger/checks -q` | **60 passed** in 2.20s (re-run after §C2's one-row edit: **60 passed** in 2.12s) | every row's quote verifies against the contract bytes, every assertion ref resolves, both `-000` SYNC pins match, the coverage tripwires hold |
+| `make ledger-mutate` | **ALL mutations proven 69 / 69**; `UNPROVEN, named with reason (none)` | every probe was watched going red against a counterfactual — the probes still discriminate, they are not passing vacuously |
+| `.venv/bin/python -m pytest modules/tool-work-tracker/tests -q` | **127 passed**, 0 failed, 0 xfailed, 0 skipped, in 629.55s (0:10:29) | Freeze 3 / 4 / 5's behavioural half at the **agent seam**: Conformance Fixtures 2, 3 and 4, against real `bd` + this suite's own isolated dolt server |
+| `.venv/bin/python -m pytest -m integration tests/integration/test_phantom_conflict_recovery.py tests/integration/test_post_reclaim_fence.py tests/integration/test_resolve_fence.py tests/integration/test_directed_claim.py -q` | **20 passed** in 67.90s | Conformance Fixture 1 (4), the post-reclaim fence at the **adapter** (5), the integrator half (4), and the directed-claim atomicity + refusal-specificity cites (7) |
+| `.venv/bin/python -m pytest tests/unit/test_custody.py tests/unit/test_custody_dead_holder.py tests/unit/test_supervisor.py -q` | **67 passed** in 0.41s | the liveness/TTL/sweep cites behind `CCV1-002`, `CCV1-006` and `CCV1-007` |
+| `.venv/bin/ruff check ledger` / `ruff format --check ledger` | `All checks passed!` / `7 files already formatted` | — |
+
+**Environment.** `bd` **1.1.2** (`20e493e56`) and `dolt` both on `PATH`, so nothing
+skipped for a missing binary — a suite that skips is not a suite that passed. Every
+`bd`-touching run used the per-session **isolated** dolt server
+(`tests/_dolt_isolation.py`); the shared server at `:3308` was never contacted and no
+live service was touched.
+
+**Not re-run, and why.** `make test-conformance-a` / `-b` (the operator-surface kits)
+and the remaining root tiers: `git diff origin/main --name-only -- src tests` is
+**empty** on this branch. Nothing executable moved, so those recordings still describe
+this tree; re-running them would spend a browser launch to re-read the same numbers.
+
+---
+
+### C2. Drift found — both directions, all 24 CCV1 rows
+
+Four checks, run over every row, independently of the probes that also run them.
+
+**(a) Every `contract.quote` byte-verifies. 23 / 23.** Each quote whitespace-collapsed
+and tested as a contiguous substring of the collapsed
+`contracts/custody-coordination.v1.md` (the SYNC row `CCV1-000` carries hashes, not a
+quote). **Zero failures.** Recomputed in this lane with its own script, not merely
+delegated to `test_every_row_quote_verifies_against_its_own_contract_bytes` — which
+also passes.
+
+**(b) Disposition matches what the probe MEASURES. 24 / 24, with one row's TITLE
+corrected.** All 22 CONFORMS rows were walked against their probe or their cited tests;
+each disposition is what the assertion actually establishes. The two NOT-ASSERTABLE rows
+(`CCV1-018` Core 13, `CCV1-019` NOT-ASSERTABLE 1) carry justifications and the contract
+itself declares both unassertable. **One real drift, and it was drift in the ledger, not
+in the code:**
+
+> **`CCV1-009` — title corrected.** The title read, verbatim, *"a post-reclaim close is
+> not fenced -- the fence is gated on status held"*. That is the **VIOLATION this row was
+> seeded with on 2026-09-01**, left standing after `work_item_pipeline-dn4` closed it and
+> the disposition flipped to CONFORMS. The row's one-line summary therefore asserted the
+> exact opposite of its own disposition, its own probe (`test_row_ccv1_009` asserts the
+> identity-keyed fence **exists** outside the `status == "held"` gate) and its own measured
+> fixtures. New title: *"a post-reclaim close IS fenced -- the fence is keyed on custody
+> identity, not status"*. A dated paragraph recording the correction was appended to the
+> row's notes.
+>
+> **Why nothing caught it:** no probe, no tripwire and no mutation reads `title` — `grep`
+> for `title` in `ledger/checks/` returns **zero** hits. The ledger was green with the
+> stale title, which is precisely why a human re-read was needed. **No disposition
+> changed; no probe changed; the tally did not move.**
+>
+> The one other place the old wording survives — §11's *"Residual 2 — a live
+> `VIOLATION-MOVEMENT` event, unhandled"* note, which quotes the strict `xfail` reason
+> *"a post-reclaim close is not fenced … PRODUCT defect … not fixed here"* — is
+> deliberately left as written: it is a dated record of what was true then, and the marker
+> it describes was itself removed by PR #71 (`ea233a7`), which today's **0 xfailed** module
+> run confirms.
+
+**(c) No CONFORMS row is a "file exists" claim. Walked one by one.** Every one of the 15
+probe-backed CONFORMS rows carries at least one substantive content assertion —
+whitespace-collapsed source shape (`CCV1-003`, `-004`, `-011`, `-012`, `-013`, `-015`,
+`-017`), agent-facing prose pinned in **both** directions, present *and* absent
+(`CCV1-005`, `-008`, `-016`), Makefile/CI text (`CCV1-021`, `-022`), a content hash
+(`CCV1-000`), or the fence's exact source shape plus its refusal wording (`CCV1-009`).
+Two rows use an `.exists()` call as a **supplement** to those assertions (`CCV1-009`
+part 3/4, `CCV1-022` part 4), never as the whole claim. The seven `indexed` rows cite
+23 named test functions, every one of which resolves **and was executed green today**
+(§C1).
+
+> **One honest limit, named rather than hidden.** In `test_row_ccv1_023`, the half that
+> covers **Conformance Fixture 1** is `fixture_1.exists()` and nothing more — no
+> assertion about that file's contents. It is not a hollow row: the same file's contents
+> are asserted by `CCV1-010` and `CCV1-014`, which index **four** named test functions
+> inside it, all four run green today. But read alone, `CCV1-023`'s Fixture-1 half is an
+> existence check. Fixtures 2, 3 and 4 in the same probe go further (per-fixture
+> good/bad pair counts, plus an AST scan proving no half is `xfail`/`skip`).
+> **Smallest fix, if the owner wants it closed:** give Fixture 1 the same treatment —
+> assert it carries ≥ 2 separately-named tests. Not done here (it edits `ledger/checks/`,
+> outside this lane's scope).
+
+**(d) `CCV1-000` SYNC hash matches. Recomputed, not assumed.**
+
+```
+contracts/custody-coordination.v1.md  pinned ec4b736f8d6dca4e…  observed ec4b736f8d6dca4e…  MATCH
+docs/VISION.md                        pinned f5eb400c79211d90…  observed f5eb400c79211d90…  MATCH
+```
+
+No hash moved, so **no full-ledger re-review was triggered** by §4 of `LEDGER-FORMAT.md`.
+This section is a scheduled re-check, which is a weaker trigger and says so.
+
+**Drift toward the contract, silently: none found.** No row reads red while the code has
+quietly been fixed — there are no red rows left in this family to be silently fixed. The
+only remaining drift of that shape was `CCV1-009`'s title, above, which is the mirror
+case: a row reading red in *prose* while its disposition, probe and fixtures all read
+green.
+
+---
+
+### C3. Freeze Bar reading — Freeze 1 through Freeze 9
+
+One paragraph each, against the contract's own nine conditions.
+
+**Freeze 1 — Residual issues resolved or Backlogged. MET BY MEASUREMENT.** The clause
+names three: D-1, D-2, D-5. **D-1** (Core 3 — a failed `take_custody` left the item held
+with no custody record) is **resolved** by `work_item_pipeline-aih`; `CCV1-003` is
+CONFORMS, its probe asserts all three separable parts of the compensation (the failing arm
+routes to it, the compensation releases *and* verifies by its own read-back, and a
+compensating release that itself fails stays loud), and its two behavioural fixtures —
+`modules/tool-work-tracker/tests/test_custody_atomic.py::test_failed_take_custody_releases_the_claim_back_to_ready`
+and `::test_failed_take_custody_then_failed_release_says_the_item_may_still_be_held` — ran
+inside today's 127-passed module suite. **D-2** (Core 7 — post-reclaim close unfenced) is **resolved** by
+`work_item_pipeline-dn4`; `CCV1-009` is CONFORMS and was measured on both layers today —
+`tests/integration/test_post_reclaim_fence.py` (5 tests: the fence after a real reap, the
+fence after the bare release that sweep makes, the integrator half, the live-holder half,
+the already-landed-close half) inside the 20-passed run, and Fixture 2's three
+`test_fixture2_*` tests inside the 127. **D-5** (Core 11 — a landed write reported as a
+failure) is **resolved**; `CCV1-014` indexes three named tests in
+`test_phantom_conflict_recovery.py`, all three green today. For completeness, the two
+residuals Freeze 1 does *not* name: **D-3** (Incident C, `held_stale`) was fixed in PR #63
+and is out of this contract's scope by the SEED's own adjudication; **D-4**'s conflict half
+was discharged at SEED. **D-6** is Freeze 2's subject, below. **Nothing here is waiting on
+a person** — but see Freeze 2 for the one word that is.
+
+**Freeze 2 — D-6 recovery verb designed and implemented. MET BY MEASUREMENT; ONE OWNER
+WORD OUTSTANDING.** **The verb is `work_release`** — not `work_reopen`, and not the new
+`work_custody_clear` Backlog 3 offered as its other option. Backlog 3's proposal reads
+*"`work_custody_clear` **or extended semantics on `work_release`**"*; the second branch is
+what shipped. `Beads.release` now reads the item's status **before** any write and returns
+`already_closed` having written nothing, and the tool seam's `unclaim` clears the session's
+own custody latch in-process — so the D-6 wedge (a session whose close already landed while
+it still believes it holds the item) recovers with no restart, no human, and **without
+reopening the closed item**, which Backlog 3 itself calls "dangerous". Its tests, all green
+today: at the adapter,
+`tests/integration/test_phantom_conflict_recovery.py::test_release_on_an_already_resolved_item_writes_nothing_and_reports_already_closed`
+(`CCV1-010`'s indexed cite); at the agent seam,
+`modules/tool-work-tracker/tests/test_conformance_fixtures.py::test_fixture3_release_of_an_already_closed_held_item_clears_the_latch`,
+whose BAD half asserts the item's snapshot is **byte-identical** afterwards (so a write
+that happened to land on the same status is caught too) and whose tail proves the session
+can claim again immediately; plus
+`modules/tool-work-tracker/tests/test_phantom_conflict_recovery.py::test_unclaim_recovers_a_session_wedged_on_an_already_closed_item`.
+**Human-only residue:** Backlog 3 still stands in the contract as a Backlogged clause with
+an unfired trigger. Whether the shipped `work_release` semantics **discharge** Freeze 2 or
+merely **defer** it with approval is a word only the owner can say. The SEED asked this same
+question on 2026-09-01 and it has not been answered since.
+
+**Freeze 3 — All four Conformance fixtures implemented, passing, and executable via
+`make test`. MET BY MEASUREMENT.** All four exist as discriminating good/bad pairs and all
+four ran green today. **Fixture 1** (conflicted-but-landed close):
+`tests/integration/test_phantom_conflict_recovery.py`, 4 tests, inside today's 20-passed
+run — plus an unnamed-by-the-contract tool-seam twin,
+`modules/tool-work-tracker/tests/test_phantom_conflict_recovery.py` (2 tests), inside the
+127 (see §C4-6). **Fixture 2** (post-reclaim close fence): three `test_fixture2_*` in
+`modules/tool-work-tracker/tests/test_conformance_fixtures.py`, plus the adapter-layer
+`tests/integration/test_post_reclaim_fence.py` (5). **Fixture 3** (in-process recovery
+after reclaim): three `test_fixture3_*`. **Fixture 4** (single-hold): four
+`test_fixture4_*`. **Nothing is quietly disabled** — `test_row_ccv1_023` part 4 walks the
+fixture file's AST for any `xfail`/`skip`/`skipif` decorator and found none, and the run
+itself reported **0 xfailed, 0 skipped**. **Executable via `make test`**: the `test` target
+runs `pytest tests ledger/checks` **and** `pytest modules/tool-work-tracker/tests` as two
+deliberately non-fail-fast invocations, and CI runs the same as Tier 2 / Tier 4 / Tier 5.
+
+**Freeze 4 — All check functions implemented and passing. MET ON SUBJECTS; NOT MET ON
+NAMES.** This is the one condition whose reading changes the answer, so both are stated.
+**On subjects: green.** Each of the five named checks has its subject asserted by machinery
+that runs in CI, and every one of those assertions was executed green today —
+`check_claim_atomic` → Core 1 → `CCV1-001`'s three `test_directed_claim.py` tests;
+`check_custody_fresh_survives` → Core 2 → `CCV1-002`'s five unit tests;
+`check_readback_verified` → Core 10 → `CCV1-012` + `CCV1-013` probes and
+`test_phantom_conflict_recovery.py`'s three read-back tests; `check_fenced_close` → Core 7
+→ `CCV1-009`'s probe, `test_post_reclaim_fence.py` (5) and Fixture 2 (3);
+`check_single_hold` → Core 12 → `CCV1-017`'s probe and Fixture 4 (4). **On names: two of
+five exist.** `check_claim_atomic` (`src/amplifier_work_tracker/contract.py:158`) and
+`check_custody_fresh_survives` (`:644`) are real functions in `doctor`'s registry.
+`check_readback_verified`, `check_fenced_close` and `check_single_hold` **do not exist
+anywhere in this repository** under those names — `grep -rn` returns hits only in the
+contract itself and in this report. And the two that do exist run **only** under
+`amplifier-work-tracker doctor`, which **CI does not run at all** (checked:
+`.github/workflows/ci.yml` has no `doctor` step). This is pre-lock candidate §C4-2/§C4-3.
+
+**Freeze 5 — Test suite importable and run as part of CI. MET BY MEASUREMENT (as the
+ledger reads it).** `CCV1-022` is CONFORMS and its probe asserts all four halves of the
+wiring — the editable install (`-e "modules/tool-work-tracker[dev]"` in **both** `make venv`
+and CI's setup step), the `test-module` target, `make test`'s aggregation of it, and the CI
+"Tier 5 -- tool module tests" step — plus that the suite it wires in still exists. Measured
+today rather than inferred: **127 passed, 0 failed, 0 xfailed, 0 skipped** in 629.55s against
+real `bd` 1.1.2 and an isolated dolt server. **Literal-text caveat:** the clause's own glob,
+`tests/test_*.py`, matches **zero** files in this repository (`ls tests/test_*.py` → *No such
+file or directory*); the tests live in `tests/unit/` (44), `tests/integration/` (29),
+`tests/cli/` (9) and `modules/tool-work-tracker/tests/` (20). The ledger reads the clause as
+being about the tool-module suite, which is the reading that makes it a real Freeze blocker —
+but that reading is the ledger's, not the contract's. Pre-lock candidate §C4-4.
+
+**Freeze 6 — Every Core clause verified against actual code. MET BY MEASUREMENT.** Every
+Core clause is cited by at least one row (the coverage tripwire
+`test_every_core_clause_of_every_contract_is_cited_by_at_least_one_row` enforces this and
+passes), and every row's assertion resolves and ran today. Per clause:
+
+| Clause | Row(s) | Assertion that verifies it against code | Ran today |
+|---|---|---|---|
+| Core 1 | `CCV1-001` | indexed → `tests/integration/test_directed_claim.py` ×3 | ✅ in 20 |
+| Core 2 | `CCV1-002` | indexed → `tests/unit/test_custody.py` ×3, `test_custody_dead_holder.py` ×2 | ✅ in 67 |
+| Core 3 | `CCV1-003` | probe `test_row_ccv1_003` — 4 source-shape assertions on the compensation | ✅ in 60 |
+| Core 4 | `CCV1-004`, `CCV1-005` | probes — the one-strike mechanism's source shape; both agent docs pinned present **and** absent | ✅ in 60 |
+| Core 5 | `CCV1-006` | indexed → `tests/unit/test_custody.py` ×3 | ✅ in 67 |
+| Core 6 | `CCV1-007`, `CCV1-008` | indexed → `tests/unit/test_supervisor.py` ×4; probe pinning both docs' sweep prose | ✅ in 67 / 60 |
+| Core 7 | `CCV1-009` | probe — the identity fence outside the `status == "held"` gate, its `FencedError`, its refusal wording, and the mechanism pin | ✅ in 60 (+ 5 + 3 behavioural) |
+| Core 8 | `CCV1-010` | indexed → `tests/integration/test_phantom_conflict_recovery.py` ×1 | ✅ in 20 |
+| Core 9 | `CCV1-011` | probe — renew's holder+generation fence, the monotonic increment, `take_custody`'s assignee fence | ✅ in 60 |
+| Core 10 | `CCV1-012`, `CCV1-013` | probes — `release`'s verify-before-success; both claim paths returning the read-back, never `Item.from_beads` | ✅ in 60 |
+| Core 11 | `CCV1-014`, `CCV1-015`, `CCV1-016` | indexed → `tests/integration/test_phantom_conflict_recovery.py` ×3; probe over the **closed list** of 14 item-level write verbs; probe over both prose surfaces | ✅ in 20 / 60 |
+| Core 12 | `CCV1-017` | probe — the single-hold refusal, by name, before any `bd` call | ✅ in 60 (+ 4 behavioural) |
+| Core 13 | `CCV1-018` | **NOT-ASSERTABLE**, with justification; the contract declares it so itself | n/a |
+| Core 14 | `CCV1-020` | indexed → `tests/integration/test_directed_claim.py` ×4 | ✅ in 20 |
+| NOT-ASSERTABLE 1 | `CCV1-019` | **NOT-ASSERTABLE**, self-declaring, with justification | n/a |
+
+**Freeze 7 — Every quote a contiguous, whitespace-collapsed substring. MET BY
+MEASUREMENT, AND MECHANIZED.** 23 / 23 quote-carrying rows verify (§C2a), enforced on every
+run by `test_every_row_quote_verifies_against_its_own_contract_bytes` and recomputed
+independently here. The check is family-resolved: a row is verified against the contract it
+*names*, never against whichever contract happens to be first in the file.
+
+**Freeze 8 — PR review by an external reviewer. NOT MET. NOT THIS LANE.** This condition
+is human- or agent-**independent** by construction: a reviewer who is not the author. This
+lane authored part of what would be reviewed, so it cannot discharge it, and does not try.
+The precedent is `operator-surface.v1`'s own Freeze 9: an independent reviewer produced
+`.amplifier/converge/operator-surface-freeze9-review.md`, returned **REQUEST CHANGES**, and
+three owner-ratified pre-lock fixes (RC-1/2/3) landed before the FROZEN stamp. **§C4 below is
+what that reviewer should be pointed at first** — seven candidates found by this re-check,
+every one a defect in the contract's own text rather than in the machinery.
+
+**Freeze 9 — Owner ratification and signature. NOT MET. OWNER ONLY.** Downstream of
+Freeze 8 by the contract's own ordering, and of the one outstanding word on Freeze 2.
+
+**Stated plainly: everything a machine can check is green.** 60 / 60 ledger probes;
+69 / 69 mutations proven with none unproven; 127 module tests; 20 custody integration
+tests; 67 custody unit tests; zero red rows; zero `xfail`; zero `skip`; both SYNC hashes
+matching; every quote verifying; every Core clause covered. **Nothing mechanical stands
+between this contract and FROZEN.** What stands between them is one owner word on Freeze 2,
+an external review (Freeze 8), the owner's stamp (Freeze 9), and whatever that review
+decides to do with §C4.
+
+---
+
+### C4. Pre-lock candidates — LISTED, NOT FIXED
+
+Seven defects in the contract's **own text**, found by this re-check. The contract is
+DRAFT, so an edit is permitted in principle — and is deliberately **not** made here. The
+precedent is exact: `operator-surface.v1`'s pre-lock fixes (RC-1/2/3) were the **owner's**
+call, taken **after** the external review, not the reconciler's. Each candidate below
+carries its measurement and the **smallest** fix that would close it.
+
+**C4-1 — Core 1's machine-check parenthetical is false on this tree, twice, and points at a
+section that does not exist.** Current text (`:17`): *"both must pass; skipped under
+`--quick` in CI due to Freeze Bar dependencies (see §Freeze Blockers)"*. Measured: (i) CI
+never runs `doctor` at all, with or without `--quick` — `.github/workflows/ci.yml` has no
+`doctor` step; (ii) `--quick` skips those two checks for **speed**, not for Freeze Bar
+dependencies — `contract.py`'s own comment says *"they are the two slowest checks by a wide
+margin"*; (iii) there is **no** `§Freeze Blockers` section in this contract — the section is
+`## Freeze Bar`. *Smallest fix:* delete the clause from `;` onward, leaving *"both must
+pass."*
+
+**C4-2 — Nine of the fourteen machine-check ids the contract names do not exist.** The
+contract names 14 ids across its Core clauses. Five are real entries in `doctor`'s registry
+(`src/amplifier_work_tracker/contract.py`): `claim.atomic`, `claim.directed_atomic`,
+`custody.fresh_survives`, `custody.idle_not_exempt`, `custody.fenced`. **Nine are not
+anywhere in the repository:** `claim.custody_indivisible` (Core 3), `custody.one_strike`
+(Core 4), `sweep.required_and_scheduled` (Core 6 — the contract itself annotates this one
+"(Backlogged: …)"), `fence.close_post_reclaim` (Core 7), `recovery.discoverable` (Core 8),
+`write.readback_verified` (Core 10), `write.honest_failure` (Core 11), `session.single_hold`
+(Core 12), `claim.error_specificity` (Core 14). Core 7's is the sharpest case, and it is
+sharper than a spelling mistake: the registry *does* carry a close fence, `resolve.fenced`,
+but reading it shows it stages a **takeover** (holder A releases, holder B claims, A wakes
+and closes) — so it never reaches the **released-but-not-yet-re-claimed** state Core 7
+explicitly names as the case it covers. Renaming `fence.close_post_reclaim` to
+`resolve.fenced` would therefore make the contract point at a check narrower than its own
+clause; the assertion that really covers both halves is `CCV1-009`'s probe plus
+`tests/integration/test_post_reclaim_fence.py`. *Smallest fix:*
+re-label each absent id with the assertion that actually carries the clause (the ledger row
+and its probe/cites, as tabulated in Freeze 6 above), or state inline that the id names an
+intended check not yet in the registry. Nine unresolvable ids in a locked contract are nine
+pointers a future reader will try to run and cannot.
+
+**C4-3 — the Conformance `Checks` list names three functions that do not exist.** Of
+`check_claim_atomic()`, `check_custody_fresh_survives()`, `check_readback_verified()`,
+`check_fenced_close()` and `check_single_hold()`, only the first two are real; the other
+three return no hits outside the contract. The same paragraph also says these are
+*"implemented as test functions in `ledger/checks/`"* — the two that exist live in
+`src/amplifier_work_tracker/contract.py`, not in `ledger/checks/`. *Smallest fix:* re-point
+the list at the real assertions (Freeze 6's table is the mapping) and correct the location
+sentence. See also §C4-2 — these two candidates are the same defect at two grains, and one
+fix could close both.
+
+**C4-4 — Freeze 5's glob matches nothing.** *"Test suite (`tests/test_*.py`) is importable
+and run as part of CI"*. `ls tests/test_*.py` → *No such file or directory*. *Smallest fix:*
+name what the clause actually means — `modules/tool-work-tracker/tests/` is the suite whose
+absence made this a Freeze blocker, and `CCV1-022` already reads it that way.
+
+**C4-5 — Conformance 1 and 2 still say "Bad behavior (current)".** Both fixtures describe
+their bad half as **current** (`:183`, `:197`). Neither is current: Conformance 1's
+unread-back conflict was fixed in PR #63 and Conformance 2's status-gated fence by
+`work_item_pipeline-dn4`, both measured green today. Conformance 3 and 4 say plainly *"Bad
+behavior:"* with no qualifier, so the inconsistency is visible inside one section. This is
+also the exact class of statement the **owner-ratified 2026-09-03 amendment struck from every
+Core clause** — conformance status lives in the ledger only — and it survived there.
+*Smallest fix:* delete the two `(current)` qualifiers, matching Conformance 3 and 4.
+
+**C4-6 — Conformance 1's Verification describes the tool seam; its Test location names only
+the adapter.** The Verification reads *"Call `work_resolve(id)` … then call
+`work_list(item_id=id)`"* — agent-seam verbs — while the only Test location it names is
+`tests/integration/test_phantom_conflict_recovery.py`, which exercises `Beads.resolve` /
+`Beads.release` directly. The tool-seam counterpart **does** exist and is unnamed by the
+contract: `modules/tool-work-tracker/tests/test_phantom_conflict_recovery.py`. Conformance 2
+already names both layers ("(tool seam)" and "(adapter layer)"). *Smallest fix:* give
+Conformance 1 the same two-path form Conformance 2 already has.
+
+**C4-7 — one clause id remains unnumbered.** `CCV1-021` cites `Conformance: Checks`, which is
+the only clause id in either family with no bare number; the 2026-09-03 amendment numbered
+the Conformance *fixtures* and the Freeze Bar but not the `Checks` subsection. This is
+already a **reported** deviation, not a silent one — `ledger/checks/_support.py` carries it
+as an explicit `unnumbered=frozenset({"Conformance: Checks"})` with a comment naming the
+amendment. *Smallest fix (optional):* number it, and drop the exemption in the same change.
+Listed for completeness; it costs nothing today.
+
+**Two residuals that are not contract text, and are not fixed here either.** (i) The seven
+`indexed` rows' `last_measured` dates still read 2026-09-01 (six of them) and 2026-09-05
+(`CCV1-002`) although all 23 cited tests were executed green **today** — refreshing them would be a
+`rows.yaml` write beyond this lane's drift-only scope, and it understates rather than
+overstates, so it is named rather than done. (ii) `CCV1-009` and `CCV1-022` still carry
+`assertion.kind: probe` with a named follow-up to upgrade five rows to `indexed` now that
+the behavioural fixtures run in CI; that is a schema change across five rows plus the
+mutation harness, still out of scope, and now with the fixtures measured green rather than
+assumed.
+
+---
+
+### C5. Honest limits of this re-check
+
+- **This section produces evidence, not a lock.** No contract byte was edited. Nothing here
+  is owner ratification and nothing here is an external review.
+- **The ledger probes remain in-process source assertions.** They prove the *shape* of the
+  code, never its behaviour. What makes this run stronger than a probe-only run is that the
+  behavioural fixtures behind the shape assertions were **executed** (§C1), not cited.
+- **`make test` was not run end to end.** The tiers this contract's Freeze Bar depends on
+  were run individually and are named with their counts; the root tiers unrelated to custody
+  (CLI surface, web, observatory, the operator-surface kits) were not re-run, because
+  `git diff origin/main -- src tests` is empty and no custody claim rests on them.
+- **Two clauses are NOT-ASSERTABLE and stay that way.** Core 13 and NOT-ASSERTABLE 1 are
+  about what an *agent* did in a session this repository does not host. No run in §C1
+  strengthens them, and none pretends to.
+- **`CCV1-023`'s Fixture-1 half is an existence check** (§C2c) — the one place a CONFORMS
+  row leans on `.exists()` without a content assertion of its own, mitigated but not closed
+  by `CCV1-010`/`CCV1-014` indexing four named tests inside that same file.
+- **The seven pre-lock candidates were found by reading, not by a check.** Nothing in the
+  ledger would have caught any of them: every one is a statement in the contract's own prose
+  that no probe reads. That is exactly why Freeze 8 exists, and why this list is handed to it
+  rather than acted on.
+
+---
+
+### C6. Files written by this re-check
+
+| File | What changed |
+|---|---|
+| `ledger/reconcile-report.md` | this section (`C1`–`C6`) and one Changelog entry |
+| `ledger/rows.yaml` | **one row**: `CCV1-009`'s stale title corrected, plus a dated note paragraph recording it (§C2b). No disposition, no assertion, no quote, no other row. |
+| `contracts/operator-surface.v3-candidate.md` | a **new sibling proposal** (one change: re-anchor Backlogged 4's under-qualified `` `__init__.py:711` `` citation to its full path). Proposes only; edits nothing. |
+
+**No other file was written.** No byte of `contracts/custody-coordination.v1.md`, of
+`contracts/operator-surface.v1.md`, of `ledger/checks/`, of `src/`, of `tests/`, of
+`modules/`, of `docs/` or of `.github/`. No item was filed and none closed; no work-tracker
+item was claimed or resolved. The live service was never contacted, `:3308` was never
+written, and no locked-document guard was invoked — because no locked document was opened.
+
+---
+
 ## Changelog
+- **2026-09-06 — PRE-LOCK RE-CHECK, `contracts/custody-coordination.v1.md`
+  (DRAFT), Freeze Bar read by measurement.** Scheduled re-check, not a
+  hash-triggered re-review — no SYNC hash moved and both `CCV1-000` pins were
+  recomputed, not assumed. **Everything a machine can check is green:** `pytest
+  ledger/checks -q` **60 passed**; `make ledger-mutate` **69/69, none unproven**;
+  `pytest modules/tool-work-tracker/tests -q` **127 passed / 0 failed / 0 xfailed
+  / 0 skipped** (629s, real `bd` 1.1.2 + isolated dolt); the four custody
+  integration files **20 passed**; the three custody unit files **67 passed**;
+  ruff clean. Tally unchanged at **22 CONFORMS / 2 NOT-ASSERTABLE / 0 GAP / 0
+  VIOLATION**; **0 dispositions changed, 0 quotes re-anchored** (23/23 verify).
+  Freeze 1 / 3 / 5 / 6 / 7 read **met by measurement**; Freeze 4 reads **met on
+  subjects, not on names** (three of its five named `check_*` functions do not
+  exist, and the two that do run only under `doctor`, which CI never runs);
+  Freeze 2 reads **met** — the D-6 verb is `work_release`'s extended
+  `already_closed` semantics, measured on both layers — with **one owner word
+  outstanding** on whether that discharges or defers it; Freeze 8 (external
+  review) and Freeze 9 (owner stamp) are the two human conditions and are **not
+  this lane's** to discharge. **One drift found, in the ledger and not the
+  code:** `CCV1-009`'s title still read *"a post-reclaim close is not fenced"* —
+  the VIOLATION it was seeded with — while its disposition, probe and fixtures
+  all read green; corrected, with a dated note, and nothing machine-read touched
+  (no probe reads `title`). **Seven pre-lock candidates in the contract's own
+  text are LISTED, not fixed** (§C4) — a false CI claim and a dangling
+  §Freeze Blockers pointer in Core 1, nine invented machine-check ids, three
+  non-existent `check_*` functions, a Freeze 5 glob matching zero files, two
+  stale "(current)" bad-behaviour labels, a Conformance 1 Test-location that
+  names the adapter while its Verification describes the tool seam, and one
+  unnumbered clause id — because a DRAFT's pre-lock edits are the owner's call
+  **after** the external review, exactly as operator-surface's RC-1/2/3 were.
+  Also written: `contracts/operator-surface.v3-candidate.md`, a one-change
+  sibling proposal re-anchoring Backlogged 4's under-qualified
+  `` `__init__.py:711` `` citation to its full path (it proposes only; the
+  FROZEN contract is untouched). No `src/`, no `tests/`, no `ledger/checks/`, no
+  contract byte; the live service was never contacted. See
+  §"Re-check 2026-09-06 — custody-coordination.v1 Freeze Bar reading".
 - **2026-09-06 — Core 10 residual closed (`work_item_pipeline-zhv`).** Dead
   `webapp._oldest_ready_item` deleted; `OSV1-015` stays CONFORMS with its
   exemption paragraph replaced by a dated note and its probe retargeted onto a
