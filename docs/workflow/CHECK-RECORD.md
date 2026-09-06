@@ -23,3 +23,13 @@ One entry per integration, written by the MANAGER session in its own commit (nev
   - `.venv/bin/pyright src tests` → 0 errors; `ruff check src tests ledger` → All checks passed!
   - `sha256sum contracts/operator-surface.v1.md` a1f304b1… == OSV1-000 pin; contract untouched by the lane (confirmed by diff)
 - Contract reading after re-run: operator-surface.v1 **Kept** — both conformance kits now carry zero xfail markers; custody-coordination.v1 **Kept**.
+
+## 2026-09-06 16:42 UTC — merge of lane/custody-freeze-prep + lane/dash-names (post-merge pair gate) + manager repair
+- Covers: merges a8a003a (custody-freeze-prep) and 0a6faab (dash-names) on `converge/cycle-2026-09-06c` = main 86cd375 + both lanes; manager repair in the same branch: `contracts/operator-surface.v2-candidate.md` → `contracts/applied/operator-surface.v2-candidate.applied.md` (+ contracts/applied/README.md).
+- Ran, in this session, on the union:
+  - `pytest ledger/checks -q` → 60 passed · `make ledger-mutate` → 69 / 69, UNPROVEN (none)
+  - `pytest tests/conformance/operator_surface/test_tier_a.py -q` → 42 passed, 0 xfailed
+  - `pytest tests/unit -q` → 976 passed · `ruff check` + `ruff format --check` (src tests modules ledger) clean · `pyright src tests modules` 0
+  - `sha256sum contracts/operator-surface.v1.md` == OSV1-000 pin; both contracts byte-identical to main (diff)
+  - hooks-candidate-guard pure evaluator (fix branch, shipped config) on this repo, cwd=repo: locked contract → **deny / guard_blocked** (was continue / guard_allowed_ratified before the archive)
+- Contract reading after re-run: operator-surface.v1 **Kept**; custody-coordination.v1 **Kept** (24 CCV1 rows 22/2/0; CCV1-009 title drift corrected by the lane, disposition unchanged).

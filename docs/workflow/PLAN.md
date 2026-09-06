@@ -28,3 +28,18 @@ Regenerated each manager cycle from the repository's history and the shared queu
 - ready: `1y2` (external, not this operation) + the Core 10 residual item filed this cycle. Held: `lvn` (this session, resolving on merge).
 - Width: 0 lanes running; nothing under width — the only lane-shaped item is the Core 10 residual, held for the owner's priority word since it is a src change on a frozen surface (kit + ledger re-derivation).
 - 2026-09-06T13:30:54Z CALL priority ANSWERED "yes" — lane zhv launched (batch hw-post-lock).
+
+## Cycle 2026-09-06 (third wake; owner returned with feedback + "tackle all of those what's-left items")
+- Where-you-run: no WORKSPACE-MANIFEST.json here; this multi-repo dir is the operating root (it already holds .converge/feedback). BATCH_DIRs: `.converge/work_tracker` (lanes dash-names, custody-freeze-prep) and `.converge/converge` (lane guard-cwd, repo amplifier-bundle-converge cloned into the workspace). Earlier batches under .amplifier/highway/ predate the rule; left in place (moving is the steward's call).
+- Feedback drop `.converge/feedback/2026-09-06-project-names-dashes.md` → became lane **dash-names** (decision: document + actionable refusal with suggested underscore form; NAME_RE unchanged, no silent normalization — the owner said documenting is fine and normalization would create two spellings of one project). Cause measured: adapter.py:211 NAME_RE, tool schemas carry no naming rule, error prints a regex.
+- Guard after restart: STILL not biting — the `hooks:` key in workspace settings is not read by the CLI (mounted config unchanged). Key removed; note kept. Fix is upstream → lane **guard-cwd** in amplifier-bundle-converge (converge-qfi9). Until it lands, CI (OSV1-000) is the lock's only teeth in this workspace.
+- Backlogged 4 pointer RESOLVED by git archaeology: at 4aaee50, modules/tool-work-tracker/…/__init__.py:711 = `"custody_lost": held.lost_reason,` — the citation was under-qualified, not dead; same key at :711 today. → operator-surface.v3-candidate (one change) drafted by lane custody-freeze-prep.
+- Custody lock: lane **custody-freeze-prep** measures Freeze 1–9 + drift check; external review (Freeze 8) delegated read-only; owner's word (Freeze 9) then ONE-write lock.
+- VISION.md: reviewer gives LOCK vs HOLD-LOOSELY reading → owner's call.
+- Width 3 / 3 lanes live, provably disjoint files (tool module+adapter+awareness+cli | ledger report+v3 candidate | other repo). Deficit 0.
+- 2026-09-06T15:18:42Z — no CALL open yet; three will follow when lanes land: ratify (v3 candidate), ratify/priority (custody lock word), priority (VISION lock or hold loosely).
+- 2026-09-06T16:42:50Z three lanes landed: guard-cwd (converge PR #59 open, REVIEW_REQUIRED), custody-freeze-prep, dash-names (item filed at integration, resolving on merge). Manager repair: applied v2 candidate archived → hatch closed (measured deny). Second guard defect filed converge-wu3y.
+- 2026-09-06T16:42:50Z CALL ratify - custody pre-lock true-up (external review RC-1..9 + lane C4-1..6, one list). Parked: custody lock. Continued: dash-names + custody prep landing in PR.
+- 2026-09-06T16:42:50Z CALL ratify - operator-surface.v3-candidate (Backlogged 4 citation). Parked: v3 apply. Continued: same.
+- 2026-09-06T16:42:50Z CALL priority - VISION.md: hold loosely (recommended) or lock. Parked: none. Continued: same.
+- 2026-09-06T16:42:50Z CALL ratify - custody Freeze 2: discharge D-6 via work_release's already_closed branch, or defer. Parked: custody lock. Continued: same.
