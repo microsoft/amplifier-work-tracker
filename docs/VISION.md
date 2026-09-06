@@ -2,6 +2,8 @@
 
 **Status:** DRAFT
 
+**Hold loosely** — owner's word 2026-09-06 ("go for all", on the external reviewer's recommendation): the lock bar is met; left deliberately unlocked while its two governing contracts settle under lock; revisit at each `ledger/reconcile-report.md` re-check.
+
 **Scope:** This is the vision for amplifier-work-tracker, which governs two seams: the **custody and coordination seam** — how claimed items are held exclusively by one actor while that actor actively maintains its grip — and the **operator surface**, the human web surface one operator watches. Other concerns — dolt-ops internals, project semantics, and work-item filtering — are explicitly out of scope.
 
 **Governing contracts:** `contracts/custody-coordination.v1.md` (custody seam: *The Vision*, Principles 1–7); `contracts/operator-surface.v1.md` (operator surface: *The Operator Surface*, Principles 8–12). This vision points to them; it does not restate them.

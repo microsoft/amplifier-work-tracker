@@ -357,7 +357,8 @@ def _m023_test_location_regresses(w: World) -> None:
     """
     w.replace(
         CONTRACT_PATH,
-        "**Test location:** `tests/integration/test_phantom_conflict_recovery.py`.",
+        "**Test location:** `modules/tool-work-tracker/tests/test_phantom_conflict_recovery.py` "
+        "(tool seam) and `tests/integration/test_phantom_conflict_recovery.py` (adapter layer).",
         "**Test location:** `tests/test_incident_b.py` (to be added).",
     )
 

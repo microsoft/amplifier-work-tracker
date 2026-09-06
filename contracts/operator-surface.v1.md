@@ -208,7 +208,7 @@ A `supersedes` edge is rendered as its own relation rather than falling into the
 
 A custody loss is legible to the operator on the web surface, not only through the agent tool result described by `contracts/custody-coordination.v1.md Core 8`.
 
-**Trigger:** the owner reports a reclaim they did not see on the web surface. *(Brief A §3, `__init__.py:711`)*
+**Trigger:** the owner reports a reclaim they did not see on the web surface. *(Brief A §3, `modules/tool-work-tracker/amplifier_module_tool_work_tracker/__init__.py:711`)*
 
 ---
 
@@ -380,6 +380,7 @@ Before this contract moves from DRAFT to FROZEN, all of the following conditions
 
 ## Changelog
 
+- **2026-09-06 — v3 amendment, owner-ratified ("go for all"):** Backlogged 4's citation re-anchored to modules/tool-work-tracker/…/__init__.py at its current line via the ratified sibling proposal operator-surface.v3-candidate.md (archived to contracts/applied/). Status remains FROZEN.
 - **2026-09-06 — v2 amendment, owner-ratified ("Ratified"):** six wording fixes from the Freeze 9 external review applied via the ratified sibling proposal operator-surface.v2-candidate.md: Core 1 "leads" routed to Core 12's review cadence; Core 4 gains the register-growth sentence; Core 5's machine-check line names its predicate and bound; Core 12/13 define "ENCODE gate"; Core 2's evidence citations re-anchored; Backlogged 2/4/6 triggers made observable. Status remains FROZEN.
 - **2026-09-05 — FROZEN.** Owner ratification and signature (Freeze 10): owner's literal words "Ok, do the freeze" and "looked, ratify." Status moves DRAFT → FROZEN. From this entry on, this file changes only by a sibling proposal (`operator-surface.v2-candidate.md`) carrying the target line, the exact change, real evidence, and what does not change; `hooks-candidate-guard` refuses in-place edits.
 - **2026-09-05 — Freeze 8 record (ratification input, never a machine check):** the owner looked at the rendered L0 (Mission Control), L1 (Project Observatory) and L2 (Item Detail) at 430, 900 and 1280px in both themes — the eighteen captures from the pinned-browser run (chromium 148.0.7778.0 / playwright 1.60.0) on main @ d039b32 — and said "looked".

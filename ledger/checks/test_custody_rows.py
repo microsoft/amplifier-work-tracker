@@ -755,7 +755,9 @@ def test_row_ccv1_023() -> None:
     #    (and their status qualifiers) are gone -- a regression back to any
     #    of them is exactly the drift this row once had to just record.
     assert contains(
-        CONTRACT_PATH, "**Test location:** `tests/integration/test_phantom_conflict_recovery.py`."
+        CONTRACT_PATH,
+        "**Test location:** `modules/tool-work-tracker/tests/test_phantom_conflict_recovery.py` "
+        "(tool seam) and `tests/integration/test_phantom_conflict_recovery.py` (adapter layer).",
     ), "CCV1-023: Fixture 1's corrected Test-location line is gone"
     assert contains(
         CONTRACT_PATH,

@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-09-06 (applied).** This proposal was ratified by the owner and applied to `contracts/operator-surface.v1.md` in the custody-lock lane (base main `4c37b16`); the contract's Changelog records it. It is kept here as the record of what was ratified. It was moved out of the `*-candidate.md` name shape because a ratified candidate left beside its target keeps the candidate-guard's escape hatch open indefinitely (measured 2026-09-06; upstream item converge-wu3y).
+
 # Proposal — operator-surface v1, one under-qualified citation re-anchored
 
 ```
@@ -6,7 +8,7 @@ target: contracts/operator-surface.v1.md
 
 **Date:** 2026-09-06
 **Author:** agent:lane/custody-freeze-prep (measured on this tree, not transcribed)
-**Status:** PROPOSED
+**Status:** RATIFIED by owner 2026-09-06 ("your recommendations are good, go for all") — applied to operator-surface.v1.md in the custody-lock lane (base main `4c37b16`)
 **Against:** `contracts/operator-surface.v1.md`, Status FROZEN, `main` @ `86cd375`
 **Evidence source:** `contracts/operator-surface.v2-candidate.md`, §"Not in this proposal — seen,
 and deliberately left out", item 3 — a returned need, plus a false finding that need carries.
@@ -236,7 +238,7 @@ Owner's word:
 
 <!-- stamp line — the owner writes on the blank line below this comment; leave it blank otherwise -->
 
-______
+Ratified by owner — 2026-09-06, literal: "your recommendations are good, go for all".
 
 <!-- end stamp line -->
 

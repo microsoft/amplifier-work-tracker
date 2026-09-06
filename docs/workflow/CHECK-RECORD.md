@@ -33,3 +33,8 @@ One entry per integration, written by the MANAGER session in its own commit (nev
   - `sha256sum contracts/operator-surface.v1.md` == OSV1-000 pin; both contracts byte-identical to main (diff)
   - hooks-candidate-guard pure evaluator (fix branch, shipped config) on this repo, cwd=repo: locked contract → **deny / guard_blocked** (was continue / guard_allowed_ratified before the archive)
 - Contract reading after re-run: operator-surface.v1 **Kept**; custody-coordination.v1 **Kept** (24 CCV1 rows 22/2/0; CCV1-009 title drift corrected by the lane, disposition unchanged).
+
+## 2026-09-06 18:58 UTC — lane/custody-lock rebuilt as converge/custody-lock @ aa1b5fb (custody lock + v3 amendment + VISION hold-loosely)
+- Covers: ece0974 (operator-surface v3 applied via ratified candidate, candidate archived) · d3bc320 (custody DRAFT true-up: Freeze 8 review RC-1..9 + 6 nits; Freeze 2 discharged) · 1f328cb (manager: RC-10 from pass 2, applied while DRAFT) · aa1b5fb (manager: lock re-applied as ONE write, CCV1-000/OSV1-000 re-hashed). Freeze 8: pass 1 REQUEST CHANGES → pass 2 REQUEST CHANGES (RC-10) → pass 3 **APPROVE** (.amplifier/converge/custody-freeze8-review.md).
+- Ran, in this session, on the branch: `pytest ledger/checks -q` → 60 passed · `make ledger-mutate` → 69/69, UNPROVEN (none) · Tier-A → 42 passed, 0 xfailed · custody conformance fixtures → 10 passed · ruff check/format ledger clean · sha256(custody) == CCV1-000 == OSV1-000 pin · `**Status:** FROZEN` ×1 on line 3 of both contracts.
+- Contract reading: custody-coordination.v1 **Kept and now locked** (Freeze 1–9 met: 1–7 measurement, 8 review, 9 owner's word); operator-surface.v1 **Kept** (v3 applied; 33/3/0/0); VISION.md hold-loosely recorded (owner's word).
