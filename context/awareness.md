@@ -103,6 +103,13 @@ Seven things here fail **silently** if you get them wrong — no error, no undo:
    reach for `work_reopen` only when the underlying work is genuinely
    incomplete or wrong.
 
+## Naming a project
+
+**Underscores, never dashes** -- `^[a-z][a-z0-9_]{1,30}$`: lowercase letter
+first, then lowercase letters/digits/underscores, 2-31 chars. Write
+`my_project`, not `my-project`; a dash name is refused before anything is
+created, and the refusal names the underscore form for you.
+
 ## Where to go next
 
 - No server running, or unsure → `work_tracker_status`; it names the exact

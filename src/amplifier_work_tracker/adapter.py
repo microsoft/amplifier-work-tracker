@@ -210,6 +210,74 @@ _CONNECTION_RETRY_BACKOFF_CAP = 0.5
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,30}$")
 
+# The naming rule as a SENTENCE, derived from `NAME_RE.pattern` so the prose
+# and the regex can never drift apart. This is the single home of that
+# sentence for the whole product: `adapter`'s own refusals, every `project`
+# parameter description in the tool module, and the CLI's `--project` help
+# all render THIS string. A rule an agent only discovers by failing a call
+# is a rule stated in the wrong place -- measured cost (steward, 2026-09-06):
+# "sessions keep trying to name things with dashes, fail, and then have to
+# try again w/ underscores."
+#
+# Dashes stay refused deliberately (owner's call: "if we can't support
+# dashes that is fine"). A project name becomes a dolt database name and a
+# bd id prefix downstream, and silently rewriting `my-project` to
+# `my_project` would leave two spellings of one project -- the one the
+# caller asked for and the one that actually exists.
+NAME_RULE = (
+    "Project names: lowercase letter first, then lowercase letters, digits or "
+    f"underscores, 2-31 chars (regex {NAME_RE.pattern}); dashes are not accepted "
+    "-- write my_project, not my-project."
+)
+
+# Every character `NAME_RE` will not accept inside a name. Used ONLY to build
+# a suggestion (see `suggest_project_name`), never to rewrite anything.
+_NAME_REPAIR_RE = re.compile(r"[^a-z0-9_]")
+
+
+def suggest_project_name(name: str) -> str | None:
+    """The nearest VALID project name to `name`, or `None` when the one
+    mechanical repair we are willing to propose does not produce a valid
+    name.
+
+    The repair is deliberately boring and predictable: lowercase, then every
+    character outside `[a-z0-9_]` replaced with `_`. `my-project` ->
+    `my_project`; `Demo.App` -> `demo_app`.
+
+    SUGGESTION ONLY -- nothing in this module ever applies it. Applying it
+    silently is the failure mode this whole path exists to avoid (see
+    `NAME_RULE`): the caller would end up with a project whose real name is
+    not the name they typed. The refusal still refuses; it just now points
+    at the fix.
+
+    Returns `None` rather than a half-repaired string when the result would
+    still fail `NAME_RE` -- `9lives` (leading digit), `x` (too short), a
+    32-character name. A refusal with no suggestion is the honest outcome
+    there; offering one would send the caller off to retry a name that fails
+    too.
+    """
+    repaired = _NAME_REPAIR_RE.sub("_", name.lower())
+    if repaired == name or not NAME_RE.match(repaired):
+        return None
+    return repaired
+
+
+def invalid_project_name_error(name: str, *, label: str = "project name") -> str:
+    """The refusal message for a name that fails `NAME_RE`: the offending
+    name, the rule as a sentence (`NAME_RULE`), and -- when one exists -- the
+    specific valid name the caller probably meant.
+
+    Every project-name refusal in this module renders this, so a caller never
+    has to reverse-engineer a bare regex into an actionable next move. See
+    `suggest_project_name` for why the suggestion is never applied.
+    """
+    message = f"invalid {label} {name!r}. {NAME_RULE}"
+    suggestion = suggest_project_name(name)
+    if suggestion is not None:
+        message += f" Did you mean {suggestion!r}?"
+    return message
+
+
 # --------------------------------------------------------------------------
 # Subprocess timeouts -- every `bd`/`dolt`/`git` call this module makes goes
 # through `_run_bounded` (below), never a bare `subprocess.run` with no
@@ -1570,9 +1638,9 @@ def move_item(src: str, dst: str, item_id: str) -> MoveReport:
     `_item_row_counts` read on `src` proving zero residue).
     """
     if not NAME_RE.match(src):
-        raise BeadsError(f"invalid project name {src!r}: must match {NAME_RE.pattern}")
+        raise BeadsError(invalid_project_name_error(src, label="source project name"))
     if not NAME_RE.match(dst):
-        raise BeadsError(f"invalid project name {dst!r}: must match {NAME_RE.pattern}")
+        raise BeadsError(invalid_project_name_error(dst, label="destination project name"))
     if src == dst:
         raise BeadsError(
             f"cannot move item {item_id!r}: source and destination are the same project ({src!r})"
@@ -5103,9 +5171,9 @@ class Workspace:
         """
         if not NAME_RE.match(name):
             raise BeadsError(
-                f"invalid project name {name!r}: must match {NAME_RE.pattern}. "
-                f"Dots are rejected deliberately -- they produce a database that "
-                f"reports successful creation and then fails every later command."
+                invalid_project_name_error(name)
+                + " Dots are rejected deliberately -- they produce a database that "
+                "reports successful creation and then fails every later command."
             )
         d = self.path(name)
         beads_dir = d / ".beads"
@@ -5250,7 +5318,7 @@ class Workspace:
                 f"-- pass force=True (CLI: --yes). This is destructive and irreversible."
             )
         if not NAME_RE.match(name):
-            raise BeadsError(f"invalid project name {name!r}: must match {NAME_RE.pattern}")
+            raise BeadsError(invalid_project_name_error(name))
 
         d = self.path(name)
         beads_dir = d / ".beads"
@@ -5358,14 +5426,14 @@ class Workspace:
         """
         if not NAME_RE.match(new):
             raise BeadsError(
-                f"invalid new project name {new!r}: must match {NAME_RE.pattern}. "
-                f"Dots and hyphens are rejected deliberately -- they produce a database "
-                f"that reports success and then fails every later command."
+                invalid_project_name_error(new, label="new project name")
+                + " Dots and hyphens are rejected deliberately -- they produce a database "
+                "that reports success and then fails every later command."
             )
         if old == new:
             raise BeadsError(f"cannot rename project {old!r} to itself")
         if not NAME_RE.match(old):
-            raise BeadsError(f"invalid project name {old!r}: must match {NAME_RE.pattern}")
+            raise BeadsError(invalid_project_name_error(old, label="project name"))
 
         old_dir = self.path(old)
         new_dir = self.path(new)
