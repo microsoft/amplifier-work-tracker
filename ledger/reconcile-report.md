@@ -1147,7 +1147,37 @@ Other edges written at creation: `qgo → c1a`, `ujy → c1a`, `np3 → c1a, qgo
 
 ---
 
-## 8. Freeze Bar status — BLOCKED
+## 8. Freeze Bar status — READY FOR THE OWNER'S LOOK AND EXTERNAL REVIEW
+
+**Current reading, 2026-09-05, measured on `main` @ `7e43e73`.** The full
+condition-by-condition evidence is in the re-check section below
+(*Re-check 2026-09-05 … §R8*); this is the summary that supersedes the seed
+reading kept as history in §8a.
+
+| Condition | Status |
+|---|---|
+| Freeze 1 — Tier-A kit exists and runs on every PR | **MET** (OSV1-027) — CI Tier 6; ran here, 41 passed / 1 named xfail |
+| Freeze 2 — Tier-B kit, pinned chromium, isolated data, own CI tier | **MET** (OSV1-028) — CI Tier 7; `playwright==1.60.0` / chromium 148.0.7778.0; ran here ×2, 89 passed |
+| Freeze 3 — every Tier-B check emits re-checkable artifacts | **MET** (OSV1-029) — recording regenerated here and re-read by the ledger |
+| Freeze 4 — every fixture discriminates, demonstrated by running it | **MET** (OSV1-030) — 14 arms, every bad half still biting |
+| Freeze 5 — every Core CONFORMS or NOT-ASSERTABLE-with-cadence | **MET** (OSV1-031) — 19 Core rows: 17 CONFORMS + 2 NOT-ASSERTABLE, **0 red** |
+| Freeze 6 — exemption register complete, no literal sites left | **MET** (OSV1-032) — 8 enumerated, set-equal to the live census; 0 literal, inline and `<style>`-block |
+| Freeze 7 — every contract quote verifies against its cited file | **MET** (OSV1-033), with the recorded limit: in-repo quotes proven, out-of-repo brief citations reported unverifiable |
+| Freeze 8 — owner's rendered-page look recorded in the Changelog | **NOT MET — human only** (OSV1-034, `work_item_pipeline-eah` open). The contract says *"never a machine check"* |
+| Freeze 9 — external PR review | **NOT MET — human only**; no row, no machine reading exists |
+| Freeze 10 — owner FROZEN stamp | **NOT MET — human only**; no row |
+
+**Everything a machine can check is green.** The three conditions outstanding
+are, by the contract's own construction, acts of people: the owner's look, an
+external reviewer's read, and the owner's stamp.
+
+The contract stays **DRAFT**. Nothing in this ledger moves it, and nothing in
+this ledger can.
+
+### 8a. Seed reading, 2026-09-04 (history — superseded)
+
+Kept verbatim rather than deleted: the point of a ratchet is that the earlier
+reading stays readable beside the later one.
 
 | Condition | Status |
 |---|---|
@@ -1352,7 +1382,414 @@ their substantive half, so the weak one is never the only evidence.
 `contracts/custody-coordination.v1.md`, `docs/VISION.md`, and anything under
 `src/`. No PR opened, nothing merged, and the live service was never contacted.
 
+---
+
+## Re-check 2026-09-05 — operator-surface.v1 after highway hw-operator-surface (waves 1–4)
+
+Standing re-check of the `OSV1-###` family (and, because `pytest ledger/checks`
+covers both families, the `CCV1-###` quotes and SYNC row too) against `main`
+@ **`7e43e73`** — the head of the four-wave highway that landed PRs #82
+(`aec9991`), #83 (`6c2e9fa`), #84 (`065da04`) and #85 (`7e43e73`).
+
+**Every number below was measured on this tree by this re-check.** Nothing is
+transcribed from a lane report, an orchestrator summary, or the row it appears
+on. Where a figure could only be re-read rather than re-derived (the Tier-B
+recording), the run that produced it was executed here, twice, and the result
+compared byte for byte against the committed one.
+
+**Outcome in one line:** **zero disposition changes**, zero drift in either
+direction, hashes intact, tripwires green — and **Freeze 5 is met by
+measurement**, leaving Freeze 8/9/10 (three human acts) as the only conditions
+outstanding.
+
+---
+
+### R1. What was actually run (a self-report is not proof)
+
+| Command | Result | What it proves |
+|---|---|---|
+| `.venv/bin/python -m pytest ledger/checks -q` | **60 passed in 1.88s** | every row's quote verifies, every assertion ref resolves, the tripwires hold |
+| `make ledger-mutate` | **ALL mutations proven 69 / 69**; `UNPROVEN … (none)` | every probe was watched going red against a counterfactual — none is asserting nothing |
+| `make test-conformance-a` | **41 passed, 89 deselected, 1 xfailed in 31.30s** | the Tier-A kit runs on this tree; the one xfail is the named `OSV1-015` residual (§R7) |
+| `.venv/bin/python -m pytest -m tier_b tests/conformance/operator_surface/browser -q` | **89 passed in 123.30s**, then **89 passed in 104.27s** | the Tier-B kit runs in a real pinned chromium against a live app, twice |
+| `.venv/bin/python -m pytest ledger/checks -q` *against the second run's fresh recording* | **60 passed in 1.90s** | the ledger is green on numbers measured minutes earlier, not only on the committed ones |
+| `.venv/bin/ruff check ledger` / `ruff format --check ledger` | `All checks passed!` / `7 files already formatted` | — |
+
+**One named deviation from the instruction's command list.** Tier-B was invoked
+as the `test-conformance-b` target's own pytest line rather than through `make
+test-conformance-b`, because that target depends on `playwright-install`, which
+runs `playwright install --with-deps chromium` — and `--with-deps` was excluded
+by instruction (it installs system packages). The browser for the pinned
+`playwright 1.60.0` was already present, so nothing was downloaded; the kit's own
+`kit.pinned_browser` arm re-asserted the engine from inside the run
+(`chromium 148.0.7778.0 / playwright 1.60.0`), and the ledger's `OSV1-028` probe
+independently re-read that against `pyproject.toml`'s exact pin. The selection
+(`-m tier_b`) and the path are byte-identical to the Makefile recipe.
+
+**Not touched:** both contracts, `docs/VISION.md`, everything under `src/`, and
+the live service (no dolt write outside the isolated test fixture, no
+`amplifier-work-tracker service *`, none of the reserved ports — the Tier-B app
+binds `127.0.0.1:0` and reads the bound port back off the live socket).
+
+---
+
+### R2. Rows by disposition — 36 `OSV1-###` rows, unchanged
+
+| | Count | Change since 2026-09-04 re-review |
+|---|---|---|
+| CONFORMS | **32** | +23 |
+| NOT-ASSERTABLE | **3** | 0 |
+| GAP | **1** | −18 |
+| VIOLATION | **0** | −5 |
+
+**Core-carrying rows: 19 → 17 CONFORMS + 2 NOT-ASSERTABLE, 0 red.** The single
+red row is `OSV1-034` (Freeze 8 — the owner's look), which is human-only by the
+contract's own words and carries a live open queue item.
+
+The `CCV1-###` family was re-verified in the same run and is unmoved: 24 rows,
+22 CONFORMS / 2 NOT-ASSERTABLE / 0 red.
+
+#### R2.1 Per-row table — id · clause · disposition · what measured it
+
+| Row | Clause | Disposition | What measured it, on this tree |
+|---|---|---|---|
+| OSV1-000 | (SYNC) | CONFORMS | both contract files re-hashed here: `f4098752…` and `ec4b736f…`, both matching the pin |
+| OSV1-001 | Core 1 | CONFORMS | Tier-A `hero.velocity_and_counts` good half, undeferred and passing over the rendered L0; probe re-reads the hero markup in `widgets.py` |
+| OSV1-002 | Core 2 | CONFORMS | token-set census: exactly `{--alarm, --blocked, --watch}`, the two alias names resolving *into* the set |
+| OSV1-003 | Core 2 | CONFORMS | Tier-B `calm.zero_alarm_pixels` re-read: calm L0 **and** L1 at 0 `--alarm` / 0 `--blocked` in both themes, against 264 `--blocked` px on the genuinely-alarming fixture |
+| OSV1-004 | Core 3 | CONFORMS | Tier-A `state.not_colour_only` over rendered L0/L1/L2 of the alarm fixture (0 wordless), cross-read against Tier-B `state.not_colour_only` (`alarm/L1/dark`: 19 status elements, 0 wordless) |
+| OSV1-005 | Core 4 | CONFORMS | the inline-style census **re-run in this session**: `LITERAL` **0**; `<style>` blocks outside the token module **0**, literal declarations in them **0** |
+| OSV1-006 | Core 4 | CONFORMS | the `COMPUTED` census **re-run here**: 8 sites, set-equal to the register (§R4) |
+| OSV1-007 | Core 5 | CONFORMS | the route audit **re-run here**: 30 routes, **0** GET handlers reaching a mutating adapter call |
+| OSV1-008 | Core 6 | CONFORMS | Tier-B `swap.survives` re-read on calm L0 **and** L1: scroll, open-`<details>`, pause control and pause flag all preserved; ≥1 tagged live region survives by node identity; announcement present *and* preserved (vacuity guarded) |
+| OSV1-009 | Core 7 | CONFORMS | the token-pair luminance engine **re-run here**: 54 text pairs, **0** below 4.5:1; 9 non-text pairs, **0** below 3:1, over all three declared token blocks |
+| OSV1-010 | Core 7 | CONFORMS | Tier-B `perception.floors` re-read across all **18** renders: `text_below_floor` 0, `controls_below_44px` 0, `non_text_below_floor` 0, the one enumerated exemption at exactly 1 per L1 render |
+| OSV1-011 | Core 7 | CONFORMS | Tier-B `perception.floors` re-read: `running_animations_under_reduced_motion` **0** across all 18 renders, plus the single kernel-level rule in `webtheme.py` |
+| OSV1-012 | Core 8 | CONFORMS | Tier-A `calm.keeps_slot` good halves on L0 **and** L1, undeferred and passing against the all-empty fixture |
+| OSV1-013 | Core 9 | CONFORMS | manifest + served-asset census: no framework, bundler, template engine or build step |
+| OSV1-014 | Core 10 | CONFORMS | dependency-manifest census: no charting, no drag-and-drop library |
+| OSV1-015 | Core 10 | CONFORMS | view-reachable `bd.list` census: every call reached from a view carries an explicit finite limit (residual, named: §R7) |
+| OSV1-016 | Core 10 | CONFORMS | `THEME_STORAGE_KEY` persistence + the first-paint boot script, and the density preference alongside it |
+| OSV1-017 | Core 11 | CONFORMS | push-channel call-site census: exactly one site, inside the reclaim path |
+| OSV1-018 | Core 12 | NOT-ASSERTABLE | the contract itself declares "**Machine check:** none"; cadence named in-contract ("owner review of L0/L1/L2 at each ENCODE gate and before any Freeze stamp") |
+| OSV1-019 | Core 13 | NOT-ASSERTABLE | same — an outcome measure with no number measured yet; cadence named in-contract |
+| OSV1-020 | Conformance 1 | CONFORMS | the three bad halves re-read from the run: 10 531 `--alarm` px (injected chip), 16 681 `--retired_amber` px (reinstated palette), 264 `--blocked` px (real alarming fixture) |
+| OSV1-021 | Conformance 2 | CONFORMS | both tiers' halves: Tier-A accessible-name half + Tier-B hue half; the bad half strips 19 chips and reports 11 wordless |
+| OSV1-022 | Conformance 3 | CONFORMS | Tier-B `swap.survives` bad halves ran and failed as named (naive replacement: 0 surviving live regions, pause control lost) |
+| OSV1-023 | Conformance 4 | CONFORMS | the sweep covers exactly L0/L1/L2 × 430/900/1280 × dark/light (18), and `bad-wide-element` moves the element-level reading while `scroll_width` does not |
+| OSV1-024 | Conformance 5 | CONFORMS | kit fixture present with its bad halves, good half **undeferred**, and `OSV1-001` green (record defect in this row's prose: §R6, F1) |
+| OSV1-025 | Conformance 6 | CONFORMS | kit fixture present, importing *this* ledger's register, good half **undeferred**, `OSV1-005` green (record defect in this row's prose and its probe docstring: §R6, F1) |
+| OSV1-026 | Conformance 7 | CONFORMS | both good halves (L0 and L1) undeferred and passing; both bad halves still asserted |
+| OSV1-027 | Freeze 1 | CONFORMS | kit exists at the contract's named path, wired to `make test-conformance-a` **and** CI Tier 6; the kit ran here (41 passed) |
+| OSV1-028 | Freeze 2 | CONFORMS | `pyproject.toml`'s exact `playwright==1.60.0` pin re-read and compared against the recording's own engine block; CI Tier 7 present; the kit ran here (89 passed ×2) |
+| OSV1-029 | Freeze 3 | CONFORMS | `LAST_RUN.json`'s envelope re-read, and the ledger re-read the **freshly regenerated** recording (60 passed) — never the browser tier's own pass/fail |
+| OSV1-030 | Freeze 4 | CONFORMS | all 14 Conformance arms present in the recorded run, each bad-half headline still non-zero — demonstrated by running, not by existing |
+| OSV1-031 | Freeze 5 | CONFORMS | the ledger tally itself: 19 Core rows, **0** red, NOT-ASSERTABLE set exactly `{OSV1-018, OSV1-019}` (§R3) |
+| OSV1-032 | Freeze 6 | CONFORMS | register enumerated (8) **and** the literal census at 0 on both halves — inline and `<style>`-block |
+| OSV1-033 | Freeze 7 | CONFORMS | every attributed in-repo quotation re-verified against the file it cites; out-of-repo brief citations *reported* as unverifiable, not silently passed |
+| OSV1-034 | Freeze 8 | **GAP** | the contract's Changelog records no owner look at the rendered pages — `work_item_pipeline-eah`, confirmed **open** in the queue |
+| OSV1-035 | Reserved 1 | NOT-ASSERTABLE | namespace held; ungoverned until an outside caller parses `--json` |
+
+---
+
+### R3. The tally that made Freeze 5 true
+
+Freeze 5 asks that *"every Core clause reads CONFORMS in `ledger/`, or is
+NOT-ASSERTABLE with its review cadence named here."* At SEED (2026-09-04,
+`4aaee50`) **10 of the 19 Core-carrying rows were red**. They went green one at
+a time, each flip carried by a real measurement and each retargeting its probe
+in the *same* change (the `VIOLATION-MOVEMENT` rule), so no pin was ever left
+asserting a shape the tree had already left:
+
+| # | Row | Clause | Item | The measurement that flipped it |
+|---|---|---|---|---|
+| 1 | OSV1-001 | Core 1 | `…-ujy` | the rebuilt L0 hero: velocity over a **stated** window plus the four counts, in one hero region |
+| 2 | OSV1-009 | Core 7 | `…-sxh` | token-pair math: 6 failing text pairs (all `--ink-quiet` in light, across both duplicated light blocks) → **0 of 54** |
+| 3 | OSV1-004 | Core 3 | `…-c1a` | rendered L0/L1/L2 of the alarm fixture: **0** status-bearing elements without a word or accessible name |
+| 4 | OSV1-015 | Core 10 | `…-8vv` | `webbrowse.py:339`'s `limit=0` (bd's "no limit") replaced by an explicit finite bound |
+| 5 | OSV1-016 | Core 10 | `…-dg3` | the theme choice persisted to `localStorage` and resolved in `<head>` before first paint — it now survives a refresh |
+| 6 | OSV1-005 | Core 4 | `…-np3` | the literal-style census: **66 → 0** inline sites, and the `<style>`-block half **40 → 0** |
+| 7 | OSV1-003 | Core 2 | `…-a1o` | calm L1 `--blocked` pixels **97 → 0** in both themes, while the alarming fixture still paints 264 |
+| 8 | OSV1-012 | Core 8 | `…-aad` | empty widgets: L0 1 problem + L1 2 problems → **0 / 0** against the same empty fixture |
+| 9 | OSV1-008 | Core 6 | `…-v3m` | body-swap survivals: live region by node identity, pause control, `<details>`, scroll — **1 of 4 → 4 of 4**, on L0 and L1 |
+| 10 | OSV1-010 | Core 7 | `…-96f` | rendered floors across 18 renders: **7 failing text nodes → 0** (worst pair 3.13:1 → 4.75:1); L0 controls under 44 px **26 of 34 → 0**; non-text below 3:1 **0** outside one enumerated exemption |
+
+Re-verified here, not taken on the tally's word: **19** Core-carrying rows
+exist; **0** carry `GAP` or `VIOLATION`; the NOT-ASSERTABLE set is exactly
+`{OSV1-018 (Core 12), OSV1-019 (Core 13)}` — the two clauses the contract
+*itself* declares unassertable, each with its cadence named in the contract at
+`contracts/operator-surface.v1.md:157`.
+
+`OSV1-031`'s own honest limit stands and is worth repeating: it counts
+dispositions, so a dishonest disposition would pass *there* and fail in the row
+that carries it. That is why §R2.1 names a measurement for all 19 rather than
+citing the tally.
+
+---
+
+### R4. The exemption register — 8 sites, re-measured here
+
+`style_sites_in("COMPUTED")` was re-run in this session and is **set-equal** to
+`EXEMPTION_REGISTER` (23 → 8 at the wave-3/4 unions; it did not grow):
+
+| Site | Expression | Purpose |
+|---|---|---|
+| `webapp.py:1127` | `flex:{n} 1 0` | state-bar segment ratio |
+| `webapp.py:1823` | `width:{today_w}px` | throughput bar, today |
+| `webapp.py:1826` | `width:{prior_w}px` | throughput bar, prior 6 d |
+| `webtheme.py:4379` | `{style}` | axis ruler numeral offset |
+| `webtheme.py:4398` | `left:{_grad_x(f):.1f}px` | graduation tick offset |
+| `webtheme.py:4405` | `width:{px}px` | age bar length |
+| `widgets.py:866` | `width:{pct}%` | status-mix segment (hatched) |
+| `widgets.py:868` | `width:{pct}%` | status-mix segment |
+
+Alongside it, re-measured here: `LITERAL` inline sites **0**; `<style>` blocks
+outside the token module **0**; literal declarations inside such blocks **0**.
+Freeze 6's two conjuncts — *enumerated* and *nothing literal remaining* — both
+hold.
+
+---
+
+### R5. The Tier-B recording — provenance and re-measurement
+
+The committed `tests/conformance/operator_surface/browser/LAST_RUN.json`
+(sha256 `b1131d1f…`, `recorded_at 2026-09-05T23:46:45Z`) was produced by the
+wave-4 union and re-recorded once on each union, as Freeze 3 requires. Its
+provenance block:
+
+```
+"browser": {"name": "chromium", "version": "148.0.7778.0", "playwright": "1.60.0"}
+"schema":  "operator-surface-tier-b/1"
+```
+
+**This re-check ran the kit twice more and diffed the result against the
+committed file, leaf by leaf.**
+
+| Run | Diff against the committed recording |
+|---|---|
+| 1 (123.30 s, 89 passed) | 4 × light-theme `calm.zero_alarm_pixels` `watch` buckets (5444→5333, 5237→5155, 5380→5355, 6323→6278); `perception.floors` `calm/L1/430/dark` `text_scored` 178→179; `recorded_at` |
+| 2 (104.27 s, 89 passed) | the same 4 `watch` buckets (5444→5358, 5237→5189, 5380→5295, 6323→6329); `recorded_at`. **Nothing else.** |
+
+**Every asserted field was byte-identical in both runs.** The two fields that
+moved are both recorded-but-unasserted, and both were checked rather than
+assumed:
+
+- **The light-theme `--watch` pixel buckets** — the known ±~200 px wobble.
+  Observed deltas here: −111/−82/−25/−45 (run 1) and −86/−48/−85/+6 (run 2), all
+  inside that band. Grepped: no probe in `ledger/checks` and no assertion in the
+  kit reads a `watch` bucket; the `calm.zero_alarm_pixels` arms assert `alarm`,
+  `blocked` and `retired_amber` only.
+- **`text_scored` 178 → 179 on `calm/L1/430/dark` (run 1 only)** — investigated,
+  because "anything else that moved" is drift until shown otherwise. Diffing the
+  full scored-element lists out of the two runs' own artifact directories, the
+  entire difference is fixture identity (the per-run random project name and item
+  ids) and relative-age text — **plus exactly one structural difference**: the
+  freshness meta-row renders **one** text node while the fixture is under a
+  minute old (`span.v` = `"just now"`) and **two** once it crosses a minute
+  (`span.v` = `"1"` + `span.v-suffix` = `"m ago"`). Run 1 loaded that page ~60 s
+  into a full session; the isolated single-test runs (178, three times) and run 2
+  (178) loaded it sooner. Historical artifacts on disk show the same denominator
+  at 177/177/178/178/179 across the day. It is a session-timing artifact of the
+  fixture, not a product change: `text_below_floor` (the field the row asserts)
+  was **0** in every run, and `text_scored` has exactly one write site in the kit
+  and **zero** readers in `ledger/` or the kit's assertions.
+
+**The committed recording was restored** (`git checkout --` back to
+`b1131d1f…`) after the comparison. Re-recording is the union's act, not this
+reconcile's; this run's job was to prove the committed numbers reproduce, and
+they do.
+
+---
+
+### R6. Drift check — both directions, per row
+
+Checked independently of the suite (a second script, not the ledger's own
+helpers), then cross-checked by running the suite:
+
+| Check | Result |
+|---|---|
+| (a) `contract.quote` byte-verifies (whitespace-collapsed contiguous substring) | **58 / 60 rows verify**; the 2 without a quote are the SYNC rows, which pin by hash instead — correct per `LEDGER-FORMAT.md` §4. No row carries a quote at top level (the malformed shape §2 names) |
+| (b) disposition matches what the probe/kit measures **today** | **0 rows would change.** Every probe passes (60/60) *and* every probe was watched going red against its counterfactual (69/69) |
+| (c) no CONFORMS row is a "file exists" claim | **0 existence-only probes.** Every probe that calls `_exists()` also asserts something measured; the four rows that could most cheaply fake it (`OSV1-024/-025/-026/-030`) each additionally assert *undeferred good halves* and the disposition of the row they depend on |
+| (d) SYNC hashes | `operator-surface.v1.md` `f4098752…`, `custody-coordination.v1.md` `ec4b736f…`, `docs/VISION.md` `f5eb400c…` — **all three match**. No re-review triggered |
+| Drift *toward* the contract (un-pinning) | none unaccounted for: the ten Core flips of §R3 each landed with a ratified item and a probe retargeted in the same change. `git diff dfd4b8f..7e43e73 -- contracts/ docs/VISION.md` is **empty** — the four waves moved `src/` and `tests/`, never the contract |
+| Drift *away* (regression) | none. No row moved from CONFORMS |
+| Red rows carrying a **live** queue ref | 1 of 1 — `OSV1-034` → `work_item_pipeline-eah`, confirmed **open** in `work_tracker` (checked against the tracker, not merely present in YAML) |
+
+#### R6.1 Findings that are *not* disposition drift — reported, not absorbed
+
+**F1 — two rows carry stale pinning prose above a CONFORMS disposition.**
+`OSV1-024` and `OSV1-025` both still *open* their notes with "PINNING ROW — …
+its GOOD half does not pass … A passing probe here is NOT conformance. Flip
+direction VIOLATION-MOVEMENT", and only correct it several paragraphs later
+("FLIPPED … 2026-09-05 … runs undeferred and PASSES"). `test_row_osv1_025`'s
+docstring summary is stale in the same way ("its GOOD half is still deferred
+against OSV1-005") two lines above an assertion that it is **not** deferred.
+The dispositions and the assertions are right; the leading prose is wrong, and
+it names the *opposite* flip direction from the one the retargeted probes run
+in. Scanned the whole family: exactly these two rows and that one docstring.
+**Not corrected in this branch** — a prose fix is neither a disposition change
+nor drift the ratchet may absorb silently, and this branch's diff is scoped to
+this report. Filed as **`work_item_pipeline-lvn`**; the need is returned in §R9.
+
+**F2 — a green row's item is still open.** `OSV1-031` reads CONFORMS while
+`work_item_pipeline-umm` ("[ledger] OSV1-031 (Freeze 5) GAP…") remains **open**
+in `work_tracker`. Nothing in `LEDGER-FORMAT.md` is violated (a `work` ref is
+required for red rows, not forbidden on green ones), but the queue and the
+ledger now disagree about whether Freeze 5 is done. Closing another actor's
+tracking item is not this reconciler's call — returned in §R9.
+
+**F3 — cosmetic, recorded for completeness.** `OSV1-010` carries `work: null`
+while its own notes name `work_item_pipeline-96f`; the three sibling wave-4
+flips (`-003`, `-008`, `-012`) kept theirs on the field. Legal either way for a
+green row; noted so a later reader does not read the absence as "no item ever
+existed".
+
+**Discharged here:** `work_item_pipeline-c1a`'s closing note recorded a residual
+— *"reconcile-report.md's SEED narrative still describes pre-kit evidence for
+these rows (rows.yaml itself is current)"*. §R2.1 above supersedes it: every one
+of the 36 rows now carries the evidence that stands **on `7e43e73`**, beside the
+seed narrative rather than in place of it.
+
+---
+
+### R7. Honest limits of this re-check
+
+1. **The `--watch` wobble is real and unasserted.** Four light-theme pixel
+   buckets move by up to ~200 px between runs (§R5). No row reads them. If a
+   future row ever wants to, it needs a tolerance, not an equality.
+2. **The Tier-B recording's denominators are session-timing dependent.**
+   `text_scored` differs by one depending on whether the fixture has aged past a
+   minute when the page loads (§R5). Asserted fields are stable; denominators
+   recorded beside them are not, and should not be turned into pins without a
+   frozen clock.
+3. **The `.btn.danger` fix is not exercised by the recorded sweep.** The Manage
+   drawer is shut on the calm page, so the at-rest sweep never paints that
+   control. The lane verified it separately by forcing every `<details>` open;
+   that one-off is **not** a committed arm. If a later change opens the drawer by
+   default, the existing calm sweep is what catches it — until then this corner
+   of `OSV1-003` rests on a measurement nobody re-runs.
+4. **Core 12 and Core 13 are NOT-ASSERTABLE by the contract's own words**, not
+   by this ledger's convenience. Two of the nineteen Core rows are therefore
+   carried by owner review at a named cadence rather than by any check —
+   including at the Freeze stamp itself. Freeze 5 admits this explicitly; a
+   reader should not mistake "0 red Core rows" for "19 Core clauses under
+   machine check". It is 17.
+5. **`OSV1-015` carries a residual, and the Tier-A kit still reports it.**
+   `test_antigoals_enforced` is `xfail`: `_oldest_ready_item` (`webapp.py:902`,
+   the `bd.list` at `:909`) calls `bd.list` with no limit at all. Verified here —
+   the function has **no caller in `src/`** (only tests reference it), and Core 10
+   scores calls *"reached from a view"*, so the row is CONFORMS honestly; the
+   kit's Core 10 reading is source-wide with no reachability analysis, so it
+   still sees the call. Deleting the dead function (or teaching the check
+   reachability) retires the marker.
+6. **Freeze 7 is narrower than its own text.** In-repo quotations are proven
+   byte-exact; the contract's citations of out-of-repo briefs are *reported* as
+   unverifiable, not verified. `OSV1-033` records this.
+7. **A tally gate cannot audit the rows it counts.** `OSV1-031` asserts an
+   aggregate; the evidence lives in the nineteen rows under it (§R2.1).
+8. **This re-check did not re-derive rows from the contract text.** The contract
+   bytes did not move (§R6 (d)), so the seed's derivation stands. A contract
+   amendment triggers the full re-review, never a hash bump.
+
+---
+
+### R8. Freeze Bar reading — Freeze 1–10 as written in the contract
+
+Read against `contracts/operator-surface.v1.md:353-375`, condition by
+condition, on this tree:
+
+| Condition | Status today | Evidence |
+|---|---|---|
+| **Freeze 1** — Tier-A kit at the named path, runs on every PR | **MET** | kit present at `tests/conformance/operator_surface/test_tier_a.py`; CI Tier 6 step + `make test-conformance-a`; ran here, 41 passed / 1 named xfail |
+| **Freeze 2** — Tier-B kit, pinned chromium, live app, isolated fixture data, own CI tier | **MET** | exact pin `playwright==1.60.0` in `pyproject.toml`, matching the recording's `chromium 148.0.7778.0`; app on `127.0.0.1:0` over the isolated dolt fixture; CI Tier 7; ran here twice, 89 passed each |
+| **Freeze 3** — every Tier-B check emits artifacts the orchestrator re-checks; no rendered impression reported as a pass | **MET** | measure→write→read-back→assert throughout (writes ≤ read-backs, checked); `LAST_RUN.json` regenerated here and re-read by the ledger (60 passed); no assertion opens a screenshot |
+| **Freeze 4** — every Conformance fixture discriminates, demonstrated by running it | **MET** | all 14 arms present in the recorded run with their bad-half headlines still non-zero; the kits ran here |
+| **Freeze 5** — every Core clause CONFORMS, or NOT-ASSERTABLE with cadence named | **MET** | 19 Core rows: 17 CONFORMS + 2 NOT-ASSERTABLE (Core 12, Core 13), cadence named at `:157`; **0 red** (§R3) |
+| **Freeze 6** — exemption register complete, no literal colour/font/size site remaining | **MET** | register 8 sites, set-equal to the live census; literal sites 0 inline and 0 in `<style>` blocks (§R4) |
+| **Freeze 7** — every quote verified as a contiguous whitespace-collapsed substring of the file it cites | **MET, with the limit at §R7.6** | in-repo quotations verify; out-of-repo brief citations reported unverifiable |
+| **Freeze 8** — the owner has looked at rendered L0/L1/L2 at 430/900/1280 in both themes, recorded in the Changelog | **NOT MET — human only** | `OSV1-034` GAP, `work_item_pipeline-eah` open. The contract says this is *"never a machine check"*; no check can close it |
+| **Freeze 9** — PR review of the contract by an external reviewer, not its author | **NOT MET — human only** | no row (no machine reading exists); process act |
+| **Freeze 10** — owner ratification and "FROZEN" stamp in a dated Changelog entry | **NOT MET — human only** | no row; process act |
+
+**Plainly stated: everything a machine can check is green.** Freeze 1 through 7
+are met by measurement on `7e43e73`, and the three that remain — 8, 9, 10 — are
+by the contract's own construction acts of people, not of checks. The contract is
+**READY FOR THE OWNER'S LOOK AND EXTERNAL REVIEW**.
+
+It remains **DRAFT**. Nothing in this reconcile moves it, and nothing in this
+reconcile *can*: the remaining conditions are the owner's look, an external
+reviewer's read, and the owner's stamp.
+
+---
+
+### R9. Returned to the root — needs this re-check did not decide
+
+1. **Who fixes the stale pinning prose on `OSV1-024`/`OSV1-025` and
+   `test_row_osv1_025`'s docstring (F1), and on what branch?** The correction is
+   inside `ledger/`, so it is a reconciler-shaped edit — but it is not a
+   disposition change, and this branch's diff was scoped to the report by
+   instruction. Filed as `work_item_pipeline-lvn`; a one-word ruling ("fold it
+   into the next re-check" / "its own branch") settles it.
+2. **Should the reconciler close `work_item_pipeline-umm` now that `OSV1-031`
+   is green (F2)?** It is the Freeze-5 tracking item, the row it tracks is
+   CONFORMS by measurement, and this report is the evidence — but the item was
+   filed by, and is held in the workflow of, the highway that closed it. This
+   reconciler files into the queue; it does not close other actors' items
+   without a ruling.
+3. **Does the `.btn.danger` corner (R7.3) warrant a committed arm?** Adding one
+   means opening the drawer in a Tier-B fixture, which is a kit change, not a
+   ledger change. Recorded as an honest limit rather than filed, because
+   "should the sweep open the drawer" is a conformance-design call.
+
+---
+
+### R10. Files written by this re-check
+
+| File | Change |
+|---|---|
+| `ledger/reconcile-report.md` | this section (`R1`–`R10`), the new §8 Freeze Bar reading with the seed reading kept as dated history, and a Changelog entry |
+
+**No other file was written.** `ledger/rows.yaml` is byte-unchanged because no
+disposition moved; both contracts, `docs/VISION.md` and everything under `src/`
+were never opened for writing; `LAST_RUN.json` was regenerated by the two Tier-B
+runs and then restored to its committed bytes. One item filed
+(`work_item_pipeline-lvn`); no item closed; the live service was never contacted.
+
 ## Changelog
+- **2026-09-05 — RE-CHECK, `contracts/operator-surface.v1.md` (`OSV1-###`),
+  after highway `hw-operator-surface` waves 1–4** (PRs #82 `aec9991`, #83
+  `6c2e9fa`, #84 `065da04`, #85 `7e43e73`). Standing ratchet run against `main`
+  @ `7e43e73`. **Zero disposition changes and zero drift in either direction**
+  — the tally stands at **32 CONFORMS / 3 NOT-ASSERTABLE / 1 GAP / 0
+  VIOLATION**, with **0 red Core-carrying rows** (19 Core rows: 17 CONFORMS + 2
+  NOT-ASSERTABLE), so **Freeze 5 is met by measurement**; the ten Core flips
+  that took it there are recorded with the measurement behind each (§R3). All
+  three SYNC hashes re-computed and matching (`f4098752…`, `ec4b736f…`,
+  `f5eb400c…`) — no re-review triggered, and `git diff dfd4b8f..7e43e73 --
+  contracts/ docs/VISION.md` is empty, so the four waves moved `src/` and
+  `tests/` and never the contract. Measured here, not transcribed: `pytest
+  ledger/checks -q` **60 passed**; `make ledger-mutate` **69/69, none
+  unproven**; `make test-conformance-a` **41 passed / 1 named xfail**; the
+  Tier-B kit **89 passed, twice**, with every asserted field byte-identical to
+  the committed recording (the only moving leaves are the four unasserted
+  light-theme `--watch` buckets and a session-timing `text_scored` denominator,
+  both diagnosed in §R5) — and the ledger re-run **green against the fresh
+  recording**, not only the committed one. The censuses were re-run in-session
+  too: 0 literal inline sites, 0 `<style>` blocks outside the token module, the
+  8-site exemption register set-equal to the live `COMPUTED` census, 30 routes
+  with 0 GET-reaching-mutation, 54 text pairs / 9 non-text pairs all clearing
+  their floors. **Freeze Bar reading: 1–7 MET, 8/9/10 outstanding and
+  human-only** — the contract is READY FOR THE OWNER'S LOOK AND EXTERNAL
+  REVIEW, and stays DRAFT (§8, seed reading kept as §8a). Two record defects
+  reported rather than absorbed: `OSV1-024`/`OSV1-025` still open their notes
+  with stale "PINNING ROW" prose above a CONFORMS disposition (with
+  `test_row_osv1_025`'s docstring), filed as `work_item_pipeline-lvn`; and
+  `work_item_pipeline-umm` remains open under the now-green `OSV1-031`. Three
+  needs returned to the root (§R9). `ledger/rows.yaml` byte-unchanged; no
+  contract, no `docs/VISION.md` and no `src/` byte touched; the live service was
+  never contacted.
+
 - **2026-09-04 — operator-surface DRAFT true-up #1, mandatory full re-review.**
   Owner-ratified (*"yep, do it all."*) three-part amendment: Core 4 widened to
   reach `<style>` blocks outside the token module (evidence: `webtrust.py`'s
