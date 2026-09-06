@@ -243,14 +243,18 @@ def test_calm_sweep_catches_the_reinstated_retired_palette(
     """BAD half B of Conformance 1 -- the contract's own named defect.
 
         **Bad:** the same page with the retired-palette region reinstated -- a
-        hardcoded amber outside the token set -- is reported as alarm-coloured
-        pixels on a calm page.
+        hardcoded amber outside the token set -- is reported as pixels of a hue
+        outside the token set on a calm page: `#D9A253` is far enough from
+        `--alarm` that the sweep counts it in its own bucket rather than as
+        alarm colour.
 
-    Recorded honestly: `#D9A253` is a DIFFERENT hue from `--alarm` (#f59e0b),
-    far enough away that the token sweep does not classify it as `--alarm` at
-    all. So the sweep carries a third bucket for it, and this test asserts on
-    THAT bucket -- rather than pretending a tolerance wide enough to swallow
-    the retired amber would still be a `--alarm` measurement.
+    Quote refreshed 2026-09-06 to the contract's post-RC-2 wording. The
+    measured fact behind it is unchanged and was this fixture's own finding:
+    `#D9A253` is a DIFFERENT hue from `--alarm` (#f59e0b), far enough away that
+    the token sweep does not classify it as `--alarm` at all, so the sweep
+    carries a third bucket for it and this test asserts on THAT bucket. RC-2
+    moved that reading INTO the clause rather than leaving the kit to
+    reinterpret it -- the assertion below is untouched.
     """
     page = context_factory(calm_app).new_page()
     goto(page, calm_app, calm_app.url("L0"), theme=theme)
@@ -754,19 +758,24 @@ def test_naive_replacement_loses_the_open_disclosure(
     """BAD half of Conformance 3, as the contract literally words it, RUN.
 
         **Bad:** a whole-body innerHTML replacement that recreates the region
-        loses all four; the snapshot shows offset zero, the disclosure closed,
-        the pause flag cleared, and a fresh live region with nothing announced.
+        -- the open disclosure closes and every tagged live region is replaced
+        by a fresh node (chromium preserves scroll and the pause flag by
+        itself; a reflowing replacement loses scroll too).
 
     The same arrangement and the same snapshot probe, but the swap is a naive
     `document.body.innerHTML = ...` with no capture/restore -- the surface
     minus `captureState`/`restoreState`.
 
-    Measured, and recorded rather than glossed: it does NOT lose all four.
-    On chromium 148 a synchronous whole-body replacement preserves
-    `window.scrollY` by itself, so the contract's own bad half does not
-    discriminate on the scroll half. It does lose the open disclosure, which
-    is what this test asserts; the scroll half is discriminated by
-    `test_naive_replacement_with_reflow_loses_the_scroll_offset` below.
+    Quote refreshed 2026-09-06 to the contract's post-RC-2 wording, which is
+    this fixture's own measurement folded back into the clause. The pre-RC-2
+    text said the naive replacement "loses all four"; run on chromium 148 it
+    does not -- a synchronous whole-body replacement preserves `window.scrollY`
+    and the pause flag by itself, so those two arms did not discriminate. It
+    does lose the open disclosure and every tagged live region, which is what
+    this test asserts; the scroll half is discriminated by
+    `test_naive_replacement_with_reflow_loses_the_scroll_offset` below. RC-2
+    wrote both facts into the contract instead of leaving the kit to
+    reinterpret it -- the assertions below are untouched.
     """
     page, before, arrangement = _arrange_swap_scenario(context_factory, calm_app, "L0")
     page.bring_to_front()
@@ -969,18 +978,23 @@ def perception(calm_app, context_factory, artifacts, browser_info):
 @pytest.mark.parametrize("level", LEVELS)
 @pytest.mark.parametrize("width", VIEWPORTS)
 def test_no_horizontal_overflow(perception, level, width):
-    """Conformance 4's LITERAL metric: "`scrollWidth == clientWidth`".
+    """`scrollWidth == clientWidth` -- Conformance 4's metric UNTIL 2026-09-05.
 
-    Recorded honestly, because this metric is vacuous on this surface: the
-    stylesheet sets `overflow-x: clip` on `html` and `body`, so content wider
-    than the viewport is clipped and `scrollWidth` never grows. The check
-    still runs (the clause names it, and a future stylesheet that drops the
-    clip must not silently start overflowing), and the artifact records the
-    computed `overflow-x` next to the numbers so nobody reads this pass as
-    "nothing extends past the viewport". That question is asked by
-    `test_no_element_extends_past_the_viewport` below, which clipping cannot
-    hide from -- and by the bad half, which demonstrates that a 900px element
-    at a 430px viewport does NOT move this metric at all.
+    The clause no longer words it this way. RC-2 reworded Conformance 4's good
+    half to the measured defect -- "no element's border box extends past
+    `clientWidth` at any viewport" -- which is asserted by
+    `test_no_element_extends_past_the_viewport` below. This test is kept, and
+    is now defence in depth rather than the clause's own metric.
+
+    Recorded honestly, because this metric is vacuous on this surface, and that
+    is exactly why the clause moved off it: the stylesheet sets `overflow-x:
+    clip` on `html` and `body`, so content wider than the viewport is clipped
+    and `scrollWidth` never grows. It still runs (a future stylesheet that
+    drops the clip must not silently start overflowing), and the artifact
+    records the computed `overflow-x` next to the numbers so nobody reads this
+    pass as "nothing extends past the viewport" -- and the bad half
+    demonstrates that a 900px element at a 430px viewport does NOT move this
+    metric at all.
     """
     m = perception(level, width, "dark")["measurement"]["overflow"]
     assert m["scroll_width"] == m["client_width"], (
@@ -995,14 +1009,19 @@ def test_no_horizontal_overflow(perception, level, width):
 @pytest.mark.parametrize("level", LEVELS)
 @pytest.mark.parametrize("width", VIEWPORTS)
 def test_no_element_extends_past_the_viewport(perception, level, width):
-    """The measurement `overflow-x: clip` cannot hide.
+    """GOOD half of Conformance 4, overflow arm -- the clause's own metric
+    since the 2026-09-05 RC-2 true-up.
 
-    Conformance 4 asks whether the page fits its viewport. `scrollWidth`
-    answers "is there anything to scroll to", which a clip suppresses; an
-    element's own border box running past `clientWidth` answers the question
-    actually asked. Two horizontal-overflow defects are already recorded
-    in-code as previously observed at <=480px and 415px (`webtheme.py:1838`,
-    `:2624-2630`) -- this is the check that sees them.
+        **Good:** no element's border box extends past `clientWidth` at any
+        viewport [...]
+
+    The measurement `overflow-x: clip` cannot hide. Conformance 4 asks whether
+    the page fits its viewport. `scrollWidth` answers "is there anything to
+    scroll to", which a clip suppresses; an element's own border box running
+    past `clientWidth` answers the question actually asked -- which is why RC-2
+    reworded the clause onto it. Two horizontal-overflow defects are already
+    recorded in-code as previously observed at <=480px and 415px
+    (`webtheme.py:1838`, `:2624-2630`) -- this is the check that sees them.
     """
     m = perception(level, width, "dark")["measurement"]["overflow"]
     assert m["elements_beyond_viewport"] == 0, (
@@ -1157,17 +1176,19 @@ def test_overflow_check_catches_an_injected_wide_element(
     calm_app: AppServer, context_factory, artifacts, browser_info
 ):
     """BAD half of Conformance 4, overflow arm -- and the reason the clause's
-    own metric had to be supplemented.
+    metric moved.
 
-        **Bad:** a fixture with a fixed-width element wider than 430px emits
-        `scrollWidth > clientWidth`.
+        **Bad:** in a fixture with a fixed-width element wider than 430px,
+        that element extends past `clientWidth` [...]
 
-    Run, and the result recorded as measured: a 900px fixed-width element at a
-    430px viewport does NOT move `scrollWidth` on this surface, because
-    `overflow-x: clip` swallows it. The element-level metric catches it. The
-    assertion therefore lands on the metric that discriminates, and the
-    artifact carries BOTH readings so the clause's literal wording is shown to
-    be non-discriminating here rather than quietly reinterpreted.
+    Quote refreshed 2026-09-06 to the contract's post-RC-2 wording. The
+    pre-RC-2 text asked for `scrollWidth > clientWidth`; run, and recorded as
+    measured, a 900px fixed-width element at a 430px viewport does NOT move
+    `scrollWidth` on this surface, because `overflow-x: clip` swallows it. The
+    element-level metric catches it, so the assertion lands there -- and the
+    artifact carries BOTH readings. RC-2 reworded the clause onto the metric
+    that discriminates rather than leaving the kit to reinterpret the literal
+    one; the assertion below is untouched.
     """
     page = context_factory(calm_app, width=430, height=900).new_page()
     goto(page, calm_app, calm_app.url("L0"), theme="dark")

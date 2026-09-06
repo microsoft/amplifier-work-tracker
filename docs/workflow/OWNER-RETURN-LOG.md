@@ -21,3 +21,5 @@ One entry per return of the intent steward (clock-stamped) or per unprompted bri
 - This PR: v2 candidate (6 changes, evidence = Freeze 9 review), `lvn` prose repair (OSV1-024/025 + `test_row_osv1_025` docstring), `docs/workflow/{PLAN,OWNER-RETURN-LOG}.md`.
 - Queue: `zhv` (Core 10 residual, ready), `1y2` (external), `lvn` (held → resolving on merge).
 </details>
+
+## 2026-09-06 13:30 - they came back with the word: "yes" (priority for zhv)
