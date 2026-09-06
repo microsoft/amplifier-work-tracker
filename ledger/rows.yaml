@@ -364,7 +364,7 @@
     ratified Call 2 (option C); work_item_pipeline-qjn.
 
 - id: CCV1-009
-  title: a post-reclaim close is not fenced -- the fence is gated on status held
+  title: a post-reclaim close IS fenced -- the fence is keyed on custody identity, not status
   contract:
     file: contracts/custody-coordination.v1.md
     clause: Core 7
@@ -443,6 +443,22 @@
     change across five rows plus the mutation harness, and a
     note-correction lane is the wrong place to make it. It stays a named
     follow-up, now with the fixtures measured green rather than assumed.
+    TITLE CORRECTED 2026-09-06 (Freeze-Bar pre-lock re-check, the one drift
+    that re-check found in either direction). The title read, verbatim,
+    "a post-reclaim close is not fenced -- the fence is gated on status
+    held" -- the VIOLATION this row was SEEDED with on 2026-09-01, left
+    standing after `work_item_pipeline-dn4` closed it and the disposition
+    flipped to CONFORMS. So the row's own one-line summary asserted the
+    exact opposite of its disposition, its probe and its measured
+    fixtures: a reader skimming titles would have read the family as
+    carrying a red row it does not carry. Nothing machine-read moved --
+    no probe, no tripwire and no mutation reads `title` (checked: zero
+    hits for `title` in `ledger/checks/`), and the ledger was green with
+    the stale title, which is exactly why nothing caught it. The
+    historical adjudication in `reconcile-report.md` that QUOTES the old
+    title (the "PRODUCT defect ... not fixed here" paragraph) is
+    deliberately left as written: it is a dated record of what was true
+    then, not a claim about now.
 
 - id: CCV1-010
   title: a session that lost custody can discover it and recover in-process
