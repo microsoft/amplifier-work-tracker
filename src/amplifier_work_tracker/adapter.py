@@ -262,6 +262,19 @@ def suggest_project_name(name: str) -> str | None:
     return repaired
 
 
+# Why a DOTTED name in particular is refused rather than merely discouraged:
+# `bd init` accepts it, reports successful creation, and then fails every
+# later command against the database it just claimed to make. Appended by the
+# two creating paths (`Workspace.create`, `Workspace.rename`) and ONLY when
+# the offending name actually contains a dot -- a caller who typed
+# `my-project` is not helped by a paragraph about dots, and a refusal that
+# ends on an irrelevant sentence buries the suggestion that precedes it.
+_DOTTED_NAME_NOTE = (
+    " Dots are rejected deliberately -- they produce a database that reports "
+    "successful creation and then fails every later command."
+)
+
+
 def invalid_project_name_error(name: str, *, label: str = "project name") -> str:
     """The refusal message for a name that fails `NAME_RE`: the offending
     name, the rule as a sentence (`NAME_RULE`), and -- when one exists -- the
@@ -5171,9 +5184,7 @@ class Workspace:
         """
         if not NAME_RE.match(name):
             raise BeadsError(
-                invalid_project_name_error(name)
-                + " Dots are rejected deliberately -- they produce a database that "
-                "reports successful creation and then fails every later command."
+                invalid_project_name_error(name) + (_DOTTED_NAME_NOTE if "." in name else "")
             )
         d = self.path(name)
         beads_dir = d / ".beads"
@@ -5427,8 +5438,7 @@ class Workspace:
         if not NAME_RE.match(new):
             raise BeadsError(
                 invalid_project_name_error(new, label="new project name")
-                + " Dots and hyphens are rejected deliberately -- they produce a database "
-                "that reports success and then fails every later command."
+                + (_DOTTED_NAME_NOTE if "." in new else "")
             )
         if old == new:
             raise BeadsError(f"cannot rename project {old!r} to itself")

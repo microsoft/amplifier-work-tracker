@@ -511,6 +511,30 @@ def test_an_already_valid_name_gets_no_suggestion():
     assert A.suggest_project_name("demo_app_2") is None
 
 
+def test_the_dotted_name_note_appears_only_for_a_dotted_name(tmp_path):
+    """`create`'s dot-specific warning is real (a dotted name makes `bd
+    init` report success and then fail every later command), but it is only
+    true of DOTTED names. Appending it to every refusal ends a dash-name
+    message on an irrelevant paragraph about dots -- burying the suggestion
+    that precedes it, which is the one part the caller needs."""
+    ws = A.Workspace(tmp_path)
+
+    try:
+        ws.create("bad.name")
+        raise AssertionError("expected BeadsError for a dotted project name")
+    except A.BeadsError as e:
+        assert "Dots are rejected deliberately" in str(e)
+
+    try:
+        ws.create("my-project")
+        raise AssertionError("expected BeadsError for a dashed project name")
+    except A.BeadsError as e:
+        assert "Dots are rejected" not in str(e), f"dot warning on a dash name: {e}"
+        assert str(e).rstrip().endswith("Did you mean 'my_project'?"), (
+            f"the suggestion must be the last thing the caller reads: {e}"
+        )
+
+
 def test_a_dash_name_is_refused_not_silently_normalized(tmp_path):
     """The rejected alternative, asserted: `create` must NOT quietly rewrite
     `my-project` to `my_project`. A silent rewrite leaves two spellings of
