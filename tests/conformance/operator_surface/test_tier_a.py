@@ -21,12 +21,10 @@ returning one string per violation. Two tests wrap each one:
 
 ## `xfail(strict=True)` is a ledger row, never a skip
 
-Two clauses do not hold on today's code, and each has an open `ledger/` row
-saying so. Their good halves are `pytest.mark.xfail(strict=True)` with the row
-id in the reason -- never `skip`, never deleted:
+One clause does not hold on today's code, and it has an open `ledger/` row
+saying so. Its good half is `pytest.mark.xfail(strict=True)` with the row id
+in the reason -- never `skip`, never deleted:
 
-    calm.keeps_slot           OSV1-012  an empty widget keeps its slot but
-                                        says nothing
     antigoals.enforced        OSV1-015  `_oldest_ready_item` calls `bd.list`
                                         with no limit (the row's own recorded
                                         residual -- see the marker's reason)
@@ -822,12 +820,6 @@ def test_calm_keeps_slot_hero_scale_is_read_from_the_stylesheet() -> None:
     assert hero_scale_classes(), "no class in the stylesheet reaches hero scale"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="OSV1-012 (Core 8): `render_attention_queue` emits a bare "
-    "`<div class='attn-list'></div>` with zero rows -- the slot survives, the "
-    "sentence does not. Flip the row and delete this marker in the same change.",
-)
 def test_calm_keeps_slot(alarm_dataset, empty_dataset) -> None:
     """Conformance 7's GOOD half: L0 empty vs populated.
 
@@ -844,13 +836,6 @@ def test_calm_keeps_slot(alarm_dataset, empty_dataset) -> None:
     assert not problems, "Core 8 (`calm.keeps_slot`) on L0:\n  " + "\n  ".join(problems)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="OSV1-012 (Core 8): on L1 the same defect appears twice more -- "
-    "`render_agents_panel` emits a bare `<div class='agents-list'></div>` with "
-    "zero rows, and the status-breakdown donut renders a legend of zeroes with no "
-    "sentence. Flip the row and delete this marker in the same change.",
-)
 def test_calm_keeps_slot_l1(alarm_dataset, empty_dataset) -> None:
     """Conformance 7 names L0 AND L1, so L1 is asserted separately rather than
     folded into the L0 half -- fixing one and not the other is progress this

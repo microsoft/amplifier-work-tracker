@@ -44,6 +44,7 @@ from amplifier_work_tracker.webapp import (
     _item_facts_kv_html,
     _item_held_chip_html,
     _item_time_kv_html,
+    _live_region_html,
     _not_found_body,
     _observatory_help_and_theme_html,
     _observatory_icon_sprite_html,
@@ -141,7 +142,15 @@ def _status_tabs_html(name: str, status: str, counts: dict[str, int]) -> str:
     for key, label in _STATUS_TABS:
         active = " is-active" if key == status else ""
         blocked_cls = " tab-blocked" if key == "blocked" else ""
-        dot = '<span class="dot"></span> ' if key == "blocked" else ""
+        # The Blocked tab's dot keeps its SLOT at every count (Core 8) and
+        # its hue only while there is something blocked (Core 2 -- OSV1-003:
+        # a calm L1 painted 16 --blocked pixels here with nothing blocked).
+        # The class rides the DOT, not the tab, so `.status-tab tab-blocked
+        # is-active` stays exactly the string the tab tests already pin.
+        dot = ""
+        if key == "blocked":
+            zero_cls = " is-zero" if not counts.get(key, 0) else ""
+            dot = f'<span class="dot{zero_cls}"></span> '
         title = (
             ' title="Newly filed, not yet triaged into ready or deferred"'
             if key == "intake"
@@ -568,6 +577,11 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
             if not shown
             else ""
         )
+        # Core 6's announcement half. Composed OUTSIDE the body f-string
+        # below: `requires-python = ">=3.11"`, and 3.11 forbids a nested
+        # same-quoted f-string inside a `{...}` expression part -- the same
+        # real constraint `_EM_DASH` above exists for.
+        announce_html = _live_region_html(f"{name} status: {verdict['headline']}")
         tabs_html = _status_tabs_html(name, status, _status_tab_counts(summary))
         search_value = f' value="{_esc(q)}"' if q else ""
         manage_html = f"""
@@ -614,6 +628,7 @@ def register(app: FastAPI, workspace: A.Workspace) -> None:
         body = f"""
         {_observatory_icon_sprite_html()}
         <div class="container">
+        {announce_html}
         {_flash(request)}
         <div class="breadcrumb">{crumb}</div>
         <div class="section">{hero_html}</div>

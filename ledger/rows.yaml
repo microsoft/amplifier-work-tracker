@@ -1037,21 +1037,99 @@
     the calm-pixel sweep (OSV1-003).
 
 - id: OSV1-003
-  title: a calm L1 paints 97 --blocked pixels with nothing blocked
+  title: a calm L0 and L1 both paint zero --alarm and zero --blocked pixels, in both themes
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 2
     quote: |
       On a calm screen — nothing held past TTL, nothing blocked — zero `--alarm` and zero
       `--blocked` pixels are painted; that absence is what makes the alarm pop.
-  disposition: VIOLATION
-  work: work_item_pipeline-qgo
+  disposition: CONFORMS
+  work: work_item_pipeline-a1o
   assertion:
     kind: probe
     ref: test_row_osv1_003
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED 2026-09-05, VIOLATION -> CONFORMS (VIOLATION-MOVEMENT: the pin went
+    red because the tree moved TOWARD the clause), work_item_pipeline-a1o. This
+    is no longer a pinning row: the probe asserts the INVARIANT now, and the
+    flip direction is REGRESSION.
+
+    THE MEASUREMENT THAT FLIPPED IT, same pinned chromium 148.0.7778.0 /
+    playwright 1.60.0, same isolated calm fixture, same full-page sweep against
+    the LIVE token values, re-recorded on this tree and read back by this row's
+    probe from `tests/conformance/operator_surface/browser/LAST_RUN.json`:
+      L0 dark   0 --alarm, 0 --blocked  across 2 813 440 px  (was 0 / 0)
+      L0 light  0 --alarm, 0 --blocked  across 2 813 440 px  (was 0 / 0)
+      L1 dark   0 --alarm, 0 --blocked  across 3 792 640 px  (was 0 / 97)
+      L1 light  0 --alarm, 0 --blocked  across 3 792 640 px  (was 0 / 97)
+    The Tier-B `xfail(strict=True)` this row owned on `calm.zero_alarm_pixels`
+    at L1 XPASSed on that run and was deleted in the same change, per Freeze 3's
+    own instruction.
+
+    WHERE THE 97 PIXELS ACTUALLY WERE, located pixel-by-pixel before anything
+    was changed rather than inferred from the stylesheet -- the sweep's own
+    matching coordinates were clustered and reconciled against every element's
+    computed style and page-space rect on a calm L1 in dark:
+      81 px  `span.sw.mix-blocked`, the status-donut legend's swatch for the
+             ZERO-count "Blocked" bucket, a 10x10 3px-radius chip at (275, 621)
+      16 px  `span.dot` inside the Blocked status TAB, a 6px circle at (316, 2167)
+      97 px  total, and the two clusters account for it exactly.
+
+    THE THIRD PAINTER THIS ROW NAMED PAINTED NOTHING, recorded because a row
+    that keeps repeating an unverified attribution is the drift `ledger/` exists
+    to catch. The prior note (and the deleted xfail reason) named
+    `button.btn.danger`'s border as the third source. It is not: all three
+    `.btn.danger` controls live inside a CLOSED `<details class="actions-drawer">`,
+    where chromium lays them out (`getBoundingClientRect` reports 216x44 at
+    y=3356 and y=3368) but never paints them -- the full-page screenshot is
+    2 963 px tall and they sit outside it entirely. Their contribution to the 97
+    was ZERO. The attribution was plausible from the stylesheet and wrong in the
+    render, which is the whole reason this check is a pixel sweep.
+
+    THEY WERE FIXED ANYWAY, and the reason is recorded rather than assumed: a
+    conformance that holds only while a drawer happens to be shut is an accident,
+    not a property. `button.danger`'s rest border moved from `--blocked` to the
+    neutral `--ink-quiet`, with the reserved hue returning on
+    hover/focus-visible/active. Verified by re-running the sweep with every
+    `<details>` on the page forced open: 0 --alarm and 0 --blocked in BOTH
+    themes, drawer open or closed.
+
+    WHAT THE FIX IS, in the clause's own terms. Core 2 reserves `--alarm` and
+    `--blocked` for status that is actually present, and each of the two real
+    painters was borrowing the hue with no status behind it -- a "Blocked 0"
+    legend swatch and a lamp on a tab with nothing to point at. Both now keep
+    their SLOT and drop their HUE at zero (`is-zero` -> `--ink-quiet`), which is
+    the existing "alarm lamp present and switched off" convention this surface
+    already uses at `.kpi-card.is-blocked.is-zero` and `.sw.fill-empty`. Core 8
+    is unaffected: the legend row still renders its name, its `0` and its
+    `0.0%`, and the tab still renders the word "Blocked" and its count. Core 3
+    is unaffected for the same reason -- neither was ever colour-only. Core 4 is
+    unaffected: three CSS rules and two class names, zero literals.
+
+    THE SWEEP STILL DISCRIMINATES -- the same three arms, re-run on the fixed
+    tree, every number byte-identical to the pre-fix recording:
+      injected `var(--alarm)` chip on a calm L0   10 531 --alarm px
+      genuinely-alarming fixture (no injection)      264 --blocked px
+      reinstated retired `#D9A253` palette region 16 681 retired_amber px
+    A fix that had merely blinded the sweep would have moved all three. The
+    alarming L1 render also still paints the reserved hue -- `alarm.reserved_hue`
+    on `alarm/L1/dark` reads 2 669 --alarm and 734 --blocked, unchanged, because
+    the legend swatch keeps its hue the moment the count is non-zero. That is
+    the discrimination the fix had to preserve and did.
+
+    NO OTHER ROW'S RECORDED NUMBERS MOVED, checked rather than hoped: on the
+    re-recording, `perception.floors` reads L1 `non_text_below_floor` 23 of 73
+    and `text_below_floor` 3 dark / 4 light, and L0 16 of 79 / 26 of 34 controls
+    -- every figure OSV1-010 pins, unchanged, including across the danger
+    border's move to `--ink-quiet` (which clears 3:1 where `--rule-hi` would not
+    have). The only fields that moved at all are the LIGHT-theme `--watch`
+    counts, which Core 2 does not score and no row reads, and which this row
+    already records as jittering by up to ~2% run to run.
+
+    HISTORY BELOW THIS LINE is the record as it stood while the row was red. It
+    is left rather than deleted: the measurement that made it red is what makes
+    the flip meaningful.
 
     RE-DERIVED 2026-09-05, GAP -> VIOLATION. The kit the previous disposition
     was waiting on now exists and has run
@@ -1135,6 +1213,37 @@
     migration introduced through a CSS-specificity trap (see OSV1-005's own
     notes) -- and reads 1 161 again after the repair, byte-identical to the
     pre-lane value.
+
+    RE-RECORDED 2026-09-05 AT THE WAVE-4 UNION, once, on the merged tree, same
+    pinned chromium 148.0.7778.0 / playwright 1.60.0 -- three lanes had each
+    re-recorded `LAST_RUN.json` against a tree carrying only their own fix, so
+    all three recordings were discarded and this one was made from scratch.
+    EVERY VERDICT FIELD THIS ROW ASSERTS IS UNCHANGED and still measured, not
+    inherited:
+      L0 dark   0 --alarm, 0 --blocked  across 3 002 880 px
+      L0 light  0 --alarm, 0 --blocked  across 3 002 880 px
+      L1 dark   0 --alarm, 0 --blocked  across 3 877 120 px
+      L1 light  0 --alarm, 0 --blocked  across 3 877 120 px
+    THE SWEPT AREAS MOVED, and the paragraphs above are superseded on that one
+    number only: L0 2 813 440 -> 3 002 880 px, L1 3 792 640 -> 3 877 120 px.
+    Both pages simply got TALLER on the union -- the empty-states lane added a
+    calm sentence to every empty widget (Core 8) and the rendered-floors lane
+    raised every control to a 44px target box (Core 7). A swept area is a
+    denominator, not a verdict; the numerators are still 0 and 0.
+    THE THREE DISCRIMINATION ARMS STILL FIRE, byte-identical to every previous
+    recording -- 10 531 --alarm px for the injected chip, 264 --blocked for the
+    genuinely-alarming fixture, 16 681 retired_amber for the reinstated retired
+    palette. A larger canvas with a still-quiet result means something only if
+    the sweep can still find hue when hue is there, and it can.
+    ONE EARLIER CLAIM IN THIS ROW IS NOW STALE, corrected here rather than
+    edited out of the paragraph that made it: the wave-3 note above says "NO
+    OTHER ROW'S RECORDED NUMBERS MOVED ... `perception.floors` reads L1
+    `non_text_below_floor` 23 of 73 ... and L0 16 of 79 / 26 of 34 controls --
+    every figure OSV1-010 pins, unchanged". That was true on the wave-3 tree.
+    On this union those figures are ALL ZERO (0 of 73, 0 of 79, 0 of 34),
+    because the rendered-floors lane closed OSV1-010 in this wave. The
+    statement was accurate when it was written and is superseded by
+    measurement, which is the only way a recorded number changes here.
 
     HONEST LIMIT ON REPRODUCIBILITY, recorded rather than smoothed: the run
     was repeated on this tree, and 290 of the 294 recorded fields are
@@ -1360,13 +1469,57 @@
       webapp.py:1127    flex:{n} 1 0              state-bar segment ratio
       webapp.py:1823    width:{today_w}px         throughput bar, today
       webapp.py:1826    width:{prior_w}px         throughput bar, prior 6 d
-      webtheme.py:4197  {style}                   axis ruler numeral offset
-      webtheme.py:4216  left:{_grad_x(f):.1f}px   graduation tick offset
-      webtheme.py:4223  width:{px}px              age bar length
-      widgets.py:837    width:{pct}%              status-mix segment (hatched)
-      widgets.py:839    width:{pct}%              status-mix segment
+      webtheme.py:4379  {style}                   axis ruler numeral offset
+      webtheme.py:4398  left:{_grad_x(f):.1f}px   graduation tick offset
+      webtheme.py:4405  width:{px}px              age bar length
+      widgets.py:866    width:{pct}%              status-mix segment (hatched)
+      widgets.py:868    width:{pct}%              status-mix segment
     Every one is "a bar width, a chart offset" -- the clause's own gloss of what
     this exemption is FOR.
+
+    LINE NUMBERS ONLY, 2026-09-05 (work_item_pipeline-aad): the two widgets.py
+    entries moved 837/839 -> 866/868. The SITES did not change -- same two
+    declarations, same file, same purpose, register still 8. They shifted
+    because that lane added `widgets._empty_note` above them (Core 8). Recorded
+    rather than silently corrected, because this register is pinned by
+    `file:line` and a line-shift is indistinguishable from a new site unless
+    someone says which it was.
+    THE THREE WEBTHEME PINS MOVED +22 ON 2026-09-05 (work_item_pipeline-a1o,
+    from 4197/4216/4223), and nothing else about this row did. OSV1-003's fix
+    inserted three commented CSS rules higher in the same file; the SITES, the
+    expressions and the count are identical, and the register neither grew nor
+    shrank. Recorded rather than quietly re-numbered, because "the register did
+    not change" and "the register changed by three line numbers" look the same
+    in a diff and mean different things.
+
+    RE-ANCHORED 2026-09-05 (work_item_pipeline-96f): the three webtheme.py
+    sites moved +82 lines each (4197/4216/4223 -> 4279/4298/4305) when the
+    Core 7 rendered-floor fix added token-block comments above them. The
+    register did not GROW and no site changed -- a line-keyed register moves
+    whenever anything above it does, which is the cost of keying it that way.
+
+    RE-MEASURED 2026-09-05 AT THE WAVE-4 UNION (orchestrator), and this is the
+    pin that stands: the three webtheme.py sites read 4379 / 4398 / 4405, +182
+    lines from main @065da04's 4197 / 4216 / 4223. Neither lane's own number
+    survives contact with the union -- calm-pixels measured 4219/4238/4245 on a
+    tree with only its own +22, swap-survives measured 4275/4294/4301 with only
+    its +78, rendered-floors measured 4279/4298/4305 with only its +82 -- so the
+    register was re-derived by RUNNING the census on the merged tree rather than
+    by adopting any of the three. THE ARITHMETIC RECONCILES: 22 + 78 + 82 = 182,
+    which is exactly the observed shift, so all three insertions are accounted
+    for and none of the three sites is new. WHICH ENTRIES MOVED AND WHY:
+      webtheme.py  4197 -> 4379  (+182)  axis ruler numeral offset
+      webtheme.py  4216 -> 4398  (+182)  graduation tick offset
+      webtheme.py  4223 -> 4405  (+182)  age bar length
+        three lanes each inserted CSS ABOVE all three: calm-pixels' three
+        commented `--blocked`/`--watch` rules (+22), swap-survives' persistent
+        live-region rule and its comment block (+78), rendered-floors' light
+        token blocks, glass fills and control-sizing rules (+82).
+      webapp.py    1127 / 1823 / 1826    UNMOVED -- no lane edited above them.
+      widgets.py   866 / 868             UNMOVED this wave; they had already
+        moved 837/839 -> 866/868 in the empty-states merge recorded above.
+    The register neither GREW nor SHRANK: 8 sites before, 8 after, the same
+    eight expressions. The census was re-run, not reasoned about.
 
     THE ROOT'S TRIAGE RULING WAS APPLIED, and it is what removed 15 sites. Two
     kinds were on the register that should not have been:
@@ -1438,7 +1591,7 @@
          kit would close the residue.
 
 - id: OSV1-008
-  title: one of Core 6's four named survivals holds; the other three do not
+  title: all four of Core 6's named survivals hold, on L0 and on L1
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 6
@@ -1446,78 +1599,95 @@
       Scroll position, every open `<details>`, and the pause control's state survive that swap,
       and an assistive-technology announcement pending at the moment of the swap is not silently
       destroyed by it.
-  disposition: VIOLATION
-  work: work_item_pipeline-qgo
+  disposition: CONFORMS
+  work: work_item_pipeline-v3m
   assertion:
     kind: probe
     ref: test_row_osv1_008
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    RE-DERIVED 2026-09-05, VIOLATION -> CONFORMS (work_item_pipeline-v3m). The
+    pin broke the right way: the probe froze the wrong shape (one survival of
+    four), the fix landed, and the frozen assertions went red. Retargeted in
+    the same change to assert the CONFORMING shape, still per survival.
 
-    RE-DERIVED 2026-09-05, GAP -> VIOLATION. At seed this row recorded source
-    shape as HYPOTHESES for a browser run to confirm or refute. The run has
-    happened.
-
-    MEASURED IN A REAL BROWSER 2026-09-05 -- chromium 148.0.7778.0 via the
+    RE-MEASURED IN A REAL BROWSER 2026-09-05 -- chromium 148.0.7778.0 via the
     pinned playwright 1.60.0, against a live app on an ephemeral loopback port
-    over the isolated dolt fixture. Every number below is re-read by this
-    row's probe from `tests/conformance/operator_surface/browser/LAST_RUN.json`,
-    the kit's committed run summary; the probe never trusts the browser tier's
-    own pass/fail (Freeze 3 / Phase-1 ruling 6).
+    over the isolated dolt fixture, RE-RECORDED on this tree and re-run twice
+    with every asserted field byte-identical. Every number is re-read by this
+    row's probe from `tests/conformance/operator_surface/browser/LAST_RUN.json`;
+    the probe never trusts the browser tier's own pass/fail (Freeze 3 /
+    Phase-1 ruling 6).
 
     THE RESULT, L0 and L1, scrolled 400px, one `<details>` opened, the poll
-    paused, the surface's own poller forced through one tick:
-      scroll offset      PRESERVED      (`restoreState`'s `window.scrollTo`)
-      open `<details>`   LOST           hypothesis REFUTED in practice
-      pause control      LOST           hypothesis CONFIRMED
-      announcement       NOTHING TO LOSE  hypothesis CONFIRMED, and worse
-    One of four holds.
+    paused, an announcement pending, the surface's own poller forced through
+    one tick -- BEFORE -> AFTER:
+      scroll offset      PRESERVED   -> PRESERVED    (unchanged; it always held)
+      open `<details>`   LOST        -> PRESERVED
+      pause control      LOST        -> PRESERVED
+      announcement       DESTROYED   -> PRESERVED    (L0 0-of-1 survivors ->
+                         1-of-2; L1 had no region at all -> 1-of-1)
+    Four of four, both levels.
 
-    THE DISCLOSURE HALF IS WORSE THAN THE SEED THOUGHT. The seed recorded that
-    `restoreState` restores open `details[id]`, and read that as an
-    implementation being present. Measured in the render, the mechanism has
-    ZERO TARGETS: no `<details>` on L0, L1 or L2 carries an id at all (help
-    popover, activity feed, actions drawer -- all id-less; `details_with_id`
-    is 0 in the run summary). An open disclosure therefore closes on every
-    20-second poll.
+    THE DISCLOSURE HALF. `restoreState` re-opened only `details[id]`, and NO
+    `<details>` on this surface carries an id (help popover, activity feed,
+    actions drawer -- all id-less; `details_with_id` is still 0), so the
+    mechanism had ZERO TARGETS and an open disclosure closed on every
+    20-second poll. It now records open disclosures by ORDINAL + class
+    signature as well as by id -- the same key this kit's own snapshot uses,
+    chosen for the same measured reason. The id path is kept because it
+    survives a RE-ORDER, which the ordinal key cannot; `details_with_id` stays
+    pinned at 0 so the day the markup gains ids, this row is re-derived rather
+    than silently switching mechanisms.
 
-    THE PAUSE CONTROL, exactly as the seed predicted: `window.__wtRefreshPaused`
-    survives (it lives on `window`, which a body swap never replaces) but the
-    button is re-rendered by the server at `aria-pressed="false"`
-    (webapp.py:3549) and nothing re-applies the flag. A paused page shows
-    itself as running. The run records both halves separately
-    (`pause_flag_preserved: true`, `pause_control_preserved: false`) because
-    an operator reads the control, not the flag.
+    THE PAUSE CONTROL. `window.__wtRefreshPaused` always survived (it lives on
+    `window`, which a body swap never replaces) but the button came back
+    server-rendered at `aria-pressed="false"` every tick and nothing
+    re-applied the flag -- a paused page showed itself as running.
+    `restorePauseControl` now re-synchronises the control to the flag after
+    every swap, delegating to the page's own `wtToggleRefresh` where it exists
+    so the button's label, icon and title vocabulary stays declared in exactly
+    one place. The run records both halves separately
+    (`pause_flag_preserved` and `pause_control_preserved`, both true now)
+    because an operator reads the control, not the flag.
 
-    THE ANNOUNCEMENT HALF, RE-DERIVED 2026-09-05 on the merged tree -- it now
-    fails one step LATER on L0, and the same step earlier on L1:
-      L0  `live_regions_before` 0 -> 1. The rebuilt verdict hero renders a
-          `role="status"` region (widgets.py:1379, OSV1-001's wave-1 work),
-          so there IS an announcement now -- and the body-swap destroys it:
-          `marked_live_regions_after` is 0 of 1. The tagged node does not
-          survive; the page comes back with a fresh, empty region.
-      L1  `live_regions_before` is still 0 -- no live region renders at all,
-          so there remains nothing for the swap to destroy and nothing for the
-          operator to hear.
-    `aria-live` still has zero occurrences in `src/`; the L0 region is a
-    `role="status"`, and `role="alert"` (webapp.py:1211, :4213) still does not
-    render on a calm page. The row's probe pins both levels separately, and
-    pins the SURVIVAL at 0, so a fix that carries the region across the swap
-    goes red here.
+    THE ANNOUNCEMENT HALF, and why the fix is a NODE and not a message. A
+    whole-body `innerHTML` replacement destroys every live region inside it
+    and the server renders fresh, empty ones -- measured on the verdict hero's
+    own `role="status"`: 0 of the 1 tagged node survived. L1 failed one step
+    earlier still: it rendered NO live region at all. The fix adds exactly one
+    persistent region per polling level, `#wt-live` (webapp.py's
+    `_live_region_html`, id shared with the poller via `T.LIVE_REGION_ID`),
+    which `auto_refresh_js` DETACHES before the swap and re-attaches in place
+    of the server's fresh copy afterwards. Its text is updated only when the
+    fresh render actually says something different, so a screen reader hears a
+    real state change rather than the same sentence every 20 seconds. The hero's
+    own `role="status"` is still destroyed and rebuilt -- that is why
+    `live_regions_before` is 2 on L0 and `marked_live_regions_after` is 1, not
+    2, and why the row pins the count of SURVIVORS rather than of regions.
+    `aria-live` went from zero occurrences in `src/` to exactly one declaration
+    site, pinned.
 
-    WHAT THIS ROW SAID BEFORE, left standing because it was true when it was
-    measured: "THE ANNOUNCEMENT HALF HAS NOTHING TO PRESERVE: live_regions_before
-    is 0 ... the clause fails one step earlier than the swap." That reading was
-    taken before the hero rebuild landed.
+    NODE IDENTITY IS THE READING, NOT TEXT. The kit records both
+    (`marked_live_regions_after` and `announcement_preserved`) because text
+    alone does not discriminate: the naive-replacement bad half destroys the
+    region and the server re-renders the SAME sentence into a brand-new one,
+    so a check comparing only text would call that survival. The bad half is
+    RUN and asserted to lose node identity (0 survivors) while its text comes
+    back -- which is exactly the trap named.
 
     THE KIT DOES NOT MEASURE THIS VACUOUSLY. A forced tick whose fetch quietly
     fails leaves the page untouched, and an untouched page "preserves"
     everything; the kit plants a sentinel node before the swap and refuses to
-    measure until it is gone. That guard caught exactly this: chromium marks a
-    page that is not the front page of its window as hidden, the poller's
-    first guard is `document.hidden`, and the first version of these numbers
-    was taken from a page nothing had swapped.
+    measure until it is gone. That guard caught exactly this once already:
+    chromium marks a page that is not the front page of its window as hidden,
+    the poller's first guard is `document.hidden`, and the first version of
+    these numbers was taken from a page nothing had swapped.
+
+    WHAT THIS ROW SAID BEFORE, left standing because it was true when it was
+    measured: "One of four holds ... THE DISCLOSURE HALF IS WORSE THAN THE SEED
+    THOUGHT ... the mechanism has ZERO TARGETS ... THE ANNOUNCEMENT HALF ...
+    `marked_live_regions_after` is 0 of 1 ... L1 `live_regions_before` is still
+    0." Those readings are superseded by the run above, not deleted.
 - id: OSV1-009
   title: every declared token pair clears its floor -- 4.5:1 text, 3:1 non-text, both themes
   contract:
@@ -1595,7 +1765,7 @@
     necessary, never sufficient.
 
 - id: OSV1-010
-  title: rendered contrast, target boxes and a motion trace -- measured, three of four floors fail
+  title: rendered contrast, target boxes and a motion trace -- measured, all four floors met
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 7
@@ -1603,14 +1773,152 @@
       plus a browser run emitting computed contrast ratios, target bounding boxes, and a
       motion-preference trace at 430, 900, and 1280px in both themes; the orchestrator
       re-checks those numbers against the floors.
-  disposition: VIOLATION
-  work: work_item_pipeline-qgo
+  disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_osv1_010
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED 2026-09-05, VIOLATION -> CONFORMS (work_item_pipeline-96f). Was a
+    PINNING row; the probe now asserts the floors are MET, in the regression
+    direction, and the four Tier-B `xfail(strict)` markers that named this row
+    are gone from the kit. Every number below is re-read by this row's probe
+    from `tests/conformance/operator_surface/browser/LAST_RUN.json`, the kit's
+    committed run summary -- never from the browser tier's own pass/fail
+    (Freeze 3 / Phase-1 ruling 6), and never transcribed.
+
+    MEASURED IN A REAL BROWSER 2026-09-05 -- chromium 148.0.7778.0 via the
+    pinned playwright 1.60.0, against a live app on an ephemeral loopback port
+    over the isolated dolt fixture; 18 renders (L0/L1/L2 x 430/900/1280 x
+    dark/light), recorded TWICE with byte-identical values on every field this
+    row asserts.
+
+    ALL FOUR FLOORS, BEFORE -> AFTER:
+
+      TEXT CONTRAST (floor 4.5:1) -- 7 failing nodes -> 0, all 18 renders.
+        L0   0 of 136 -> 0 of 136   (was already clean; unmoved)
+        L1   3 of 183 dark, 4 of 183 light -> 0 / 0
+        L2   1 of 58 dark, 2 of 58 light   -> 0 / 0
+      Worst pair moved 3.13:1 -> 4.75:1. Fixed at the TOKEN, in all four
+      declared blocks: `--ink-quiet` #7c8798 -> #a1a8b5 (dark) and #596473 ->
+      #4e5764 (light), `--brand-cyan-ink` #0b6b80 -> #0a5e71 (light only;
+      dark's #22d3ee already read 6.29:1 there). No call site moved off a
+      token and no reading copy was relabelled decorative.
+
+      This is the HONEST LIMIT OSV1-009 recorded, closed by measurement. Those
+      same tokens cleared 4.5:1 as flat swatch pairs on the three declared
+      grounds; in the render they sat on glass-over-glass chip surfaces
+      (#383a40 dark, #ccd1db light) that flat pair math cannot model -- 3.13:1
+      on L1's `.status-chip.st-resolved`, 3.92:1 in light, 3.99:1 on
+      `.st-held`, 3.77/4.26:1 on L2's drawer count, 4.35:1 on
+      `.drawer-section label.eyebrow`. Each is now >= 4.75:1 on its own
+      rendered background. The ink ramp did NOT collapse to buy it:
+      `--ink-tertiary` reads 7.33:1 dark / 5.75:1 light on the same chip
+      surface, so quiet stays visibly the quieter step, which is what
+      OSV1-009's own distinctness assert forbids trading away.
+
+      TARGET SIZE (floor 44px) -- 26 of 34 controls on L0 -> 0 of 34, and 0 of
+      41 on L1 / 0 of 20 on L2, at every one of the three widths.
+        L0  26 of 34 at 900/1280, 16 of 34 at 430  -> 0
+        L1  22 of 41 (21 of 40 at 430)             -> 0
+        L2  11 of 20                               -> 0
+      The named offenders and what moved: the auto-refresh pause control
+      (26x26 -> --u), every nav icon-button, the theme toggle and the help
+      disclosure (34x34 -> --u), the window-range and status tabs (28px tall
+      -> min-height/min-width --u), the L0 activity-feed rows (37px -> --u),
+      the L1 items filter `<input type=search>` (181x19, the one field the
+      base `input[type=text]` rule never reached), the breadcrumb links
+      (19.5px), the brand wordmark (21px) and the identity links Setup/Logout
+      (11.5px). For the link-shaped ones the HIT AREA grew and the type did
+      not: `min-height`/`min-width: var(--u)` on an inline-flex box inside a
+      row that was already centred, so the 62px header keeps its height.
+      Inline links stay excluded per WCAG 2.5.8's own inline exception and the
+      excluded population is still emitted beside the scored one.
+
+      NON-TEXT CONTRAST (floor 3:1) -- 16 of 79 on L0 -> 0, in BOTH themes.
+        L0  16 of 79 dark, 16 of 79 light -> 0 / 0
+        L1  23 of 73 dark, 23 of 73 light -> 0 / 0 (one exemption, below)
+        L2  11 of 33 dark, 11 of 33 light -> 0 / 0
+      Fixed with ONE new token rather than by bumping a hairline:
+      `--control-edge` (rgba(255,255,255,.40) dark / rgba(11,18,32,.52)
+      light), applied to the border of an INTERACTIVE control only -- icon
+      buttons, the pause toggle, KPI cards, fleet/agents/agent/item rows, the
+      dormant disclosure, active window/status tabs, form fields, the drawer's
+      action buttons. `--glass-hairline`/`-soft` keep painting every
+      decorative panel edge unchanged, which is why a rim did not become a
+      stroke everywhere. Measured worst case after: 3.35:1 dark (#7c7d81 on
+      #2c2d34), 3.23:1 light (#707682 on #d5d9e3); the icon-button border this
+      row used to name at 1.27:1 now reads 3.53:1. Neutral by construction (a
+      white/ink alpha, no hue), so Core 2's status-hue firewall is untouched
+      and the calm sweep is unmoved.
+
+      REDUCED MOTION -- still PASSES at every level, width and theme: zero
+      animations run under an emulated `prefers-reduced-motion: reduce` once
+      the page is quiescent. Unmoved by this change and still asserted here
+      as well as by OSV1-011.
+
+      HORIZONTAL OVERFLOW -- still PASSES, and still recorded as WEAK
+      EVIDENCE: `scrollWidth == clientWidth` at all nine level/width pairs,
+      but `html`/`body` carry `overflow-x: clip` so that metric cannot move.
+      `elements_beyond_viewport` (border boxes past `clientWidth`, which
+      clipping cannot hide) is 0 everywhere INCLUDING 430px after the target-
+      size work -- the check that would have caught a header made too wide by
+      six 44px buttons.
+
+    THE ONE BLOCKED RESIDUAL, enumerated and machine-checked, never prose:
+    L1's status-mix donut BACKING RING (`.donut-track`, and its sibling
+    `.donut-hatch-gap`) measures 1.32:1 dark / 1.15:1 light against its card
+    and is EXEMPT, via `_probe.NON_TEXT_EXEMPT_CLASSES` -- a frozenset of two
+    class names, subtracted by `below_non_text_floor`, returned by
+    `exempt_below_non_text_floor`, counted in every render's headline as
+    `non_text_exempt_below_floor`, and pinned by its own kit test
+    (`test_the_non_text_exemption_stays_narrow`: exactly 1 entry on L1, 0 on
+    L0/L2, and it must still be below the floor or the exemption is deleted).
+
+    WHY BLOCKED rather than fixed, measured at the nearest passing colour
+    (#616367 dark, #808591 light -- the first step that clears 3:1 against
+    the card):
+      track vs. a --blocked arc     dark 3.64:1 -> 1.60:1   light 5.88:1 -> 2.25:1
+      track vs. an --ink-quiet arc  dark 5.73:1 -> 2.52:1   light 5.18:1 -> 1.98:1
+    i.e. the EMPTY ring would separate from a real status arc by LESS than the
+    3:1 the floor is asking for, and a five-status donut would read as six.
+    WCAG 1.4.11's graphical-object half covers "parts of graphics required to
+    understand the content"; the arcs are, the ground they sit on is not.
+    Meeting the floor here would make the chart say something false, which is
+    the documented hierarchy this exemption protects.
+
+    RE-RECORDED 2026-09-05 AT THE WAVE-4 UNION, once, on the merged tree
+    (chromium 148.0.7778.0 / playwright 1.60.0), because two sibling lanes
+    landed in the same wave and this lane's own recording was made on a tree
+    that had neither. EVERY FLOOR THIS ROW ASSERTS STILL READS ZERO, across all
+    18 calm renders -- re-measured, not carried over:
+      text below 4.5:1      0 in every render (2 251 text nodes scored in all)
+      controls under 44px   0 in every render (568 controls measured in all)
+      non-text below 3:1    0 in every render (1 064 pairs measured in all)
+      animations under reduced motion  0 in every render
+      elements beyond the viewport     0 in every render, including 430px
+      the ONE enumerated exemption     exactly 1 on each of the 6 L1 renders,
+                                       0 on every L0 and L2 -- unchanged, and
+                                       still its own machine-checked pin
+    THE DENOMINATORS MOVED, and only the denominators. The per-render scored
+    populations above read, on the union:
+      L0  text 138 (129 at 430)   controls 34   non-text 79 (77 at 430)
+      L1  text 184 (178 dark / 179 light at 430)  controls 41 (40 at 430)
+          non-text 73 (52 at 430)
+      L2  text 58                 controls 20   non-text 33
+    Against this row's own pre-union table that is text 136 -> 138 on L0 and
+    183 -> 184 on L1; nothing else moved. THE CAUSE IS NAMED, not guessed: the
+    swap-survives lane (OSV1-008) added exactly one persistent live region per
+    polling level -- `#wt-live` on L0 and on L1 -- and it carries text, so the
+    text census counts it. L0 gains two nodes rather than one because it also
+    renders the pause CONTROL's re-applied label. L2 does not poll, has no live
+    region, and its 58 is unmoved, which is the cross-check that this is the
+    live region and not a general drift.
+    A DENOMINATOR GROWING WHILE THE NUMERATOR STAYS 0 IS THE GOOD DIRECTION:
+    two more text nodes were scored and both cleared 4.5:1. Recorded here
+    because a row that quotes "0 of 136" after the population became 138 is
+    quietly describing a render nobody measured.
+
+    HISTORY, left rather than overwritten -- each was true when measured.
 
     RE-DERIVED 2026-09-05, GAP -> VIOLATION. The browser run this clause names
     now exists and emits exactly what the clause asks for -- computed contrast
@@ -1757,8 +2065,8 @@
 
 - id: OSV1-012
   title: >-
-    two empty widgets keep their slot and say nothing -- measured, not a
-    missing kit
+    every empty widget keeps its slot AND says so in a calm sentence --
+    measured on the rendered empty fixture
   contract:
     file: contracts/operator-surface.v1.md
     clause: Core 8
@@ -1766,49 +2074,76 @@
       The calm state is stated plainly and never rendered as a triumphant zero. A widget with
       nothing to show keeps its slot and says so in a sentence, so the page does not reflow
       between calm and alarm.
-  disposition: VIOLATION
-  work: work_item_pipeline-c1a
+  disposition: CONFORMS
+  work: work_item_pipeline-aad
   assertion:
     kind: probe
     ref: test_row_osv1_012
   notes: >
-    PINNING ROW -- the probe asserts the CURRENT, KNOWN-WRONG shape on purpose;
-    a passing probe here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED 2026-09-05 VIOLATION -> CONFORMS (work_item_pipeline-aad), flip
+    direction VIOLATION-MOVEMENT. The probe is retargeted in the same change:
+    it no longer pins the silent slots, it forbids their return.
 
-    WAS GAP "KIT NOT BUILT"; NOW VIOLATION, MEASURED. The Tier-A kit exists and
-    performs the two-render comparison this clause defines, so the reason for
-    the red changed from "nobody has looked" to "we looked and it fails".
+    RE-DERIVED FROM THE PASSING GOOD HALVES, never from a source edit
+    appearing. The kit's two `calm.keeps_slot` tests render L0 and L1 against
+    an all-empty project and against the populated ALARM fixture and compare
+    them region by region. Before / after on this tree, same kit, same two
+    fixtures:
+      BEFORE  L0: 1 problem -- region 'Needs you -- ranked' keeps its slot but
+                  says nothing.
+              L1: 2 problems -- 'Agents on <project>' and 'Status breakdown',
+                  same defect.
+              Both halves `xfail(strict=True)` against this row.
+      AFTER   L0: 0 problems. L1: 0 problems. Both markers deleted; the kit
+              runs 0 failed / 0 XPASS.
 
-    MEASURED 2026-09-05, L0 and L1 rendered against an all-empty project and
-    against the populated ALARM fixture, regions matched by section id and by
-    panel heading:
+    THE THREE SENTENCES, as rendered (captured from the empty fixture):
+      L0  <div class="attn-list"><p class="empty-note">No item needs you right
+          now.</p></div>
+      L1  <div class="agents-list"><p class="empty-note">No agent has held an
+          item in this project yet.</p></div>
+      L1  <div class="status-breakdown-wrap"><div class="donut-wrap">...<div
+          class="donut-center"><span class="n">0</span><span class="l">total
+          items</span></div></div><p class="empty-note">No items to break down
+          yet.</p></div>
+    All three come from ONE helper, `widgets._empty_note`, so the register
+    cannot drift into three voices. The register is the house's own, not
+    invented for this row: `webapp.py`'s "Nothing is waiting to be claimed in
+    this queue right now.", `chartsvg.py`'s "No activity in this window",
+    `webbrowse.py`'s "No items match this filter."
+
+    THE CLAUSE HAS THREE LIMBS AND ALL THREE NOW HOLD:
       SLOTS SURVIVE   every widget region on the populated render is present on
-                      the empty one, on BOTH levels. That half of the clause
-                      holds and the check says so.
-      SENTENCES DO NOT  three regions keep their slot and say nothing at all:
-                      L0 "Needs you -- ranked" (`widgets.render_attention_queue`
-                      returns a bare `<div class="attn-list"></div>` when
-                      `rows` is empty), L1 "Agents on <project>"
-                      (`widgets.render_agents_panel`, the same shape), and L1
-                      "Status breakdown" (a legend of zeroes, no sentence).
+                      the empty one, on BOTH levels. This limb always held.
+      SENTENCES       all three formerly-silent regions now say so. This is the
+                      limb that moved.
       NO HERO-SCALE NUMERAL  nothing at or above the hero's own type size
-                      (`--text-display-size`, resolved from the token block --
-                      the floor is derived from the hero, never written down)
-                      renders a numeral outside `#verdict-hero`. That limb
-                      holds.
+                      (derived from the hero's own declared size, never written
+                      down) renders a numeral outside `#verdict-hero`. Still
+                      holds: `.empty-note` is .8125rem and carries no numeral
+                      at all, and the donut centre's `0` is 1.5rem -- reported
+                      at its siblings' scale WITH its `total items` label,
+                      which is the shape OSV1-001 already recorded as stated
+                      rather than celebrated.
 
-    SO THE ROW IS RED ON ONE LIMB OF THREE, and the kit records which: the
-    two `calm.keeps_slot` tests are `xfail(strict=True)` naming THIS row. When
-    the three regions gain their sentence the tests XPASS, which FAILS the run
-    -- that failure is the instruction to flip this row and delete the markers
-    in the same change.
+    NO REFLOW, AND THE HONEST LIMIT ON THAT PHRASE. `.empty-note` carries a
+    `min-height` of one row's own height, so a slot cannot COLLAPSE when its
+    data goes away -- that is what "keeps its slot" is enforceable as. It does
+    NOT mean an empty 1-row list occupies the same pixels as a populated
+    8-row one; nothing could make that true without rendering 7 blank rows,
+    which is the reflow-avoidance cure being worse than the disease. Two
+    structural facts carry the rest: L0's queue shares a `.two-up` grid row
+    with the velocity chart, whose height dominates; and L1's status-breakdown
+    keeps its donut on BOTH renders (`status_donut` draws its empty background
+    track at `total == 0`), so that card's dominant 150px box is identical
+    either way. Rendered PIXEL stability is Tier B and is not claimed here.
 
-    WHAT THE SOURCE ALREADY CARRIES, and still does: `widgets.py:423,433` the
-    verdict headline is "All clear" / "Idle" -- a plain statement, never a
-    triumphant zero; `webapp.py:2275` the ready queue says "Nothing is waiting
-    to be claimed in this queue right now." with the figure as an em-dash;
-    `chartsvg.py:295` "No activity in this window"; `webbrowse.py:498-503` "No
-    items match this filter." Four widgets get this right; three do not.
+    WHAT THE SOURCE ALREADY CARRIED, and still does: `widgets.py` the verdict
+    headline is "All clear" / "Idle" -- a plain statement, never a triumphant
+    zero; `webapp.py` the ready queue says "Nothing is waiting to be claimed in
+    this queue right now." with the figure as an em-dash; `chartsvg.py` "No
+    activity in this window"; `webbrowse.py` "No items match this filter."
+    Four widgets got this right; the three that did not now do.
 
 - id: OSV1-013
   title: no front-end framework, bundler, template engine, or build step
@@ -2350,7 +2685,7 @@
     so flipping either one alone fails loudly.
     FLIPPED GAP -> CONFORMS 2026-09-05 at highway wave-1 integration (orchestrator): the hero lane closed OSV1-001
     (L0 hero = velocity over a stated window + in-flight/blocked/needs-attention/open counts) and the kit's good half
-    `test_hero_velocity_and_counts` runs undeferred and PASSES on the real L0 (tier-a kit: 38 passed / 4 xfailed); the
+    `test_hero_velocity_and_counts` runs undeferred and PASSES on the real L0 (tier-a kit: 38 passed / 4 xfailed at that wave; 41 passed / 1 xfailed on the wave-4 union, re-run there, with this good half still undeferred and still passing); the
     three bad halves still fail as designed. Re-derived from the PASSING pair, not from the fixture's presence. Probe now
     asserts the regression direction: good half stays undeferred and OSV1-001 stays CONFORMS.
 
@@ -2408,22 +2743,29 @@
 
 - id: OSV1-026
   title: >-
-    Conformance 7 (empty states keep their slot) -- fixture exists and
-    discriminates, good half deferred against OSV1-012
+    Conformance 7 (empty states keep their slot) -- the two-render fixture
+    discriminates AND both its good halves pass
   contract:
     file: contracts/operator-surface.v1.md
     clause: Conformance 7
     quote: |
       **Test location:** `tests/conformance/operator_surface/test_tier_a.py` (Core 8).
-  disposition: GAP
-  work: work_item_pipeline-c1a
+  disposition: CONFORMS
+  work: work_item_pipeline-aad
   assertion:
     kind: probe
     ref: test_row_osv1_026
   notes: >
-    PINNING ROW -- the fixture exists and discriminates, but its GOOD half does
-    not pass, so the probe pins that deferral. A passing probe here is NOT
-    conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED 2026-09-05 GAP -> CONFORMS (work_item_pipeline-aad), flip direction
+    VIOLATION-MOVEMENT, and the probe is retargeted in the same change from
+    "the good half is deferred" to "the good half PASSES".
+
+    RE-DERIVED FROM THE PASSING PAIR, NEVER FROM THE FIXTURE'S PRESENCE. That
+    distinction is this row's whole subject and the failure mode it exists to
+    catch: a Conformance row is about a DISCRIMINATING fixture, and a fixture
+    whose good half has never been observed to pass is half a fixture. The
+    fixture existed at seed and this row still read GAP for exactly that
+    reason.
 
     MEASURED 2026-09-05. `tests/conformance/operator_surface/test_tier_a.py`
     implements `calm.keeps_slot` at the location Conformance 7 names, and it is
@@ -2437,13 +2779,21 @@
         empty widgets" (reports the missing region) and "or renders a
         hero-scale `0`" (reports the numeral, with hero scale DERIVED from the
         hero's own declared type size rather than written down). A third bad
-        half proves keeping the slot is not enough on its own.
-      GOOD, DEFERRED  three regions keep their slot and say nothing -- see
-        OSV1-012, which carries the measurement. Both the L0 and the L1 good
-        halves are `xfail(strict=True)` naming OSV1-012.
+        half proves keeping the slot is not enough on its own. All three still
+        run and still catch their defect -- flipping this row did not spend
+        them.
+      GOOD, NOW PASSING  `test_calm_keeps_slot` (L0) and
+        `test_calm_keeps_slot_l1` (L1) each report 0 problems against the empty
+        fixture, where they reported 1 and 2 respectively before
+        work_item_pipeline-aad. Both `xfail(strict=True)` markers are deleted;
+        the kit runs 0 failed / 0 XPASS. The measurement itself is carried by
+        OSV1-012.
 
-    THIS ROW GOES GREEN WHEN OSV1-012 DOES. The probe asserts both facts -- the
-    fixture is present with its pair, and OSV1-012 is still red.
+    WHY THE PAIR STAYED SPLIT L0/L1 rather than folding into one good half:
+    "fixing one and not the other is progress this kit must be able to show",
+    and this change proves the point in the other direction -- three regions
+    across two levels were fixed together and the two halves flipped together,
+    each still able to fail alone.
 
 - id: OSV1-027
   title: Freeze 1 -- the Tier-A kit exists and runs on every pull request
@@ -2681,30 +3031,68 @@
     not move: its subject is the bad halves, all of which still run and still
     catch their defects.
 
+    RE-DEMONSTRATED 2026-09-05 AT THE WAVE-4 UNION by running both kits on the
+    merged tree, and TWO FIGURES IN THE PARAGRAPHS ABOVE ARE SUPERSEDED:
+      `make test-conformance-b`  89 passed, 0 failed, 0 xfailed, 0 XPASS
+                                 (was 52 passed / 35 xfailed at wave 3)
+      `make test-conformance-a`  41 passed, 1 xfailed, 0 failed, 0 XPASS
+                                 (was 38 passed / 4 xfailed at wave 3)
+    THE BROWSER TIER NOW CARRIES NO DEFERRALS AT ALL. Every `xfail(strict)` it
+    held named a ledger row that was honestly red; all four rows closed in this
+    wave (OSV1-003, -008, -010, and -012 in the Tier-A kit), each lane deleted
+    the markers naming its own row because they XPASSed, and the union deletes
+    the last of them. Zero XPASS on both kits is the proof that no marker was
+    left behind covering a check that now passes -- a stale strict xfail would
+    fail the run, which is why this is checked by running rather than by
+    reading the file.
+    THE ONE REMAINING DEFERRAL IN EITHER KIT is Tier-A's `test_antigoals_
+    enforced`, which names OSV1-015's residual `_oldest_ready_item` (a
+    limit-less `bd.list` in a function with no callers). That row reads
+    CONFORMS because Core 10 scores calls REACHED FROM A VIEW and this kit's
+    census is source-wide with no reachability analysis. The marker stays until
+    the dead function goes or the census learns reachability -- named, not
+    quietly tolerated.
+    THE WAVE-3 PARAGRAPH ABOVE IS ALSO STALE ON ONE CLAIM: it says Conformance
+    7 (`calm.keeps_slot`) "is now the ONLY deferred pair in the kit, against the
+    still-open OSV1-012, and OSV1-026 stays red for exactly that reason". Both
+    halves of that ended this wave -- the empty-states lane closed OSV1-012 and
+    OSV1-026 now reads CONFORMS, and that pair is no longer deferred. Corrected
+    here rather than rewritten above, so the record shows when it stopped being
+    true. THIS ROW'S OWN DISPOSITION DOES NOT MOVE and never did on any of
+    this: its subject is the fourteen BAD halves, every one of which still runs
+    and still catches its defect, re-read from the union's own recording by
+    this row's probe.
+
     THE HOUSE PRECEDENT this follows: the custody family's CCV1-023 recorded
     discrimination by REVERTING each fix in turn and observing exactly the
     matching bad half go red while every good half stayed green.
 - id: OSV1-031
   title: >-
-    Freeze 5 -- 4 of the 19 Core-carrying rows are still red, and all four are
-    now MEASURED VIOLATIONs (no Core row is an unasserted GAP any more)
+    Freeze 5 -- every Core clause reads CONFORMS or NOT-ASSERTABLE
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 5
     quote: |
       **Freeze 5:** every Core clause reads CONFORMS in `ledger/`, or is NOT-ASSERTABLE with its
       review cadence named here.
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-umm
   assertion:
     kind: probe
     ref: test_row_osv1_031
   notes: >
-    PINNING ROW, and the only one that reads the LEDGER rather than the repo --
-    it asserts that at least one Core-carrying row is still red. A passing
-    probe here is NOT conformance; it means the family is still red. Flip
-    direction VIOLATION-MOVEMENT: the probe goes red when the last Core row
-    turns green, which is the signal to flip this row.
+    FLIPPED 2026-09-05 GAP -> CONFORMS at the highway wave-4 union, flip
+    direction VIOLATION-MOVEMENT: the pinning probe went red because the last
+    red Core-carrying row turned green, which is exactly the signal this row
+    existed to raise. The probe is retargeted in the SAME change, from "at
+    least one Core row is red" to "no Core row is red", so the gate now guards
+    the other direction -- any Core row going back to GAP or VIOLATION fails it.
+
+    WAS A PINNING ROW, and the only one that reads the LEDGER rather than the
+    repo -- it asserted that at least one Core-carrying row was still red. That
+    reading is history now and is kept below because the tally IS this row: the
+    sequence of flips is the evidence, and deleting it would leave a green row
+    with nothing behind it.
 
     MEASURED AT SEED, 2026-09-04 against 4aaee50. Core 1-13 are carried by 19
     rows (Core 2, 4, 7, 10 split into halves with differing dispositions):
@@ -2810,6 +3198,150 @@
       GAP 0             every Core clause is still ASSERTED
     Four red, every one of them a MEASURED failure. Freeze 5 is met when all
     four are green and the two NOT-ASSERTABLE rows still name their cadence.
+
+    RE-PINNED 2026-09-05 by the empty-states lane (work_item_pipeline-aad),
+    THREE RED. The count is what the probe MEASURES on this lane's tree, not a
+    number carried over: 19 Core-carrying rows, red = OSV1-003, -008, -010.
+    ONE flip moves it: OSV1-012 (Core 8) VIOLATION -> CONFORMS, re-derived from
+    the Tier-A kit's two `calm.keeps_slot` good halves going from 1 and 2
+    reported problems to 0 and 0 against the same empty fixture -- not from a
+    source edit appearing. The tally is now:
+      CONFORMS 14       OSV1-001, -002, -004, -005, -006, -007, -009, -011,
+                        -012, -013, -014, -015, -016, -017
+      NOT-ASSERTABLE 2  OSV1-018 (Core 12), OSV1-019 (Core 13) -- unchanged
+      VIOLATION 3       OSV1-003, -008, -010
+      GAP 0             every Core clause is still ASSERTED
+    Three red, and all three are the browser-tier halves (Core 2's calm-pixel
+    sweep, Core 6, Core 7's rendered half) owned by other lanes. THIS LANE
+    COUNTED ON ITS OWN BASE, base main @065da04; the orchestrator re-counts on
+    the union and that count supersedes this one if the union differs.
+    RE-PINNED 2026-09-05 by the calm-pixels lane (work_item_pipeline-a1o),
+    THREE RED, on that lane's own tree rather than on the union -- the
+    orchestrator re-counts on the union, and this number is honest only about
+    what this tree contains. ONE flip moves it: OSV1-003 (Core 2) VIOLATION ->
+    CONFORMS, re-derived from a chromium run RE-RECORDED on this tree, not from
+    a marker being deleted -- a calm L1 measured 0 --alarm and 0 --blocked in
+    both themes where it measured 97 --blocked, and the three discrimination
+    arms (10 531 / 264 / 16 681) came back byte-identical, so the sweep was not
+    merely blinded. The tally is now:
+      CONFORMS 14       OSV1-001, -002, -003, -004, -005, -006, -007, -009,
+                        -011, -013, -014, -015, -016, -017
+      NOT-ASSERTABLE 2  OSV1-018 (Core 12), OSV1-019 (Core 13) -- unchanged
+      VIOLATION 3       OSV1-008, -010, -012
+      GAP 0             every Core clause is still ASSERTED
+    Three red, every one a MEASURED failure. Freeze 5 is met when all three are
+    green and the two NOT-ASSERTABLE rows still name their cadence.
+    RE-COUNTED 2026-09-05 at highway wave-4 integration (orchestrator): the calm-pixels lane flipped OSV1-003 and the
+    empty-states lane flipped OSV1-012 in the same wave, each re-pinning this count to 3 against its own tree; the union
+    is 2. Remaining red Core rows: OSV1-008 (Core 6, swap) and OSV1-010 (Core 7, rendered floors) -- both in flight.
+
+    RE-PINNED 2026-09-05 by the swap-survives lane (work_item_pipeline-v3m),
+    THREE RED. ONE flip moves it: OSV1-008 (Core 6) VIOLATION -> CONFORMS,
+    re-derived from a Tier-B run RE-RECORDED on this lane's own tree -- all
+    four of Core 6's named survivals now hold on BOTH L0 and L1
+    (`scroll_preserved`, `open_details_preserved`, `pause_control_preserved`,
+    `marked_live_regions_after` 1 of 2 on L0 and 1 of 1 on L1). The count
+    below is what THIS lane's tree measures; the orchestrator re-counts on the
+    union, and this pin is expected to move again if a sibling lane flips a
+    Core row in the same wave.
+    The tally is now:
+      CONFORMS 14       OSV1-001, -002, -004, -005, -006, -007, -008, -009,
+                        -011, -013, -014, -015, -016, -017
+      NOT-ASSERTABLE 2  OSV1-018 (Core 12), OSV1-019 (Core 13) -- unchanged
+      VIOLATION 3       OSV1-003, -010, -012
+      GAP 0             every Core clause is still ASSERTED
+    Three red, every one of them a MEASURED failure. Freeze 5 is met when all
+    three are green and the two NOT-ASSERTABLE rows still name their cadence.
+
+    RE-PINNED 2026-09-05 by the rendered-floors lane (work_item_pipeline-96f),
+    THREE RED, counted by the probe on THIS lane's tree. ONE flip moves it:
+    OSV1-010 (Core 7, the Tier-B rendered half) VIOLATION -> CONFORMS, and it
+    is a re-derivation from a real chromium run of this tree, not a row flipped
+    because a kit file appeared -- the recording was made twice, byte-identical
+    on every field the row asserts, and its four Tier-B `xfail(strict)` markers
+    were deleted because they XPASSed. Text below 4.5:1 went 7 nodes -> 0,
+    controls under 44px 26 of 34 on L0 -> 0, non-text below 3:1 16 of 79 -> 0
+    in both themes, with ONE enumerated machine-checked exemption (the donut's
+    backing ring) recorded in OSV1-010's own notes and counted per render in
+    `LAST_RUN.json`.
+    The tally is now:
+      CONFORMS 14       OSV1-001, -002, -004, -005, -006, -007, -009, -010,
+                        -011, -013, -014, -015, -016, -017
+      NOT-ASSERTABLE 2  OSV1-018 (Core 12), OSV1-019 (Core 13) -- unchanged
+      VIOLATION 3       OSV1-003, -008, -012
+      GAP 0             every Core clause is still ASSERTED
+    Three red, every one of them a MEASURED failure. Freeze 5 is met when all
+    three are green and the two NOT-ASSERTABLE rows still name their cadence.
+    This lane counts only its own tree; two other lanes are in flight against
+    OSV1-003 and OSV1-012, so the orchestrator re-counts on the union.
+
+    RE-COUNTED 2026-09-05 AT THE WAVE-4 UNION (orchestrator), ZERO RED, and
+    THIS is the count that flips the row. It is what the probe MEASURES on the
+    merged tree -- `red = [r for r in the 19 Core-carrying rows if disposition
+    in {GAP, VIOLATION}]` came back EMPTY -- not a number transcribed from any
+    of the four lanes, each of which honestly counted 3 on its own base because
+    each could only see its own flip. THE FLIP SEQUENCE THIS WAVE, in merge
+    order, each re-derived from a measurement on this tree and not from a file
+    appearing:
+      OSV1-003  Core 2, calm-pixels (work_item_pipeline-a1o).  A calm L1 paints
+                0 --alarm and 0 --blocked in BOTH themes (it painted 97
+                --blocked); a calm L0 likewise 0/0. The three discrimination
+                arms still fire on the SAME recording -- 10 531 --alarm px for
+                the injected chip, 264 --blocked for the genuinely-alarming
+                fixture, 16 681 for the reinstated retired palette -- so the
+                sweep went quiet because the surface did, not because the
+                measurement went blind.
+      OSV1-012  Core 8, empty-states (work_item_pipeline-aad).  Tier-A's two
+                `calm.keeps_slot` good halves report 0 and 0 problems against
+                the same empty fixture (1 and 2 before), and their bad halves
+                still catch a stripped note.
+      OSV1-008  Core 6, swap-survives (work_item_pipeline-v3m).  On the union's
+                own re-recorded run, calm L0 AND calm L1 both come back
+                `scroll_preserved` true, `open_details_preserved` true,
+                `pause_control_preserved` true, `announcement_preserved` true,
+                `marked_live_regions_after` 1. The two bad arms still lose what
+                they are there to lose: the naive replacement loses the open
+                `<details>`, the reflow variant loses the scroll offset too.
+      OSV1-010  Core 7 rendered half, rendered-floors (work_item_pipeline-96f).
+                Across all 21 `perception.floors` renders on the union: 2 251
+                text nodes scored, `text_below_floor` 0 in every one; 568
+                controls measured, `controls_below_44px` 0; 1 064 non-text
+                pairs, `non_text_below_floor` 0; 6 renders carry exactly 1
+                `non_text_exempt_below_floor` each -- the enumerated donut
+                backing ring, one per L1 render at 3 widths x 2 themes, which
+                is the single machine-checked exemption OSV1-010 enumerates.
+                `running_animations_under_reduced_motion` 0 throughout.
+    THE RECORDING BEHIND THREE OF THOSE FOUR WAS MADE ONCE, ON THIS TREE, and
+    twice over: `make test-conformance-b` was run two times back to back
+    (89 passed, 0 failed, 0 xpassed each time) under the pinned chromium
+    148.0.7778.0 / playwright 1.60.0, and every field any row asserts came back
+    byte-identical between the two. The only fields that moved are the
+    light-theme `--watch` pixel buckets (5 319 -> 5 444, 5 095 -> 5 237,
+    5 266 -> 5 380, 6 303 -> 6 323), which no row reads -- the known wobble,
+    named here rather than left for someone to rediscover as a flake.
+    NO LANE'S OWN RECORDING SURVIVED: three lanes each re-recorded
+    `LAST_RUN.json` against a tree carrying only their own fix, so all three
+    were discarded and the union was recorded from scratch. That is the whole
+    reason this count is 0 and not 3.
+    The tally is now:
+      CONFORMS 17       OSV1-001, -002, -003, -004, -005, -006, -007, -008,
+                        -009, -010, -011, -012, -013, -014, -015, -016, -017
+      NOT-ASSERTABLE 2  OSV1-018 (Core 12), OSV1-019 (Core 13) -- unchanged,
+                        and both still name the review cadence the clause
+                        itself declares, which is Freeze 5's second limb
+      VIOLATION 0
+      GAP 0
+    Zero red. Freeze 5's condition -- "every Core clause reads CONFORMS in
+    `ledger/`, or is NOT-ASSERTABLE with its review cadence named here" -- is
+    met by measurement on this tree.
+
+    WHAT THIS ROW DOES NOT SAY, recorded so a future reader does not widen it:
+    Freeze 5 is ONE of the eight Freeze conditions, and going green here does
+    not make the contract frozen. OSV1-034 (Freeze 8, the owner's own look at
+    the rendered pages, recorded in the Changelog) is still GAP and can only be
+    closed by the owner -- an agent writing that entry would be a fabricated
+    attestation. Freeze 5 green + Freeze 8 red is the honest state of the
+    family today.
 
 - id: OSV1-032
   title: >-
@@ -2962,6 +3494,22 @@
     WHY IT IS ROWED AT ALL, given that limit: the record's presence is a byte
     fact that gates the Freeze Bar, and rowing it keeps the condition visible
     between waves instead of surfacing only when someone tries to stamp FROZEN.
+
+    RE-CHECKED 2026-09-05 AT THE WAVE-4 UNION, DISPOSITION UNCHANGED (GAP).
+    Re-measured rather than assumed: the contract's Changelog still holds
+    exactly the three entries it held at seed and true-up #1 -- all dated
+    2026-09-04 -- and the strings 430, 900 and 1280 appear nowhere in it (0
+    occurrences). Nothing an agent did this wave could move this row, and
+    nothing did.
+    WHY IT IS RE-CHECKED HERE ANYWAY: OSV1-031 (Freeze 5) flipped to CONFORMS
+    on this union, which leaves THIS as the only red row in the operator-surface
+    family and the only Freeze condition still standing between the contract and
+    a Freeze Bar. That raises the pressure to close it cheaply, and cheaply is
+    exactly what is forbidden: writing this entry on the owner's behalf -- or
+    letting the eighteen rendered captures this wave's browser tier took at
+    430/900/1280 in both themes stand in for the owner's look -- would be a
+    fabricated attestation (Phase-1 ruling 6). The KIT has looked; the OWNER has
+    not. Those are different facts, and this row records the second one.
 
 - id: OSV1-035
   title: Reserved 1 -- CLI --json shapes, ungoverned until an outside caller parses them

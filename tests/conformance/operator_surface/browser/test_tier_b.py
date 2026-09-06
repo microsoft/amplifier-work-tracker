@@ -96,47 +96,23 @@ def known_violation(row: str, what: str):
     return pytest.mark.xfail(strict=True, reason=f"{row}: {what}")
 
 
-#: Levels whose rendered text contrast is below the floor today (OSV1-010).
-#: L0 passes in both themes and is NOT marked -- a blanket marker would hide
-#: a future L0 regression behind an expected failure.
-_CONTRAST_LEVELS = [
-    pytest.param("L0"),
-    pytest.param(
-        "L1",
-        marks=known_violation(
-            "OSV1-010",
-            "L1's `.status-chip.st-resolved` reads 3.13:1 in dark and 3.92:1 in "
-            "light against its own chip surface (3 occurrences each); light also "
-            "drops `.status-chip.st-held` to 3.99:1. Re-measured 2026-09-05 on the "
-            "merged tree: light was 5 failures at 2.26:1/2.83:1 before the contrast "
-            "lane moved `--ink-quiet` (OSV1-009), and is 4 now",
-        ),
-    ),
-    pytest.param(
-        "L2",
-        marks=known_violation(
-            "OSV1-010",
-            "L2's `.actions-drawer summary .count` reads 3.77:1 in dark and 4.26:1 "
-            "in light, and light also drops `.drawer-section label.eyebrow` to "
-            "4.35:1 -- the `--ink-quiet` reading-copy pair OSV1-009 recorded, "
-            "measured here in the render (re-measured 2026-09-05)",
-        ),
-    ),
-]
+#: Every level, unmarked. WAS the kit's one per-level xfail list: L1 and L2
+#: carried `known_violation("OSV1-010", ...)` for text pairs that measured
+#: 3.13-4.35:1 against their own composited chip/drawer surfaces. Both markers
+#: went with the fix (`--ink-quiet` #7c8798 -> #a1a8b5 dark / #596473 ->
+#: #4e5764 light, `--brand-cyan-ink` #0b6b80 -> #0a5e71 light), and the list is
+#: kept as a list rather than folded back into `LEVELS` so the next level that
+#: needs a marker has an obvious place to put one.
+_CONTRAST_LEVELS = [pytest.param(level) for level in LEVELS]
 
-#: The calm pixel sweep: L0 is clean in both themes, L1 is not (OSV1-003).
-_CALM_LEVELS = [
-    pytest.param("L0"),
-    pytest.param(
-        "L1",
-        marks=known_violation(
-            "OSV1-003",
-            "a calm L1 paints 97 `--blocked` pixels in both themes -- the legend "
-            "swatch (`span.sw`), the live `span.dot`, and the destructive "
-            "`button.btn.danger`'s border -- with nothing blocked in the project",
-        ),
-    ),
-]
+#: The calm pixel sweep: L0 and L1 are both clean in both themes.
+#: L1 CARRIED A MARKER UNTIL 2026-09-05 (OSV1-003): it painted 97 `--blocked`
+#: pixels with nothing blocked -- 81 from the status-donut legend's
+#: zero-count `span.sw.mix-blocked`, 16 from the Blocked tab's `span.dot`.
+#: Both now keep their slot and drop the hue at zero, the marker XPASSed, and
+#: it was deleted with the fix. Neither level is marked now, deliberately: a
+#: blanket marker would hide the next regression behind an expected failure.
+_CALM_LEVELS = [pytest.param("L0"), pytest.param("L1")]
 
 
 # ---------------------------------------------------------------------------
@@ -589,6 +565,20 @@ def _swap_record(artifacts, browser_info, *, scenario, clause, before, after, ar
             "pause_flag_preserved": after["pause_flag"] == before["pause_flag"],
             "live_regions_before": before["live_region_count"],
             "marked_live_regions_after": after["surviving_marked_live_regions"],
+            # NODE IDENTITY above, TEXT here -- see `_probe.SWAP_STATE_JS`'s
+            # own note for why one without the other is not a reading.
+            #
+            # Recorded as BOOLEANS, not as the sentence itself: the fixture's
+            # project name is randomly generated per run and appears in L1's
+            # announcement, so the raw text is not reproducible across two runs
+            # and would make `LAST_RUN.json` -- the committed summary the
+            # ledger re-reads -- churn on every recording. The full text stays
+            # in `measurement.before/after.live_message`, which is what the
+            # assertions below compare.
+            "announcement_present_before": bool(before["live_message"]),
+            "announcement_preserved": (
+                bool(before["live_message"]) and after["live_message"] == before["live_message"]
+            ),
             "details_with_id": before["details_with_id"],
         },
     )
@@ -651,14 +641,18 @@ def test_swap_preserves_scroll_offset(request, level):
     )
 
 
-@known_violation(
-    "OSV1-008",
-    "`restoreState` only re-opens `details[id]`, and NO `<details>` on this "
-    "surface carries an id -- the help popover, the activity feed and the actions "
-    "drawer are all id-less, so the restore mechanism has zero targets",
-)
 @pytest.mark.parametrize("level", ["L0", "L1"])
 def test_swap_preserves_open_disclosures(request, level):
+    """Core 6's second named survival.
+
+    Was a known violation until 2026-09-05: `restoreState` re-opened only
+    `details[id]`, and NO `<details>` on this surface carries an id (the help
+    popover, the activity feed and the actions drawer are all id-less), so the
+    restore mechanism had ZERO targets and an open disclosure closed on every
+    20-second poll. It now records open `<details>` by ORDINAL + class
+    signature as well as by id -- the same key this kit's own snapshot uses,
+    for the same measured reason -- and the marker is gone.
+    """
     record = request.getfixturevalue(f"swap_{level.lower()}")
     m = record["measurement"]
     assert m["before"]["open_details"], (
@@ -672,21 +666,18 @@ def test_swap_preserves_open_disclosures(request, level):
     )
 
 
-@known_violation(
-    "OSV1-008",
-    "the flag survives on `window` but the control does not: the server "
-    're-renders `#refreshToggle` at aria-pressed="false" (webapp.py:3549) and '
-    "nothing re-applies the flag to it, so a paused page shows itself as running",
-)
 @pytest.mark.parametrize("level", ["L0", "L1"])
 def test_swap_preserves_the_pause_control(request, level):
     """The pause CONTROL's state, not just the flag behind it.
 
     Core 6 names "the pause control's state", and an operator reads the
-    control, not `window.__wtRefreshPaused`. Both are recorded in the artifact
-    so the split outcome is legible: the flag lives on `window` and survives;
-    the button is re-rendered by the server at `aria-pressed="false"`
-    (webapp.py:3549) and nothing re-applies the flag to it.
+    control, not `window.__wtRefreshPaused`. Both are still recorded in the
+    artifact, because they are two different things that used to disagree: the
+    flag lives on `window` and always survived, while the button came back
+    server-rendered at `aria-pressed="false"` every tick and nothing
+    re-applied the flag -- a paused page showed itself as running. Fixed
+    2026-09-05: `restoreState` re-synchronises the control to the flag after
+    every swap, so the artifact now shows both halves agreeing.
     """
     record = request.getfixturevalue(f"swap_{level.lower()}")
     m = record["measurement"]
@@ -703,15 +694,6 @@ def test_swap_preserves_the_pause_control(request, level):
     )
 
 
-@known_violation(
-    "OSV1-008",
-    "L0 now renders exactly ONE live region -- the rebuilt verdict hero's "
-    "`role=status` (widgets.py:1379) -- and the body-swap destroys it: 0 of the 1 "
-    "tagged node survives, and the page comes back with a fresh, empty region. On "
-    "L1 the clause still fails one step earlier: no live region renders at all "
-    "(`aria-live` has zero occurrences in `src/`), so nothing is ever announced "
-    "across the swap. Re-measured 2026-09-05 on the merged tree",
-)
 @pytest.mark.parametrize("level", ["L0", "L1"])
 def test_swap_preserves_a_pending_announcement(request, level):
     """Core 6's fourth named survival.
@@ -722,7 +704,17 @@ def test_swap_preserves_a_pending_announcement(request, level):
     Measured by tagging every live region BEFORE the swap and counting how
     many tagged nodes survive it. A whole-body `innerHTML` replacement
     destroys them all and builds fresh, empty ones -- which is precisely the
-    Conformance 3 bad half, and precisely what the shipped surface does.
+    Conformance 3 bad half, and precisely what the shipped surface did until
+    2026-09-05: L0 rendered exactly one region (the verdict hero's
+    `role="status"`, widgets.py:1379) and 0 of the 1 tagged node survived; L1
+    rendered none at all, so nothing was ever announced there.
+
+    Fixed by adding ONE persistent region per polling level (`#wt-live`,
+    webapp.py's `_live_region_html`) that the poller DETACHES before the swap
+    and re-attaches after -- so the node itself survives, tag and all -- and
+    by giving L1 a region it never had. The hero's own `role="status"` is
+    still destroyed and rebuilt; the count of survivors, not of regions, is
+    what this asserts.
     """
     record = request.getfixturevalue(f"swap_{level.lower()}")
     m = record["measurement"]
@@ -741,6 +733,18 @@ def test_swap_preserves_a_pending_announcement(request, level):
         f"({m['after']['surviving_marked_live_regions']} of the tagged nodes "
         f"survived); the page now carries "
         f"{m['after']['live_region_count']} fresh region(s) with nothing announced."
+    )
+    assert m["before"]["live_message"], (
+        f"{level}: the persistent region (`#wt-live`) carried no text before the "
+        f"swap, so 'the announcement survived' would be vacuously true -- an "
+        f"empty region announces nothing whether it survives or not."
+    )
+    assert m["after"]["live_message"] == m["before"]["live_message"], (
+        f"swap.survives FAILED on {level}: the surviving region's announcement "
+        f"changed across the swap, {m['before']['live_message']!r} -> "
+        f"{m['after']['live_message']!r}. The node survived but what it was "
+        f"saying did not, which an operator hears as the announcement being "
+        f"cut off and replaced."
     )
 
 
@@ -791,6 +795,15 @@ def test_naive_replacement_loses_the_open_disclosure(
         "the Conformance 3 bad half did NOT discriminate on disclosures: a naive "
         "whole-body replacement with no restore left "
         f"{m['after']['open_details']} open, the same as before the swap."
+    )
+    assert m["after"]["surviving_marked_live_regions"] == 0, (
+        "the Conformance 3 bad half did NOT discriminate on the announcement: a "
+        "naive whole-body replacement with no capture/restore left "
+        f"{m['after']['surviving_marked_live_regions']} of the tagged live "
+        f"region(s) alive. Node identity is the whole reading here -- note that "
+        f"the TEXT does come back ({m['after']['live_message']!r}), because the "
+        f"server re-renders the same sentence into a brand-new region; a check "
+        f"that only compared text would call this survival."
     )
 
 
@@ -938,6 +951,11 @@ def perception(calm_app, context_factory, artifacts, browser_info):
                 "controls_below_44px": len(_probe.undersized_controls({"targets": targets})),
                 "non_text_measured": len(non_text["measured"]),
                 "non_text_below_floor": len(_probe.below_non_text_floor(non_text)),
+                # The size of the ONE enumerated exemption, per render. Recorded
+                # beside the number it is subtracted from so the allowance can
+                # never grow unseen -- see `_probe.NON_TEXT_EXEMPT_CLASSES` and
+                # `test_the_non_text_exemption_stays_narrow`.
+                "non_text_exempt_below_floor": len(_probe.exempt_below_non_text_floor(non_text)),
                 "running_animations_under_reduced_motion": len(_probe.running_animations(motion)),
             },
         )
@@ -1014,13 +1032,6 @@ def test_text_contrast_floor(perception, level, width, theme):
     )
 
 
-@known_violation(
-    "OSV1-010",
-    "26 of 34 interactive controls on L0 (22 of 41 on L1, 11 of 20 on L2) measure "
-    "under 44px on their smaller side -- among them the pause control itself at "
-    "26x26, every window-selector link at 28px tall, and the footer links at 11.5px "
-    "(L0 was 35 controls before the hero rebuild; re-measured 2026-09-05)",
-)
 @pytest.mark.parametrize("level", LEVELS)
 @pytest.mark.parametrize("width", VIEWPORTS)
 def test_interactive_targets_meet_the_floor(perception, level, width):
@@ -1070,14 +1081,6 @@ def test_reduced_motion_stops_every_animation(perception, level, width):
     )
 
 
-@known_violation(
-    "OSV1-010",
-    "16 of 79 interactive-control borders and icon strokes on L0 are below 3:1 in "
-    "dark (16 of 79 in light); L1 23/73 in both themes; L2 11/33 in both. The "
-    "icon-button border is #303238 on #1e2027 -- 1.27:1. Re-measured 2026-09-05 on "
-    "the merged tree: the light-mode counts fell (was 29/82 on L0, 44/73 on L1, "
-    "13/33 on L2) where the contrast lane moved `--ink-quiet`",
-)
 @pytest.mark.parametrize("level", LEVELS)
 @pytest.mark.parametrize("theme", THEMES)
 def test_non_text_contrast_floor(perception, level, theme):
@@ -1087,6 +1090,13 @@ def test_non_text_contrast_floor(perception, level, theme):
     background. A decorative gradient edge or an icon painted as a background
     image is not reachable this way, and the artifact records how many
     elements had to be skipped for exactly that reason.
+
+    ONE enumerated exemption is subtracted here -- the status-mix donut's
+    backing ring, `_probe.NON_TEXT_EXEMPT_CLASSES`, with the measurement that
+    justifies it. It is not softening the floor and it is not invisible: the
+    exempted entries stay in the artifact, their count is recorded beside the
+    failure count in every render's headline, and their shape is pinned by
+    `test_the_non_text_exemption_stays_narrow` below.
     """
     m = perception(level, 1280, theme)["measurement"]["non_text_contrast"]
     assert m["measured"], f"no non-text surface was scored on {level}/{theme} -- vacuous pass"
@@ -1098,6 +1108,48 @@ def test_non_text_contrast_floor(perception, level, theme):
         f"({m['unresolved_backgrounds']} elements skipped -- background not a "
         f"single colour). Worst:\n"
         + _probe.summarise(bad, ("ratio", "kind", "colour", "background_hex", "path"))
+    )
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_the_non_text_exemption_stays_narrow(perception, theme):
+    """The exemption above is pinned, not merely declared.
+
+    `below_non_text_floor` excuses exactly the classes in
+    `_probe.NON_TEXT_EXEMPT_CLASSES`. An allowance nobody counts is how a
+    floor quietly stops being a floor, so this asserts the shape of what it
+    actually excused on the one level that has a donut at all: ONE element,
+    the status-mix track, at the ratio recorded in the probe's own note. A
+    second exempted element -- or a first one on L0/L2, which draw no donut --
+    fails here rather than disappearing into a green non-text arm.
+    """
+    exempt = {
+        level: _probe.exempt_below_non_text_floor(
+            perception(level, 1280, theme)["measurement"]["non_text_contrast"]
+        )
+        for level in LEVELS
+    }
+    assert not exempt["L0"] and not exempt["L2"], (
+        f"perception.floors: the non-text exemption fired on a level that draws no "
+        f"donut -- L0 {len(exempt['L0'])}, L2 {len(exempt['L2'])} entries. The "
+        f"allowance is for the status-mix chart's backing ring and nothing else:\n"
+        + _probe.summarise(exempt["L0"] + exempt["L2"], ("class_name", "ratio", "colour", "path"))
+    )
+    assert len(exempt["L1"]) == 1, (
+        f"perception.floors: the non-text exemption excused {len(exempt['L1'])} "
+        f"elements on L1 in {theme}, pinned at 1 (the donut track). Growth here is "
+        f"the floor being widened by the allowance rather than met:\n"
+        + _probe.summarise(exempt["L1"], ("class_name", "ratio", "colour", "path"))
+    )
+    only = exempt["L1"][0]
+    assert only["class_name"].split()[0] in _probe.NON_TEXT_EXEMPT_CLASSES, (
+        f"perception.floors: the exempted element is {only['class_name']!r}, not one "
+        f"of {sorted(_probe.NON_TEXT_EXEMPT_CLASSES)}."
+    )
+    assert float(only["ratio"]) < _probe.NON_TEXT_CONTRAST_FLOOR, (
+        f"perception.floors: the donut track now measures {only['ratio']}:1, at or "
+        f"above the {_probe.NON_TEXT_CONTRAST_FLOOR}:1 floor -- it no longer needs "
+        f"exempting. Delete the exemption and re-derive OSV1-010."
     )
 
 

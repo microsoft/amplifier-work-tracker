@@ -424,14 +424,13 @@ def _mo002_alias_becomes_a_bespoke_hue(w: World) -> None:
 def _mo003b_the_retired_palette_returns(w: World) -> None:
     """The retired pre-blend-3 ground comes back to webpwa.py's offline body.
 
-    DIRECTION NOTE, stated rather than hidden: OSV1-003's declared direction is
-    VIOLATION-MOVEMENT (it is still VIOLATION -- a calm L1 still paints
-    `--blocked`, which `_mo003_the_calm_page_stops_painting_blocked` is the
-    counterfactual for). This mutation pushes the OTHER way, and it is here on
-    purpose: the row's two palette specimens
-    CLOSED on 2026-09-05 (OSV1-005), so its probe stopped pinning them as
-    present and started guarding that they stay gone. A guard nobody has
-    watched fail is a guard that might assert nothing.
+    DIRECTION NOTE, no longer an exception: OSV1-003 flipped to CONFORMS on
+    2026-09-05 (work_item_pipeline-a1o), so the whole row is REGRESSION-directed
+    now and this mutation is the same shape as its two siblings rather than the
+    odd one out. It was already pushing this way while the row was red, because
+    the row's two palette specimens CLOSED on 2026-09-05 (OSV1-005) and its
+    probe stopped pinning them as present and started guarding that they stay
+    gone. A guard nobody has watched fail is a guard that might assert nothing.
     """
     w.replace(
         WEBPWA,
@@ -507,14 +506,14 @@ def _mo009a_the_media_light_block_regresses(w: World) -> None:
     first would credit a half-reverted colour as conformance -- which is exactly
     the shape the seed pin recorded (three grounds x TWO blocks = six pairs).
     """
-    w.replace(WEBTHEME, "    --ink-quiet:#596473;", "    --ink-quiet:#7c8ba0;")
+    w.replace(WEBTHEME, "    --ink-quiet:#4e5764;", "    --ink-quiet:#7c8ba0;")
 
 
 def _mo009b_the_attr_light_block_regresses(w: World) -> None:
     """REGRESSION: the same fallback in the manual-toggle light block."""
     w.replace(
         WEBTHEME,
-        "  --ink-quiet:#596473;     /* likewise",
+        "  --ink-quiet:#4e5764;     /* likewise",
         "  --ink-quiet:#7c8ba0;     /* likewise",
     )
 
@@ -528,20 +527,33 @@ def _mo011_a_second_motion_block_appears(w: World) -> None:
     )
 
 
-def _mo012_the_empty_slot_gains_its_sentence(w: World) -> None:
-    """FIXED: `render_attention_queue` grows the empty branch Core 8 asks for,
-    so the L0 region that keeps its slot finally says so."""
+def _mo012_the_empty_slot_goes_silent_again(w: World) -> None:
+    """REGRESSION: `render_attention_queue` loses its empty branch, so the L0
+    region goes back to keeping its slot and saying nothing.
+
+    TURNED ROUND 2026-09-05 (work_item_pipeline-aad). While the row was
+    VIOLATION this mutation was the FIXED world (the empty branch APPEARING);
+    now the row is CONFORMS the direction reverses and the defect it closed --
+    a bare `<div class="attn-list"></div>` -- is the counterfactual.
+    """
     w.replace(
         WIDGETS,
-        "    rows_html: list[str] = []\n"
-        '    for r in data["rows"]:\n'
-        '        priority_label = _esc(r["priority"].upper())',
         '    if not data["rows"]:\n'
-        "        return '<div class=\"attn-list\">Nothing needs you right now.</div>'\n"
-        "    rows_html: list[str] = []\n"
-        '    for r in data["rows"]:\n'
-        '        priority_label = _esc(r["priority"].upper())',
+        '        return f\'<div class="attn-list">'
+        '{_empty_note("No item needs you right now.")}</div>\'\n',
+        '    if not data["rows"]:\n        return \'<div class="attn-list"></div>\'\n',
     )
+
+
+def _mo012_the_slot_loses_its_min_height(w: World) -> None:
+    """REGRESSION, the OTHER limb: the sentence survives but `.empty-note`
+    stops holding a box, so the slot collapses when its data goes away.
+
+    Core 8 has two halves -- "keeps its slot" AND "says so in a sentence" -- and
+    a probe that only read the words would credit a collapsing widget with
+    conformance. One mutation per half, for that reason.
+    """
+    w.replace(WEBTHEME, "  min-height:44px;margin:0;", "  margin:0;")
 
 
 def _mo013_a_template_engine_is_declared(w: World) -> None:
@@ -618,74 +630,168 @@ def _mo027_ci_stops_running_the_kit(w: World) -> None:
     )
 
 
-def _mo003_the_calm_page_stops_painting_blocked(w: World) -> None:
-    """FIXED: a calm L1 stops painting `--blocked`.
+def _mo003_the_calm_page_paints_blocked_again(w: World) -> None:
+    """REGRESSION: a calm L1 goes back to painting `--blocked`.
 
-    The counterfactual a pinning row needs -- the browser measuring the FIXED
-    behaviour. Both themes measured 97, so both anchors move together.
+    DIRECTION REVERSED 2026-09-05 with the row (work_item_pipeline-a1o).
+    While OSV1-003 was a VIOLATION pin this mutation had to model the FIX (97
+    -> 0); the fix landed, the row reads CONFORMS, and the counterfactual a
+    green row needs is the defect COMING BACK. The number restored is the one
+    actually measured before the fix, not a token non-zero: 97 --blocked on a
+    calm L1 in dark.
     """
     w.replace(
         TIER_B_SUMMARY,
-        '"calm/L1/dark": {\n        "alarm": 0,\n        "blocked": 97,',
         '"calm/L1/dark": {\n        "alarm": 0,\n        "blocked": 0,',
+        '"calm/L1/dark": {\n        "alarm": 0,\n        "blocked": 97,',
     )
 
 
-def _mo008_the_swap_starts_restoring_the_disclosure(w: World) -> None:
-    """FIXED: an open `<details>` survives the body-swap on L0."""
-    w.replace(
-        TIER_B_SUMMARY,
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
-        '        "marked_live_regions_after": 0,\n        "open_details_preserved": false,',
-        '"calm/L0/dark": {\n        "details_with_id": 2,\n        "live_regions_before": 1,\n'
-        '        "marked_live_regions_after": 0,\n        "open_details_preserved": true,',
-    )
+def _mo003c_the_alarming_fixture_stops_painting_blocked(w: World) -> None:
+    """REGRESSION, and the one that matters most on a row full of zeroes.
 
-
-def _mo008_the_announcement_survives_the_swap(w: World) -> None:
-    """FIXED: the live region tagged before the swap SURVIVES it on L0.
-
-    Newly measurable since the hero rebuild: before it, L0 rendered no live
-    region at all and Core 6's announcement half had nothing to preserve. Now
-    there is exactly one (`role="status"`), the swap destroys it, and a fix
-    that carried it across would flip this half of the row.
+    "Zero alarm pixels on a calm page" is trivially satisfiable by a sweep that
+    has stopped seeing the hue at all, so OSV1-003's green rests on the
+    discriminating arm as much as on the calm one. This blinds that arm -- the
+    genuinely-alarming fixture reporting 0 --blocked where it measured 264 --
+    and the probe must refuse the row rather than keep reading its own zeroes
+    as evidence.
     """
     w.replace(
         TIER_B_SUMMARY,
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
-        '        "marked_live_regions_after": 0,',
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
-        '        "marked_live_regions_after": 1,',
+        '"bad-alarm-fixture/L0/dark": {\n        "alarm": 0,\n        "blocked": 264,',
+        '"bad-alarm-fixture/L0/dark": {\n        "alarm": 0,\n        "blocked": 0,',
     )
 
 
-def _mo008_the_pause_control_starts_surviving(w: World) -> None:
-    """FIXED: the pause CONTROL's own state survives the swap on L0.
+def _mo008_the_disclosure_stops_surviving(w: World) -> None:
+    """REGRESSION: an open `<details>` stops surviving the body-swap on L0.
 
-    Separable from the disclosure half above, and pinned separately, because
-    the two are different fixes: one needs ids in the markup, the other needs
-    the re-rendered button to be re-synchronised with `window.__wtRefreshPaused`.
+    Direction flipped 2026-09-05 with the row (work_item_pipeline-v3m):
+    OSV1-008 reads CONFORMS now, so the mutation that must be WATCHED FAILING
+    is the one that takes the survival away, not the one that grants it.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 1,\n'
+        '        "open_details_preserved": true,',
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 1,\n'
+        '        "open_details_preserved": false,',
+    )
+
+
+def _mo008_the_announcement_stops_surviving(w: World) -> None:
+    """REGRESSION: the live region tagged before the swap no longer survives it.
+
+    Separately watched from the text half below, and from the disclosure half
+    above, because they are three different mechanisms: node identity is what
+    the poller's detach/re-attach buys, and it is the only reading a
+    destroy-and-rebuild cannot fake.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 1,',
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 0,',
+    )
+
+
+def _mo008_the_announcement_text_changes(w: World) -> None:
+    """REGRESSION: the surviving region's text is replaced across the swap.
+
+    The node survives, so `marked_live_regions_after` still reads 1 -- and the
+    announcement is still cut off. This is the half a node-identity check alone
+    would miss, which is why the row asserts both.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,',
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": false,',
+    )
+
+
+def _mo008_the_pause_control_stops_surviving(w: World) -> None:
+    """REGRESSION: the pause CONTROL's own state stops surviving the swap on L0.
+
+    Separable from the disclosure half, and pinned separately, because the two
+    are different mechanisms: one re-opens disclosures by ordinal + id, the
+    other re-synchronises the re-rendered button with `window.__wtRefreshPaused`.
     A row that noticed only one of them would absorb the other silently.
     """
     w.replace(
         TIER_B_SUMMARY,
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
-        '        "marked_live_regions_after": 0,\n        "open_details_preserved": false,\n'
-        '        "pause_control_preserved": false,',
-        '"calm/L0/dark": {\n        "details_with_id": 0,\n        "live_regions_before": 1,\n'
-        '        "marked_live_regions_after": 0,\n        "open_details_preserved": false,\n'
-        '        "pause_control_preserved": true,',
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 1,\n'
+        '        "open_details_preserved": true,\n        "pause_control_preserved": true,',
+        '"calm/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 1,\n'
+        '        "open_details_preserved": true,\n        "pause_control_preserved": false,',
     )
 
 
-def _mo010_the_target_floor_is_met(w: World) -> None:
-    """FIXED: every interactive control on L0 reaches 44px."""
+def _mo008_l1_loses_its_live_region(w: World) -> None:
+    """REGRESSION: L1 goes back to rendering NO live region at all.
+
+    The state this row recorded before the fix, and the one that fails Core 6
+    one step EARLIER than the swap: with nothing rendered there is nothing to
+    destroy and nothing for the operator to hear.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L1/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 1,',
+        '"calm/L1/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 0,',
+    )
+
+
+def _mo010_a_control_falls_back_under_the_target_floor(w: World) -> None:
+    """REGRESSION: the browser measures a control back under 44px on L0.
+
+    RETARGETED 2026-09-05 with the row (work_item_pipeline-96f). This used to
+    inject the FIX -- `controls_below_44px` 26 -> 0 -- because OSV1-010 was a
+    pin. The row now reads CONFORMS and asserts the floors are MET, so the
+    counterfactual that has to go red is the shape it forbids: one control
+    slipping back under the floor on ONE render of eighteen. The probe sweeps
+    every render for exactly this reason.
+    """
     w.replace(
         TIER_B_SUMMARY,
         '"calm/L0/1280/dark": {\n        "client_width": 1280,\n        "controls": 34,\n'
-        '        "controls_below_44px": 26,',
-        '"calm/L0/1280/dark": {\n        "client_width": 1280,\n        "controls": 34,\n'
         '        "controls_below_44px": 0,',
+        '"calm/L0/1280/dark": {\n        "client_width": 1280,\n        "controls": 34,\n'
+        '        "controls_below_44px": 1,',
+    )
+
+
+def _mo010_the_donut_exemption_grows(w: World) -> None:
+    """REGRESSION: the ONE enumerated non-text exemption widens.
+
+    The failure mode an exemption invites: the non-text arm stays green not
+    because the borders were fixed but because the allowance grew to cover
+    them. A second exempted element on L1 must go red here, and does.
+    """
+    w.replace(
+        TIER_B_SUMMARY,
+        '"calm/L1/1280/dark": {\n        "client_width": 1280,\n        "controls": 41,\n'
+        '        "controls_below_44px": 0,\n        "elements_beyond_viewport": 0,\n'
+        '        "non_text_below_floor": 0,\n        "non_text_exempt_below_floor": 1,',
+        '"calm/L1/1280/dark": {\n        "client_width": 1280,\n        "controls": 41,\n'
+        '        "controls_below_44px": 0,\n        "elements_beyond_viewport": 0,\n'
+        '        "non_text_below_floor": 0,\n        "non_text_exempt_below_floor": 4,',
     )
 
 
@@ -701,13 +807,15 @@ def _mo011_an_animation_runs_under_the_preference(w: World) -> None:
     w.replace(
         TIER_B_SUMMARY,
         '"calm/L0/430/dark": {\n        "client_width": 430,\n        "controls": 34,\n'
-        '        "controls_below_44px": 16,\n        "elements_beyond_viewport": 0,\n'
-        '        "non_text_below_floor": 16,\n        "non_text_measured": 77,\n'
+        '        "controls_below_44px": 0,\n        "elements_beyond_viewport": 0,\n'
+        '        "non_text_below_floor": 0,\n        "non_text_exempt_below_floor": 0,\n'
+        '        "non_text_measured": 77,\n'
         '        "overflow_x_style": "clip",\n'
         '        "running_animations_under_reduced_motion": 0,',
         '"calm/L0/430/dark": {\n        "client_width": 430,\n        "controls": 34,\n'
-        '        "controls_below_44px": 16,\n        "elements_beyond_viewport": 0,\n'
-        '        "non_text_below_floor": 16,\n        "non_text_measured": 77,\n'
+        '        "controls_below_44px": 0,\n        "elements_beyond_viewport": 0,\n'
+        '        "non_text_below_floor": 0,\n        "non_text_exempt_below_floor": 0,\n'
+        '        "non_text_measured": 77,\n'
         '        "overflow_x_style": "clip",\n'
         '        "running_animations_under_reduced_motion": 6,',
     )
@@ -794,11 +902,13 @@ def _mo022_the_swap_bad_half_stops_discriminating(w: World) -> None:
     Conformance 3's bad half no longer differs from the shipped poller."""
     w.replace(
         TIER_B_SUMMARY,
-        '"bad-naive-replacement/L0/dark": {\n        "details_with_id": 0,\n'
-        '        "live_regions_before": 1,\n        "marked_live_regions_after": 0,\n'
+        '"bad-naive-replacement/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 0,\n'
         '        "open_details_preserved": false,',
-        '"bad-naive-replacement/L0/dark": {\n        "details_with_id": 0,\n'
-        '        "live_regions_before": 1,\n        "marked_live_regions_after": 0,\n'
+        '"bad-naive-replacement/L0/dark": {\n        "announcement_present_before": true,\n'
+        '        "announcement_preserved": true,\n        "details_with_id": 0,\n'
+        '        "live_regions_before": 2,\n        "marked_live_regions_after": 0,\n'
         '        "open_details_preserved": true,',
     )
 
@@ -847,15 +957,31 @@ def _mo029_the_kit_stops_reading_its_artifacts_back(w: World) -> None:
     )
 
 
-def _mo031_a_red_core_row_goes_green(w: World) -> None:
-    """FIXED: one of the ten red Core-carrying rows flips, so the gate's tally
-    moves. Reaches the ledger through the patched reader plus the cache clear
-    `applied()` performs -- `rows()` memoises the parse.
+def _mo031_a_green_core_row_goes_red(w: World) -> None:
+    """REGRESSION: a Core-carrying row that reads CONFORMS is pushed back to
+    VIOLATION, so Freeze 5's condition stops holding while the Freeze row above
+    it still reads CONFORMS. Reaches the ledger through the patched reader plus
+    the cache clear `applied()` performs -- `rows()` memoises the parse.
+
+    REWRITTEN 2026-09-05 at the wave-4 union (orchestrator). It used to be a
+    FIXED mutation -- flip one of the RED Core rows green and watch the "at
+    least one is still red" pin notice. There are no red Core rows left to
+    flip, so that counterfactual is not merely unnecessary, it is unbuildable:
+    the mutation would have to invent a red row first. The probe was retargeted
+    to `len(red) == 0` in the same change, and its direction is now REGRESSION,
+    so this mutation moves in the matching direction.
+
+    Anchored on OSV1-008's own probe REF rather than on its `work:` id or a
+    bare disposition line: `disposition: CONFORMS` now appears on 31 OSV1 rows,
+    and an anchor that matched any of them would prove nothing about which row
+    moved. The ref is unique by construction -- one probe per row.
     """
     w.replace(
         ROWS_PATH,
-        "  disposition: VIOLATION\n  work: work_item_pipeline-c1a",
-        "  disposition: CONFORMS\n  work: work_item_pipeline-c1a",
+        "  disposition: CONFORMS\n  work: work_item_pipeline-v3m\n"
+        "  assertion:\n    kind: probe\n    ref: test_row_osv1_008",
+        "  disposition: VIOLATION\n  work: work_item_pipeline-v3m\n"
+        "  assertion:\n    kind: probe\n    ref: test_row_osv1_008",
     )
 
 
@@ -896,13 +1022,33 @@ def _mo025_the_literal_style_row_goes_red_again(w: World) -> None:
     )
 
 
-def _mo026_the_empty_slot_row_goes_green(w: World) -> None:
-    """FIXED: OSV1-012 closes, so Conformance 7's deferred good halves should
-    now pass."""
+def _mo026_the_l1_good_half_is_deferred_again(w: World) -> None:
+    """REGRESSION: Conformance 7's L1 good half goes back behind an xfail while
+    this row still reads CONFORMS -- a green Conformance row whose fixture no
+    longer runs is the claim-without-check Freeze 4 forbids.
+
+    TURNED ROUND 2026-09-05 (work_item_pipeline-aad): while the row was GAP the
+    counterfactual was OSV1-012 CLOSING; now that both are green it is the
+    deferral returning. Aimed at the L1 half specifically, because Conformance
+    7 names L0 AND L1 and a probe that only watched L0 would miss half of it.
+    """
+    w.replace(
+        _support.REPO_ROOT / TIER_A_KIT,
+        "def test_calm_keeps_slot_l1(alarm_dataset, empty_dataset) -> None:",
+        '@pytest.mark.xfail(strict=True, reason="OSV1-012 regressed")\n'
+        "def test_calm_keeps_slot_l1(alarm_dataset, empty_dataset) -> None:",
+    )
+
+
+def _mo026_the_empty_slot_row_goes_red_again(w: World) -> None:
+    """REGRESSION: OSV1-012 reopens, so Conformance 7 is no longer demonstrated
+    end-to-end. The two move together by construction."""
     w.replace(
         ROWS_PATH,
-        "  disposition: VIOLATION\n  work: work_item_pipeline-c1a",
-        "  disposition: CONFORMS\n  work: work_item_pipeline-c1a",
+        "  disposition: CONFORMS\n  work: work_item_pipeline-aad\n"
+        "  assertion:\n    kind: probe\n    ref: test_row_osv1_012",
+        "  disposition: VIOLATION\n  work: work_item_pipeline-aad\n"
+        "  assertion:\n    kind: probe\n    ref: test_row_osv1_012",
     )
 
 
@@ -1042,8 +1188,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-003",
-        "the browser measures a calm L1 painting ZERO --blocked pixels (the fix)",
-        _mo003_the_calm_page_stops_painting_blocked,
+        "the browser measures a calm L1 painting --blocked again (97 px, the pre-fix reading)",
+        _mo003_the_calm_page_paints_blocked_again,
     ),
     Mutation(
         "OSV1-003",
@@ -1051,6 +1197,12 @@ MUTATIONS: tuple[Mutation, ...] = (
         "(the specimen this row pinned as PRESENT until OSV1-005 closed it, now "
         "guarded from the other side)",
         _mo003b_the_retired_palette_returns,
+    ),
+    Mutation(
+        "OSV1-003",
+        "the sweep goes blind: the genuinely-alarming fixture reports 0 --blocked "
+        "where it measured 264, so the row's calm zeroes stop being evidence",
+        _mo003c_the_alarming_fixture_stops_painting_blocked,
     ),
     Mutation(
         "OSV1-004",
@@ -1082,20 +1234,31 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-008",
-        "the browser measures an open `<details>` surviving the swap (the fix)",
-        _mo008_the_swap_starts_restoring_the_disclosure,
+        "the browser measures an open `<details>` no longer surviving the swap",
+        _mo008_the_disclosure_stops_surviving,
     ),
     Mutation(
         "OSV1-008",
-        "the browser measures the pause CONTROL surviving the swap (the fix)",
-        _mo008_the_pause_control_starts_surviving,
+        "the browser measures the pause CONTROL no longer surviving the swap",
+        _mo008_the_pause_control_stops_surviving,
     ),
     Mutation(
         "OSV1-008",
-        "the browser measures L0's live region surviving the swap (the fix, on the "
-        "half that only became measurable when the hero rebuild gave L0 a "
-        "`role=status` region to destroy)",
-        _mo008_the_announcement_survives_the_swap,
+        "the browser measures L0's tagged live region destroyed by the swap again "
+        "(node identity lost -- the reading a destroy-and-rebuild cannot fake)",
+        _mo008_the_announcement_stops_surviving,
+    ),
+    Mutation(
+        "OSV1-008",
+        "the surviving region's announcement is replaced across the swap (node kept, "
+        "sentence cut off -- the half a node-identity check alone would miss)",
+        _mo008_the_announcement_text_changes,
+    ),
+    Mutation(
+        "OSV1-008",
+        "L1 goes back to rendering no live region at all (Core 6's announcement half "
+        "failing one step earlier than the swap)",
+        _mo008_l1_loses_its_live_region,
     ),
     Mutation(
         "OSV1-009",
@@ -1109,8 +1272,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-010",
-        "the browser measures every interactive control on L0 reaching 44px (the fix)",
-        _mo010_the_target_floor_is_met,
+        "the browser measures one interactive control back under 44px on a swept render",
+        _mo010_a_control_falls_back_under_the_target_floor,
+    ),
+    Mutation(
+        "OSV1-010",
+        "the one enumerated non-text exemption grows to cover more than the donut track",
+        _mo010_the_donut_exemption_grows,
     ),
     Mutation(
         "OSV1-011",
@@ -1125,8 +1293,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-012",
-        "the empty attention queue grows the sentence Core 8 asks for",
-        _mo012_the_empty_slot_gains_its_sentence,
+        "the empty attention queue goes back to a bare container -- slot, no sentence",
+        _mo012_the_empty_slot_goes_silent_again,
+    ),
+    Mutation(
+        "OSV1-012",
+        "the sentence survives but `.empty-note` stops holding a box, so the slot collapses",
+        _mo012_the_slot_loses_its_min_height,
     ),
     Mutation(
         "OSV1-013", "the manifest declares a template engine", _mo013_a_template_engine_is_declared
@@ -1210,8 +1383,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-026",
-        "OSV1-012 closes, so Conformance 7's deferred good halves should now pass",
-        _mo026_the_empty_slot_row_goes_green,
+        "Conformance 7's L1 good half is deferred again behind an xfail naming OSV1-012",
+        _mo026_the_l1_good_half_is_deferred_again,
+    ),
+    Mutation(
+        "OSV1-026",
+        "OSV1-012 reopens, so Conformance 7 is no longer demonstrated end-to-end",
+        _mo026_the_empty_slot_row_goes_red_again,
     ),
     Mutation(
         "OSV1-027",
@@ -1247,8 +1425,9 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-031",
-        "one of the five red Core-carrying rows flips to CONFORMS",
-        _mo031_a_red_core_row_goes_green,
+        "a green Core-carrying row (OSV1-008) goes back to VIOLATION, so Freeze 5's "
+        "condition stops holding under a Freeze row that still reads CONFORMS",
+        _mo031_a_green_core_row_goes_red,
     ),
     Mutation(
         "OSV1-032",

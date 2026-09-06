@@ -379,28 +379,51 @@ def test_row_osv1_002() -> None:
 
 
 def test_row_osv1_003() -> None:
-    """Core 2 VIOLATION pin, RE-READ from the browser run's own numbers.
+    """Core 2 CONFORMS, RE-READ from the browser run's own numbers.
+
+    FLIPPED 2026-09-05 from VIOLATION (VIOLATION-MOVEMENT), so the direction
+    reverses with it: this used to PIN a calm L1 at 97 `--blocked` pixels, and
+    now asserts the INVARIANT the clause states. Flip direction is REGRESSION.
 
     Not "a file appeared" and not the browser tier's pass/fail: the calm sweep
-    wrote pixel counts, and this reads them back. L0 is clean in both themes;
-    L1 paints `--blocked` on a page with nothing blocked, and THAT is the
-    pinned violation.
+    wrote pixel counts and this reads them back off disk.
+
+    THE DISCRIMINATING ARM IS ASSERTED HERE TOO, and that is the point. "Zero
+    alarm pixels" is trivially satisfiable by a sweep that has stopped
+    measuring, so a green half that only reads zeroes is not evidence. The
+    genuinely-alarming fixture must still paint `--blocked`, and the alarming
+    L1 must still paint a reserved hue at all -- if either goes quiet, this row
+    is reading a blinded instrument, not a calm page.
     """
     for theme in ("dark", "light"):
-        clean = tier_b("calm.zero_alarm_pixels", f"calm/L0/{theme}")
-        assert clean["alarm"] == 0 and clean["blocked"] == 0, (
-            f"OSV1-003 (Core 2): a calm L0 in {theme} now paints "
-            f"{clean['alarm']} --alarm and {clean['blocked']} --blocked pixels. "
-            f"L0 was the CLEAN half of this row -- a regression, not progress."
-        )
-        dirty = tier_b("calm.zero_alarm_pixels", f"calm/L1/{theme}")
-        assert dirty["blocked"] == 97, (
-            f"OSV1-003 (Core 2) PIN MOVED: a calm L1 in {theme} painted "
-            f"{dirty['blocked']} --blocked pixels, pinned at 97. If the legend "
-            f"swatch, the live dot and the danger button stopped painting "
-            f"`--blocked` on a calm page, re-derive this row from the new sweep "
-            f"(work_item_pipeline-qgo)."
-        )
+        for level in ("L0", "L1"):
+            calm = tier_b("calm.zero_alarm_pixels", f"calm/{level}/{theme}")
+            assert calm["alarm"] == 0 and calm["blocked"] == 0, (
+                f"OSV1-003 (Core 2) REGRESSION: a calm {level} in {theme} paints "
+                f"{calm['alarm']} --alarm and {calm['blocked']} --blocked pixels "
+                f"across {calm['pixels_swept']} swept, with nothing held past TTL "
+                f"and nothing blocked. Core 2: that absence is what makes the alarm "
+                f"pop. L1 measured 97 --blocked until work_item_pipeline-a1o -- 81 "
+                f"from the status-donut legend's zero-count `span.sw.mix-blocked`, "
+                f"16 from the Blocked tab's `span.dot`; both keep their slot and "
+                f"drop the hue at zero now, so a non-zero reading here means one of "
+                f"them took its hue back or a new painter appeared."
+            )
+    alarming = tier_b("calm.zero_alarm_pixels", "bad-alarm-fixture/L0/dark")
+    assert alarming["blocked"] > 0, (
+        f"OSV1-003 (Core 2): the genuinely-alarming fixture painted "
+        f"{alarming['blocked']} --blocked pixels. The calm zeroes above are only "
+        f"evidence while this arm still discriminates -- a sweep that has stopped "
+        f"seeing the hue reports a calm page and an alarming one identically."
+    )
+    reserved = tier_b("alarm.reserved_hue", "alarm/L1/dark")
+    assert reserved["alarm"] > 0 or reserved["blocked"] > 0, (
+        f"OSV1-003 (Core 2): an L1 rendered WITH a blocked item painted "
+        f"{reserved['alarm']} --alarm and {reserved['blocked']} --blocked pixels. "
+        f"The fix that took this row green had to quiet the hue at ZERO only; if "
+        f"it also quieted it when the status is real, the absence no longer makes "
+        f"anything pop."
+    )
     # THE PALETTE SPECIMENS CLOSED 2026-09-05 (work_item_pipeline-np3, OSV1-005).
     # This row's own VIOLATION is unchanged -- a calm L1 still paints `--blocked`,
     # which is what the recorded sweep above measures. But the two specimens it
@@ -537,11 +560,23 @@ EXEMPTION_REGISTER: frozenset[str] = frozenset(
         "webapp.py:1127",  # flex:{n} 1 0            -- state-bar segment ratio
         "webapp.py:1823",  # width:{today_w}px       -- throughput bar, today
         "webapp.py:1826",  # width:{prior_w}px       -- throughput bar, prior 6d
-        "webtheme.py:4197",  # {style}               -- axis ruler numeral offset
-        "webtheme.py:4216",  # left:{_grad_x(f):.1f}px -- graduation tick offset
-        "webtheme.py:4223",  # width:{px}px          -- age bar length
-        "widgets.py:837",  # width:{pct}%            -- status-mix segment (hatched)
-        "widgets.py:839",  # width:{pct}%            -- status-mix segment
+        # +182 lines on 2026-09-05 at the wave-4 union (was 4197/4216/4223 on
+        # main @065da04), and RE-MEASURED here rather than transcribed from any
+        # lane: three lanes each inserted CSS ABOVE these three sites in the same
+        # file -- calm-pixels +22 (work_item_pipeline-a1o), swap-survives +78
+        # (work_item_pipeline-v3m, the live-region rules), rendered-floors +82
+        # (work_item_pipeline-96f, the light token blocks and control sizing).
+        # 22 + 78 + 82 = 182, which is exactly the observed shift, so every one
+        # of the three is accounted for and none of them is a NEW site. The
+        # SITES are unchanged and the register did not GROW -- same eight, same
+        # three expressions -- but the pins are line numbers, so any edit higher
+        # in the file moves them. Re-pinned here rather than loosened: a register
+        # that stops naming an exact line stops being a register.
+        "webtheme.py:4379",  # {style}               -- axis ruler numeral offset
+        "webtheme.py:4398",  # left:{_grad_x(f):.1f}px -- graduation tick offset
+        "webtheme.py:4405",  # width:{px}px          -- age bar length
+        "widgets.py:866",  # width:{pct}%            -- status-mix segment (hatched)
+        "widgets.py:868",  # width:{pct}%            -- status-mix segment
     }
 )
 
@@ -608,71 +643,102 @@ def test_row_osv1_007() -> None:
 
 
 #: Live regions present BEFORE the forced swap, per level, as the 2026-09-05
-#: re-recorded run measures them. L0 renders exactly ONE since the hero
-#: rebuild landed (`widgets.py:1379`, the verdict hero's `role="status"`); L1
-#: still renders none. Pinned per level rather than as a single number,
-#: because the two levels answer Core 6's announcement half differently and a
-#: shared pin would let one move under the other.
-_LIVE_REGIONS_BEFORE_SWAP = {"L0": 1, "L1": 0}
+#: RE-RECORDED run measures them, after the Core 6 fix.
+#:
+#: L0 renders TWO: the verdict hero's `role="status"` (`widgets.py:1379`) and
+#: the persistent `#wt-live` region the fix added (`webapp.py`'s
+#: `_live_region_html`). L1 renders ONE -- it had NONE before the fix, which is
+#: why Core 6's announcement half failed there one step earlier than on L0.
+#: Pinned per level rather than as a single number, because the two levels
+#: reach the clause differently and a shared pin would let one move under the
+#: other.
+_LIVE_REGIONS_BEFORE_SWAP = {"L0": 2, "L1": 1}
 
 
 def test_row_osv1_008() -> None:
-    """Core 6 VIOLATION pin: one of four survivals holds, RE-READ from the run.
+    """Core 6 CONFORMS: all four named survivals hold, RE-READ from the run.
 
-    Pinned in BOTH directions per survival, because they are separable and a
-    fix to any one of them is progress this row must record rather than
-    absorb.
+    RETARGETED from the VIOLATION pin (work_item_pipeline-v3m, 2026-09-05).
+    The pin froze the wrong shape -- one of four survivals holding -- and it
+    broke the right way when the fix landed. What it asserts now is the
+    conforming shape, still pinned per survival, because they are separable
+    mechanisms and a regression in any ONE of them is a regression this row
+    must catch rather than average away.
+
+    Every number is re-read from the kit's committed run summary
+    (`LAST_RUN.json`); this row never trusts the browser tier's own pass/fail
+    (Freeze 3 / Phase-1 ruling 6).
     """
     for level in ("L0", "L1"):
         m = tier_b("swap.survives", f"calm/{level}/dark")
         assert m["scroll_preserved"], (
-            f"OSV1-008 (Core 6): scroll offset stopped surviving the body-swap on "
-            f"{level}. That was the ONE of Core 6's four named survivals that held "
-            f"-- a regression."
+            f"OSV1-008 (Core 6) REGRESSION on {level}: scroll offset stopped "
+            f"surviving the body-swap. `restoreState`'s `window.scrollTo` runs "
+            f"LAST, after the disclosures are re-opened -- check nothing moved it "
+            f"back above them."
         )
-        assert not m["open_details_preserved"], (
-            f"OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY on {level}: an open "
-            f"`<details>` now survives the swap. Confirm it survives because the "
-            f"markup gained ids and `restoreState` reaches them, then re-derive "
-            f"this row (work_item_pipeline-qgo)."
+        assert m["open_details_preserved"], (
+            f"OSV1-008 (Core 6) REGRESSION on {level}: an open `<details>` stopped "
+            f"surviving the swap. `restoreState` records open disclosures by "
+            f"ORDINAL + class signature as well as by id -- the id path alone has "
+            f"ZERO targets on this surface, which is exactly how this used to fail."
         )
         assert m["details_with_id"] == 0, (
-            f"OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY on {level}: "
-            f"{m['details_with_id']} `<details>` now carry an id. `restoreState` "
-            f"only ever re-opens `details[id]`, so this is the mechanism acquiring "
-            f"its first targets -- re-derive from the new swap measurement."
+            f"OSV1-008 (Core 6) PIN MOVED on {level}: {m['details_with_id']} "
+            f"`<details>` now carry an id. That is not a regression -- it is the "
+            f"id path acquiring its first real targets -- but it changes WHICH "
+            f"mechanism is carrying the disclosure half, so re-derive this row "
+            f"and confirm the ordinal path is still exercised."
         )
-        assert not m["pause_control_preserved"], (
-            f"OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY on {level}: the pause "
-            f"CONTROL's state now survives the swap. Re-derive this row."
+        assert m["pause_control_preserved"], (
+            f"OSV1-008 (Core 6) REGRESSION on {level}: the pause CONTROL stopped "
+            f"surviving the swap -- a paused page shows itself as running again. "
+            f"The control is re-synchronised to `window.__wtRefreshPaused` after "
+            f"every swap (`restorePauseControl`); the operator reads the control, "
+            f"not the flag."
         )
         assert m["pause_flag_preserved"], (
-            f"OSV1-008 (Core 6): `window.__wtRefreshPaused` stopped surviving the "
-            f"swap on {level}. The flag living on `window` is why polling stays "
-            f"paused at all -- a regression."
+            f"OSV1-008 (Core 6) REGRESSION on {level}: `window.__wtRefreshPaused` "
+            f"stopped surviving the swap. The flag living on `window` is why "
+            f"polling stays paused at all."
         )
         assert m["live_regions_before"] == _LIVE_REGIONS_BEFORE_SWAP[level], (
             f"OSV1-008 (Core 6) PIN MOVED on {level}: the page renders "
             f"{m['live_regions_before']} live region(s) before the swap, pinned at "
             f"{_LIVE_REGIONS_BEFORE_SWAP[level]}. Movement in either direction "
             f"changes what Core 6's announcement half is even asking -- re-derive "
-            f"this row from the new swap measurement (work_item_pipeline-qgo)."
+            f"this row from the new swap measurement."
         )
-        assert m["marked_live_regions_after"] == 0, (
-            f"OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY on {level}: "
-            f"{m['marked_live_regions_after']} of the live region(s) tagged before "
-            f"the swap SURVIVED it. On L0 that is the announcement half closing -- "
-            f"re-derive this row from the new measurement."
+        assert m["marked_live_regions_after"] > 0, (
+            f"OSV1-008 (Core 6) REGRESSION on {level}: none of the "
+            f"{m['live_regions_before']} live region(s) tagged before the swap "
+            f"survived it. NODE IDENTITY is the reading that matters here: a "
+            f"region destroyed and rebuilt carrying the same sentence has still "
+            f"cut off whatever was being announced."
         )
-    assert count(WEBAPP, "aria-live") == 0 and count(WEBTHEME, "aria-live") == 0, (
-        "OSV1-008 (Core 6) PIN BROKE THE RIGHT WAY: an `aria-live` region appeared "
-        "in the source. Re-derive this row from the Tier-B snapshot rather than "
-        "from its presence."
+        assert m["announcement_present_before"], (
+            f"OSV1-008 (Core 6) on {level}: the persistent region carried no text "
+            f"before the swap, so 'the announcement survived' is vacuous -- an "
+            f"empty region announces nothing whether it survives or not."
+        )
+        assert m["announcement_preserved"], (
+            f"OSV1-008 (Core 6) REGRESSION on {level}: the surviving region's "
+            f"announcement changed across the swap. The node survived but what it "
+            f"was saying did not."
+        )
+    assert count(WEBAPP, "aria-live") == 2, (
+        f"OSV1-008 (Core 6) PIN MOVED: `aria-live` occurs "
+        f"{count(WEBAPP, 'aria-live')} time(s) in webapp.py, pinned at 2 (the "
+        f"`_live_region_html` markup and its own docstring). This row's "
+        f"announcement half rests on there being exactly ONE persistent region "
+        f"per polling level; a second declaration site means a second region, "
+        f"and only one of them is the node the poller carries across the swap."
     )
     assert contains(WIDGETS, ' role="status">'), (
-        'OSV1-008 (Core 6): the verdict hero\'s `role="status"` region is gone -- '
-        "that is the ONE live region L0 renders, and the thing the swap destroys. "
-        "Re-derive this row (and OSV1-001's hero rebuild) from a fresh run."
+        'OSV1-008 (Core 6): the verdict hero\'s `role="status"` region is gone. '
+        "It is not the region the swap preserves -- `#wt-live` is -- but it IS "
+        "one of the two L0 renders, so losing it moves `live_regions_before` and "
+        "invalidates the pin above."
     )
 
 
@@ -770,44 +836,107 @@ def test_row_osv1_009() -> None:
 
 
 def test_row_osv1_010() -> None:
-    """Core 7 VIOLATION pin (rendered half), RE-READ from the browser run.
+    """Core 7 CONFORMS (rendered half), RE-READ from the browser run.
 
-    Four floors, measured across 18 renders. Three fail and one passes, and
-    all four are pinned: a fix to any one is progress this row must record.
+    RETARGETED 2026-09-05 from the VIOLATION pin (work_item_pipeline-96f). The
+    pin froze three failing floors -- 7 text nodes below 4.5:1, 26 of 34
+    interactive controls under 44px on L0, and 16-23 non-text surfaces per
+    level below 3:1 -- and asserted the fourth (reduced motion) already passed.
+    All four are now asserted in the REGRESSION direction, over the recorded
+    run rather than the browser tier's own green (Freeze 3).
+
+    Swept over EVERY recorded render, not one scenario: three floors are
+    theme- and width-dependent (the light blocks are held in sync only by
+    comment, and 430px hides controls the wider viewports show), so reading a
+    single scenario would let seventeen others move unseen.
+
+    The ONE enumerated exemption -- the status-mix donut's backing ring, see
+    `_probe.NON_TEXT_EXEMPT_CLASSES` -- is asserted here too, by SIZE and by
+    WHERE it fires, so the allowance cannot quietly grow into the thing that
+    keeps the non-text arm green.
     """
-    l0 = tier_b("perception.floors", "calm/L0/1280/dark")
-    l1 = tier_b("perception.floors", "calm/L1/1280/dark")
-    l1_light = tier_b("perception.floors", "calm/L1/1280/light")
+    renders = {
+        scenario: headline
+        for scenario, headline in tier_b_summary()["checks"]["perception.floors"].items()
+        if scenario.startswith("calm/")
+    }
+    assert len(renders) == 18, (
+        f"OSV1-010 (Core 7): the recorded run sweeps {len(renders)} renders, not the "
+        f"18 (L0/L1/L2 x 430/900/1280 x dark/light) this clause names. A narrowed "
+        f"sweep is a narrowed claim -- re-derive."
+    )
 
-    assert l0["text_below_floor"] == 0, (
-        f"OSV1-010 (Core 7): L0 now has {l0['text_below_floor']} text elements below "
-        f"4.5:1. L0 was the CLEAN level for text contrast -- a regression."
+    text = {s: h["text_below_floor"] for s, h in sorted(renders.items()) if h["text_below_floor"]}
+    assert not text, (
+        f"OSV1-010 (Core 7) REGRESSION, text floor: {text} -- text below 4.5:1 against "
+        f"its own RENDERED background. Fix the TOKEN and in ALL FOUR declared blocks "
+        f"(the two light ones are held in sync only by comment); flat pair math "
+        f"clearing the floor is NOT sufficient here, which is what OSV1-009's honest "
+        f"limit records and what this row measured."
     )
-    assert l1["text_below_floor"] == 3 and l1_light["text_below_floor"] == 4, (
-        f"OSV1-010 (Core 7) PIN MOVED: L1 text below 4.5:1 measured "
-        f"{l1['text_below_floor']} dark / {l1_light['text_below_floor']} light, "
-        f"pinned at 3 / 4 (light was 5 before the contrast lane moved "
-        f"`--ink-quiet`). Movement in either direction means the render changed "
-        f"-- re-derive (work_item_pipeline-qgo)."
+
+    targets = {
+        s: f"{h['controls_below_44px']} of {h['controls']}"
+        for s, h in sorted(renders.items())
+        if h["controls_below_44px"]
+    }
+    assert not targets, (
+        f"OSV1-010 (Core 7) REGRESSION, target floor: {targets} -- interactive controls "
+        f"under 44px on their smaller side. The hit area is what has to reach --u; it "
+        f"need not be the visual size."
     )
-    assert l0["controls_below_44px"] == 26 and l0["controls"] == 34, (
-        f"OSV1-010 (Core 7) PIN MOVED: L0 measured {l0['controls_below_44px']} of "
-        f"{l0['controls']} interactive controls under 44px, pinned at 26 of 34 "
-        f"(35 before the hero rebuild replaced one control)."
+
+    non_text = {
+        s: f"{h['non_text_below_floor']} of {h['non_text_measured']}"
+        for s, h in sorted(renders.items())
+        if h["non_text_below_floor"]
+    }
+    assert not non_text, (
+        f"OSV1-010 (Core 7) REGRESSION, non-text floor: {non_text} -- control borders "
+        f"or icon strokes below 3:1. `--control-edge` is the token that carries an "
+        f"INTERACTIVE control's boundary; `--glass-hairline`/`-soft` are the "
+        f"decorative panel edges WCAG 1.4.11 exempts, and swapping one for the other "
+        f"is how this regresses."
     )
-    assert l0["non_text_below_floor"] > 0, (
-        "OSV1-010 (Core 7) PIN BROKE THE RIGHT WAY: every measured control border "
-        "and icon stroke on L0 now meets 3:1. Re-derive this row."
+
+    motion = {
+        s: h["running_animations_under_reduced_motion"]
+        for s, h in sorted(renders.items())
+        if h["running_animations_under_reduced_motion"]
+    }
+    assert not motion, (
+        f"OSV1-010 (Core 7) REGRESSION, reduced motion: {motion} animation(s) run "
+        f"under the preference. This floor passed before the other three were fixed "
+        f"and must not be traded for them -- see OSV1-011 for the kernel-rule half."
     )
-    assert l0["running_animations_under_reduced_motion"] == 0, (
-        f"OSV1-010 (Core 7): {l0['running_animations_under_reduced_motion']} "
-        f"animation(s) now run under `prefers-reduced-motion: reduce`. That floor "
-        f"PASSED at this measurement -- a regression, and Core 7's kernel-rule half "
-        f"(OSV1-011) with it."
+
+    # The exemption, asserted as a NUMBER and by WHERE it fires. L1 is the only
+    # level that draws a donut; an exemption appearing on L0 or L2, or a second
+    # one appearing on L1, means the allowance -- not the fix -- is what is
+    # keeping the non-text arm green.
+    exempt = {s: h["non_text_exempt_below_floor"] for s, h in sorted(renders.items())}
+    stray = {s: n for s, n in exempt.items() if n and "/L1/" not in s}
+    assert not stray, (
+        f"OSV1-010 (Core 7): the non-text exemption fired outside L1: {stray}. It "
+        f"covers the status-mix donut's backing ring and nothing else -- L0 and L2 "
+        f"draw no donut, so an entry there is the allowance spreading."
     )
+    grown = {s: n for s, n in exempt.items() if "/L1/" in s and n != 1}
+    assert not grown, (
+        f"OSV1-010 (Core 7): L1's non-text exemption is pinned at exactly 1 entry "
+        f"(`.donut-track`, 1.32:1 dark / 1.15:1 light -- the one BLOCKED residual "
+        f"this row records); observed {grown}. Growth here widens the floor instead "
+        f"of meeting it."
+    )
+
     assert contains(WEBTHEME, "--u:44px"), (
         "OSV1-010 (Core 7): the 44px target token is gone -- the thing the Tier-B "
         "bounding-box check exists to verify."
+    )
+    assert contains(WEBTHEME, "--control-edge:"), (
+        "OSV1-010 (Core 7): `--control-edge` is gone from the token block. It is the "
+        "token that took every interactive control's border from 1.24-1.60:1 to over "
+        "3:1 without dragging the decorative panel hairlines along with it."
     )
 
 
@@ -876,31 +1005,66 @@ def test_row_osv1_011() -> None:
 
 
 def test_row_osv1_012() -> None:
-    """Core 8 VIOLATION pin: two widget renderers still have no empty branch,
-    and the kit's two `calm.keeps_slot` halves are still deferred against this
-    row.
+    """Core 8 CONFORMS: every widget that can render empty keeps its slot AND
+    says so, and the kit's two `calm.keeps_slot` halves are no longer deferred.
 
-    Pinned on the RENDERERS rather than on a rendered page, because that is
-    what an in-process probe can see: `render_attention_queue` and
-    `render_agents_panel` return their container unconditionally, so an empty
-    one is a slot with nothing in it. Giving either an empty branch flips this
-    pin -- which is the fix landing.
+    RETARGETED 2026-09-05 (work_item_pipeline-aad) from the VIOLATION pin. The
+    pin asserted the ABSENCE of an empty branch in two renderers; this asserts
+    the presence of the sentence in all three, plus the sentence's own register
+    (no numeral, no exclamation) -- because "grew an empty branch" and "says
+    something calm in it" are different facts and only the second is the
+    clause.
+
+    Asserted on the RENDERERS rather than on a rendered page, because that is
+    what an in-process probe can see. The rendered proof is the Tier-A kit's
+    own `calm.keeps_slot` pair, whose deferral this probe now forbids.
     """
-    for func in ("render_attention_queue", "render_agents_panel"):
+    sentences = {
+        "render_attention_queue": "No item needs you right now.",
+        "render_agents_panel": "No agent has held an item in this project yet.",
+        "render_status_breakdown": "No items to break down yet.",
+    }
+    for func, sentence in sentences.items():
         body = _widgets_function(func)
-        assert "if not data[" not in body, (
-            f"OSV1-012 (Core 8) PIN BROKE THE RIGHT WAY: `{func}` now has an empty "
-            f"branch. If it emits the empty SENTENCE Core 8 requires, re-run the "
-            f"Tier-A kit's `calm.keeps_slot` halves, flip OSV1-012 to CONFORMS, delete "
-            f"their xfail markers and retarget this probe -- all in the same change "
-            f"(work_item_pipeline-c1a)."
+        assert "_empty_note(" in body, (
+            f"OSV1-012 (Core 8) REGRESSION: `{func}` no longer routes its empty case "
+            f"through `_empty_note`. A widget with nothing to show keeps its slot AND "
+            f"says so in a sentence -- an empty container is the defect this row closed."
         )
+        assert sentence in body, (
+            f"OSV1-012 (Core 8) REGRESSION: `{func}`'s empty sentence is gone or "
+            f"changed. Expected {sentence!r}. If the wording moved deliberately, "
+            f"re-derive this row from a re-run of the Tier-A kit's `calm.keeps_slot` "
+            f"halves rather than editing this string to match."
+        )
+        assert "!" not in sentence and not any(ch.isdigit() for ch in sentence), (
+            f"OSV1-012 (Core 8) REGRESSION: `{func}`'s empty sentence acquired a "
+            f"numeral or an exclamation. The calm state is STATED, never celebrated -- "
+            f"a triumphant zero is what this clause forbids."
+        )
+    assert contains(WIDGETS, 'class="empty-note"'), (
+        "OSV1-012 (Core 8) REGRESSION: `_empty_note` no longer emits `.empty-note`. "
+        "That class is where the slot's `min-height` lives (webtheme.py) -- without "
+        "it an empty widget collapses instead of keeping its slot."
+    )
+    theme = read(WEBTHEME)
+    assert ".empty-note{" in theme, (
+        "OSV1-012 (Core 8) REGRESSION: the `.empty-note` rule is gone from the token "
+        "module. Keeping the slot is the half of this clause that is about geometry, "
+        "not words."
+    )
+    empty_rule = theme.split(".empty-note{", 1)[1].split("}", 1)[0]
+    assert "min-height" in empty_rule, (
+        f"OSV1-012 (Core 8) REGRESSION: `.empty-note` no longer sets a `min-height`, "
+        f"so an empty widget collapses to nothing instead of keeping its slot. The "
+        f"rule now reads: {empty_rule.strip()!r}"
+    )
     kit = _kit_source()
     for test_name in ("test_calm_keeps_slot", "test_calm_keeps_slot_l1"):
-        assert "OSV1-012" in _kit_deferred_rows(kit, test_name), (
-            f"OSV1-012 (Core 8) PIN BROKE THE RIGHT WAY: the kit's `{test_name}` is no "
-            f"longer deferred against this row. A passing good half is the fix -- flip "
-            f"the row in the same change."
+        assert not _kit_deferred_rows(kit, test_name), (
+            f"OSV1-012 (Core 8) REGRESSION: the kit's `{test_name}` is deferred behind "
+            f"an xfail again. This row reads CONFORMS off that half PASSING; a deferred "
+            f"good half means it should not."
         )
     assert contains(WIDGETS, '"All clear"'), (
         "OSV1-012 (Core 8): the calm headline 'All clear' is gone. Calm must stay "
@@ -1424,6 +1588,14 @@ def test_row_osv1_022() -> None:
     Two of them, because the contract's literal bad half does not discriminate
     on scroll here (a synchronous whole-body replacement preserves the offset
     by itself on chromium 148); the reflow variant does. Both are re-read.
+
+    RE-DERIVED 2026-09-05 alongside OSV1-008 (work_item_pipeline-v3m), exactly
+    as this probe's own message instructed. The good half's disclosure reading
+    flipped false -> true when Core 6 was fixed; what this row is about is that
+    the bad halves still CATCH what they exist to catch, so the good-half pin
+    is now stated as a DIFFERENCE from the bad half rather than as a fixed
+    value -- a bad half that reads the same as the good one demonstrates
+    nothing whichever way both read.
     """
     assert _exists(TIER_B_KIT), (
         f"OSV1-022 (Conformance 3): {TIER_B_KIT} is gone -- the fixture this row "
@@ -1443,10 +1615,15 @@ def test_row_osv1_022() -> None:
         "unproven."
     )
     good = tier_b("swap.survives", "calm/L0/dark")
-    assert good["scroll_preserved"] and not good["open_details_preserved"], (
+    assert good["scroll_preserved"] and good["open_details_preserved"], (
         "OSV1-022 (Conformance 3): the good half's own outcome moved (scroll "
         f"{good['scroll_preserved']}, disclosures {good['open_details_preserved']}) "
         f"-- re-derive this row and OSV1-008 together."
+    )
+    assert good["open_details_preserved"] != naive["open_details_preserved"], (
+        "OSV1-022 (Conformance 3): the good half and the literal bad half now "
+        "report the SAME disclosure outcome. A bad half that cannot be told apart "
+        "from the good one demonstrates nothing, whichever way both happen to read."
     )
     assert contains(WEBTHEME, "document.body.innerHTML = doc.body.innerHTML"), (
         "OSV1-022 (Conformance 3): the whole-body innerHTML swap is gone. That IS the "
@@ -1579,24 +1756,39 @@ def test_row_osv1_025() -> None:
 
 
 def test_row_osv1_026() -> None:
-    """Conformance 7 pin: the two-render fixture exists and discriminates, and
-    its GOOD halves are still deferred against OSV1-012."""
+    """Conformance 7 CONFORMS: the two-render fixture discriminates AND both of
+    its GOOD halves pass, on L0 and on L1.
+
+    RETARGETED 2026-09-05 (work_item_pipeline-aad) from the GAP pin, which
+    asserted the good halves were DEFERRED. A Conformance row is about a
+    discriminating fixture, and a fixture whose good half has never been seen
+    to pass is half a fixture -- so this now asserts the deferral is GONE and
+    the row it was deferred against is green. Both bad halves are still
+    asserted: flipping this row must not spend them.
+    """
     kit = _kit_source()
     assert "check_calm_keeps_slot" in _kit_defs(kit), (
         f"OSV1-026 (Conformance 7): {TIER_A_KIT} no longer implements "
         f"`calm.keeps_slot` at the location the contract names."
     )
+    for good_half in ("test_calm_keeps_slot", "test_calm_keeps_slot_l1"):
+        assert good_half in _kit_defs(kit), (
+            f"OSV1-026 (Conformance 7) REGRESSION: the kit's `{good_half}` is gone. "
+            f"Conformance 7 names L0 AND L1, and this row reads CONFORMS off BOTH "
+            f"halves passing."
+        )
+        assert not _kit_deferred_rows(kit, good_half), (
+            f"OSV1-026 (Conformance 7) REGRESSION: `{good_half}` is deferred behind an "
+            f"xfail again. This row is green because the good halves PASS -- a "
+            f"deferred half means it should not be."
+        )
     assert _kit_bad_halves(kit, "test_calm_keeps_slot"), (
         "OSV1-026 (Conformance 7): the fixture no longer ships a bad half (Freeze 4)."
     )
-    assert "OSV1-012" in _kit_deferred_rows(kit, "test_calm_keeps_slot"), (
-        "OSV1-026 (Conformance 7) PIN BROKE THE RIGHT WAY: the good half is no longer "
-        "deferred against OSV1-012. Flip OSV1-012 AND this row and retarget both "
-        "probes in the same change (work_item_pipeline-c1a)."
-    )
-    assert row("OSV1-012")["disposition"] in PINNING_DISPOSITIONS, (
-        "OSV1-026 (Conformance 7) PIN BROKE THE RIGHT WAY: OSV1-012 is no longer red, "
-        "so Conformance 7's good halves should now pass. Re-derive from the PASSING pair."
+    assert row("OSV1-012")["disposition"] not in PINNING_DISPOSITIONS, (
+        "OSV1-026 (Conformance 7) REGRESSION: OSV1-012 went red again, so Conformance "
+        "7's good halves cannot be passing. These two rows move together -- re-derive "
+        "both from a re-run of the pair."
     )
     assert contains(
         OPERATOR_CONTRACT_PATH, "a render that drops empty widgets, or renders a hero-scale `0`"
@@ -1913,11 +2105,20 @@ def test_row_osv1_030() -> None:
 
 
 def test_row_osv1_031() -> None:
-    """Freeze 5 pin: at least one Core-carrying row is still red.
+    """Freeze 5 CONFORMS: NO Core-carrying row is red.
 
-    The only probe in this family that reads the LEDGER rather than the repo.
-    It goes red when the last Core row turns green -- which is the signal to
-    flip this row, not a failure.
+    RETARGETED 2026-09-05 at the wave-4 union, in the same change that flipped
+    the row (VIOLATION-MOVEMENT: the old pin -- "at least one Core row is still
+    red" -- went red because the last one turned green). The direction is now
+    REGRESSION: this fails the moment any Core-carrying row goes back to GAP or
+    VIOLATION, which is the only way Freeze 5 can stop being met.
+
+    Still the only probe in this family that reads the LEDGER rather than the
+    repo. It cannot, and does not, re-verify the 17 underlying measurements --
+    each Core row owns its own probe and its own evidence, and this one asserts
+    the AGGREGATE those probes add up to. That is the honest limit of a tally
+    gate: it counts dispositions, so a dishonest disposition would pass here
+    and fail in the row that carries it.
     """
     core_rows = [
         r
@@ -1930,21 +2131,15 @@ def test_row_osv1_031() -> None:
         f"re-derive."
     )
     red = sorted(r["id"] for r in core_rows if r["disposition"] in {"GAP", "VIOLATION"})
-    assert red, (
-        "OSV1-031 (Freeze 5) PIN BROKE THE RIGHT WAY: every Core-carrying row now reads "
-        "CONFORMS or NOT-ASSERTABLE. Confirm each formerly-red row was RE-DERIVED from "
-        "real measurement (not flipped because a kit file appeared), then flip OSV1-031 "
-        "to CONFORMS and retarget this probe to assert no Core row is red "
-        "(work_item_pipeline-umm)."
-    )
-    assert len(red) == 4, (
-        f"OSV1-031 (Freeze 5): pinned 4 red Core-carrying rows, observed {len(red)}: "
-        f"{red}. Movement in either direction means this gate's tally changed -- update "
-        f"the pin and the row's notes in the same change. (10 at seed; OSV1-009 went "
-        f"green 2026-09-04, work_item_pipeline-sxh; OSV1-015 and -016 went green "
-        f"2026-09-04, work_item_pipeline-8vv and -dg3; OSV1-001 and OSV1-004 went green "
-        f"2026-09-05, work_item_pipeline-ujy and the Tier-A kit; OSV1-005 went green "
-        f"2026-09-05, work_item_pipeline-np3.)"
+    assert len(red) == 0, (
+        f"OSV1-031 (Freeze 5) REGRESSION: {len(red)} Core-carrying row(s) went back to "
+        f"GAP or VIOLATION: {red}. Freeze 5 asks that EVERY Core clause read CONFORMS "
+        f"or be NOT-ASSERTABLE with its cadence named, so this gate no longer holds -- "
+        f"re-open OSV1-031 (disposition GAP) in the SAME change that reddens the row, "
+        f"rather than leaving a green Freeze row above a red Core one. (Ten Core rows "
+        f"were red at seed; the last four went green 2026-09-05 at the wave-4 union -- "
+        f"OSV1-003 work_item_pipeline-a1o, OSV1-012 work_item_pipeline-aad, OSV1-008 "
+        f"work_item_pipeline-v3m, OSV1-010 work_item_pipeline-96f.)"
     )
     assert {r["id"] for r in core_rows if r["disposition"] == "NOT-ASSERTABLE"} == {
         "OSV1-018",
@@ -1952,7 +2147,9 @@ def test_row_osv1_031() -> None:
     }, (
         "OSV1-031 (Freeze 5): the NOT-ASSERTABLE Core rows changed. Freeze 5's second "
         "limb admits exactly the clauses the CONTRACT declares unassertable, each with "
-        "its cadence named -- a new one is a downgrade, not a pass."
+        "its cadence named -- a new one is a downgrade, not a pass. This matters MORE "
+        "now that the row reads CONFORMS: moving a Core row to NOT-ASSERTABLE would "
+        "keep this gate green while removing the assertion under it."
     )
 
 
