@@ -1,1 +1,6 @@
 unit rc=0
+integration rc=0
+cli rc=0
+ledger rc=0
+module rc=0
+ALLDONE
