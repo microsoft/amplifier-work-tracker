@@ -1,0 +1,237 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__ test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim ___
+
+project = 'reapproj1af25cf318'
+
+    @pytest.mark.asyncio
+    async def test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim(project):
+        """Trigger path 1: the explicit `work_resolve` refusal. Claim -> force
+        reap -> resolve refuses (fenced) -> but the SAME session's next
+        `work_claim` must still succeed, in the same process.
+    
+        Was `xfail(strict=True)` for ledger row CCV1-009 (`work_item_pipeline-dn4`)
+        while `Beads.resolve`'s fence ran only under `if current.status == "held"`
+        and a reaped item is `open`, so the stale holder's close landed. That
+        PRODUCT defect is fixed -- the fence is now keyed on custody IDENTITY,
+        not item status, and CCV1-009 reads CONFORMS -- so the marker was
+        XPASSing (strict) and failing this suite. Removed rather than re-aimed:
+        the behaviour it described no longer exists. The same refusal is pinned
+        as a discriminating good/bad pair in `test_conformance_fixtures.py`
+        (contract Fixture 2) and at the adapter layer in
+        `tests/integration/test_post_reclaim_fence.py`."""
+        add_session = WorkTrackerSession({"actor": _unique("adder")})
+        first = await add_session.add(project, "first reap-recovery item", acceptance="n/a")
+        assert first.success is True
+    
+        session = WorkTrackerSession({"actor": _unique("resolver")})
+        claimed = await session.claim(project)
+        assert claimed.success is True
+        item_id = claimed.output["claimed"]  # type: ignore[index]
+    
+        reaped = _force_reap(session, project)
+        assert reaped["reclaimed_count"] == 1
+    
+        resolved = await session.resolve(item_id, "trying to close after being reclaimed")
+        assert resolved.success is False
+        assert "reclaimed" in str(resolved.output).lower()
+    
+        # The fix: session state must not stay poisoned.
+>       assert session._held is None  # noqa: SLF001
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: assert _Held(project='reapproj1af25cf318', item_id='reapproj1af25cf318-1vo', actor='resolverf741fff641', generation=1, stop=<...44440428ef0: unset>, thread=<Thread(custody-reapproj1af25cf318-1vo, started daemon 268573970219392)>, lost_reason=None) is None
+E        +  where _Held(project='reapproj1af25cf318', item_id='reapproj1af25cf318-1vo', actor='resolverf741fff641', generation=1, stop=<...44440428ef0: unset>, thread=<Thread(custody-reapproj1af25cf318-1vo, started daemon 268573970219392)>, lost_reason=None) = <amplifier_module_tool_work_tracker.WorkTrackerSession object at 0xf44442743e00>._held
+
+modules/tool-work-tracker/tests/test_reap_recovery.py:86: AssertionError
+---------------------------- Captured stdout setup -----------------------------
+Starting server with Config HP="127.0.0.1:60719"|T="28800000"|R="false"|L="info"
+---------------------------- Captured stderr setup -----------------------------
+time="2026-09-05T18:51:06-07:00" level=info msg="Creating root@localhost superuser"
+time="2026-09-05T18:51:06-07:00" level=info msg="Server ready. Accepting connections."
+time="2026-09-05T18:51:06-07:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-09-05T18:51:06-07:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-09-05T18:51:06-07:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-09-05T18:51:06-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-09-05T18:51:06-07:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-09-05T18:51:07-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-09-05T18:51:07-07:00" level=info msg=ConnectionClosed connectionID=2
+time="2026-09-05T18:51:07-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-09-05T18:51:07-07:00" level=info msg=ConnectionClosed connectionID=3
+time="2026-09-05T18:51:07-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-09-05T18:51:07-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+time="2026-09-05T18:51:07-07:00" level=info msg=ConnectionClosed connectionID=4
+time="2026-09-05T18:51:07-07:00" level=warning msg="error running query" connectTime="2026-09-05 18:51:07.375636526 -0700 PDT m=+0.479000671" connectionDb=reapproj1af25cf318 connectionID=5 error="table not found: schema_migrations" queryTime="2026-09-05 18:51:07.376714219 -0700 PDT m=+0.480078380"
+time="2026-09-05T18:51:07-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=6
+time="2026-09-05T18:51:07-07:00" level=warning msg="error running query" connectTime="2026-09-05 18:51:07.377103514 -0700 PDT m=+0.480467675" connectionDb=reapproj1af25cf318 connectionID=6 error="table not found: schema_migrations" queryTime="2026-09-05 18:51:07.377882904 -0700 PDT m=+0.481247065"
+time="2026-09-05T18:51:07-07:00" level=warning msg="error running query" connectTime="2026-09-05 18:51:07.377103514 -0700 PDT m=+0.480467675" connectionDb=reapproj1af25cf318 connectionID=6 error="table not found: schema_migrations" queryTime="2026-09-05 18:51:07.379525588 -0700 PDT m=+0.482889765"
+time="2026-09-05T18:51:07-07:00" level=warning msg="error running query" connectTime="2026-09-05 18:51:07.377103514 -0700 PDT m=+0.480467675" connectionDb=reapproj1af25cf318 connectionID=6 error="table not found: schema_migrations" queryTime="2026-09-05 18:51:07.381857997 -0700 PDT m=+0.485222158"
+time="2026-09-05T18:51:08-07:00" level=warning msg="error running query" connectTime="2026-09-05 18:51:07.377103514 -0700 PDT m=+0.480467675" connectionDb=reapproj1af25cf318 connectionID=6 error="table not found: ignored_schema_migrations" queryTime="2026-09-05 18:51:08.837469207 -0700 PDT m=+1.940833352"
+time="2026-09-05T18:51:09-07:00" level=info msg=ConnectionClosed connectionID=6
+time="2026-09-05T18:51:09-07:00" level=info msg=ConnectionClosed connectionID=5
+time="2026-09-05T18:51:09-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=7
+time="2026-09-05T18:51:09-07:00" level=info msg=ConnectionClosed connectionID=7
+time="2026-09-05T18:51:09-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=8
+time="2026-09-05T18:51:09-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=9
+time="2026-09-05T18:51:09-07:00" level=info msg=ConnectionClosed connectionID=8
+time="2026-09-05T18:51:09-07:00" level=info msg=ConnectionClosed connectionID=9
+time="2026-09-05T18:51:09-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=10
+time="2026-09-05T18:51:09-07:00" level=info msg=ConnectionClosed connectionID=10
+time="2026-09-05T18:51:09-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=11
+time="2026-09-05T18:51:09-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=12
+time="2026-09-05T18:51:09-07:00" level=info msg=ConnectionClosed connectionID=11
+time="2026-09-05T18:51:09-07:00" level=info msg=ConnectionClosed connectionID=12
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=13
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=13
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=14
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=15
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=14
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=15
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=16
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=16
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=17
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=17
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=18
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=18
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=19
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=19
+----------------------------- Captured stdout call -----------------------------
+
+----------------------------- Captured stderr call -----------------------------
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=20
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=20
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=21
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=21
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=22
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=23
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=22
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=24
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=24
+time="2026-09-05T18:51:10-07:00" level=warning msg="error running query" connectTime="2026-09-05 18:51:10.372746793 -0700 PDT m=+3.476110938" connectionDb=reapproj1af25cf318 connectionID=23 error="backup 'backup_export' not found" queryTime="2026-09-05 18:51:10.480071511 -0700 PDT m=+3.583435640"
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=23
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=25
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=25
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=26
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=26
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=27
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=27
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=28
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=28
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=29
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=29
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=30
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=30
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=31
+time="2026-09-05T18:51:10-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=32
+time="2026-09-05T18:51:10-07:00" level=info msg=ConnectionClosed connectionID=31
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=32
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=33
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=33
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=34
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=34
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=35
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=35
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=36
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=36
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=37
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=37
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=38
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=38
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=39
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=39
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=40
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=40
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=41
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=41
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=42
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=42
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=43
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=43
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=44
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=44
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=45
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=45
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=46
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=46
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=47
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=47
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=48
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=49
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=48
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=50
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=50
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=49
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=51
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=51
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=52
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=52
+time="2026-09-05T18:51:11-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=53
+time="2026-09-05T18:51:11-07:00" level=info msg=ConnectionClosed connectionID=53
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=54
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=54
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=55
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=55
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=56
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=56
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=57
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=57
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=58
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=58
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=59
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=59
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=60
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=60
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=61
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=61
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=62
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=62
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=63
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=63
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=64
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=64
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=65
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=66
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=65
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=67
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=67
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=66
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=68
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=68
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=69
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=69
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=70
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=70
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=71
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=71
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=72
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=72
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=73
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=73
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=74
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=74
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=75
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=75
+time="2026-09-05T18:51:12-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=76
+time="2026-09-05T18:51:12-07:00" level=info msg=ConnectionClosed connectionID=76
+time="2026-09-05T18:51:13-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=77
+time="2026-09-05T18:51:13-07:00" level=info msg=ConnectionClosed connectionID=77
+------------------------------ Captured log call -------------------------------
+ERROR    amplifier_work_tracker.webpush:webpush.py:435 ntfy alarm unexpected failure for reclaimed reapproj1af25cf318-1vo: asyncio.run() cannot be called from a running event loop
+--------------------------- Captured stderr teardown ---------------------------
+time="2026-09-05T18:51:13-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=78
+time="2026-09-05T18:51:13-07:00" level=info msg="stats stopped: context canceled"
+time="2026-09-05T18:51:13-07:00" level=info msg=ConnectionClosed connectionID=78
+time="2026-09-05T18:51:13-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=79
+time="2026-09-05T18:51:13-07:00" level=info msg=ConnectionClosed connectionID=79
+time="2026-09-05T18:51:13-07:00" level=info msg="Server closing listener. No longer accepting connections."
+time="2026-09-05T18:51:13-07:00" level=info msg="stats stopped: context canceled"
+=============================== warnings summary ===============================
+modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim
+  /home/bkrabach/dev/hw-model-performance/lanes/c0e-ccv1-023-ledger-note/amplifier-work-tracker/.venv/lib/python3.12/site-packages/_pytest/stash.py:108: RuntimeWarning: coroutine 'alarm_for_reclaimed_item' was never awaited
+    del self._storage[key]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim
+1 failed, 1 warning in 6.30s

@@ -131,7 +131,7 @@
   disposition: CONFORMS
   assertion:
     kind: indexed
-    last_measured: 2026-09-01
+    last_measured: 2026-09-05
     refs:
       - file: tests/unit/test_custody.py
         name: test_reclaim_eligible_fresh_survives_a_long_total_hold
@@ -139,10 +139,35 @@
         name: test_is_fresh_true_within_ttl
       - file: tests/unit/test_custody.py
         name: test_reclaim_eligible_stale_after_ttl_lapses
+      - file: tests/unit/test_custody_dead_holder.py
+        name: test_a_live_holder_deep_inside_the_ttl_is_left_alone
+      - file: tests/unit/test_custody_dead_holder.py
+        name: test_ttl_staleness_still_wins_and_costs_no_pid_probe
   notes: >
-    `custody.reclaim_eligible` reaches "eligible" by exactly two routes --
-    a stale/absent last_seen, or the one-way escalation ceiling. Total hold
-    duration is never an input.
+    `custody.reclaim_eligible` reaches "eligible" by exactly THREE routes,
+    and total hold duration is never an input to any of them: a
+    stale/absent last_seen (path 1), a DEAD HOLDER (path 2 -- the record
+    names a real pid on THIS host that the kernel says is gone, AND custody
+    has already been silent for two renewal intervals), or the one-way
+    escalation ceiling (path 3). STALE-NOTE FIX 2026-09-05
+    (model_performance-c0e, found by that item's audit of every row for
+    mechanism claims the recent merges invalidated): this note said
+    "exactly two routes" and named only paths 1 and 3. Path 2 landed in PR
+    #76 (46d7da4, model_performance-oy4) AFTER this note was written, and
+    `reclaim_eligible`'s own docstring has read "Three paths to eligible,
+    and only three" ever since -- so the ledger and the source disagreed on
+    the count of the very mechanism this row is about. THE DISPOSITION IS
+    UNCHANGED, and the clause is not weakened by path 2: it observes the
+    HOLDER's liveness, never the hold's AGE, is fenced so it can only
+    ACCELERATE path 1 inside a window path 1 would have covered anyway, and
+    every unknowable case (another host, no host, absent/zero pid, a
+    recently renewed hold) resolves to NOT eligible. Two path-2 cites added
+    above so this row now covers the route it describes: a live holder deep
+    inside the TTL is still left alone, and TTL staleness still wins
+    without a pid probe being consulted at all. The rest of path 2's own
+    behaviour (the dead-holder acceleration itself) is CCV1-006's and
+    oy4's, not this clause's -- this row asserts only that duration never
+    disqualifies.
 
 - id: CCV1-003
   title: a claim whose custody step fails is compensated -- the item goes back to ready
@@ -183,10 +208,20 @@
         test_failed_take_custody_then_failed_release_says_the_item_may_still_be_held
     HONEST LIMIT: the probe below is a source-shape assertion (this ledger
     kit is in-process only -- no bd, no subprocess), and the fixtures above
-    live in the tool module's separately-packaged suite, which still runs
-    in no CI (CCV1-022). Command used: `cd modules/tool-work-tracker &&
-    .venv/bin/python -m pytest tests/test_custody_atomic.py -q`. Upgrade
-    this row to an `indexed` cite when CCV1-022 goes green.
+    live in the tool module's separately-packaged suite. Command used: `cd
+    modules/tool-work-tracker && .venv/bin/python -m pytest
+    tests/test_custody_atomic.py -q`. STALE-NOTE FIX 2026-09-05
+    (model_performance-c0e): this note used to say that suite "still runs
+    in no CI (CCV1-022)" and to defer the indexed upgrade until CCV1-022
+    went green. CCV1-022 IS green -- PR #68 (b3fac1e) wired the suite three
+    ways (venv install, the Makefile `test-module` target inside `make
+    test`, and ci.yml's "Tier 5 -- tool module tests" step, .github/
+    workflows/ci.yml:125-126) -- so the stated blocker no longer exists and
+    the HONEST LIMIT is now only that this row's own assertion is still a
+    probe. The indexed upgrade for this row (and CCV1-004, CCV1-009,
+    CCV1-010, CCV1-017) stays a named follow-up, unblocked, deliberately
+    not taken by a note-correction lane; see CCV1-022's own note, which
+    named the same four rows and left the same follow-up.
 
 - id: CCV1-004
   title: custody renewal is one-strike; any failure ends renewal for good
@@ -203,9 +238,17 @@
     HONEST LIMIT: this is a source-shape probe, not a behavioral fixture.
     The behavioral assertion exists -- modules/tool-work-tracker/tests/
     test_reap_recovery.py::test_background_renew_loop_generic_failure_does_
-    not_clear_held -- but that suite runs in nothing (CCV1-022), so it
-    cannot be cited as measured. Upgrade this row to an indexed cite when
-    CCV1-022 goes green.
+    not_clear_held. STALE-NOTE FIX 2026-09-05 (model_performance-c0e): this
+    note used to add that the suite "runs in nothing (CCV1-022), so it
+    cannot be cited as measured", and to defer the indexed upgrade until
+    CCV1-022 went green. CCV1-022 IS green (PR #68, b3fac1e -- Makefile
+    `test-module` inside `make test`, plus ci.yml's "Tier 5" step), and
+    that fixture was MEASURED PASSING on this branch 2026-09-05 as part of
+    the 5-test test_reap_recovery.py file. So the reason this row is not an
+    indexed cite is no longer "the suite does not run"; it is only that the
+    upgrade has not been made. Named follow-up, unblocked -- same one
+    CCV1-003, CCV1-009, CCV1-010 and CCV1-017 carry, and the same one
+    CCV1-022's own note left open.
 
 - id: CCV1-005
   title: agent-facing prose states renewal as one-strike and names its passive signal
@@ -377,6 +420,29 @@
     the pre-write AND the contended path. The probe's landmarks were
     re-pointed to follow `resolve_outcome`; the CLAIM is unchanged and
     re-verified.
+    RE-ASSESSED 2026-09-05 (model_performance-c0e -- the item that asked
+    for this re-assessment, on the theory the row might flip). IT DOES NOT
+    FLIP: it was already CONFORMS and stays CONFORMS. What changed is the
+    evidence behind it. Both halves were RUN this time, not merely probed
+    for existence: tests/integration/test_post_reclaim_fence.py reports 5
+    passed -- the fence half twice (after a real reap sweep, and after the
+    bare `release` that sweep makes), the integrator half, the live-holder
+    half, and the already-landed-close half -- and the discriminating pair
+    at the tool seam (test_conformance_fixtures.py Fixture 2, three tests)
+    passes with it. The fixture therefore does cover BOTH halves the
+    original filing required: the stale holder is refused, AND an
+    integrator's plain resolve of that same unheld item still succeeds.
+    ADDED, because the row was strong on WHETHER and silent on WHERE:
+    modules/tool-work-tracker/tests/test_reap_recovery.py::test_post_reap_refusal_originates_below_the_session_latch
+    pins that this fence -- not the tool layer's session latch -- is what
+    produces the refusal, with its own discrimination measured three ways.
+    See CCV1-023's MECHANISM ATTRIBUTION paragraph, which carries the
+    reverts and the raw logs. NOT CHANGED, deliberately: `assertion.kind`
+    stays `probe`. The behavioural fixtures now run in CI (CCV1-022 is
+    green), so the indexed upgrade is unblocked -- but it is a schema
+    change across five rows plus the mutation harness, and a
+    note-correction lane is the wrong place to make it. It stays a named
+    follow-up, now with the fixtures measured green rather than assumed.
 
 - id: CCV1-010
   title: a session that lost custody can discover it and recover in-process
@@ -402,10 +468,16 @@
     read fails). RECOVERY is the D-6 wedge case, now sanctioned: release()
     checks status BEFORE any write and returns already_closed with NO write
     at all, so the recovery path cannot reopen a closed item. HONEST LIMIT:
-    only the adapter half is measured above; the tool-seam half
-    (test_phantom_conflict_recovery.py::test_unclaim_recovers_a_session_
-    wedged_on_an_already_closed_item, in the modules suite) runs in nothing
-    -- CCV1-022. Backlog 3's recovery verb remains Backlogged; the verb
+    only the adapter half is cited above; the tool-seam half is
+    modules/tool-work-tracker/tests/test_phantom_conflict_recovery.py::test_unclaim_recovers_a_session_wedged_on_an_already_closed_item.
+    STALE-NOTE FIX 2026-09-05 (model_performance-c0e): that half used to be
+    described as running "in nothing -- CCV1-022". CCV1-022 IS green (PR
+    #68, b3fac1e): the modules suite runs in `make test` and in ci.yml's
+    "Tier 5" step, and that file was MEASURED PASSING on this branch
+    2026-09-05. The half is therefore run, just not yet cited here --
+    adding it is the same named, now-unblocked indexed-upgrade follow-up
+    CCV1-003, CCV1-004, CCV1-009 and CCV1-017 carry.
+    Backlog 3's recovery verb remains Backlogged; the verb
     that closed the incident was existing work_release semantics, not a new
     one.
 
@@ -606,9 +678,20 @@
     ref: test_row_ccv1_017
   notes: >
     Enforced before any bd call, naming the held item. HONEST LIMIT: this
-    is a source-shape probe. Conformance Fixture 4 (the behavioral
-    single-hold fixture) does not exist in ANY suite -- see CCV1-023 -- so
-    the refusal is enforced and asserted by nothing. The contract's own
+    is a source-shape probe. STALE-NOTE FIX 2026-09-05
+    (model_performance-c0e): this note used to say Conformance Fixture 4
+    (the behavioral single-hold fixture) "does not exist in ANY suite --
+    see CCV1-023 -- so the refusal is enforced and asserted by nothing".
+    BOTH halves of that sentence are now false. Fixture 4 exists, in the
+    very file CCV1-023 flipped CONFORMS on
+    (modules/tool-work-tracker/tests/test_conformance_fixtures.py), as four
+    tests: a directed second claim and a queue-mode second claim are each
+    refused while holding, and the constraint lifts after either exit from
+    a hold (resolve and release, pinned separately). Measured passing on
+    this branch 2026-09-05. So the refusal is asserted behaviourally, not
+    "by nothing" -- this row's own assertion is simply still a probe, the
+    same named, now-unblocked indexed-upgrade follow-up CCV1-003, CCV1-004,
+    CCV1-009 and CCV1-010 carry. The contract's own
     note that this is "stated in code only; FREEZE requires prose
     documentation" remains accurate: the refusal text appears in no tool
     description and no prose file.
@@ -817,6 +900,50 @@
     failing the suite (exactly as CCV1-022's own notes predicted it would).
     CCV1-009's and CCV1-022's notes described that xfail as still present;
     both corrected in this same re-review (see those rows).
+    MECHANISM ATTRIBUTION, MEASURED 2026-09-05 (model_performance-c0e).
+    This row's SEEDED note (commit 1621771, while the row was still GAP)
+    said Fixture 2's home "asserts the TOOL-layer refusal (which passes via
+    the session latch)". That sentence is GONE -- highway wave 2 (PR #71,
+    ea233a7) rewrote these notes wholesale when the row flipped CONFORMS --
+    but it was never replaced by the right answer, and a reader re-derives
+    that same wrong mechanism from the layer names alone, so the right
+    answer is recorded here and pinned executably below. WHAT ACTUALLY
+    MAKES
+    modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim
+    PASS is TWO mechanisms at two layers, and the session latch is neither
+    of them: (a) the REFUSAL is the adapter's custody-identity fence --
+    `resolve_outcome`'s `elif cust_holder == who and current.holder != who`
+    branch, PR #68 (b3fac1e), the same branch CCV1-009 pins; (b) `assert
+    session._held is None` and the subsequent successful re-claim are the
+    TOOL layer's `except A.FencedError` arm (PR #3, 69b717e), which clears
+    the latch and stops the custody thread. The SESSION LATCH refuses
+    nothing on this path: after a reap it still names the item, so
+    `resolve`'s own `held is None or held.item_id != item_id` gate is
+    satisfied and passes the call straight through to the adapter.
+    DISCRIMINATED BY REVERT, one mechanism at a time, against real bd +
+    this suite's isolated dolt server: delete the fence branch and the
+    fixture fails at `assert resolved.success is False` with
+    `ToolResult(success=True, output={'resolved': ..., 'resolution':
+    'trying to close after being reclaimed'})` -- the close LANDS, which is
+    the latch letting it through, and is precisely the pre-#68 symptom
+    model_performance-c0e was filed for; delete the latch-clearing instead
+    and the refusal still happens (the fence is untouched) but the fixture
+    fails at `assert session._held is None` with the `_Held` still naming
+    the item. Raw logs, committed:
+    docs/lanes/c0e-ccv1-023-ledger-note/evidence/discrim-A-fence-reverted.log
+    and .../discrim-B-latch-clearing-reverted.log. THE CLAIM IS NO LONGER
+    ONLY PROSE: test_reap_recovery.py::test_post_reap_refusal_originates_below_the_session_latch
+    asserts the latch still names the item at the moment of the refused
+    call, that the ADAPTER refuses with no session in the picture at all,
+    that the surfaced wording is the fence's and not the latch's, and that
+    an integrator's close of the same unheld item still succeeds. Its own
+    discrimination was measured three ways, each raw log committed beside
+    the two above: fence removed -> DID NOT RAISE FencedError
+    (pin-mutA-fence-removed.log); refusal re-sourced to the latch's wording
+    -> the wording assertion goes red
+    (pin-mutB-refusal-moved-to-latch.log); fence re-keyed on "the item is
+    unheld" instead of custody IDENTITY -> the integrator half goes red
+    (pin-mutC-fence-rekeyed-on-unheld.log).
 
 # =============================================================================
 # OSV1 -- contracts/operator-surface.v1.md (DRAFT), seeded 2026-09-04
