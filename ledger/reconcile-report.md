@@ -1147,32 +1147,44 @@ Other edges written at creation: `qgo → c1a`, `ujy → c1a`, `np3 → c1a, qgo
 
 ---
 
-## 8. Freeze Bar status — READY FOR THE OWNER'S LOOK AND EXTERNAL REVIEW
+## 8. Freeze Bar status — FROZEN
 
-**Current reading, 2026-09-05, measured on `main` @ `7e43e73`.** The full
-condition-by-condition evidence is in the re-check section below
-(*Re-check 2026-09-05 … §R8*); this is the summary that supersedes the seed
-reading kept as history in §8a.
+**Current reading, 2026-09-05, at the lock**, measured on the branch
+`converge/freeze-operator-surface-v1` off `main` @ `d039b32`. The full
+condition-by-condition evidence is in the lock section below
+(*Lock 2026-09-05 … §L4*); this supersedes the pre-lock reading kept as history
+in §8b and the seed reading in §8a.
 
 | Condition | Status |
 |---|---|
 | Freeze 1 — Tier-A kit exists and runs on every PR | **MET** (OSV1-027) — CI Tier 6; ran here, 41 passed / 1 named xfail |
-| Freeze 2 — Tier-B kit, pinned chromium, isolated data, own CI tier | **MET** (OSV1-028) — CI Tier 7; `playwright==1.60.0` / chromium 148.0.7778.0; ran here ×2, 89 passed |
-| Freeze 3 — every Tier-B check emits re-checkable artifacts | **MET** (OSV1-029) — recording regenerated here and re-read by the ledger |
+| Freeze 2 — Tier-B kit, pinned chromium, isolated data, own CI tier | **MET** (OSV1-028) — CI Tier 7; `playwright==1.60.0` / chromium 148.0.7778.0 |
+| Freeze 3 — every Tier-B check emits re-checkable artifacts | **MET** (OSV1-029) — the committed recording is re-read by the ledger, not trusted |
 | Freeze 4 — every fixture discriminates, demonstrated by running it | **MET** (OSV1-030) — 14 arms, every bad half still biting |
-| Freeze 5 — every Core CONFORMS or NOT-ASSERTABLE-with-cadence | **MET** (OSV1-031) — 19 Core rows: 17 CONFORMS + 2 NOT-ASSERTABLE, **0 red** |
+| Freeze 5 — every Core CONFORMS or NOT-ASSERTABLE-with-cadence | **MET** (OSV1-031) — 19 Core rows: 17 CONFORMS + 2 NOT-ASSERTABLE, **0 red**; both cadences now carry a trigger that outlives this stamp (RC-3) |
 | Freeze 6 — exemption register complete, no literal sites left | **MET** (OSV1-032) — 8 enumerated, set-equal to the live census; 0 literal, inline and `<style>`-block |
 | Freeze 7 — every contract quote verifies against its cited file | **MET** (OSV1-033), with the recorded limit: in-repo quotes proven, out-of-repo brief citations reported unverifiable |
-| Freeze 8 — owner's rendered-page look recorded in the Changelog | **NOT MET — human only** (OSV1-034, `work_item_pipeline-eah` open). The contract says *"never a machine check"* |
-| Freeze 9 — external PR review | **NOT MET — human only**; no row, no machine reading exists |
-| Freeze 10 — owner FROZEN stamp | **NOT MET — human only**; no row |
+| Freeze 8 — owner's rendered-page look recorded in the Changelog | **MET — owner act, recorded** (OSV1-034, GAP → **CONFORMS**). The owner looked at the three contact sheets and said *"looked"*; the dated Changelog record is the trace. The contract says *"never a machine check"*, and the retargeted probe still only asserts the RECORD |
+| Freeze 9 — external PR review | **MET — human act, out-of-repo record**; `.amplifier/converge/operator-surface-freeze9-review.md`, an independent reviewer (not the author), verdict REQUEST CHANGES → approve once RC-1/2/3 land. **No row**: the file lives outside this repository, exactly as Brief A and Brief B do, so no in-repo check can read it |
+| Freeze 10 — owner FROZEN stamp | **MET — owner act, recorded**; the dated `2026-09-05 — FROZEN.` Changelog entry carrying the owner's literal words *"Ok, do the freeze"* and *"looked, ratify."* **No row**: a signature has no machine reading, and rowing one would be a fabricated attestation |
 
-**Everything a machine can check is green.** The three conditions outstanding
-are, by the contract's own construction, acts of people: the owner's look, an
-external reviewer's read, and the owner's stamp.
+**Freeze 1–7 are met by measurement; 8 and 10 are owner acts, recorded; 9 is an
+external reviewer's read, recorded.** The three that no check could ever close
+were closed the only way they can be — by people — and each left a trace a
+later reader can find.
 
-The contract stays **DRAFT**. Nothing in this ledger moves it, and nothing in
-this ledger can.
+The contract is **FROZEN**. Nothing in this ledger moved it there: the owner
+did, in the Changelog. What this ledger did was refuse to let it be stamped
+until the conditions actually held, and then re-review every row against the
+bytes the stamp changed.
+
+**From here, this contract changes only by a sibling proposal**
+(`operator-surface.v2-candidate.md`), never by an in-place edit. Six lower
+findings from the Freeze 9 review are deferred to exactly that route: Core 1's
+"leads" sentence, Core 4's silence on register GROWTH, Core 5's audit being
+narrower than "reaches", the `_oldest_ready_item` dead-function xfail, the
+drifted `file:line` citations, and Backlogged triggers 4 and 6 being
+unobservable.
 
 ### 8a. Seed reading, 2026-09-04 (history — superseded)
 
@@ -1193,6 +1205,32 @@ reading stays readable beside the later one.
 | Freeze 10 — owner FROZEN stamp | **no row** — see §9, need 5 |
 
 The contract stays **DRAFT**. Nothing in this seed moves it.
+
+### 8b. Pre-lock reading, 2026-09-05 on `main` @ `7e43e73` (history — superseded)
+
+Kept verbatim rather than deleted, for the same reason §8a is: this is what the
+bar read on the last tree before the owner acted, and the difference between
+this table and §8's is exactly the three human acts.
+
+| Condition | Status |
+|---|---|
+| Freeze 1 — Tier-A kit exists and runs on every PR | **MET** (OSV1-027) — CI Tier 6; ran here, 41 passed / 1 named xfail |
+| Freeze 2 — Tier-B kit, pinned chromium, isolated data, own CI tier | **MET** (OSV1-028) — CI Tier 7; `playwright==1.60.0` / chromium 148.0.7778.0; ran here ×2, 89 passed |
+| Freeze 3 — every Tier-B check emits re-checkable artifacts | **MET** (OSV1-029) — recording regenerated here and re-read by the ledger |
+| Freeze 4 — every fixture discriminates, demonstrated by running it | **MET** (OSV1-030) — 14 arms, every bad half still biting |
+| Freeze 5 — every Core CONFORMS or NOT-ASSERTABLE-with-cadence | **MET** (OSV1-031) — 19 Core rows: 17 CONFORMS + 2 NOT-ASSERTABLE, **0 red** |
+| Freeze 6 — exemption register complete, no literal sites left | **MET** (OSV1-032) — 8 enumerated, set-equal to the live census; 0 literal, inline and `<style>`-block |
+| Freeze 7 — every contract quote verifies against its cited file | **MET** (OSV1-033), with the recorded limit: in-repo quotes proven, out-of-repo brief citations reported unverifiable |
+| Freeze 8 — owner's rendered-page look recorded in the Changelog | **NOT MET — human only** (OSV1-034, `work_item_pipeline-eah` open). The contract says *"never a machine check"* |
+| Freeze 9 — external PR review | **NOT MET — human only**; no row, no machine reading exists |
+| Freeze 10 — owner FROZEN stamp | **NOT MET — human only**; no row |
+
+**Everything a machine can check is green.** The three conditions outstanding
+are, by the contract's own construction, acts of people: the owner's look, an
+external reviewer's read, and the owner's stamp.
+
+The contract stays **DRAFT**. Nothing in this ledger moves it, and nothing in
+this ledger can.
 
 ---
 
@@ -1756,7 +1794,294 @@ were never opened for writing; `LAST_RUN.json` was regenerated by the two Tier-B
 runs and then restored to its committed bytes. One item filed
 (`work_item_pipeline-lvn`); no item closed; the live service was never contacted.
 
+---
+
+## Lock 2026-09-05 — operator-surface.v1 FROZEN
+
+The mandatory full re-review that a SYNC-hash change triggers, run because the
+contract moved: three owner-ratified pre-lock text fixes, the Freeze 8 record,
+and the `**Status:** DRAFT` → `**Status:** FROZEN` stamp.
+
+**Run:** 2026-09-05, branch `converge/freeze-operator-surface-v1`, branched from
+`main` @ **`d039b32`**.
+**Trigger:** `contracts/operator-surface.v1.md` changed, so `OSV1-000`'s pin
+failed. Under `LEDGER-FORMAT.md` sec.4 that mandates a **full ledger re-review,
+never a silent hash bump** — this section is that re-review's record.
+**Owner's acts, in his own words:** *"looked, ratify."* (Freeze 8, and
+ratification of the external reviewer's RC-1/RC-2/RC-3) and *"Ok, do the
+freeze"* (Freeze 10).
+
+**Outcome in one line:** **one row re-anchored, one disposition changed, zero
+drift in either direction** — and the operator-surface family now carries **no
+red row at all**.
+
+---
+
+### L1. What was actually run (a self-report is not proof)
+
+| Command | Result | What it proves |
+|---|---|---|
+| `.venv/bin/python -m pytest ledger/checks -q` | **60 passed** | every row's quote verifies against the NEW bytes, every assertion ref resolves, the tripwires hold |
+| `make ledger-mutate` | **ALL mutations proven 69 / 69**; `UNPROVEN … (none)` | every probe was watched going red against a counterfactual — including `OSV1-034`'s retargeted one |
+| `make test-conformance-a` | **41 passed, 89 deselected, 1 xfailed** | the Tier-A kit still runs green on this tree; the one xfail is the named `OSV1-015` residual, unchanged |
+| `.venv/bin/ruff check ledger` / `ruff format --check ledger` | `All checks passed!` / `7 files already formatted` | — |
+
+**Tier-B was deliberately NOT re-run, and that is stated rather than glossed.**
+`git diff origin/main --name-only -- src tests` is **empty** on this branch: no
+product byte and no kit byte moved, so the committed recording
+(`browser/LAST_RUN.json`, chromium 148.0.7778.0 / playwright 1.60.0) is still a
+recording *of this tree*, and every Tier-B-derived row re-reads exactly the
+numbers it read at `d039b32`. Re-running the browser tier would have produced
+the same numbers against the same code; it would not have made any row's
+reading more true. What DID change is text a browser cannot see.
+
+### L2. What changed in the contract — three fixes, one record, one stamp
+
+The three fixes are the external reviewer's RC-1, RC-2 and RC-3 (Freeze 9,
+`.amplifier/converge/operator-surface-freeze9-review.md`, verdict **REQUEST
+CHANGES → approve once landed**), each ratified by the owner before the stamp.
+All three are text; none required re-running a kit.
+
+**RC-1 — Core 5 said something false, and a lock would have made it expensive.**
+
+```
+was:  No `GET` route mutates state. The surface may poll itself aggressively;
+      it writes only through explicit operator actions, which are `POST`.
+now:  No `GET` handler reaches a mutating adapter call; the surface may poll
+      itself aggressively and writes work-tracker state only through explicit
+      operator actions, which are `POST`. The one named exception:
+      `GET /auth/logout` clears the session cookie.
+```
+
+`GET /auth/logout` issues `resp.delete_cookie(...)`. That is a state change on a
+GET, so the clause promised strictly more than `reads.never_write` tests — and
+the gap was recorded only in `OSV1-007`'s notes, which do not travel with a
+locked clause. The clause now states what the check asserts, scopes the write
+claim to *work-tracker* state, and names the exception. The machine-check
+sentence was tightened so it no longer restates the clause verbatim; **what
+`reads.never_write` asserts did not move** (the route audit is byte-identical,
+and its measurement — 30 routes, 22 read-only, 0 reaching a mutating adapter
+call — re-ran unchanged).
+
+**RC-2 — two Conformance bad halves did not fail for the reason they named.**
+Freeze 4 requires a bad half that "fails against the defect it names,
+demonstrated by running it". Three halves named a defect the kit does not
+measure:
+
+| | was | now | why |
+|---|---|---|---|
+| **C1 Bad** | "reported as alarm-coloured pixels" | "reported as pixels of a hue outside the token set" (+ the reason) | measured `retired_amber: 16681`, `alarm: 0`. `#D9A253` is too far from `--alarm` to classify as one; the sweep counts it in a third bucket the contract never named |
+| **C3 Bad** | "loses all four … offset zero, the disclosure closed, the pause flag cleared, and a fresh live region" | "the open disclosure closes and every tagged live region is replaced by a fresh node (chromium preserves scroll and the pause flag by itself; a reflowing replacement loses scroll too)" | measured `scroll_preserved: true`, `pause_flag_preserved: true`. Only the disclosure and live-region *node identity* actually move; the kit needed a second arm (`bad-naive-replacement-reflow`) to discriminate scroll at all |
+| **C4 Good/Bad** | `scrollWidth == clientWidth` / "emits `scrollWidth > clientWidth`" | "no element's border box extends past `clientWidth`" / "that element extends past `clientWidth`" | `html`/`body` carry `overflow-x: clip`, so a 900px element at 430px moves `scrollWidth` not at all (`scroll_width_moved: false`) and the kit asserts `elements_beyond_viewport_moved`. The reviewer added the half the ledger had missed: the **Good** half inherited the same defect, since `scrollWidth == clientWidth` is satisfiable by *clipping* the overflow rather than preventing it |
+
+**RC-3 — the two NOT-ASSERTABLE cadences expired at the stamp.** Freeze 5
+admits a clause without a check only "with its review cadence named here", and
+both named one — but both named *authoring-phase* events. Core 12: "at each
+ENCODE gate and before any Freeze stamp". Core 13: "at each ENCODE gate". After
+this stamp there is no further ENCODE gate and no further Freeze stamp, so the
+only two Core clauses carried by a human would have had **no recurring
+trigger**. Each now appends one that outlives the lock: *"and at each
+`ledger/reconcile-report.md` re-check."*
+
+**The Freeze 8 record and the FROZEN stamp.** Three dated Changelog entries were
+added, newest first: the FROZEN stamp (Freeze 10, carrying the owner's literal
+words and the proposal-only rule that now governs the file), the Freeze 8 record
+(the owner's look, marked in the entry itself as *"ratification input, never a
+machine check"*), and true-up #2 (the three fixes above). `**Status:** DRAFT`
+became `**Status:** FROZEN`.
+
+**Six lower findings were deliberately NOT taken here.** Core 1's "leads"
+sentence, Core 4's silence on register *growth*, Core 5's audit being narrower
+than "reaches", the `_oldest_ready_item` dead-function xfail, the drifted
+`file:line` citations, and Backlogged triggers 4 and 6 being unobservable. Each
+is a post-lock proposal against `operator-surface.v2-candidate.md`. The
+reviewer explicitly did not block on them, and taking them at the stamp would
+have meant landing unratified edits under an owner ratification that named
+three.
+
+### L3. Hash, rows re-anchored, disposition changed
+
+**Hash, old → new** (`sha256`, whole-file bytes, computed exactly as
+`ledger/checks/_support.py::sha256` does):
+
+```
+contracts/operator-surface.v1.md      f40987524fb47351023700fbad97c9c43d9ddd46aeb2cefd0d3ec08cd71c3edb
+                                   -> a467be2adca763734fdfb5aace44108ebb21a3d7f5c1663bf82d5eb95ee54c52
+
+contracts/custody-coordination.v1.md  ec4b736f8d6dca4ee3c29b6df8397a9d7b51d2eadd76965854e898924f529e1a
+                                      (unchanged — re-verified byte-for-byte on this run, not assumed)
+```
+
+**Rows re-anchored: 1 — checked, not assumed.** All 36 `OSV1-###` rows were
+walked; each of the 35 quote-carrying ones had its quote collapsed and tested
+against BOTH the old (`origin/main`) and the new contract text.
+
+| Row | Clause | Was | Now |
+|---|---|---|---|
+| `OSV1-007` | Core 5 | *"No GET route mutates state."* — the sentence RC-1 replaced | the clause's new normative sentences, ending *"GET /auth/logout clears the session cookie"*; same clause |
+
+**The other 34 verify byte-identically in both texts** — and the three groups a
+reader would expect to have broken are worth naming, because they did not:
+
+* `OSV1-020` / `OSV1-022` / `OSV1-023` quote Conformance 1/3/4's
+  `**Test location:**` lines, which RC-2 never touched; the probes anchoring on
+  contract prose (`OSV1-020`'s good half, `OSV1-021`'s bad half) anchor on text
+  RC-2 also left alone.
+* `OSV1-018` / `OSV1-019` quote the Core 12/13 **machine-check** sentences, not
+  the `**Reviewed at cadence:**` lines RC-3 edited.
+* `OSV1-033` (Freeze 7) re-ran green against the three NEW Changelog entries:
+  no new `file.py:LINE` citation was introduced, the two `webapp.py:37-44`
+  quotations are still present and still verify, and no new `*"…"*` attributed
+  quotation was added — the owner's words are recorded as plain quotations
+  citing no file, which is what they are.
+
+**Their NOTES were re-reviewed and corrected anyway.** A surviving quote is not
+a re-review: `OSV1-020`, `OSV1-022` and `OSV1-023` all carried notes describing
+clause text that moved, and `OSV1-018`/`OSV1-019` carried cadences that RC-3
+extended. All five now say what the clause says.
+
+**Two "honest limit" paragraphs are now IN the contract**, and their rows say so
+rather than continuing to report a gap that no longer exists:
+
+* `OSV1-007` honest limit 1 — the `GET /auth/logout` cookie clear. The clause
+  now names it; **clause text and check agree as of true-up #2**. Honest limit
+  2 (the static, module-local, depth-4 audit) is unchanged and still a limit.
+* `OSV1-023` "A FUTURE AMENDMENT MAY WANT THIS" — the `scrollWidth` wording.
+  The amendment was taken; **clause text and check agree as of true-up #2**.
+  Both paragraphs are kept, not deleted: they are the measurement that earned
+  the amendment.
+
+**Disposition changed: 1.**
+
+| Row | Was | Now | Direction |
+|---|---|---|---|
+| `OSV1-034` (Freeze 8) | **GAP** | **CONFORMS** | `VIOLATION-MOVEMENT` |
+
+The pin asserted the ABSENCE of the record — "the Changelog mentions none of
+430, 900, 1280". The owner looked at the eighteen captures from the pinned
+browser run, presented as three per-level contact sheets, and said *"looked"*;
+the owner-ratified stamp recorded it. **The pin went red the way a pin is meant
+to, and the probe was retargeted in the same change**: it now asserts that the
+Changelog carries a **dated** Freeze 8 record naming L0, L1, L2, 430, 900, 1280
+and both themes, each element enumerated separately so a record that quietly
+drops one fails rather than passing on a partial look. Its mutation flipped
+direction with it — from the FIXED counterfactual ("a Changelog entry records
+the look") to the REGRESSION one ("that record is deleted from a locked
+Changelog") — so the denominator stayed 69/69 honestly rather than by rounding.
+
+**The docstring's honest limit is kept verbatim, because the flip does not
+soften it:** the probe asserts that a RECORD EXISTS, never that the owner
+looked. Freeze 8 says *"never a machine check"* for exactly that reason.
+
+**Tally, before → after:** 32 CONFORMS / 3 NOT-ASSERTABLE / 1 GAP / 0 VIOLATION
+→ **33 / 3 / 0 / 0**. Freeze 5's Core sub-tally is unmoved (19 Core rows: 17
+CONFORMS + 2 NOT-ASSERTABLE, 0 red) — `OSV1-034` is a Freeze row, not a Core
+one. The `CCV1-###` family is untouched at 22 CONFORMS / 2 NOT-ASSERTABLE.
+
+**No row was created for the FROZEN status, for Freeze 9, or for Freeze 10.**
+FROZEN is a fact about the contract's lifecycle, not a clause. Freeze 9's record
+lives outside this repository (`.amplifier/converge/`, where Brief A and Brief B
+also live), so no in-repo check can read it. Freeze 10 is a signature, which has
+no machine reading at all. Rowing any of the three would have meant inventing an
+assertion — and `OSV1-035` was checked rather than assumed: it is **Reserved 1**
+(`--json` shapes), not a Freeze row, and `OSV1-036` does not exist.
+
+**Every other disposition re-verified against the tree, not assumed.** This
+branch changes the contract and `ledger/` only, so no row's subject code moved;
+every probe re-ran green and every probe's discriminating power was re-confirmed
+(§L1).
+
+### L4. Freeze Bar reading at the lock — Freeze 1–10 as written in the contract
+
+Read condition by condition against `contracts/operator-surface.v1.md`'s own
+Freeze Bar. The condition-by-condition table lives at **§8**; this lock is what
+put it there, and the pre-lock reading it replaced is kept as §8b. In summary:
+**1–7 met by measurement, 8 and 10 owner acts recorded in the Changelog, 9 an
+external reviewer's read recorded in a file.** All ten are met.
+
+The distinction §8 keeps and this section restates, because it is the whole
+reason the bar has ten conditions and not seven: 8, 9 and 10 are **not** things
+this ledger closed. It could not, and it says so. What it did was hold them open
+— visibly, on a row and in a table — until people closed them.
+
+### L5. Honest limits of this lock
+
+1. **Freeze 9's record is out-of-repo.** `.amplifier/converge/operator-surface-freeze9-review.md`
+   is not committed here, so no probe can verify it exists, that its author was
+   independent, or that its verdict says what §8 reports. This is the same limit
+   `OSV1-033` already reports for Brief A and Brief B, and it is reported rather
+   than papered over with a row that would assert a path and call it a review.
+2. **Freeze 8 remains a record, not an attestation.** Retargeting `OSV1-034`
+   changed which byte fact is true, not what a byte fact can prove.
+3. **Tier-B was not re-run on this branch** (§L1). Justified by an empty
+   `src`/`tests` diff, not by convenience — but "the numbers would be the same"
+   is an inference from that diff, not a fresh measurement.
+4. **The six deferred findings are real defects in a now-locked text.** They are
+   cheap to fix as proposals and were not blocked on by the reviewer, but the
+   text is locked with them in it, and that cost was accepted knowingly rather
+   than discovered later.
+5. **`work_item_pipeline-eah` is discharged but not closed.** This branch may not
+   write to the live tracker, so the item stays open in the queue and needs
+   closing by hand; the row keeps its `work` ref rather than dropping it, so the
+   open item is visible rather than orphaned. `work_item_pipeline-lvn` and
+   `work_item_pipeline-umm` remain open from the previous re-check, untouched
+   here.
+
+### L6. Files written by this lock
+
+| File | Change |
+|---|---|
+| `contracts/operator-surface.v1.md` | RC-1/RC-2/RC-3 text fixes, three Changelog entries, `**Status:** DRAFT` → `**Status:** FROZEN` |
+| `ledger/rows.yaml` | `OSV1-000` rehashed + full-re-review notes; `OSV1-007` re-anchored; `OSV1-034` GAP → CONFORMS with a retargeted probe ref; notes trued up on `OSV1-007`, `-018`, `-019`, `-020`, `-022`, `-023`, `-034` |
+| `ledger/checks/test_operator_rows.py` | `test_row_osv1_034` retargeted from the absence-pin to the record check, honest-limit docstring kept |
+| `ledger/checks/mutation_harness.py` | `OSV1-034`'s mutation flipped from FIXED to REGRESSION direction |
+| `ledger/reconcile-report.md` | this section (`L1`–`L6`), the new §8 FROZEN reading with the pre-lock reading kept as §8b, and a Changelog entry |
+
+**No other file was written.** No `src/` byte, no `tests/` byte, no
+`docs/VISION.md` byte and no `contracts/custody-coordination.v1.md` byte was
+touched; `LAST_RUN.json` was neither regenerated nor edited; the live service
+was never contacted. No item was filed and none closed.
+
 ## Changelog
+- **2026-09-05 — LOCK, `contracts/operator-surface.v1.md` FROZEN, mandatory
+  full re-review.** Owner ratification and signature (Freeze 10), literal words
+  *"Ok, do the freeze"* and *"looked, ratify."* Three owner-ratified pre-lock
+  fixes from the Freeze 9 external review (independent reviewer, verdict
+  REQUEST CHANGES → approve once landed): **RC-1** Core 5 reworded to what
+  `reads.never_write` asserts, naming `GET /auth/logout`'s cookie clear as the
+  one exception — the old sentence was literally false on this tree; **RC-2**
+  Conformance 1/3/4 halves reworded to the defects the kit MEASURES (a hue
+  outside the token set, not "alarm-coloured"; the disclosure plus live-region
+  node identity, not "all four"; the element-level border box past
+  `clientWidth`, not `scrollWidth`, which `overflow-x: clip` makes satisfiable
+  by hiding overflow rather than preventing it — the Good half inherited that
+  defect too); **RC-3** Core 12/13 cadences gain a standing trigger, "at each
+  `ledger/reconcile-report.md` re-check", because both existing triggers expire
+  at this stamp. Plus the **Freeze 8 record** (the owner looked at L0/L1/L2 at
+  430/900/1280 in both themes — the eighteen pinned-browser captures as three
+  contact sheets — and said *"looked"*) and the FROZEN stamp. SYNC (`OSV1-000`)
+  rehashed for the operator contract only (`f4098752…` → `a467be2adc…`); the
+  custody contract's bytes are unchanged and were re-verified, not assumed.
+  Full re-review performed (never a silent bump): 36 rows walked, **1
+  re-anchored** (`OSV1-007`, within the same clause), **1 disposition changed**
+  — `OSV1-034` (Freeze 8) GAP → **CONFORMS** by `VIOLATION-MOVEMENT`, its pin
+  replaced by a real record check and its mutation flipped to the regression
+  direction in the same change. Tally 32/3/1/0 → **33 CONFORMS / 3
+  NOT-ASSERTABLE / 0 GAP / 0 VIOLATION**; the family now carries **no red row**.
+  Five more rows' notes trued up where the clause text they describe moved
+  (`OSV1-018`, `-019`, `-020`, `-022`, `-023`), and two "honest limit"
+  paragraphs (`OSV1-007`'s `GET /auth/logout`, `OSV1-023`'s `scrollWidth`) now
+  record that the clause and the check AGREE. **Freeze Bar: all ten met** — 1–7
+  by measurement, 8 and 10 as owner acts recorded in the Changelog, 9 as the
+  external review file (out-of-repo, and reported as such; no row) — §8, with
+  the pre-lock reading kept as §8b. Measured here, not transcribed: `pytest
+  ledger/checks -q` **60 passed**; `make ledger-mutate` **69/69, none
+  unproven**; `make test-conformance-a` **41 passed / 1 named xfail**; ruff
+  clean. Tier-B deliberately not re-run and the reason stated (§L1): `git diff
+  origin/main -- src tests` is empty, so the committed recording is still a
+  recording of this tree. Six lower review findings deferred to post-lock
+  proposals. No `src/`, no `tests/`, no `docs/VISION.md` and no custody-contract
+  byte touched; the live service was never contacted.
 - **2026-09-05 — RE-CHECK, `contracts/operator-surface.v1.md` (`OSV1-###`),
   after highway `hw-operator-surface` waves 1–4** (PRs #82 `aec9991`, #83
   `6c2e9fa`, #84 `065da04`, #85 `7e43e73`). Standing ratchet run against `main`

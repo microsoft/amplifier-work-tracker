@@ -1,6 +1,6 @@
 # Operator Surface Contract — v1
 
-**Status:** DRAFT
+**Status:** FROZEN
 
 **Scope:** This contract governs the operator surface of amplifier-work-tracker: the human web surface one operator watches — L0 Mission Control (`GET /`), L1 Project Observatory (`GET /projects/{name}`), L2 Item Detail (`GET /projects/{name}/items/{id}`), the login, `/setup` and `/trust` onboarding pages, and the PWA shell. Its consumer is a human outside this repo's own commits; a silent change breaks trained perception, and that dependence is what makes it a seam. *(Brief A §1, webapp.py:4551, webbrowse.py:287, webbrowse.py:611; Brief B §8)*
 
@@ -64,9 +64,9 @@ Literal colour, font, or size in an inline `style=` attribute, or in a `<style>`
 
 ### Core 5: Reads never write
 
-No `GET` route mutates state. The surface may poll itself aggressively; it writes only through explicit operator actions, which are `POST`.
+No `GET` handler reaches a mutating adapter call; the surface may poll itself aggressively and writes work-tracker state only through explicit operator actions, which are `POST`. The one named exception: `GET /auth/logout` clears the session cookie.
 
-**Machine check:** `reads.never_write` — a route audit over every registered handler: no `GET` handler reaches a mutating adapter call.
+**Machine check:** `reads.never_write` — a route audit over every registered handler, asserting the clause's first sentence against each read-only one.
 
 **Tier:** A
 
@@ -154,7 +154,7 @@ A page's leading content is what the operator came to see, not a form to fill in
 
 **Tier:** NOT-ASSERTABLE
 
-**Reviewed at cadence:** owner review of L0/L1/L2 at each ENCODE gate and before any Freeze stamp.
+**Reviewed at cadence:** owner review of L0/L1/L2 at each ENCODE gate and before any Freeze stamp, and at each `ledger/reconcile-report.md` re-check.
 
 *(Brief B §5, wt-v4-observatory/BRIEF.md:82-88)*
 
@@ -168,7 +168,7 @@ The surface exists so the time between an alarm appearing and the operator ackno
 
 **Tier:** NOT-ASSERTABLE
 
-**Reviewed at cadence:** owner review at each ENCODE gate; promoted by Backlogged 6.
+**Reviewed at cadence:** owner review at each ENCODE gate and at each `ledger/reconcile-report.md` re-check; promoted by Backlogged 6.
 
 *(Brief B §6, wt-v2-poa.md:242-244, wt-v4-observatory/BRIEF.md:109-118)*
 
@@ -254,7 +254,7 @@ Tier-A-checkable Core clauses: 1, 3, 4, 5, 8, 9, 10, 11, and the token half of 2
 
 **Good:** the sweep reports zero pixels matching `--alarm` or `--blocked`.
 
-**Bad:** the same page with the retired-palette region reinstated — a hardcoded amber outside the token set — is reported as alarm-coloured pixels on a calm page.
+**Bad:** the same page with the retired-palette region reinstated — a hardcoded amber outside the token set — is reported as pixels of a hue outside the token set on a calm page: `#D9A253` is far enough from `--alarm` that the sweep counts it in its own bucket rather than as alarm colour.
 
 **Test location:** `tests/conformance/operator_surface/browser/test_tier_b.py` (Core 2).
 
@@ -278,7 +278,7 @@ Tier-A-checkable Core clauses: 1, 3, 4, 5, 8, 9, 10, 11, and the token half of 2
 
 **Good:** the post-swap DOM snapshot preserves scroll offset, the open disclosure, and the pause flag, and the live region survives to announce.
 
-**Bad:** a whole-body innerHTML replacement that recreates the region loses all four; the snapshot shows offset zero, the disclosure closed, the pause flag cleared, and a fresh live region with nothing announced.
+**Bad:** a whole-body innerHTML replacement that recreates the region — the open disclosure closes and every tagged live region is replaced by a fresh node (chromium preserves scroll and the pause flag by itself; a reflowing replacement loses scroll too).
 
 **Test location:** `tests/conformance/operator_surface/browser/test_tier_b.py` (Core 6).
 
@@ -288,9 +288,9 @@ Tier-A-checkable Core clauses: 1, 3, 4, 5, 8, 9, 10, 11, and the token half of 2
 
 **Scenario:** L0, L1, and L2 loaded at each viewport in both themes.
 
-**Good:** `scrollWidth == clientWidth` at every viewport, every interactive target measures at least 44px, and computed text contrast is at least 4.5:1.
+**Good:** no element's border box extends past `clientWidth` at any viewport, every interactive target measures at least 44px, and computed text contrast is at least 4.5:1.
 
-**Bad:** a fixture with a fixed-width element wider than 430px emits `scrollWidth > clientWidth`; a fixture using the recorded 4.27:1 ink pair emits a contrast number below the floor.
+**Bad:** in a fixture with a fixed-width element wider than 430px, that element extends past `clientWidth`; a fixture using the recorded 4.27:1 ink pair emits a contrast number below the floor.
 
 **Test location:** `tests/conformance/operator_surface/browser/test_tier_b.py` (Core 7).
 
@@ -378,6 +378,9 @@ Before this contract moves from DRAFT to FROZEN, all of the following conditions
 
 ## Changelog
 
+- **2026-09-05 — FROZEN.** Owner ratification and signature (Freeze 10): owner's literal words "Ok, do the freeze" and "looked, ratify." Status moves DRAFT → FROZEN. From this entry on, this file changes only by a sibling proposal (`operator-surface.v2-candidate.md`) carrying the target line, the exact change, real evidence, and what does not change; `hooks-candidate-guard` refuses in-place edits.
+- **2026-09-05 — Freeze 8 record (ratification input, never a machine check):** the owner looked at the rendered L0 (Mission Control), L1 (Project Observatory) and L2 (Item Detail) at 430, 900 and 1280px in both themes — the eighteen captures from the pinned-browser run (chromium 148.0.7778.0 / playwright 1.60.0) on main @ d039b32 — and said "looked".
+- **2026-09-05 — DRAFT true-up #2, owner-ratified ("ratify."):** the three pre-lock fixes from the Freeze 9 external review (independent reviewer, not the author; verdict REQUEST CHANGES → approve once landed): RC-1 Core 5 reworded to what `reads.never_write` asserts, naming `GET /auth/logout`'s cookie clear as the one exception; RC-2 Conformance 1/3/4 halves reworded to the measured defects (hue outside the token set; disclosure + live-region node identity; element-level overflow past `clientWidth`); RC-3 Core 12/13 cadences gain a standing trigger at each reconcile re-check. Six lower findings deferred to post-lock proposals.
 - **2026-09-04 — DRAFT true-up #1,** owner-ratified ("yep, do it all."): Core 4 widened to reach per-page `<style>` blocks outside the token module (evidence: `webtrust.py`'s hardcoded retired palette); Core 10's machine-check wording aligned to the clause ("does not survive a refresh"); the Changelog's `webapp.py:38-39` quotation made byte-exact (Freeze 7). Status remains DRAFT.
 - **2026-09-04 — ENCODE gate:** owner reviewed the DRAFT text and ratified it (literal: "lgtm."). Status remains DRAFT.
 - **2026-09-04 — DRAFT.** First draft, authored at the ENCODE gate from Phase-0 evidence (Brief A, shipped surface; Brief B, prior decisions), nine owner-ratified decisions, and four conformance rulings. Owner ratification, literal: *"Let's make hero the velocity, along w/ other numbers that matter, such as the active/in-flight, blocked, need attention, open, etc. Focus is on observability, etc. The rest looks good to me."* That overrode a recorded invariant — *"the dashboard's hero is the AGE of the oldest unclaimed item, never a count"*, rationale *"a giant `0` trains a viewer to stop looking. An age reads as neglect"* (`webapp.py:37-44`). The owner weighed that alternative and chose observability, so Core 1 asserts velocity with the counts that matter; the concern behind the alternative survives in the form the owner accepted, as Core 8. Settled by ruling: a human-perception seam is admissible, so every clause admitting a machine check carries one and the two that cannot are named NOT-ASSERTABLE; no ceiling constant enters Core, the exemption register living in `ledger/` (Core 4, Backlogged 2); the custody boundary is a one-way citation, leaving `contracts/custody-coordination.v1.md` untouched; CLI `--json` is Reserved 1, a different seam being a different contract.

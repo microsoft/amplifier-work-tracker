@@ -2278,23 +2278,65 @@ def test_row_osv1_033() -> None:
     )
 
 
-def test_row_osv1_034() -> None:
-    """Freeze 8 pin: the Changelog records no look at the rendered pages.
+#: The Changelog's Freeze 8 entry, located by its own label rather than by
+#: position -- a record that moved up or down the list is still the record.
+_FREEZE_8_RECORD = "Freeze 8 record"
+#: A dated Changelog bullet: `- **YYYY-MM-DD — ...`. Freeze 8 asks for the look
+#: to be "recorded in the Changelog", and this file's Changelog is dated
+#: entries; an undated one could not be placed against a tree.
+_DATED_ENTRY = re.compile(r"^- \*\*\d{4}-\d{2}-\d{2} ")
 
-    HONEST LIMIT, and it is irreducible: this can only ever assert that a
-    RECORD exists, never that the owner looked. Freeze 8 says "never a machine
-    check" for exactly that reason.
+
+def test_row_osv1_034() -> None:
+    """Freeze 8 CONFORMS: the Changelog carries a dated record of the owner's
+    look at the rendered pages.
+
+    RETARGETED 2026-09-05, in the same change that flipped this row. The pin
+    asserted the ABSENCE of the record -- "the Changelog mentions none of 430,
+    900, 1280". The owner looked, the owner-ratified FROZEN stamp recorded it,
+    the pin went red the way a pin is meant to, and this is the real check that
+    replaced it. Flip direction is now REGRESSION: this going red means the
+    record was removed from a locked contract.
+
+    Each named element is asserted SEPARATELY -- three levels, three viewports,
+    both themes -- because a record that quietly drops one of them describes a
+    partial look, and Freeze 8 names all of them.
+
+    HONEST LIMIT, and it is irreducible -- UNCHANGED BY THE FLIP: this can only
+    ever assert that a RECORD exists, never that the owner looked. Freeze 8
+    says "never a machine check" for exactly that reason, and no retargeting
+    can turn a byte fact into an attestation.
     """
     contract = read(OPERATOR_CONTRACT_PATH)
     changelog = contract[contract.index("## Changelog") :]
-    for viewport in ("430", "900", "1280"):
-        assert viewport not in changelog, (
-            f"OSV1-034 (Freeze 8) PIN BROKE THE RIGHT WAY: the Changelog now mentions "
-            f"{viewport}px. If the OWNER looked and an owner-ratified amendment "
-            f"recorded it, flip this row. If an agent wrote that entry, revert it -- "
-            f"it is a fabricated attestation (work_item_pipeline-eah)."
+    entry = next(
+        (line.strip() for line in changelog.splitlines() if _FREEZE_8_RECORD in line), None
+    )
+    assert entry, (
+        f"OSV1-034 (Freeze 8) REGRESSION: the Changelog no longer carries a "
+        f"{_FREEZE_8_RECORD!r} entry. The owner's look is the only thing that can "
+        f"satisfy Freeze 8, and that record is its only trace -- deleting it un-meets "
+        f"a Freeze condition on a FROZEN contract. It is not re-creatable by an agent: "
+        f"writing it back would be a fabricated attestation (Phase-1 ruling 6)."
+    )
+    assert _DATED_ENTRY.match(entry), (
+        f"OSV1-034 (Freeze 8): the Freeze 8 record lost its date. Freeze 8 asks for the "
+        f"look to be recorded in the Changelog, and an undated record cannot be placed "
+        f"against the tree that was looked at:\n  {entry[:160]}"
+    )
+    for level in ("L0", "L1", "L2"):
+        assert level in entry, (
+            f"OSV1-034 (Freeze 8): the Freeze 8 record no longer names {level}. The "
+            f"clause requires the look to have covered L0, L1 AND L2 -- a record naming "
+            f"fewer describes a partial look."
         )
-    assert "looked at the rendered" not in changelog, (
-        "OSV1-034 (Freeze 8): the Changelog now records a look at the rendered pages. "
-        "Confirm it was the OWNER's, then flip the row."
+    for viewport in ("430", "900", "1280"):
+        assert viewport in entry, (
+            f"OSV1-034 (Freeze 8): the Freeze 8 record no longer names {viewport}px. The "
+            f"clause names all three viewports; dropping one narrows the recorded look "
+            f"without narrowing the condition."
+        )
+    assert "both themes" in entry, (
+        "OSV1-034 (Freeze 8): the Freeze 8 record no longer says the look covered BOTH "
+        "themes. A look at one theme is half of what the clause asks for."
     )

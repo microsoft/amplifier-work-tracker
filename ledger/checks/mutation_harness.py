@@ -1083,13 +1083,27 @@ def _mo033_the_emphasis_comes_back(w: World) -> None:
     )
 
 
-def _mo034_the_changelog_records_a_look(w: World) -> None:
-    """FIXED: a Changelog entry records the owner's rendered-page look."""
-    w.append(
-        OPERATOR_CONTRACT_PATH,
-        "\n- **2026-09-05 — owner looked at the rendered L0, L1 and L2 at 430, 900 and "
-        "1280px in both themes.**\n",
+def _mo034_the_changelog_record_is_removed(w: World) -> None:
+    """REGRESSION (2026-09-05: the owner looked and the FROZEN stamp recorded
+    it, so this row flipped GAP -> CONFORMS and its probe was retargeted from
+    the pin; the mutation it replaces, `_mo034_the_changelog_records_a_look`,
+    pushed the OPPOSITE direction -- git-blame).
+
+    The Freeze 8 record is deleted from a locked Changelog. It is the only
+    trace of the one act that can satisfy Freeze 8, and no agent may write it
+    back (Phase-1 ruling 6), so a probe that did not notice its removal would
+    leave a Freeze condition silently un-met.
+    """
+    line = next(
+        (ln for ln in w.raw(OPERATOR_CONTRACT_PATH).splitlines() if "Freeze 8 record" in ln),
+        None,
     )
+    if line is None:
+        raise HarnessOutOfDate(
+            "no 'Freeze 8 record' entry in contracts/operator-surface.v1.md, so OSV1-034's "
+            "mutation has nothing to remove -- the row and this mutation are out of step"
+        )
+    w.replace(OPERATOR_CONTRACT_PATH, line + "\n", "")
 
 
 #: One entry per counterfactual. Rows with several separable halves get one
@@ -1455,8 +1469,9 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-034",
-        "a Changelog entry records the owner's rendered-page look",
-        _mo034_the_changelog_records_a_look,
+        "the Freeze 8 record -- the owner's rendered-page look -- is deleted from the "
+        "locked Changelog",
+        _mo034_the_changelog_record_is_removed,
     ),
 )
 

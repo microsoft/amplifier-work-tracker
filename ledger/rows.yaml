@@ -834,7 +834,7 @@
   contract:
     files:
       - file: contracts/operator-surface.v1.md
-        sha256: f40987524fb47351023700fbad97c9c43d9ddd46aeb2cefd0d3ec08cd71c3edb
+        sha256: a467be2adca763734fdfb5aace44108ebb21a3d7f5c1663bf82d5eb95ee54c52
       - file: contracts/custody-coordination.v1.md
         sha256: ec4b736f8d6dca4ee3c29b6df8397a9d7b51d2eadd76965854e898924f529e1a
   disposition: CONFORMS
@@ -842,6 +842,81 @@
     kind: probe
     ref: test_row_osv1_000
   notes: >
+    REHASHED 2026-09-05: the FROZEN stamp + true-up #2; full OSV1 re-review.
+    Owner ratification and signature (Freeze 10), literal words "Ok, do the
+    freeze" and "looked, ratify." Status moves DRAFT -> FROZEN. Operator hash
+    `f4098752...` -> `a467be2adc...`; `contracts/custody-coordination.v1.md`
+    re-hashed BYTE-FOR-BYTE on this run and still `ec4b736f...` -- the boundary
+    is a one-way citation, so the custody text was never opened.
+
+    WHAT MOVED IN THE CONTRACT: the three pre-lock fixes the Freeze 9 external
+    reviewer required (verdict REQUEST CHANGES -> approve once landed), the
+    Freeze 8 record, the FROZEN stamp and the Status line.
+      (1) RC-1, Core 5. "No `GET` route mutates state." was FALSE as written --
+          `GET /auth/logout` clears a session cookie -- so the clause promised
+          strictly more than `reads.never_write` tests, and a ledger note does
+          not travel with a locked clause. The clause now states what the check
+          asserts ("No `GET` handler reaches a mutating adapter call"), scopes
+          the write claim to work-tracker state, and NAMES the cookie clear as
+          the one exception. The machine-check sentence was tightened so it no
+          longer restates the clause verbatim; what `reads.never_write`
+          asserts did not move.
+      (2) RC-2, Conformance 1, 3 and 4. Three halves reworded to the defect
+          each fixture MEASURES rather than the one it named: C1's bad half to
+          "pixels of a hue outside the token set" (`#D9A253` is too far from
+          `--alarm` for the sweep to classify it as one, so it is counted in
+          its own bucket); C3's bad half to the open disclosure closing and
+          every tagged live region being replaced by a fresh node, with
+          chromium's own scroll/pause preservation and the reflow arm stated
+          in the clause; C4's good AND bad halves to the element-level reading
+          (a border box past `clientWidth`), because `overflow-x: clip` makes
+          `scrollWidth == clientWidth` satisfiable by hiding the overflow
+          instead of preventing it.
+      (3) RC-3, Core 12 and Core 13. Both NOT-ASSERTABLE cadences were
+          authoring-phase only ("at each ENCODE gate", "before any Freeze
+          stamp") and would have expired at this very stamp, leaving the two
+          Core clauses carried by a human with no recurring trigger. Each
+          gains a standing one: "and at each `ledger/reconcile-report.md`
+          re-check".
+      Plus three dated Changelog entries (the FROZEN stamp, the Freeze 8
+      record, true-up #2) and `**Status:** DRAFT` -> `**Status:** FROZEN`.
+
+    FULL RE-REVIEW PERFORMED (mandatory on any hash change, never a silent
+    bump). All 36 OSV1 rows walked against the new bytes:
+      * ROWS RE-ANCHORED: 1, and only 1 -- checked, not assumed, by collapsing
+        both the old (`origin/main`) and the new contract text and testing
+        every one of the 35 quote-carrying rows against each. OSV1-007 (Core
+        5) re-anchored to the clause's new normative sentences, staying in the
+        SAME clause. The other 34 verify byte-identically in BOTH texts --
+        including OSV1-020/-022/-023, whose quotes are Conformance
+        `**Test location:**` lines RC-2 never touched, and OSV1-018/-019,
+        whose quotes are the Core 12/13 machine-check sentences RC-3 never
+        touched. Their NOTES were re-reviewed and corrected anyway, because
+        the clause text those notes describe DID move; a surviving quote is
+        not a re-review.
+      * DISPOSITION CHANGED: 1. OSV1-034 (Freeze 8) GAP -> CONFORMS, direction
+        VIOLATION-MOVEMENT -- the owner's look is now recorded in the
+        Changelog, so the pin went red the way a pin is meant to and was
+        replaced by a real check in the same change. Tally 32 CONFORMS / 3
+        NOT-ASSERTABLE / 1 GAP / 0 VIOLATION -> 33 / 3 / 0 / 0. The
+        operator-surface family now carries NO red row.
+      * NO ROW MOVED BECAUSE OF THE STATUS LINE. FROZEN is a fact about the
+        contract's lifecycle, not a clause; no row asserts it, and none was
+        invented for it. Freeze 9 and Freeze 10 likewise get no row -- there
+        is no machine reading of an external review or of an owner's
+        signature, and rowing one would be a fabricated attestation.
+      * EVERY OTHER DISPOSITION RE-VERIFIED AGAINST THE TREE, not assumed:
+        this branch changes the contract and `ledger/` only (`git diff
+        origin/main --stat` touches `contracts/operator-surface.v1.md` and
+        three files under `ledger/`), so no row's subject code moved and no
+        Tier-B number was re-measured -- every browser-derived row still reads
+        the same committed recording it read at `d039b32`. `pytest
+        ledger/checks -q` 60 passed; `make ledger-mutate` 69/69 proven, zero
+        unproven -- the denominator did not move because OSV1-034's mutation
+        changed DIRECTION rather than count when the row flipped (the FIXED
+        counterfactual "a Changelog entry records the look" is now the
+        REGRESSION counterfactual "that record is removed").
+
     REHASHED 2026-09-04: owner-ratified DRAFT true-up #1 ("yep, do it all."),
     a three-part amendment to `contracts/operator-surface.v1.md`. Status stays
     DRAFT. Operator hash `7566c75c...` -> `f40987524f...`;
@@ -1555,12 +1630,31 @@
     file: contracts/operator-surface.v1.md
     clause: Core 5
     quote: |
-      No `GET` route mutates state.
+      No `GET` handler reaches a mutating adapter call; the surface may poll itself aggressively
+      and writes work-tracker state only through explicit operator actions, which are `POST`. The
+      one named exception: `GET /auth/logout` clears the session cookie.
   disposition: CONFORMS
   assertion:
     kind: probe
     ref: test_row_osv1_007
   notes: >
+    RE-ANCHORED 2026-09-05 at the FROZEN stamp (true-up #2, RC-1). This row's
+    quote was "No `GET` route mutates state." -- a sentence the Freeze 9
+    external reviewer showed to be FALSE on this tree, and one that would have
+    been locked. The clause was reworded to what `reads.never_write` actually
+    asserts and this quote re-anchored to the surviving/new normative text of
+    the SAME clause. HONEST LIMIT 1 BELOW IS NOW IN THE CONTRACT: the
+    `GET /auth/logout` cookie clear is named by the clause itself as the one
+    exception, so the clause text and the check AGREE as of true-up #2 -- the
+    limit is no longer a gap between what the contract promises and what this
+    row can show. The paragraph is kept, not deleted: it is the history of why
+    the clause reads the way it now does. HONEST LIMIT 2 (the static,
+    module-local, depth-4 audit) is UNCHANGED and still a limit -- the
+    reviewer named it separately as a lower finding, and closing it is a
+    post-lock proposal, not part of this stamp. Disposition unchanged
+    (CONFORMS): the measurement below was re-run on this branch and did not
+    move.
+
     MEASURED 2026-09-04 against 4aaee50 by the route audit Core 5's machine
     check names (`reads.never_write`), re-run by the probe on every ledger run:
     every route decorator in webapp.py, webbrowse.py and webtrust.py is parsed
@@ -2421,9 +2515,14 @@
     promise, which PROTOCOL.md sec.7 resists ("unlabeled judgment where it is
     not [possible]" -- NOT-ASSERTABLE exists so judgment is named, never
     smuggled). REVIEWED AT CADENCE, per the clause: owner review of L0/L1/L2 at
-    each ENCODE gate and before any Freeze stamp. Note the cadence is
-    discharged by the same owner look Freeze 8 requires (OSV1-034), so the two
-    travel together.
+    each ENCODE gate and before any Freeze stamp, AND -- added by true-up #2
+    (RC-3, owner-ratified "ratify.", 2026-09-05) -- at each
+    `ledger/reconcile-report.md` re-check. The added trigger is the whole point
+    of the fix: the two authoring-phase triggers both expire at the FROZEN
+    stamp, which would have left this clause carried by a human with no
+    recurring occasion to carry it. Note the cadence is discharged by the same
+    owner look Freeze 8 requires (OSV1-034, CONFORMS as of 2026-09-05), so the
+    two travel together.
   assertion:
     kind: none
 
@@ -2442,7 +2541,11 @@
     threshold invented in place of a baseline would be a number the ledger
     could go green against while the outcome it names got worse -- the
     gameable-proxy failure PROTOCOL.md sec.7 resists. REVIEWED AT CADENCE, per
-    the clause: owner review at each ENCODE gate. PROMOTION IS ALREADY NAMED
+    the clause: owner review at each ENCODE gate, AND -- added by true-up #2
+    (RC-3, owner-ratified "ratify.", 2026-09-05) -- at each
+    `ledger/reconcile-report.md` re-check, because the ENCODE-gate trigger
+    stops firing at the FROZEN stamp and a cadence nothing triggers is not a
+    cadence. PROMOTION IS ALREADY NAMED
     AND HELD: Backlogged 6 ("a target number for alarm-to-acknowledgement")
     fires on "the first alarm-to-acknowledgement measurement exists" -- so this
     row's job is to keep the question standing until an instrument exists, not
@@ -2465,6 +2568,17 @@
     kind: probe
     ref: test_row_osv1_020
   notes: >
+    RE-REVIEWED 2026-09-05 at the FROZEN stamp (true-up #2, RC-2). The quote
+    did not move -- it is Conformance 1's `**Test location:**` line -- but the
+    fixture's BAD HALF did: the clause said the reinstated retired palette "is
+    reported as alarm-coloured pixels", and the sweep has never reported it
+    that way. It reports it in a THIRD bucket, because `#D9A253` is too far
+    from `--alarm` to classify as one at the tolerance that keeps the three
+    status hues mutually exclusive. The clause now says "pixels of a hue
+    outside the token set", which is what the kit measures and what the
+    measurement below has recorded since seed. Disposition unchanged
+    (CONFORMS); no number was re-measured on this branch.
+
     RE-DERIVED 2026-09-05, GAP -> CONFORMS. The named path exists and carries
     `calm.zero_alarm_pixels` under the contract's own check name. This row is
     about the FIXTURE, not about Core 2 conforming -- the calm render's actual
@@ -2553,6 +2667,19 @@
     kind: probe
     ref: test_row_osv1_022
   notes: >
+    RE-REVIEWED 2026-09-05 at the FROZEN stamp (true-up #2, RC-2). The quote
+    did not move -- it is Conformance 3's `**Test location:**` line -- but the
+    clause's BAD HALF did, and it moved to what the two arms below have always
+    measured. The clause said a naive whole-body replacement "loses all four";
+    the recording says it loses the open disclosure and every tagged live
+    region's NODE IDENTITY, while chromium preserves scroll and the pause flag
+    by itself, and only the reflow variant loses scroll. That is now the
+    clause's own wording, so the discrepancy this row's notes have carried
+    since the fixture was built -- the contract naming a defect its bad half
+    does not produce -- is closed in the contract rather than only in the
+    ledger. Disposition unchanged (CONFORMS); no number was re-measured on
+    this branch.
+
     RE-DERIVED 2026-09-05, GAP -> CONFORMS. The fixture exists, runs both
     halves, and discriminates. Core 6's own verdict is OSV1-008 (VIOLATION);
     this row is about the fixture.
@@ -2600,6 +2727,22 @@
     kind: probe
     ref: test_row_osv1_023
   notes: >
+    RE-REVIEWED 2026-09-05 at the FROZEN stamp (true-up #2, RC-2). The quote
+    did not move -- it is Conformance 4's `**Test location:**` line -- but both
+    of the clause's halves did, and they moved onto the metric this fixture
+    actually asserts. THE HONEST LIMIT RECORDED BELOW IS NOW IN THE CONTRACT:
+    the clause reads "no element's border box extends past `clientWidth`"
+    (good) and "that element extends past `clientWidth`" (bad), so the clause
+    text and the check AGREE as of true-up #2. The `scrollWidth` paragraphs
+    below are kept, not deleted -- they are the measurement that earned the
+    amendment, and the kit still emits BOTH readings so a future reader can
+    see why one of them was not enough. The Freeze 9 external reviewer added
+    the half this row had not named: the GOOD half inherited the same defect,
+    since `scrollWidth == clientWidth` is satisfiable by CLIPPING the overflow
+    rather than preventing it, which made the good half a hollow assertion as
+    written. Disposition unchanged (CONFORMS); no number was re-measured on
+    this branch.
+
     RE-DERIVED 2026-09-05, GAP -> CONFORMS. The fixture exists and sweeps what
     the clause names: L0, L1 and L2 at 430, 900 and 1280px in both themes --
     18 measured renders, each emitting computed contrast ratios, target
@@ -2636,10 +2779,13 @@
     are in the artifact so the clause's wording is shown to be
     non-discriminating here instead of being quietly rewritten.
 
-    A FUTURE AMENDMENT MAY WANT THIS: the contract's `scrollWidth ==
-    clientWidth` wording is satisfiable by clipping the overflow rather than
-    preventing it. Naming it here rather than proposing a change from a test
-    file.
+    A FUTURE AMENDMENT MAY WANT THIS -- AND TOOK IT, 2026-09-05 (true-up #2,
+    RC-2): the contract's `scrollWidth == clientWidth` wording is satisfiable
+    by clipping the overflow rather than preventing it. Named here rather than
+    proposed from a test file; the external reviewer read it here, raised it as
+    RC-2, and the owner ratified the rewording before the lock. Both of
+    Conformance 4's halves now read on the element-level metric, which is the
+    one asserted above.
 
     The three swept breakpoints are still declared in the stylesheet, and this
     row's probe still pins that -- a viewport the stylesheet no longer knows
@@ -3459,7 +3605,7 @@
     carrying a live work ref would read as unfinished business.
 
 - id: OSV1-034
-  title: Freeze 8 -- the owner's rendered-page look is not recorded in the Changelog
+  title: Freeze 8 -- the owner's rendered-page look is recorded in the Changelog
   contract:
     file: contracts/operator-surface.v1.md
     clause: Freeze 8
@@ -3467,14 +3613,53 @@
       **Freeze 8:** the owner has looked at the rendered L0, L1, and L2 at 430, 900, and 1280px
       in both themes, and that look is recorded in the Changelog as a ratification input, never
       a machine check.
-  disposition: GAP
+  disposition: CONFORMS
   work: work_item_pipeline-eah
   assertion:
     kind: probe
     ref: test_row_osv1_034
   notes: >
-    PINNING ROW -- the probe pins the absence of the record; a passing probe
-    here is NOT conformance. Flip direction VIOLATION-MOVEMENT.
+    FLIPPED GAP -> CONFORMS 2026-09-05, direction VIOLATION-MOVEMENT, and the
+    probe RETARGETED in the same change. The pin asserted the ABSENCE of the
+    record; the owner looked, the owner-ratified FROZEN stamp recorded it, the
+    pin went red the way a pin is meant to, and a real check replaced it. Flip
+    direction is now REGRESSION: this row going red means the record was
+    removed from a locked contract.
+
+    WHAT THE OWNER DID, and the evidence for it. Presented with the eighteen
+    captures from the 2026-09-05 pinned-browser run (chromium 148.0.7778.0 /
+    playwright 1.60.0) on `main` @ d039b32 -- L0 Mission Control, L1 Project
+    Observatory and L2 Item Detail, each at 430, 900 and 1280px in both themes,
+    laid out as three per-level contact sheets -- the owner replied, literal:
+    "looked, ratify." The look is recorded in the contract's Changelog as a
+    dated entry (`2026-09-05 -- Freeze 8 record (ratification input, never a
+    machine check)`), which is the form Freeze 8 asks for.
+
+    WHAT THE RETARGETED PROBE ASSERTS, on every run: that the Changelog
+    carries a DATED Freeze 8 record naming all three levels (L0, L1, L2), all
+    three viewports (430, 900, 1280) and both themes. Enumerated rather than
+    pattern-matched, so a record that quietly drops a level or a breakpoint
+    fails instead of passing on a partial look.
+
+    THE IRREDUCIBLE HONEST LIMIT, UNCHANGED BY THE FLIP, and the reason the
+    clause ends "never a machine check": this probe can only ever assert that a
+    RECORD EXISTS. It cannot assert that the owner looked. Retargeting does not
+    soften that -- a byte fact cannot become an attestation. What changed is
+    which byte fact is true, and WHO made it true: the owner, in this session,
+    in his own words. Had an agent written that entry, or had the eighteen
+    captures an agent examined been allowed to stand in for the look, it would
+    be a fabricated attestation (Phase-1 ruling 6) and this row would still
+    read GAP.
+
+    WORK ITEM: work_item_pipeline-eah tracked exactly this condition and is
+    discharged by this change. The `work` ref is KEPT rather than dropped --
+    unlike OSV1-033's, whose item was closable by the change itself -- because
+    this branch may not write to the live tracker and the item is closed by the
+    owner's own act, not by a commit. It needs closing by hand.
+
+    HISTORY BELOW, kept rather than rewritten: this is what the row said while
+    the condition was open, and the point of a ratchet is that the earlier
+    reading stays readable beside the later one.
 
     MEASURED 2026-09-04 against 4aaee50: the contract's Changelog has exactly
     two entries, both dated 2026-09-04 (the ENCODE-gate "lgtm." ratification
@@ -3510,6 +3695,9 @@
     430/900/1280 in both themes stand in for the owner's look -- would be a
     fabricated attestation (Phase-1 ruling 6). The KIT has looked; the OWNER has
     not. Those are different facts, and this row records the second one.
+    (That reading stood until later the same day, when the owner did look and
+    said so in his own words -- see the flip at the head of this note. The
+    captures did not change; who looked at them did.)
 
 - id: OSV1-035
   title: Reserved 1 -- CLI --json shapes, ungoverned until an outside caller parses them
