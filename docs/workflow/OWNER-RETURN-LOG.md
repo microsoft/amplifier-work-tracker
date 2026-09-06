@@ -23,3 +23,15 @@ One entry per return of the intent steward (clock-stamped) or per unprompted bri
 </details>
 
 ## 2026-09-06 13:30 - they came back with the word: "yes" (priority for zhv)
+
+## 2026-09-06 15:14 - they came back with feedback (dashes in project names) and "tackle all of those what's-left items"
+
+**Time away.** About an hour and a half since your feedback; three lanes ran in it and all three landed.
+
+**Finished.** Project names now say their rule where an agent first reads it — every tool's `project` description, the awareness file and the CLI help carry one sentence, and a dash name is refused with the underscore spelling suggested (I re-ran the unit suite on the union: 976 passed; ruff, pyright, ledger 60, mutations 69/69, Tier-A 42/0 all green, recorded in CHECK-RECORD.md); the custody contract's Freeze Bar is measured (Freeze 1–7 met by measurement, 8 is the external review — done, 9 is yours) and its one drift (a row title saying the opposite of its disposition) is fixed; the Backlogged 4 citation turned out to be under-qualified rather than dead — it pointed at the tool module's `__init__.py:711`, which still reads `"custody_lost": held.lost_reason,` today — and a one-change v3 proposal re-anchors it; the guard defect is fixed upstream (amplifier-bundle-converge PR #59, tests 118 → 132) and awaits a maintainer's review.
+
+**Stuck.** Nothing stopped; PR #59 upstream needs a review I cannot give it, and the workspace guard stays toothless until that lands or the bundle cache refreshes.
+
+**Needs you.** Four words, each answerable in one: **ratify** the custody pre-lock true-up (the external review's nine text fixes — listed in the reply); **ratify** operator-surface v3 (one citation); **hold loosely** or **lock** for docs/VISION.md (the reviewer recommends hold loosely until the custody contract is locked, so its governing-contracts line changes once); and for custody Freeze 2, **discharge** (work_release's already-closed branch is the D-6 recovery verb, tested) or **defer**.
+
+**Anything quietly broken.** I found and closed a second hole in the lock: the ratified v2 proposal I left beside the frozen contract after applying it kept the guard's escape hatch open, so an in-place edit of the locked contract was permitted in-session for the past day (CI's hash row still caught any that would have landed; none did) — it is archived now under contracts/applied/, the hatch reads closed, and the upstream defect is filed as converge-wu3y.

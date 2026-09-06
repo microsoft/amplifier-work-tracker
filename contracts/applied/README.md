@@ -1,0 +1,3 @@
+# Applied proposals
+
+Ratified `<contract>.vN-candidate.md` files are moved here, renamed `*.applied.md`, in the same change that lands them (or as soon after as noticed). Two reasons: the record of what the owner ratified survives beside the contract it changed; and a ratified candidate left in its original name keeps `hooks-candidate-guard`'s escape hatch open for its target for as long as it exists (the guard does not enforce single use — measured 2026-09-06, upstream item converge-wu3y). Files here carry the RATIFIED status marker and are therefore themselves guarded against in-place edits.

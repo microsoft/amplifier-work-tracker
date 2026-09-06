@@ -1,3 +1,5 @@
+> **ARCHIVED 2026-09-06 (applied).** This proposal was ratified by the owner and applied to `contracts/operator-surface.v1.md` in PR #90 (main a8951bd); the contract's Changelog records it. It is kept here as the record of what was ratified. It was moved out of the `*-candidate.md` name shape because a ratified candidate left beside its target keeps the candidate-guard's escape hatch open indefinitely (measured 2026-09-06; upstream item converge-wu3y).
+
 # Proposal — operator-surface v1, six post-lock text corrections
 
 ```

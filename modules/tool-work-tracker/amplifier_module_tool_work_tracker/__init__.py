@@ -120,6 +120,31 @@ from .service_tools import WorkTrackerInstallTool, WorkTrackerStatusTool
 _MIN_RENEW_INTERVAL_SECONDS = 5
 
 
+def _project_param(description: str, *, rule_first: bool = False) -> dict[str, str]:
+    """A `project`-shaped string parameter whose description ALWAYS carries
+    the project-naming rule.
+
+    The rule is `adapter.NAME_RULE` -- the single home of that sentence,
+    built from `NAME_RE.pattern` itself -- so a schema description here can
+    never drift from what the adapter actually enforces. Every `project` /
+    `from_project` / `to_project` parameter in this module is built through
+    this helper for exactly that reason.
+
+    A tool schema is where an agent reads a parameter's rules BEFORE its
+    first call, which is why the rule belongs here and not only in a
+    refusal. Measured cost of its absence (steward, 2026-09-06): "sessions
+    keep trying to name things with dashes, fail, and then have to try again
+    w/ underscores."
+
+    `rule_first` puts the rule ahead of the parameter's own sentence, for
+    the two parameters where the caller is naming a destination rather than
+    repeating a name that already worked: `work_add`'s `project` and
+    `work_move`'s `to_project`.
+    """
+    text = f"{A.NAME_RULE} {description}" if rule_first else f"{description} {A.NAME_RULE}"
+    return {"type": "string", "description": text}
+
+
 def _summary_errored(summary: A.ProjectSummary) -> bool:
     """A project's summary represents a genuine READ failure -- an
     unreadable database whose status is a truncated `"ERROR: ..."` string
@@ -1224,7 +1249,7 @@ class WorkClaimTool:
         return {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Named project to claim from."},
+                "project": _project_param("Named project to claim from."),
                 "item_id": {
                     "type": "string",
                     "description": (
@@ -1361,7 +1386,7 @@ class WorkReopenTool:
         return {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Project the item lives in."},
+                "project": _project_param("Project the item lives in."),
                 "item_id": {
                     "type": "string",
                     "description": "Item id to reopen. Must currently be resolved.",
@@ -1426,7 +1451,7 @@ class WorkErratumTool:
         return {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Project the item lives in."},
+                "project": _project_param("Project the item lives in."),
                 "item_id": {
                     "type": "string",
                     "description": "Item id to append an erratum to. Must currently be resolved.",
@@ -1536,10 +1561,7 @@ class WorkStatsTool:
         return {
             "type": "object",
             "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Named project to report the full breakdown for.",
-                },
+                "project": _project_param("Named project to report the full breakdown for."),
             },
             "required": ["project"],
         }
@@ -1620,7 +1642,7 @@ class WorkAddTool:
         return {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Named project to add the item to."},
+                "project": _project_param("Named project to add the item to.", rule_first=True),
                 "title": {"type": "string", "description": "Short title for the new item."},
                 "description": {
                     "type": "string",
@@ -1694,14 +1716,8 @@ class WorkMoveTool:
             "type": "object",
             "properties": {
                 "item_id": {"type": "string", "description": "Item id to move."},
-                "from_project": {
-                    "type": "string",
-                    "description": "Project the item currently lives in.",
-                },
-                "to_project": {
-                    "type": "string",
-                    "description": "Project to move the item into.",
-                },
+                "from_project": _project_param("Project the item currently lives in."),
+                "to_project": _project_param("Project to move the item into.", rule_first=True),
             },
             "required": ["item_id", "from_project", "to_project"],
         }
@@ -1742,7 +1758,7 @@ class WorkEditTool:
         return {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Project the item lives in."},
+                "project": _project_param("Project the item lives in."),
                 "item_id": {"type": "string", "description": "Item id to edit."},
                 "title": {"type": "string", "description": "New title, if changing."},
                 "description": {"type": "string", "description": "New description, if changing."},
@@ -1799,7 +1815,7 @@ class WorkDeferTool:
         return {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Project the item lives in."},
+                "project": _project_param("Project the item lives in."),
                 "item_id": {"type": "string", "description": "Item id to defer/undefer."},
                 "reason": {
                     "type": "string",
@@ -1847,7 +1863,7 @@ class WorkBlockTool:
         return {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Project the item lives in."},
+                "project": _project_param("Project the item lives in."),
                 "item_id": {"type": "string", "description": "Item id to block/unblock."},
                 "reason": {
                     "type": "string",
@@ -1894,7 +1910,7 @@ class WorkDepTool:
         return {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Project the item lives in."},
+                "project": _project_param("Project the item lives in."),
                 "item_id": {
                     "type": "string",
                     "description": "Item id to declare a dependency on, or display edges for.",
@@ -1959,7 +1975,7 @@ class WorkListTool:
         return {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Named project to list items from."},
+                "project": _project_param("Named project to list items from."),
                 "item_id": {
                     "type": "string",
                     "description": (
@@ -2030,7 +2046,7 @@ class WorkSubscribeTool:
         return {
             "type": "object",
             "properties": {
-                "project": {"type": "string", "description": "Named project to subscribe to."},
+                "project": _project_param("Named project to subscribe to."),
             },
             "required": ["project"],
         }
@@ -2062,10 +2078,7 @@ class WorkUnsubscribeTool:
         return {
             "type": "object",
             "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Named project to unsubscribe from.",
-                },
+                "project": _project_param("Named project to unsubscribe from."),
             },
             "required": ["project"],
         }
