@@ -977,7 +977,7 @@
   contract:
     files:
       - file: contracts/operator-surface.v1.md
-        sha256: a1f304b11b17e6864298e68ba050d8781112545d4ea45d1a4e35ccd88bdc4d2f
+        sha256: b6f9dc58d8807e31683a907368e0f02f7702f3fb43d12027e45bb3f5ea423be0
       - file: contracts/custody-coordination.v1.md
         sha256: ec4b736f8d6dca4ee3c29b6df8397a9d7b51d2eadd76965854e898924f529e1a
   disposition: CONFORMS
@@ -985,6 +985,48 @@
     kind: probe
     ref: test_row_osv1_000
   notes: >
+    REHASHED 2026-09-06 (v3 amendment): the owner-ratified v3 amendment
+    (owner's literal words "your recommendations are good, go for all")
+    applied to the LOCKED contract through the ratified sibling proposal
+    `contracts/operator-surface.v3-candidate.md`, archived in the same change
+    to `contracts/applied/operator-surface.v3-candidate.applied.md`. Operator
+    hash `a1f304b11b...` -> `b6f9dc58d8...`;
+    `contracts/custody-coordination.v1.md` re-hashed BYTE-FOR-BYTE on this run
+    and still `ec4b736f...` at the moment of this amendment -- the boundary is
+    a one-way citation, so the custody text was not opened by it. (The custody
+    contract IS opened later in the same lane, by its own true-up and lock;
+    that move re-hashes this row a second time and carries its own note below.)
+
+    WHAT MOVED IN THE CONTRACT: exactly ONE line -- Backlogged 4's trigger
+    citation, re-anchored from the bare `__init__.py:711` (eleven files in
+    this repository carry that basename) to the full path
+    `modules/tool-work-tracker/amplifier_module_tool_work_tracker/__init__.py:711`
+    -- plus one dated Changelog entry. The line number did not move: it was
+    re-measured today and at `4aaee50`, the commit that authored the citation,
+    and is the same line in both. No clause body, no promise, no check, no
+    tier moved, and nothing under `src/`, `tests/` or `ledger/checks/` was
+    edited.
+
+    FULL RE-REVIEW PERFORMED (mandatory on any hash change, never a silent
+    bump): all 36 OSV1 rows walked. Two independent checks, both re-run on
+    this tree AFTER the edit rather than taken from the proposal's own
+    prediction: (1) no OSV1 row cites a Backlogged clause -- the 36 rows'
+    `contract.clause` values distribute Core x19, Conformance x7, Freeze x8,
+    Reserved x1, SYNC x1, Backlogged x0; (2) no row's quote overlaps the
+    changed line in either direction (each quote whitespace-collapsed and
+    tested for containment against the collapsed target line, before and
+    after, and the target line against each quote) -- NONE. Result: 0 rows
+    re-anchored, 0 dispositions changed, tally unchanged. Every OSV1 quote
+    re-verified green (`pytest ledger/checks -q`).
+
+    THE `OSV1-033` TRAP, named in the proposal and avoided: `test_row_osv1_033`
+    asserts the Changelog's backticked `<file>.py:<line>` citations are exactly
+    `{webapp.py}`. The replacement text lives in Backlogged 4, outside the
+    Changelog, and is a PATH (the character before `__init__.py` is `/`, not a
+    backtick), so it cannot match `_SOURCE_CITE` even where it stands; and the
+    ratifying Changelog entry describes the change in prose with no backticked
+    bare `file.py:NN`.
+
     REHASHED 2026-09-06: the owner-ratified v2 amendment (owner's literal word
     "Ratified") applied to the LOCKED contract through the ratified sibling
     proposal `contracts/operator-surface.v2-candidate.md`; full OSV1

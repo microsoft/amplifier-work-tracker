@@ -2673,7 +2673,155 @@ written, and no locked-document guard was invoked — because no locked document
 
 ---
 
+## Amendment 2026-09-06 — operator-surface v3 applied
+
+The mandatory full re-review that a SYNC-hash change triggers, run because the
+FROZEN contract moved again: the **one** owner-ratified correction in
+`contracts/operator-surface.v3-candidate.md`, plus one dated Changelog entry.
+
+**Run:** 2026-09-06, branch `lane/custody-lock`, branched from `main` @ **`4c37b16`**.
+**Trigger:** `contracts/operator-surface.v1.md` changed, so `OSV1-000`'s pin
+failed. Under `LEDGER-FORMAT.md` sec.4 that mandates a **full ledger re-review,
+never a silent hash bump** — this section is that re-review's record.
+**Owner's act, in his own words:** *"Yep, your recommendations are good, go for
+all."* — answering four questions at once; the third of them was "ratify
+operator-surface.v3-candidate.md". The stamp is on the proposal itself
+(`Ratified by owner — 2026-09-06, literal: "your recommendations are good, go
+for all".`), which is what let the write through: `hooks-candidate-guard`
+refuses an in-place edit of a locked contract unless a sibling
+`*.vN-candidate.md` names that contract in its `target:` field AND carries the
+ratified stamp. **The guard PERMITTED the edit** — the stamped candidate stood
+beside its target and the write went through on the first attempt. The guard was
+never bypassed: no `bash`, no `sed -i`, no emergency-unlock token.
+
+**Outcome in one line:** **zero rows re-anchored, zero dispositions changed,
+zero drift in either direction** — the amendment repairs one pointer's
+*addressing*; the line it points at never moved.
+
+---
+
+### V1. What was actually run (a self-report is not proof)
+
+| Command | Result | What it proves |
+|---|---|---|
+| `.venv/bin/python -m pytest ledger/checks -q` | **60 passed** | every row's quote verifies against the NEW bytes, every assertion ref resolves, the tripwires hold, `OSV1-000`'s pin matches |
+
+The custody family was untouched by this amendment and its pins were recomputed
+rather than assumed (see V3).
+
+---
+
+### V2. What changed in the contract — one line, one Changelog entry
+
+**Backlogged 4's trigger citation, re-anchored to its full path.**
+
+Before:
+
+```
+**Trigger:** the owner reports a reclaim they did not see on the web surface. *(Brief A §3, `__init__.py:711`)*
+```
+
+After:
+
+```
+**Trigger:** the owner reports a reclaim they did not see on the web surface. *(Brief A §3, `modules/tool-work-tracker/amplifier_module_tool_work_tracker/__init__.py:711`)*
+```
+
+The line number did not move — `711` was measured on this tree and at `4aaee50`
+(the commit that authored the citation) and is the same line in both. Only the
+*file* is qualified: eleven files in this repository are named `__init__.py`,
+and the bare citation had already been resolved to the wrong one, on the record,
+by an independent drafter (`operator-surface.v2-candidate.md` §"Not in this
+proposal", item 3, which called it a "dead pointer"). That reading was a
+mis-resolution, not a real dead pointer, and **the need it returned is answered
+here**. The v2 candidate is a ratified historical record and was not edited.
+
+Plus one Changelog entry in the contract, newest-first, recording the amendment
+and that Status remains FROZEN.
+
+---
+
+### V3. Hash, old → new
+
+| pinned file | before | after |
+|---|---|---|
+| `contracts/operator-surface.v1.md` (`OSV1-000`) | `a1f304b11b17e686…` | `b6f9dc58d8807e31…` |
+| `contracts/custody-coordination.v1.md` (`OSV1-000`, `CCV1-000`) | `ec4b736f8d6dca4e…` | **unchanged at this amendment** — recomputed byte-for-byte, not assumed |
+| `docs/VISION.md` (`CCV1-000`) | `f5eb400c79211d90…` | **unchanged at this amendment** — recomputed byte-for-byte, not assumed |
+
+The custody contract and the vision are opened **later in this same lane**, by
+the custody true-up and lock; those moves re-hash `CCV1-000` and `OSV1-000`'s
+custody entry again and carry their own record below.
+
+---
+
+### V4. The full re-review — 36 rows walked, 0 re-anchored
+
+Checked on this tree **after** the edit, not taken from the proposal's own
+prediction:
+
+1. **No OSV1 row cites a Backlogged clause.** The 36 rows' `contract.clause`
+   values distribute Core ×19, Conformance ×7, Freeze ×8, Reserved ×1, SYNC ×1.
+   Backlogged: **zero**.
+2. **No row's quote overlaps the changed line, in either direction.** Every
+   quote-carrying row was whitespace-collapsed and tested for containment
+   against the collapsed target line — before-text and after-text both — and the
+   target line against each quote. Result: **NONE**.
+
+Tally unchanged. Dispositions unchanged. No probe needed retargeting, so
+`ledger/checks/` was not touched by this amendment.
+
+---
+
+### V5. The `OSV1-033` trap, named in advance and avoided
+
+`test_row_osv1_033` asserts the contract's `## Changelog` section cites exactly
+one in-repo file — `assert cited == {"webapp.py"}` — where `_SOURCE_CITE` is a
+**backticked bare** `` `<file>.py:<line>` ``. Two consequences, both honoured:
+
+- The replacement text lives in Backlogged 4, outside the Changelog, and is a
+  *path*: the character before `__init__.py` is `/`, not a backtick, so the
+  pattern cannot match it even where it stands.
+- The ratifying Changelog entry describes the change in **prose** and writes no
+  backticked bare `file.py:NN`. `test_row_osv1_033` is green.
+
+---
+
+### V6. Files written by this amendment
+
+| File | Change |
+|---|---|
+| `contracts/operator-surface.v3-candidate.md` | the owner's ratified stamp on the file's designated stamp line — then, in the same change, `git mv`'d to `contracts/applied/` |
+| `contracts/applied/operator-surface.v3-candidate.applied.md` | the archived proposal: the ARCHIVED note and the `RATIFIED by owner 2026-09-06` status, written as **one** edit (the candidate guard refuses a status stamp that lands without the record of why it landed) |
+| `contracts/operator-surface.v1.md` | the one ratified change, byte-exact from the candidate, plus one dated Changelog entry |
+| `ledger/rows.yaml` | `OSV1-000` rehashed + full-re-review notes |
+| `ledger/reconcile-report.md` | this section (`V1`–`V6`) and a Changelog entry |
+
+**No other file was written by this amendment.** `ledger/checks/` was NOT
+touched — no row needed re-anchoring, so no probe needed retargeting. No `src/`
+byte, no `tests/` byte, and at this point no `docs/VISION.md` byte and no
+`contracts/custody-coordination.v1.md` byte. The live service was never
+contacted, `:3308` was never written. No item was filed and none closed; no
+work-tracker item was claimed or resolved.
+
+---
+
 ## Changelog
+- **2026-09-06 — AMENDMENT APPLIED, `contracts/operator-surface.v1.md`
+  (FROZEN), v3.** One owner-ratified change (owner's literal words *"Yep, your
+  recommendations are good, go for all."*): Backlogged 4's trigger citation
+  re-anchored from the bare `__init__.py:711` — eleven files in this repository
+  carry that basename, and it had already been mis-resolved once on the record —
+  to its full path, line number unchanged and re-measured at the authoring
+  commit. Applied through the ratified sibling proposal, which was stamped
+  first and archived to `contracts/applied/` in the same change; the guard
+  PERMITTED the edit and was never bypassed. `OSV1-000` operator hash
+  `a1f304b11b...` → `b6f9dc58d8...`; the custody and vision pins were recomputed
+  byte-for-byte and were unchanged at this amendment. **Full re-review of all 36
+  OSV1 rows performed** (mandatory, never a silent bump): zero rows cite a
+  Backlogged clause, zero quotes overlap the changed line in either direction →
+  **0 re-anchored, 0 dispositions changed**, tally unchanged, `pytest
+  ledger/checks -q` 60 passed. See §V1–V6.
 - **2026-09-06 — PRE-LOCK RE-CHECK, `contracts/custody-coordination.v1.md`
   (DRAFT), Freeze Bar read by measurement.** Scheduled re-check, not a
   hash-triggered re-review — no SYNC hash moved and both `CCV1-000` pins were
