@@ -449,6 +449,110 @@ def test_workspace_create_rejects_uppercase_name_before_touching_disk(tmp_path):
     assert not (tmp_path / "projects" / "BadName").exists()
 
 
+# ------------------------------ the naming rule is STATED, and the refusal
+# ------------------------------ points at the fix
+#
+# Measured cost of the rule living nowhere an agent reads before its first
+# call (steward, 2026-09-06): "sessions keep trying to name things with
+# dashes, fail, and then have to try again w/ underscores." The rule stays
+# as it is (a project name becomes a dolt database name and a bd id prefix
+# downstream); what changes is that it is now SAID -- in `NAME_RULE`, which
+# the tool schemas, the CLI `--help`, and every refusal all render -- and
+# that a refusal names the specific valid name the caller probably meant.
+
+
+def test_name_rule_states_the_rule_and_carries_the_real_pattern():
+    """`NAME_RULE` is the single home of the naming sentence, and it is
+    built FROM `NAME_RE.pattern` -- so prose and regex cannot drift apart.
+    It must also say the thing the steward's sessions kept getting wrong:
+    dashes."""
+    assert A.NAME_RE.pattern in A.NAME_RULE
+    assert "dashes are not accepted" in A.NAME_RULE
+    assert "my_project" in A.NAME_RULE and "my-project" in A.NAME_RULE
+
+
+def test_suggestion_for_a_dash_name_is_the_underscore_form():
+    """The exact failure the steward reported: a dash name. The refusal must
+    hand back the underscore spelling rather than leaving the caller to
+    reverse-engineer a regex."""
+    assert A.suggest_project_name("my-project") == "my_project"
+    assert A.suggest_project_name("work-tracker") == "work_tracker"
+
+    message = A.invalid_project_name_error("my-project")
+    assert "invalid project name 'my-project'" in message
+    assert "'my_project'" in message
+    assert A.NAME_RE.pattern in message
+
+
+def test_suggestion_for_an_uppercase_name_is_the_lowercased_form():
+    assert A.suggest_project_name("DemoApp") == "demoapp"
+    assert A.suggest_project_name("Demo.App") == "demo_app"
+    assert "'demoapp'" in A.invalid_project_name_error("DemoApp")
+
+
+def test_unrepairable_names_refuse_with_no_suggestion_and_no_crash():
+    """A name the one mechanical repair cannot rescue -- a leading digit, a
+    single character, an over-long name -- gets a refusal with NO suggestion
+    rather than a half-repaired string that would also fail. Offering
+    `9lives` back as `9lives` would send the caller off to retry the exact
+    name that just failed."""
+    for bad in ("9lives", "x", "_leading", "a" * 40, "9" * 5, ""):
+        assert A.suggest_project_name(bad) is None, bad
+        message = A.invalid_project_name_error(bad)
+        assert f"invalid project name {bad!r}" in message
+        assert A.NAME_RE.pattern in message
+        assert "Did you mean" not in message, bad
+
+
+def test_an_already_valid_name_gets_no_suggestion():
+    """`suggest_project_name` is only ever consulted on a name that already
+    failed `NAME_RE`; it must still be honest if asked about a valid one --
+    there is nothing to suggest."""
+    assert A.suggest_project_name("demo_app_2") is None
+
+
+def test_the_dotted_name_note_appears_only_for_a_dotted_name(tmp_path):
+    """`create`'s dot-specific warning is real (a dotted name makes `bd
+    init` report success and then fail every later command), but it is only
+    true of DOTTED names. Appending it to every refusal ends a dash-name
+    message on an irrelevant paragraph about dots -- burying the suggestion
+    that precedes it, which is the one part the caller needs."""
+    ws = A.Workspace(tmp_path)
+
+    try:
+        ws.create("bad.name")
+        raise AssertionError("expected BeadsError for a dotted project name")
+    except A.BeadsError as e:
+        assert "Dots are rejected deliberately" in str(e)
+
+    try:
+        ws.create("my-project")
+        raise AssertionError("expected BeadsError for a dashed project name")
+    except A.BeadsError as e:
+        assert "Dots are rejected" not in str(e), f"dot warning on a dash name: {e}"
+        assert str(e).rstrip().endswith("Did you mean 'my_project'?"), (
+            f"the suggestion must be the last thing the caller reads: {e}"
+        )
+
+
+def test_a_dash_name_is_refused_not_silently_normalized(tmp_path):
+    """The rejected alternative, asserted: `create` must NOT quietly rewrite
+    `my-project` to `my_project`. A silent rewrite leaves two spellings of
+    one project -- the name the caller asked for and the name the dolt
+    database actually carries -- so the suggestion is shown and the call
+    still fails, touching no disk."""
+    ws = A.Workspace(tmp_path)
+    try:
+        ws.create("my-project")
+        raise AssertionError("expected BeadsError for a dashed project name")
+    except A.BeadsError as e:
+        assert "'my_project'" in str(e), f"refusal did not name the fix: {e}"
+    assert not (tmp_path / "projects" / "my-project").exists()
+    assert not (tmp_path / "projects" / "my_project").exists(), (
+        "create() normalized a dashed name instead of refusing it"
+    )
+
+
 # --------------------------------------- residue must never report success
 
 

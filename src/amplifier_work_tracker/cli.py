@@ -5,6 +5,11 @@ This CLI contains NO knowledge of Beads. Every Beads interaction goes through
 moving fast, and we want its improvements without its churn reaching our
 domain logic.
 
+PROJECT NAMES take underscores, never dashes: lowercase letter first, then
+lowercase letters/digits/underscores, 2-31 chars (`^[a-z][a-z0-9_]{1,30}$`).
+Write `my_project`, not `my-project`. A name that breaks the rule is refused
+before anything is created, and the refusal names the valid form to use.
+
 `amplifier-work-tracker doctor` runs the contract suite -- executable
 assertions of every behaviour we depend on, checked against the live binary.
 Run it after any bd upgrade. It is how a breaking change reaches us as a loud
@@ -70,6 +75,17 @@ from . import custody as C
 from . import heartbeat as HB
 from . import service as S
 from . import supervisor as SV
+
+# The project-naming rule as ONE clause, with ONE home, rendered by every
+# project-name option's `--help` below. Built from `adapter.NAME_RE.pattern`
+# so it cannot drift from what the adapter actually enforces; the full
+# sentence form is `adapter.NAME_RULE` (what every refusal and every tool
+# schema renders). A `--help` line wants the short form -- the actionable
+# half plus the regex -- not the paragraph.
+_PROJECT_NAME_HELP = (
+    f"project name: lowercase/underscore only, no dashes ({A.NAME_RE.pattern}) "
+    f"-- write my_project, not my-project"
+)
 
 POLL_TICK_SECONDS = 5
 
@@ -1770,7 +1786,7 @@ def main():
     p.set_defaults(fn=cmd_doctor)
 
     p = sub.add_parser("new", help="create a named project", parents=[root_parent])
-    p.add_argument("name")
+    p.add_argument("name", help=_PROJECT_NAME_HELP)
     p.set_defaults(fn=cmd_new)
 
     p = sub.add_parser(
@@ -1781,7 +1797,7 @@ def main():
         ),
         parents=[root_parent],
     )
-    p.add_argument("name")
+    p.add_argument("name", help=_PROJECT_NAME_HELP)
     p.add_argument(
         "--yes",
         action="store_true",
@@ -1798,8 +1814,8 @@ def main():
         ),
         parents=[root_parent],
     )
-    p.add_argument("old", help="current project name")
-    p.add_argument("new", help="new project name (same rules as `new`: lowercase/underscore)")
+    p.add_argument("old", help=f"current {_PROJECT_NAME_HELP}")
+    p.add_argument("new", help=f"new {_PROJECT_NAME_HELP}")
     p.set_defaults(fn=cmd_rename)
 
     p = sub.add_parser(
@@ -1812,8 +1828,12 @@ def main():
         parents=[root_parent],
     )
     p.add_argument("--item", required=True, help="item id to move")
-    p.add_argument("--from", dest="from_project", required=True, help="current project name")
-    p.add_argument("--to", dest="to_project", required=True, help="destination project name")
+    p.add_argument(
+        "--from", dest="from_project", required=True, help=f"source {_PROJECT_NAME_HELP}"
+    )
+    p.add_argument(
+        "--to", dest="to_project", required=True, help=f"destination {_PROJECT_NAME_HELP}"
+    )
     p.set_defaults(fn=cmd_move)
 
     p = sub.add_parser(
@@ -1824,7 +1844,7 @@ def main():
         ),
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument("title", help="short title for the new item")
     p.add_argument("--description", default=None, help="what needs to be done")
     p.add_argument("--acceptance", default=None, help="Given/When/Then acceptance criteria")
@@ -1842,7 +1862,7 @@ def main():
         ),
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_status)
 
@@ -1854,7 +1874,7 @@ def main():
         ),
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument(
         "--status",
         default=None,
@@ -1884,7 +1904,7 @@ def main():
         help="safely claim one ready item, or a specific item by --id",
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument("--actor", required=True)
     p.add_argument("--lane", default=A.LANE_WORK)
     p.add_argument(
@@ -1905,7 +1925,7 @@ def main():
         ),
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument("--actor", required=True)
     p.add_argument("--id", required=True)
     p.add_argument("--pid", type=int, default=0, help="PID to watch (default: parent process)")
@@ -1928,7 +1948,7 @@ def main():
         ),
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument(
         "--ttl-seconds",
         type=int,
@@ -1946,7 +1966,7 @@ def main():
     p = sub.add_parser(
         "resolve", help="close an item with a user-readable reason", parents=[root_parent]
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument("--id", required=True)
     p.add_argument("--reason", required=True)
     p.add_argument("--actor", default="agent")
@@ -1957,7 +1977,7 @@ def main():
         help="return a RESOLVED item to the queue so its record can be corrected",
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument("--id", required=True)
     p.add_argument("--reason", required=True, help="why the stored resolution is wrong")
     p.add_argument("--actor", default="agent")
@@ -1979,7 +1999,7 @@ def main():
         ),
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument("--id", required=True)
     p.add_argument("--actor", required=True)
     p.add_argument("text", help="what's actually wrong about the stored resolution")
@@ -1990,7 +2010,7 @@ def main():
         help="release a held item back to the ready queue WITHOUT resolving it",
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument("--id", required=True)
     p.add_argument("--actor", default="agent")
     p.set_defaults(fn=cmd_unclaim)
@@ -2000,7 +2020,7 @@ def main():
         help="amend an item's title/description/acceptance/design, or --merge-into another item",
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument("--id", required=True)
     p.add_argument("--title", default=None)
     p.add_argument("--description", default=None)
@@ -2020,7 +2040,7 @@ def main():
         help="defer an open item with --reason, or --clear a deferral back to open",
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument("--id", required=True)
     p.add_argument("--reason", default=None)
     p.add_argument("--clear", action="store_true")
@@ -2032,7 +2052,7 @@ def main():
         help="block an open item with --reason, or --clear a block back to open",
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument("--id", required=True)
     p.add_argument("--reason", default=None)
     p.add_argument("--clear", action="store_true")
@@ -2044,7 +2064,7 @@ def main():
         help="declare (--depends-on) or display dependency/dependent edges on --id",
         parents=[root_parent],
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.add_argument("--id", required=True)
     p.add_argument(
         "--depends-on",
@@ -2061,7 +2081,7 @@ def main():
     p = sub.add_parser(
         "notify", help="propagate resolved work back to reporters", parents=[root_parent]
     )
-    p.add_argument("--project", required=True)
+    p.add_argument("--project", required=True, help=_PROJECT_NAME_HELP)
     p.set_defaults(fn=cmd_notify)
 
     p = sub.add_parser(
