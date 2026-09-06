@@ -957,24 +957,30 @@ def _mo029_the_kit_stops_reading_its_artifacts_back(w: World) -> None:
     )
 
 
-def _mo031_a_red_core_row_goes_green(w: World) -> None:
-    """FIXED: one of the red Core-carrying rows flips, so the gate's tally
-    moves. Reaches the ledger through the patched reader plus the cache clear
-    `applied()` performs -- `rows()` memoises the parse.
+def _mo031_a_green_core_row_goes_red(w: World) -> None:
+    """REGRESSION: a Core-carrying row that reads CONFORMS is pushed back to
+    VIOLATION, so Freeze 5's condition stops holding while the Freeze row above
+    it still reads CONFORMS. Reaches the ledger through the patched reader plus
+    the cache clear `applied()` performs -- `rows()` memoises the parse.
 
-    RE-ANCHORED 2026-09-05 (work_item_pipeline-aad): this used to move OSV1-012,
-    which is now green and can no longer be the counterfactual. Anchored on the
-    row's own probe ref rather than on its `work:` id, because
-    `work_item_pipeline-qgo` names three still-red Core rows and a bare
-    disposition/work pair is no longer unique.
-    RE-ANCHORED AGAIN 2026-09-05 at wave-4 integration (orchestrator): OSV1-003
-    went green (calm-pixels lane); now anchored on OSV1-008's probe ref.
+    REWRITTEN 2026-09-05 at the wave-4 union (orchestrator). It used to be a
+    FIXED mutation -- flip one of the RED Core rows green and watch the "at
+    least one is still red" pin notice. There are no red Core rows left to
+    flip, so that counterfactual is not merely unnecessary, it is unbuildable:
+    the mutation would have to invent a red row first. The probe was retargeted
+    to `len(red) == 0` in the same change, and its direction is now REGRESSION,
+    so this mutation moves in the matching direction.
+
+    Anchored on OSV1-008's own probe REF rather than on its `work:` id or a
+    bare disposition line: `disposition: CONFORMS` now appears on 31 OSV1 rows,
+    and an anchor that matched any of them would prove nothing about which row
+    moved. The ref is unique by construction -- one probe per row.
     """
     w.replace(
         ROWS_PATH,
-        "  disposition: VIOLATION\n  work: work_item_pipeline-qgo\n"
+        "  disposition: CONFORMS\n  work: work_item_pipeline-v3m\n"
         "  assertion:\n    kind: probe\n    ref: test_row_osv1_008",
-        "  disposition: CONFORMS\n  work: work_item_pipeline-qgo\n"
+        "  disposition: VIOLATION\n  work: work_item_pipeline-v3m\n"
         "  assertion:\n    kind: probe\n    ref: test_row_osv1_008",
     )
 
@@ -1419,8 +1425,9 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "OSV1-031",
-        "one of the three red Core-carrying rows flips to CONFORMS",
-        _mo031_a_red_core_row_goes_green,
+        "a green Core-carrying row (OSV1-008) goes back to VIOLATION, so Freeze 5's "
+        "condition stops holding under a Freeze row that still reads CONFORMS",
+        _mo031_a_green_core_row_goes_red,
     ),
     Mutation(
         "OSV1-032",

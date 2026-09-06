@@ -560,15 +560,21 @@ EXEMPTION_REGISTER: frozenset[str] = frozenset(
         "webapp.py:1127",  # flex:{n} 1 0            -- state-bar segment ratio
         "webapp.py:1823",  # width:{today_w}px       -- throughput bar, today
         "webapp.py:1826",  # width:{prior_w}px       -- throughput bar, prior 6d
-        # +22 lines on 2026-09-05 (work_item_pipeline-a1o, was 4197/4216/4223):
-        # OSV1-003's fix inserted three commented CSS rules ABOVE them. The SITES
-        # are unchanged and the register did not GROW -- same eight, same three
-        # expressions -- but the pins are line numbers, so any edit higher in the
-        # file moves them. Re-pinned here rather than loosened: a register that
-        # stops naming an exact line stops being a register.
-        "webtheme.py:4219",  # {style}               -- axis ruler numeral offset
-        "webtheme.py:4238",  # left:{_grad_x(f):.1f}px -- graduation tick offset
-        "webtheme.py:4245",  # width:{px}px          -- age bar length
+        # +182 lines on 2026-09-05 at the wave-4 union (was 4197/4216/4223 on
+        # main @065da04), and RE-MEASURED here rather than transcribed from any
+        # lane: three lanes each inserted CSS ABOVE these three sites in the same
+        # file -- calm-pixels +22 (work_item_pipeline-a1o), swap-survives +78
+        # (work_item_pipeline-v3m, the live-region rules), rendered-floors +82
+        # (work_item_pipeline-96f, the light token blocks and control sizing).
+        # 22 + 78 + 82 = 182, which is exactly the observed shift, so every one
+        # of the three is accounted for and none of them is a NEW site. The
+        # SITES are unchanged and the register did not GROW -- same eight, same
+        # three expressions -- but the pins are line numbers, so any edit higher
+        # in the file moves them. Re-pinned here rather than loosened: a register
+        # that stops naming an exact line stops being a register.
+        "webtheme.py:4379",  # {style}               -- axis ruler numeral offset
+        "webtheme.py:4398",  # left:{_grad_x(f):.1f}px -- graduation tick offset
+        "webtheme.py:4405",  # width:{px}px          -- age bar length
         "widgets.py:866",  # width:{pct}%            -- status-mix segment (hatched)
         "widgets.py:868",  # width:{pct}%            -- status-mix segment
     }
@@ -2099,11 +2105,20 @@ def test_row_osv1_030() -> None:
 
 
 def test_row_osv1_031() -> None:
-    """Freeze 5 pin: at least one Core-carrying row is still red.
+    """Freeze 5 CONFORMS: NO Core-carrying row is red.
 
-    The only probe in this family that reads the LEDGER rather than the repo.
-    It goes red when the last Core row turns green -- which is the signal to
-    flip this row, not a failure.
+    RETARGETED 2026-09-05 at the wave-4 union, in the same change that flipped
+    the row (VIOLATION-MOVEMENT: the old pin -- "at least one Core row is still
+    red" -- went red because the last one turned green). The direction is now
+    REGRESSION: this fails the moment any Core-carrying row goes back to GAP or
+    VIOLATION, which is the only way Freeze 5 can stop being met.
+
+    Still the only probe in this family that reads the LEDGER rather than the
+    repo. It cannot, and does not, re-verify the 17 underlying measurements --
+    each Core row owns its own probe and its own evidence, and this one asserts
+    the AGGREGATE those probes add up to. That is the honest limit of a tally
+    gate: it counts dispositions, so a dishonest disposition would pass here
+    and fail in the row that carries it.
     """
     core_rows = [
         r
@@ -2116,23 +2131,15 @@ def test_row_osv1_031() -> None:
         f"re-derive."
     )
     red = sorted(r["id"] for r in core_rows if r["disposition"] in {"GAP", "VIOLATION"})
-    assert red, (
-        "OSV1-031 (Freeze 5) PIN BROKE THE RIGHT WAY: every Core-carrying row now reads "
-        "CONFORMS or NOT-ASSERTABLE. Confirm each formerly-red row was RE-DERIVED from "
-        "real measurement (not flipped because a kit file appeared), then flip OSV1-031 "
-        "to CONFORMS and retarget this probe to assert no Core row is red "
-        "(work_item_pipeline-umm)."
-    )
-    assert len(red) == 2, (
-        f"OSV1-031 (Freeze 5): pinned 2 red Core-carrying rows, observed {len(red)}: "
-        f"{red}. Movement in either direction means this gate's tally changed -- update "
-        f"the pin and the row's notes in the same change. (10 at seed; OSV1-009 went "
-        f"green 2026-09-04, work_item_pipeline-sxh; OSV1-015 and -016 went green "
-        f"2026-09-04, work_item_pipeline-8vv and -dg3; OSV1-001 and OSV1-004 went green "
-        f"2026-09-05, work_item_pipeline-ujy and the Tier-A kit; OSV1-005 went green "
-        f"2026-09-05, work_item_pipeline-np3; OSV1-012 went green 2026-09-05, "
-        f"work_item_pipeline-aad; OSV1-003 went green 2026-09-05, "
-        f"work_item_pipeline-a1o.)"
+    assert len(red) == 0, (
+        f"OSV1-031 (Freeze 5) REGRESSION: {len(red)} Core-carrying row(s) went back to "
+        f"GAP or VIOLATION: {red}. Freeze 5 asks that EVERY Core clause read CONFORMS "
+        f"or be NOT-ASSERTABLE with its cadence named, so this gate no longer holds -- "
+        f"re-open OSV1-031 (disposition GAP) in the SAME change that reddens the row, "
+        f"rather than leaving a green Freeze row above a red Core one. (Ten Core rows "
+        f"were red at seed; the last four went green 2026-09-05 at the wave-4 union -- "
+        f"OSV1-003 work_item_pipeline-a1o, OSV1-012 work_item_pipeline-aad, OSV1-008 "
+        f"work_item_pipeline-v3m, OSV1-010 work_item_pipeline-96f.)"
     )
     assert {r["id"] for r in core_rows if r["disposition"] == "NOT-ASSERTABLE"} == {
         "OSV1-018",
@@ -2140,7 +2147,9 @@ def test_row_osv1_031() -> None:
     }, (
         "OSV1-031 (Freeze 5): the NOT-ASSERTABLE Core rows changed. Freeze 5's second "
         "limb admits exactly the clauses the CONTRACT declares unassertable, each with "
-        "its cadence named -- a new one is a downgrade, not a pass."
+        "its cadence named -- a new one is a downgrade, not a pass. This matters MORE "
+        "now that the row reads CONFORMS: moving a Core row to NOT-ASSERTABLE would "
+        "keep this gate green while removing the assertion under it."
     )
 
 
