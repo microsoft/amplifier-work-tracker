@@ -306,10 +306,32 @@ its result is recorded on the PR itself. This note does not claim a green run
 it has not seen. The PR is opened as a **draft** and is to be marked ready
 only once its own CI is green, per the goal.
 
-Locally, `make test` (root suite + ledger checks + the `tool-work-tracker`
-module suite) was run on the branch; see the PR body for its result. The
-change is four YAML frontmatter strings — no Python, no behaviour, no
-public surface.
+**Locally, `make test` on the branch @ `eb108f9` is GREEN**, both pytest
+invocations of the target:
+
+```
+tests + ledger/checks      1565 passed, 3 skipped, 89 deselected, 2 warnings   2222.00s (37:01)
+modules/tool-work-tracker   131 passed, 9 warnings                              597.23s (09:57)
+make test exit code: 0
+```
+
+Zero failures, zero errors. The 89 deselected are the `tier_b` browser
+conformance tier, deselected by `pyproject`'s `-m "not tier_b"` addopts as
+designed — that tier has its own `make test-conformance-b` target and a
+chromium download, and is deliberately not part of `make test`. `ruff check`
+and `ruff format --check` also pass on the lane artifacts.
+
+This is the expected result: the change is four YAML frontmatter strings — no
+Python, no behaviour, no public surface. Posted as a PR comment
+(`#94 issuecomment-5573941050`) as well, so the green run is recorded where a
+reviewer reads it.
+
+**A stash-compare byte-identity check was NOT applicable here** and is not
+claimed: there is no default-mode output to compare. Nothing executable
+changed — the diff is four description strings in YAML frontmatter, and the
+before/after difference in rendered behaviour is exactly the catalog delta
+measured above, which is the intended change rather than a regression to
+rule out.
 
 ---
 
