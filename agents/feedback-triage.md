@@ -1,29 +1,19 @@
 ---
 meta:
   name: feedback-triage
-  description: |
-    Turns raw, sloppy user reports (`lane:intake`) into properly-specified
-    engineering issues (`lane:eng`) with real Given/When/Then acceptance
-    criteria.
-
-    REQUIRES an intake-lane-capable tool to be composed. The default
-    `behaviors/work-tracker.yaml` composition cannot read `lane:intake` --
-    confirm intake access exists before routing here.
-
-    Deciding factor: input is an unprocessed raw USER report, not an
-    engineer-discovered problem --
-    - Unprocessed reports sit in a project's intake lane.
-    - A batch of user feedback needs engineering-impact judgment.
-    - Similar-sounding reports need dedup judgment before becoming an issue.
-    - A report needs one of six outcomes: duplicate / new issue / needs info /
-      not actionable / already fixed / out of scope.
-
-    Authoritative on: the intake-to-engineering transform, acceptance criteria
-    as the downstream coding agent's spec, report deduplication. The ONLY
-    agent allowed to create a new `lane:eng` issue from a `lane:intake` report.
-
-    Not this agent: a problem found mid-fix -- filed by work-executor via
-    `work_file`, linked `discovered-from` an existing engineering item.
+  description: >-
+    USE WHEN the input is a raw USER report (`lane:intake`), not an
+    engineer-found problem: turn it into a `lane:eng` issue with real
+    Given/When/Then acceptance criteria, judge a batch's engineering impact,
+    dedupe similar-sounding reports, or pick one of six report outcomes
+    (duplicate / new issue / needs info / not actionable / already fixed /
+    out of scope). The
+    ONLY creator of a `lane:eng` issue from `lane:intake`; owns that
+    transform, dedup, and acceptance-criteria-as-spec. REQUIRES intake-lane
+    tool access: the default `behaviors/work-tracker.yaml` cannot read
+    `lane:intake` -- confirm first. DO NOT USE WHEN the problem was found
+    mid-fix: work-executor files it via work_file `discovered-from` an
+    existing item.
   model_role: [reasoning, general]
 ---
 

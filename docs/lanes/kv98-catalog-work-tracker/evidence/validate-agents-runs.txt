@@ -1,0 +1,97 @@
+validate-agents v1.7.0 -- BEFORE / AFTER, same host, same day (2026-09-07)
+==========================================================================
+
+Recipe file (both runs):
+  /home/bkrabach/.amplifier/cache/amplifier-foundation-c909465861f9d6ce/recipes/validate-agents.yaml
+  dependency resolved_revision: a27d5824517d078097b60d84779dd3eae80202cd
+                                (git+https://github.com/microsoft/amplifier-foundation@v2.1.2)
+
+BEFORE was run against a pristine `git archive HEAD` export of this repo at
+f619c45 (extracted to /tmp/kv98-stock) rather than by stashing, so the
+working tree was never disturbed. The export was independently confirmed to
+render the stock catalog byte-for-byte (COMBINED CATALOG BYTES: 3640, equal
+to the BEFORE render taken from the live tree).
+
+
+BEFORE -- /tmp/kv98-stock (stock descriptions, repo HEAD f619c45)
+-----------------------------------------------------------------
+run_id:      run-42cd5a1bff8a
+session_id:  fbc23e6c6f994ac9-20260907-094413_recipe
+status:      completed
+
+VERDICT (synthesize-report):  "Overall Verdict: PASS WITH WARNINGS"
+
+discovery_results.total_count:      2
+discovery_results.location_counts:  {"agents/": 2}
+discovery_results.candidates_scanned: 2
+discovery_results.non_agent_count:  0
+structural summary:  total 2, passed 2, errors 0, warnings 2
+quality_level:       needs_work   (driver: NO_TOOLS_SECTION x2 -- see below)
+
+  agent            desc_chars  desc_tok  example_count  commentary_count  has_strong_trigger  triggers_found  warnings
+  feedback-triage       1108       277         0               0               false             []            NO_TOOLS_SECTION
+  work-executor         1127       281         0               0               true              ["MUST"]      NO_TOOLS_SECTION
+
+
+AFTER -- lane/kv98-catalog-work-tracker (lean descriptions, final state)
+------------------------------------------------------------------------
+run_id:      run-b18878d22d5c
+session_id:  5e39e09376de4148-20260907-094844_recipe
+status:      completed
+
+VERDICT (synthesize-report):  "Overall Verdict: PASS WITH WARNINGS"
+
+discovery_results.total_count:      2
+discovery_results.location_counts:  {"agents/": 2}
+discovery_results.candidates_scanned: 2
+discovery_results.non_agent_count:  0
+structural summary:  total 2, passed 2, errors 0, warnings 2
+quality_level:       needs_work   (same driver, same two warnings)
+
+  agent            desc_chars  desc_tok  example_count  commentary_count  has_strong_trigger  triggers_found  warnings
+  feedback-triage        716       179         0               0               true             ["DO NOT"]    NO_TOOLS_SECTION
+  work-executor          628       157         0               0               true             ["DO NOT"]    NO_TOOLS_SECTION
+
+
+WHAT MOVED, AND WHAT DID NOT
+-----------------------------
+UNCHANGED (the verdict "stayed PASS"):
+  overall verdict         PASS WITH WARNINGS  ->  PASS WITH WARNINGS
+  errors                  0                   ->  0
+  warnings                2                   ->  2   (same code, same two agents)
+  example/commentary      0 / 0               ->  0 / 0
+  agents discovered       2                   ->  2
+  model_role coverage     2/2                 ->  2/2
+
+IMPROVED:
+  feedback-triage has_strong_trigger   false -> true   (gained an explicit DO NOT USE WHEN)
+  description tokens                   277+281=558 -> 179+157=336   (-40%)
+
+The two NO_TOOLS_SECTION warnings are PRE-EXISTING and untouched by this
+change -- they fire on `has_explicit_tools`, a frontmatter `tools:` key this
+branch never edits. Both BEFORE and AFTER runs independently adjudicated
+them false positives (work-executor's tools are declared at
+behaviors/work-tracker.yaml:18-38; feedback-triage is deliberately not
+composed). No action taken on either, per this lane's scope.
+
+
+INDEPENDENT FIDELITY CORROBORATION (unprompted, from the BEFORE run)
+---------------------------------------------------------------------
+The BEFORE run's description-quality phase -- which had never seen the lean
+text -- volunteered the exact preservation list a shortening pass must meet:
+
+  "any shortening must preserve every routing fact identified above: the
+   deciding-factor sentence, the four/four condition bullets, the 'Not this
+   agent' line naming the sibling agent, and (for feedback-triage) the
+   intake-composition precondition at :9-11. Dropping the precondition in
+   particular would silently mis-route to an agent that cannot make a legal
+   call."
+
+The AFTER run confirms each survived:
+
+  "REQUIRES intake-lane tool access: the default behaviors/work-tracker.yaml
+   cannot read lane:intake -- confirm first. That is a routing fact worth
+   more than a cleared checkbox."
+
+  "the only genuinely compressible material is prose scaffolding [...] not
+   any trigger condition or DO NOT USE WHEN clause."

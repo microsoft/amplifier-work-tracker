@@ -1,0 +1,59 @@
+===== BEFORE =====
+--- delegate agent catalog (this repo's entries) ---
+  - work-tracker:feedback-triage: Turns raw, sloppy user reports (`lane:intake`) into properly-specified
+engineering issues (`lane:eng`) with real Given/When/Then acceptance
+criteria.
+
+REQUIRES an intake-lane-capable tool to be composed. The default
+`behaviors/work-tracker.yaml` composition cannot read `lane:intake` --
+confirm intake access exists before routing here.
+
+Deciding factor: input is an unprocessed raw USER report, not an
+engineer-discovered problem --
+- Unprocessed reports sit in a project's intake lane.
+- A batch of user feedback needs engineering-impact judgment.
+- Similar-sounding reports need dedup judgment before becoming an issue.
+- A report needs one of six outcomes: duplicate / new issue / needs info /
+  not actionable / already fixed / out of scope.
+
+Authoritative on: the intake-to-engineering transform, acceptance criteria
+as the downstream coding agent's spec, report deduplication. The ONLY
+agent allowed to create a new `lane:eng` issue from a `lane:intake` report.
+
+Not this agent: a problem found mid-fix -- filed by work-executor via
+`work_file`, linked `discovered-from` an existing engineering item.
+
+  - work-tracker:work-executor: Claims and works engineering-lane (`lane:eng`) items from a work-tracker
+project queue through to a user-readable resolution, and reports the
+read-only state of that queue.
+
+The deciding factor: work must come off a shared multi-agent queue rather
+than be picked by hand. Specifically --
+- A named work-tracker project has ready items and the next one should be
+  pulled and worked ("next item in the queue", "what should I work on").
+- An item is already claimed and needs carrying through to resolution.
+- A distinct new problem was found mid-fix and must be filed linked
+  `discovered-from` the item currently held.
+- Someone asks what is currently held or ready in a project (read-only
+  `work_status`). This agent is the authoritative view because it is the
+  one that actually claims and holds items.
+
+Authoritative on: `work_claim`, `work_declare`, `work_resolve`,
+`work_file`, `work_status`, custody renewal and reclaim, empty-queue
+handling, parallel-agent coordination on a shared queue.
+
+Not this agent: triaging raw user reports into issues (that is
+feedback-triage's intake lane), or any direct `bd` / CLI access.
+
+[agent catalog bytes: 2302]
+
+--- hooks-skills-visibility (this repo's entries) ---
+<system-reminder source="hooks-skills-visibility">
+Available skills (use load_skill tool):
+
+- **claiming-work-safely**: The claim/custody procedure for any session that claims work directly from a work-tracker project queue: why the obvious read-then-write approach double-claims silently, the loop through work_claim/work_declare/work_resolve, the custody freshness model (renew/TTL/escalation), the two declared states, what to do after a reap, empty-queue handling, filing discovered work, and the never-touch-bd rule. Use when claiming, holding, declaring state on, resolving, or losing custody of a work-tracker item -- or when in doubt about any of those mechanics.
+- **work-tracker-operations**: Operating and diagnosing amplifier-work-tracker: what `doctor` proves and how to read a violated assumption (fix scope is adapter.py only), the bd >= 1.1.2 version floor with the measured double-claim table, the shared-server topology requirement, scheduling reap and notify on timers (resolution does NOT propagate on its own), and the known silent sharp edges (dotted project names, TOCTOU name allocation, no storage authz, native leases don't replicate). Use when running doctor, upgrading bd, standing up a project, scheduling operator jobs, or diagnosing why something that should be automatic isn't happening.
+</system-reminder>
+[skills block bytes: 1338]
+
+[COMBINED CATALOG BYTES: 3640]
