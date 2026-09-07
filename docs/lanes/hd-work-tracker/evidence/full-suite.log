@@ -1,0 +1,59 @@
+........................................................................ [  4%]
+........................................................................ [  9%]
+........................................................................ [ 13%]
+........................................................................ [ 18%]
+........................................................................ [ 22%]
+.......................................................s................ [ 27%]
+...................................ss................................... [ 32%]
+........................................................................ [ 36%]
+........................................................................ [ 41%]
+........................................................................ [ 45%]
+........................................................................ [ 50%]
+........................................................................ [ 55%]
+........................................................................ [ 59%]
+........................................................................ [ 64%]
+........................................................................ [ 68%]
+........................................................................ [ 73%]
+........................................................................ [ 78%]
+........................................................................ [ 82%]
+........................................................................ [ 87%]
+........................................................................ [ 91%]
+........................................................................ [ 96%]
+........................................................                 [100%]
+=============================== warnings summary ===============================
+tests/integration/test_observatory_web.py:20
+  /home/bkrabach/dev/hw-model-performance/lanes/hd-work-tracker/amplifier-work-tracker/tests/integration/test_observatory_web.py:20: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient  # noqa: E402
+
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /home/bkrabach/dev/hw-model-performance/lanes/hd-work-tracker/amplifier-work-tracker/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/integration/test_web.py:702: bd set no `owner` on this item -- happens where the environment has no git identity (e.g. a bare CI container with no `git config user.email`). `owner` is an environment-provided value, not a code invariant; the environment-independent humanization guarantees are covered by test_humanize_identity_* in tests/unit.
+SKIPPED [1] tests/integration/test_web_pwa.py:234: Pillow not installed (dev/build-only tool)
+SKIPPED [1] tests/integration/test_web_pwa.py:249: Pillow not installed (dev/build-only tool)
+1565 passed, 3 skipped, 89 deselected, 2 warnings in 2215.89s (0:36:55)
+ROOT_RC=0
+........................................................................ [ 46%]
+........................................................................ [ 92%]
+............                                                             [100%]
+=============================== warnings summary ===============================
+modules/tool-work-tracker/tests/test_conformance_fixtures.py::test_fixture2_bad_half_stale_holders_resolve_is_refused_after_a_real_reap
+modules/tool-work-tracker/tests/test_conformance_fixtures.py::test_fixture2_good_half_integrator_close_of_a_reclaimed_item_still_succeeds
+modules/tool-work-tracker/tests/test_conformance_fixtures.py::test_fixture3_a_fenced_reclaim_clears_the_latch_with_no_manual_step
+modules/tool-work-tracker/tests/test_dead_holder_successor_claim.py::test_successor_work_claim_succeeds_after_the_sweep_reclaims
+modules/tool-work-tracker/tests/test_dead_holder_successor_claim.py::test_the_successor_can_then_resolve_the_item_it_reclaimed
+modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_resolve_refusal_after_reap_clears_held_and_allows_new_claim
+modules/tool-work-tracker/tests/test_reap_recovery.py::test_post_reap_refusal_originates_below_the_session_latch
+modules/tool-work-tracker/tests/test_reap_recovery.py::test_explicit_declare_refusal_after_reap_clears_held_and_allows_new_claim
+modules/tool-work-tracker/tests/test_reap_recovery.py::test_background_renew_loop_detects_reap_and_clears_held_state
+  /home/bkrabach/dev/hw-model-performance/lanes/hd-work-tracker/amplifier-work-tracker/.venv/lib/python3.12/site-packages/_pytest/stash.py:108: RuntimeWarning: coroutine 'alarm_for_reclaimed_item' was never awaited
+    del self._storage[key]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+156 passed, 9 warnings in 640.15s (0:10:40)
+MODULE_RC=0

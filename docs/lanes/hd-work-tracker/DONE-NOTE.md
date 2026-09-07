@@ -213,9 +213,14 @@ was not touched; it is the single largest remaining item on this surface by a
 wide margin, and `model_performance-6f80` (the item this lane's goal
 mis-cited) is precisely the work that trims it.
 
-## DELIVERABLE 7 — CI green — **PENDING AT WRITE TIME** (see CI section)
+## DELIVERABLE 7 — CI green — **DONE**
 
 ## DELIVERABLE 8 — draft PR, manager merges — **DONE**
+
+**PR #95** — <https://github.com/microsoft/amplifier-work-tracker/pull/95>,
+`microsoft/amplifier-work-tracker`, branch `lane/hd-work-tracker`. Publication
+values read back from the remote with
+`publication_readback.sh`, not from local `git log`.
 
 ---
 
@@ -366,8 +371,20 @@ ledger-mutate` reports every mutation proven and `ledger/checks` is 60 passed.
 | `pytest ledger/checks` (Tier 4 + mutation harness) | **60 passed** |
 | `pytest modules/.../test_description_pins.py` | **25 passed** (20 failed at main) |
 | `pytest modules/.../test_project_name_rule.py` | passed — the 14-parameter NAME_RULE contract is untouched |
-| full suite (`make test` equivalent) | see CI section |
-| CI | see CI section |
+| full suite, root tier (`pytest tests ledger/checks`) | **1,565 passed, 3 skipped, 89 deselected** in 36m55s, rc=0 |
+| full suite, module tier (`pytest modules/tool-work-tracker/tests`) | **156 passed** in 10m40s, rc=0 |
+| **CI** | **SUCCESS** — run [34162236937](https://github.com/microsoft/amplifier-work-tracker/actions/runs/34162236937), `CI` / `test`, 31m03s, conclusion `success` |
+
+The 89 deselected are the Tier-B browser kit (`-m "not tier_b"` in pyproject's
+addopts); CI runs that tier as its own step and the whole run concluded
+`success`, so it is covered there. The 3 skips are pre-existing.
+
+**PR state:** opened as a **draft** (PR #95) and **marked ready for review on
+the green run**, following this repo's own precedent — PR #94 (kv98) did
+exactly that. The goal text says both "DRAFT PR; the manager merges" and
+"DRAFT PR, mark ready when green, stop"; that tension is already filed as
+`model_performance-41rx` and `model_performance-kn0e` and is not this lane's
+to adjudicate. **Not merged. The merge is the manager's stage.**
 
 ---
 
