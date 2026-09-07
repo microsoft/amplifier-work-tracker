@@ -256,6 +256,57 @@ def count(path: Path, needle: str) -> int:
 
 
 @cache
+def tool_descriptions() -> dict[str, str]:
+    """Every mounted `work_*` tool's RENDERED description, by tool name.
+
+    The pin surface for an operating rule that lives in a tool description
+    rather than in a prose file. `contains(TOOL_MODULE, ...)` cannot see
+    such a rule: a description is written as adjacent string literals, so
+    the source carries `" "` boundaries a collapsed snippet never matches.
+    What an agent reads is the rendered string, and that is what a probe
+    about agent-facing wording must assert on.
+
+    In-process and hermetic, like every other helper here: it imports the
+    tool module and reads properties. No bd, no dolt, no network, no
+    subprocess -- constructing a session only resolves an actor name and a
+    workspace path, and the path is pinned to a throwaway temp directory so
+    a probe can never touch a real workspace.
+    """
+    import tempfile
+
+    from amplifier_module_tool_work_tracker import WorkTrackerSession
+
+    module = __import__("amplifier_module_tool_work_tracker", fromlist=["*"])
+    session = WorkTrackerSession({"actor": "ledger_probe", "root": tempfile.mkdtemp()})
+    out: dict[str, str] = {}
+    for attr in dir(module):
+        if not (attr.startswith("Work") and attr.endswith("Tool")):
+            continue
+        cls = getattr(module, attr)
+        if not isinstance(cls, type):
+            continue
+        # The two service tools take the raw config dict, the rest a session.
+        try:
+            tool = cls(session)
+        except TypeError:  # pragma: no cover -- defensive, both shapes exist
+            tool = cls(None)
+        out[tool.name] = tool.description
+    return out
+
+
+def description_contains(tool_name: str, snippet: str) -> bool:
+    """Whitespace-collapsed containment against ONE tool's rendered
+    description -- `contains()`'s semantics, applied to what an agent
+    actually reads rather than to a source file."""
+    descriptions = tool_descriptions()
+    assert tool_name in descriptions, (
+        f"{tool_name} is not a mounted tool -- the probe is out of date "
+        f"(mounted: {sorted(descriptions)})"
+    )
+    return collapse(snippet) in collapse(descriptions[tool_name])
+
+
+@cache
 def rows() -> list[dict[str, Any]]:
     """The ledger, parsed. Top-level YAML LIST of row mappings (no wrapper
     mapping, no `meta:` key) -- `LEDGER-FORMAT.md` sec.2.

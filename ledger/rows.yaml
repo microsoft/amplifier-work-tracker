@@ -413,6 +413,20 @@
     the BEHAVIOUR it describes is asserted by CCV1-004. Evidence brief
     sec.D-7; ratified lane work item 3; work_item_pipeline-m7o.
 
+    RE-ANCHORED 2026-09-07 (model_performance-b1tw, lean head): the second
+    surface is no longer `context/awareness.md` -- that file is always-on,
+    so every session paid for this rule on every turn and read it long
+    before the moment it bites. The same words now live in `work_status`'s
+    own tool DESCRIPTION, where an agent goes to read `custody_lost`, and
+    the probe follows them there (`description_contains`, which asserts on
+    the RENDERED description because `contains()` cannot see through the
+    adjacent string literals a description is written as). Disposition
+    unchanged (CONFORMS); skill leg unchanged; both-directions pin
+    unchanged. HONEST LIMIT: the mutation harness patches FILES, so the
+    description leg is not mutation-covered -- its discriminating check is
+    modules/tool-work-tracker/tests/test_description_pins.py, which fails
+    red if the phrase moves.
+
 - id: CCV1-006
   title: declared_state is reporting only; awaiting_human is not exempt
   contract:
@@ -526,6 +540,17 @@
     (the reap interval now appears in the constants table). The
     OPERATOR-facing skill already said it plainly. Evidence brief sec.D-9;
     ratified Call 2 (option C); work_item_pipeline-qjn.
+
+    RE-ANCHORED 2026-09-07 (model_performance-b1tw, lean head), same
+    reasoning as CCV1-005: the second surface moved off always-on
+    `context/awareness.md` into `work_stats`'s tool DESCRIPTION -- the tool
+    that shows `held_stale`/`held_by`, i.e. exactly where an agent is
+    looking when it is tempted to wait for a stuck held item to free
+    itself. Disposition unchanged (CONFORMS); skill leg unchanged. The
+    mutation harness's CCV1-008 counterfactual now lands on the skill (a
+    file it can patch) rather than on the deleted awareness prose; the
+    description leg's discriminating check is
+    modules/tool-work-tracker/tests/test_description_pins.py.
 
 - id: CCV1-009
   title: a post-reclaim close IS fenced -- the fence is keyed on custody identity, not status
@@ -904,6 +929,18 @@
     that cannot itself conflict, never resubmit a non-idempotent write
     blind -- survives on both surfaces and is pinned as such.
     work_item_pipeline-ryp.
+
+    RE-ANCHORED 2026-09-07 (model_performance-b1tw, lean head): the
+    agent-facing surface is no longer always-on `context/awareness.md`. Its
+    text moved VERBATIM into skills/claiming-work-safely/SKILL.md -- the
+    document an agent loads when it is in doubt about these mechanics --
+    and the trigger-moment half now ALSO sits in the descriptions of the
+    four verbs it is about: work_resolve/work_release say their own success
+    is read-back confirmed, work_add/work_file say to re-read with
+    work_list before retrying. All six assertions are in the probe. Two
+    prose surfaces still say so, neither billed on every turn of every
+    session; disposition unchanged (CONFORMS). The mutation harness's
+    CCV1-016 counterfactual now lands on the skill.
 
 - id: CCV1-017
   title: a session holds at most one item at a time

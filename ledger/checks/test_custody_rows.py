@@ -30,7 +30,6 @@ import re
 
 from ._support import (
     ADAPTER,
-    AWARENESS,
     CI_WORKFLOW,
     CLAIM_SKILL,
     CONTRACT_PATH,
@@ -40,6 +39,7 @@ from ._support import (
     collapse,
     contains,
     count,
+    description_contains,
     function_names,
     read,
     row,
@@ -188,33 +188,38 @@ def test_row_ccv1_004() -> None:
 
 
 def test_row_ccv1_005() -> None:
-    """Core 4 CONFORMS: both agent-facing documents now state renewal as
+    """Core 4 CONFORMS: both agent-facing surfaces now state renewal as
     one-strike AND name the passive discovery signal. Pinned in both
     directions -- the corrected claim must be present, and the reassurance
     it replaced ("you do not need to do anything to keep it fresh") must
     stay gone.
+
+    RE-ANCHORED (model_performance-b1tw): the second surface used to be
+    `context/awareness.md`. That file is always-on -- every session pays
+    for it on every turn, and a session reads it long before the moment
+    this rule bites. The rule now lives in `work_status`'s own tool
+    description, which is where an agent goes to READ `custody_lost`, and
+    this probe follows it there. Same words, same both-directions pin, a
+    surface that fires when it matters. The skill leg is unchanged.
     """
-    for path, label, present in (
-        (
-            CLAIM_SKILL,
-            "SKILL.md",
-            "**Any single renewal failure ends renewal permanently** — there is no "
-            "retry on the next tick.",
-        ),
-        (
-            AWARENESS,
-            "awareness.md",
-            "a single failed renewal ends renewal permanently — there is no retry on the next tick",
-        ),
+    assert contains(
+        CLAIM_SKILL,
+        "**Any single renewal failure ends renewal permanently** — there is no "
+        "retry on the next tick.",
+    ), "CCV1-005 (Core 4) pin: SKILL.md no longer states renewal as one-strike"
+    assert description_contains(
+        "work_status",
+        "a single failed renewal ends renewal permanently -- there is no retry on the next tick",
+    ), "CCV1-005 (Core 4) pin: work_status's description no longer states renewal as one-strike"
+    for label, has in (
+        ("SKILL.md", lambda s: contains(CLAIM_SKILL, s)),
+        ("work_status's description", lambda s: description_contains("work_status", s)),
     ):
-        assert contains(path, present), (
-            f"CCV1-005 (Core 4) pin: {label} no longer states renewal as one-strike"
-        )
-        assert contains(path, "holding.custody_lost"), (
+        assert has("holding.custody_lost"), (
             f"CCV1-005 (Core 4) pin: {label} no longer names the passive signal an "
             f"agent discovers a stopped renewal by"
         )
-        assert not contains(path, "you do not need to do anything to keep it fresh"), (
+        assert not has("you do not need to do anything to keep it fresh"), (
             f"CCV1-005 (Core 4) pin: the corrected prose in {label} regressed to the "
             f"custody-keeps-itself-fresh reassurance Core 4 contradicts"
         )
@@ -224,21 +229,27 @@ def test_row_ccv1_005() -> None:
 
 
 def test_row_ccv1_008() -> None:
-    """Core 6 CONFORMS: both agent-facing documents now state the TTL as
+    """Core 6 CONFORMS: both agent-facing surfaces now state the TTL as
     reclaim-ELIGIBILITY enforced by the out-of-band sweep, name the sweep,
     and name the consequence of no sweep running. Pinned in both
     directions -- the stale "is released by the clock" phrasing must stay
     gone from each.
+
+    RE-ANCHORED (model_performance-b1tw), same reasoning as CCV1-005: the
+    second surface moved off always-on `context/awareness.md` and into
+    `work_stats`'s own tool description -- the tool that shows you
+    `held_stale`/`held_by`, i.e. exactly where an agent is looking when it
+    is tempted to wait for a stuck held item to free itself. The skill leg
+    is unchanged.
     """
-    assert contains(
-        AWARENESS,
-        "**The TTL does not enforce itself.** After 15 minutes with no renewal a hold "
-        "is merely *reclaim-eligible*; the out-of-band `reap` sweep is what actually "
-        "reclaims it, and only where an operator has one installed and running.",
-    ), "CCV1-008 (Core 6) pin: awareness.md no longer states the TTL as sweep-enforced"
-    assert contains(
-        AWARENESS, "expect a dead agent's hold to persist indefinitely where no sweep runs"
-    ), "CCV1-008 (Core 6) pin: awareness.md no longer names the no-sweep consequence"
+    assert description_contains(
+        "work_stats",
+        "The TTL does not enforce itself: an unrenewed hold is only reclaim-eligible, "
+        "the out-of-band reap sweep is what actually reclaims it",
+    ), "CCV1-008 (Core 6) pin: work_stats's description no longer states the TTL as sweep-enforced"
+    assert description_contains(
+        "work_stats", "a dead agent's hold persists indefinitely where no sweep runs"
+    ), "CCV1-008 (Core 6) pin: work_stats's description no longer names the no-sweep consequence"
     assert contains(
         CLAIM_SKILL,
         "**The TTL is not self-enforcing.** Nothing in your process, and no timer in "
@@ -248,12 +259,15 @@ def test_row_ccv1_008() -> None:
     assert contains(
         CLAIM_SKILL, "Where no sweep runs, a dead agent's hold **persists indefinitely**."
     ), "CCV1-008 (Core 6) pin: SKILL.md no longer names the no-sweep consequence"
-    for path, label in ((AWARENESS, "awareness.md"), (CLAIM_SKILL, "SKILL.md")):
-        assert not contains(path, "releases the item back to the queue"), (
+    for label, has in (
+        ("SKILL.md", lambda s: contains(CLAIM_SKILL, s)),
+        ("work_stats's description", lambda s: description_contains("work_stats", s)),
+    ):
+        assert not has("releases the item back to the queue"), (
             f"CCV1-008 (Core 6) pin: {label} regressed to stating the release as "
             f"automatic -- Core 6 denies exactly that"
         )
-        assert not contains(path, "15-minute hold is released back to the queue"), (
+        assert not has("15-minute hold is released back to the queue"), (
             f"CCV1-008 (Core 6) pin: {label} regressed to stating the release as "
             f"automatic -- Core 6 denies exactly that"
         )
@@ -529,36 +543,57 @@ def test_row_ccv1_015() -> None:
 
 
 def test_row_ccv1_016() -> None:
-    """Core 11 CONFORMS: both prose surfaces -- the agent-facing awareness
-    file and the CLI's own CONTENTION / RETRY CONTRACT -- now state a
-    reported conflict as UNKNOWN rather than as proof the write did not
-    land, name the two verbs that verify by read-back, and keep the
-    re-read-before-retry guidance that was always correct.
+    """Core 11 CONFORMS: both prose surfaces -- the agent-facing
+    claiming-work-safely skill and the CLI's own CONTENTION / RETRY
+    CONTRACT -- state a reported conflict as UNKNOWN rather than as proof
+    the write did not land, name the two verbs that verify by read-back,
+    and keep the re-read-before-retry guidance that was always correct.
 
     Pinned in both directions: the "did not happen" claim (defensible
     before PR #63, wrong the moment resolve/release started reading a
     conflicted write back) must stay gone from both files.
+
+    RE-ANCHORED (model_performance-b1tw): the agent-facing surface used to
+    be always-on `context/awareness.md`. Its full text moved VERBATIM into
+    the skill -- the document an agent loads when it is in doubt about
+    these mechanics -- and the trigger-moment half now also sits in the
+    descriptions of the four verbs it is about, asserted below. Two prose
+    surfaces still say so; neither is billed on every turn of every
+    session.
     """
     assert contains(
-        AWARENESS,
+        CLAIM_SKILL,
         "**A reported write failure does NOT prove the write failed — treat it as "
         "UNKNOWN and re-read before you retry.**",
-    ), "CCV1-016 (Core 11) pin: awareness.md no longer states a reported failure as unknown"
+    ), "CCV1-016 (Core 11) pin: SKILL.md no longer states a reported failure as unknown"
     assert contains(
-        AWARENESS,
+        CLAIM_SKILL,
         "`work_resolve` and `work_release` already handle it for you: on a conflict "
         "they re-read the item and report success when the write did in fact land",
-    ), "CCV1-016 (Core 11) pin: awareness.md no longer names the verify-by-read-back verbs"
+    ), "CCV1-016 (Core 11) pin: SKILL.md no longer names the verify-by-read-back verbs"
     assert contains(
-        AWARENESS, "There, a reported failure means *unknown*, never *didn't happen*."
-    ), "CCV1-016 (Core 11) pin: awareness.md no longer scopes the guarantee to those verbs"
+        CLAIM_SKILL, "There, a reported failure means *unknown*, never *didn't happen*."
+    ), "CCV1-016 (Core 11) pin: SKILL.md no longer scopes the guarantee to those verbs"
     assert contains(
         CLI, 'Treat a reported failure as "this MIGHT have happened," never as "this did not '
     ), "CCV1-016 (Core 11) pin: the CLI contention contract no longer states failure as unknown"
     assert contains(CLI, "Every other write verb"), (
         "CCV1-016 (Core 11) pin: the CLI contention contract no longer scopes the guarantee"
     )
-    for path, label in ((AWARENESS, "context/awareness.md"), (CLI, "src/.../cli.py")):
+    # The trigger-moment restatement: the two verbs that verify say so where a
+    # caller reads their result, and the two non-idempotent creators warn about
+    # the blind retry where a caller is about to make one.
+    for verb in ("work_resolve", "work_release"):
+        assert description_contains(verb, "a reported success here is confirmed"), (
+            f"CCV1-016 (Core 11) pin: {verb}'s description no longer states that its own "
+            f"success is read-back verified"
+        )
+    for verb in ("work_add", "work_file"):
+        assert description_contains(verb, "re-read with work_list"), (
+            f"CCV1-016 (Core 11) pin: {verb}'s description no longer tells a caller to "
+            f"re-read before retrying an unverified write"
+        )
+    for path, label in ((CLAIM_SKILL, "SKILL.md"), (CLI, "src/.../cli.py")):
         assert not contains(path, "the write genuinely did not happen"), (
             f"CCV1-016 (Core 11) pin: {label} regressed to claiming a reported conflict "
             f"proves the write did not land"
@@ -570,7 +605,7 @@ def test_row_ccv1_016() -> None:
         "transaction-was-aborted guarantee Incident B disproved"
     )
     # The correct half of the original guidance must survive the correction.
-    for path, label in ((AWARENESS, "context/awareness.md"), (CLI, "src/.../cli.py")):
+    for path, label in ((CLAIM_SKILL, "SKILL.md"), (CLI, "src/.../cli.py")):
         assert contains(path, "read-only") and contains(path, "cannot itself conflict"), (
             f"CCV1-016 (Core 11) pin: {label} lost the re-read-before-retry instruction "
             f"(the half of the original guidance that was always correct)"
