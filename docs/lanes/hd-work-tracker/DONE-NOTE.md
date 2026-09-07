@@ -404,7 +404,20 @@ to adjudicate. **Not merged. The merge is the manager's stage.**
    and was added for a measured reason. Raising or trimming it is an
    owner-visible decision; this lane declined to make it as a side effect of a
    byte reduction.
-5. **The skill grew 11,208 → 14,724 bytes (+3,516)** as hazards 6 and 7 landed
+5. **`publication_readback.sh` returns a stale `head_sha` and exits 0** —
+   reproduced live by this lane 40 seconds after a push, and root-caused to
+   one block: the script reads the authoritative sha from `git ls-remote` and
+   then **overwrites it** with `gh pr list`'s `headRefOid`, which lags a push.
+   Filed as `model_performance-lsda`, linked `relates-to`
+   `model_performance-17oq` (which predicted the symptom) and relevant to
+   `model_performance-fr47`. A two-option patch (minimal / fail-loud, with a
+   recommendation) is shipped as an artifact at
+   `docs/lanes/hd-work-tracker/proposed-publication-readback-patch.md` —
+   **not applied**, because the script lives in another repo this lane must
+   not edit. **This lane's own `DONE.json` carries the value `git ls-remote`
+   and `gh pr view` agree on, re-read after the final push — not the value
+   the script printed.**
+6. **The skill grew 11,208 → 14,724 bytes (+3,516)** as hazards 6 and 7 landed
    there. That is pay-per-use, not pay-per-turn: it is charged only to a
    session that actually loads `claiming-work-safely`, which is the whole
    point of the move. It does mean the *combined repo prose* fell by less than
