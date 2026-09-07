@@ -37,7 +37,7 @@ job in a different repo.**
 |---|---|
 | What GOAL.md's Task/DELIVERABLES describe | `amplifier-work-tracker`'s own head cost: 21 tool descriptions + `work-tracker-awareness.md` |
 | What this lane was provisioned with | worktree `amplifier-work-tracker`, branch `lane/hd-work-tracker`, artifact root `docs/lanes/hd-work-tracker/` |
-| What `6f80` actually is | "STAGE 1 (C): tool-delegate must STRIP example/commentary blocks at catalog-render time" — repo `amplifier-module-tool-delegate`, which per `model_performance-j1e6`'s resolution **returns 404** |
+| What `6f80` actually is | "STAGE 1 (C): tool-delegate must STRIP example/commentary blocks at catalog-render time" — tool-delegate, which is **not in this lane's worktree** |
 
 `6f80`'s deliverables are unreachable from this worktree **by construction**:
 the lane's own SCOPE-OUTS forbid touching another repo, and the goal's own
@@ -59,6 +59,42 @@ GOAL, not a task. Report it against the goal … and resolve."*
    (awareness-file dedupe). Claimed and executed.
 4. `work_file(...)` → **`model_performance-z7nk`**, the goal defect, filed
    `discovered-from` b1tw with a proposed authoring rule.
+
+**CORRECTED 2026-09-07T23:16Z, and the correction is the important part.**
+An earlier draft of this note said `6f80` was "back in the queue, unclaimed and
+untouched" and that its repo "404s". Both were wrong, and the same corrections
+are recorded as an erratum on `model_performance-b1tw`:
+
+* **`6f80` is RESOLVED** — `closed_at 2026-09-07T21:57:01Z`, by lane
+  `6f80-delegate-example-strip`, which did the real render-time strip and
+  shipped it as **`microsoft/amplifier-foundation` PR #376** (head `985ecb72`,
+  now **MERGED**). It was resolved about an hour before this note first
+  claimed it was outstanding. **This lane released it at ~20:44Z and then never
+  re-read it** — the "verify a claim against a value you already know" failure,
+  the same class as `model_performance-lsda`, which this lane filed against
+  someone else's script for trusting a stale read in the same session. One
+  `work_list(item_id="model_performance-6f80")` would have caught it.
+* **The repo claim was half-right and misleading.**
+  `microsoft/amplifier-module-tool-delegate` does 404 — re-verified. But
+  tool-delegate ships as `modules/tool-delegate/` **inside**
+  `microsoft/amplifier-foundation`, which is where #376 landed. The honest
+  statement is "not in this lane's worktree", never "does not exist". That
+  claim was inherited from `j1e6`'s resolution and repeated without
+  re-deriving it.
+
+**What this does not change:** releasing `6f80` untouched was correct, and is
+precisely what made its correct resolution possible — had this lane held it,
+the lane that could actually do the work could not have claimed it. Resolving
+`6f80` from here was never available: its acceptance criteria (a fixture agent
+with an `<example>` block, a render-time strip, a debug log line naming
+stripped agents) were satisfied by nothing done here, and writing this lane's
+summary onto that item is the `model_performance-69y` failure mode exactly.
+
+**So the goal's Outcome A reads, honestly, as satisfied across two lanes:** its
+first clause — *"`model_performance-6f80` is resolved with a user-readable
+summary"* — is now TRUE, by that other lane, not by this one; its second clause
+— *"AND the deliverables below exist"* — is this lane's, and they exist as
+PR #95.
 
 This is the same class already filed as `model_performance-pq7q` ("a goal's
 deliverable list must be checkable against the lane's provisioned worktrees at
@@ -209,9 +245,11 @@ this bundle's, and only this bundle's.
 description is **47,877 chars — 39.7% of the entire 120,620-char tool-
 description surface on this app list, and 4.3× this whole bundle's 21 tools
 combined.** It is the dynamic agent catalog. That is not this lane's repo and
-was not touched; it is the single largest remaining item on this surface by a
-wide margin, and `model_performance-6f80` (the item this lane's goal
-mis-cited) is precisely the work that trims it.
+was not touched here — and it did not need to be: `model_performance-6f80` (the
+item this lane's goal mis-cited) is precisely the work that trims it, and it
+**landed the same day**, as `microsoft/amplifier-foundation` PR #376 (merged),
+reported at −9,474 chars per request. The two results compose on one surface:
+that lane took the biggest single item, this lane took the work-tracker slice.
 
 ## DELIVERABLE 7 — CI green — **DONE**
 
@@ -398,12 +436,15 @@ to adjudicate. **Not merged. The merge is the manager's stage.**
 ## What remains open
 
 1. **The merge** — manager's stage. Draft PR, marked ready when CI is green.
-2. **`model_performance-6f80` is back in the queue, unclaimed and untouched.**
-   It is real work (render-time example stripping in tool-delegate) and,
-   per the census above, it targets the single largest description on the
-   surface (`delegate`, 47,877 chars). It needs a lane provisioned in the
-   right repo — and per `j1e6`, that repo currently 404s, which is its own
-   blocker.
+2. **~~`model_performance-6f80` is back in the queue~~ — NO: it is DONE.**
+   Resolved 2026-09-07T21:57:01Z by lane `6f80-delegate-example-strip`;
+   `microsoft/amplifier-foundation` PR #376, head `985ecb72`, **merged**. Its
+   own note reports −9,474 chars per request from the render-time strip. That
+   is the same `delegate` description this lane's census measured at 47,877
+   chars (39.7% of the whole surface), so the two results compose: this lane
+   trimmed the work-tracker slice, that lane trimmed the biggest single item on
+   the same surface. **Nothing to fund.** (This entry previously said the
+   opposite; see the correction above.)
 3. **`model_performance-z7nk`** — the goal-authoring cross-check. One line in
    the template.
 4. **The 14× `NAME_RULE` repetition** (~2,464 chars of schema, 25% of this
