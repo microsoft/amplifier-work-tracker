@@ -1,0 +1,433 @@
+.FFFFFFFFFFF..FFFFFFFF..F                                                [100%]
+=================================== FAILURES ===================================
+___________________ test_every_description_is_trigger_first ____________________
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+
+    def test_every_description_is_trigger_first(descriptions: dict[str, str]) -> None:
+        """A description's first words decide whether a model reaches for the
+        tool at all. It opens with the trigger -- when to use it -- not with what
+        the tool is."""
+        wrong = {n: d[:40] for n, d in descriptions.items() if not d.startswith(("USE WHEN", "USE FIRST"))}
+>       assert not wrong, f"descriptions that do not open with a trigger: {wrong}"
+E       AssertionError: descriptions that do not open with a trigger: {'work_claim': 'Atomically claim work AND establish PID-', 'work_declare': "Report this session's declared state for", 'work_resolve': 'Fenced close of the item this session cu', 'work_reopen': 'Return a RESOLVED item to the queue so i', 'work_erratum': 'Append an APPEND-ONLY erratum to a RESOL', 'work_release': 'Voluntarily hand the item this session c', 'work_status': 'Read-only: every known project with its ', 'work_stats': 'Read-only: the FULL status breakdown for', 'work_file': 'File a newly discovered problem, linked ', 'work_add': 'File a new engineering-lane work item di', 'work_move': 'Move one item from one project to anothe', 'work_edit': "Amend an existing item's own title/descr", 'work_defer': 'Defer an open item with a reason -- it l', 'work_block': 'Block an open item with a reason -- same', 'work_dep': 'Declare item_id depends on (per dep_type', 'work_list': 'List items in a project (read-only) -- i', 'work_subscribe': "Subscribe THIS session to a project's st", 'work_unsubscribe': "Stop THIS session's status reminders for", 'work_subscriptions': 'List the projects THIS session is curren', 'work_tracker_status': 'Read-only: is the amplifier-work-tracker', 'work_tracker_install': 'Install and start the amplifier-work-tra'}
+E       assert not {'work_claim': 'Atomically claim work AND establish PID-', 'work_declare': "Report this session's declared state for",...k_resolve': 'Fenced close of the item this session cu', 'work_reopen': 'Return a RESOLVED item to the queue so i', ...}
+
+modules/tool-work-tracker/tests/test_description_pins.py:158: AssertionError
+_______________ test_every_description_names_when_not_to_use_it ________________
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+
+    def test_every_description_names_when_not_to_use_it(descriptions: dict[str, str]) -> None:
+        """These 21 verbs have deliberately adjacent jobs (defer/block/dep,
+        erratum/reopen, file/add, status/stats). Without an explicit DO NOT USE
+        the catalog routes on vibes."""
+        missing = sorted(n for n, d in descriptions.items() if "DO NOT USE" not in d)
+>       assert not missing, f"descriptions with no DO NOT USE clause: {missing}"
+E       AssertionError: descriptions with no DO NOT USE clause: ['work_add', 'work_block', 'work_claim', 'work_declare', 'work_defer', 'work_dep', 'work_edit', 'work_erratum', 'work_file', 'work_list', 'work_move', 'work_release', 'work_reopen', 'work_resolve', 'work_stats', 'work_status', 'work_subscribe', 'work_subscriptions', 'work_tracker_install', 'work_tracker_status', 'work_unsubscribe']
+E       assert not ['work_add', 'work_block', 'work_claim', 'work_declare', 'work_defer', 'work_dep', ...]
+
+modules/tool-work-tracker/tests/test_description_pins.py:166: AssertionError
+____________________ test_no_description_exceeds_its_budget ____________________
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+
+    def test_no_description_exceeds_its_budget(descriptions: dict[str, str]) -> None:
+        over = {n: len(d) for n, d in descriptions.items() if len(d) > MAX_DESCRIPTION_CHARS}
+>       assert not over, (
+            f"descriptions over the {MAX_DESCRIPTION_CHARS}-char budget: {over}. "
+            f"Every char here is billed on every request of every session."
+        )
+E       AssertionError: descriptions over the 610-char budget: {'work_claim': 942, 'work_reopen': 1473, 'work_erratum': 837, 'work_add': 622, 'work_move': 816, 'work_edit': 617, 'work_list': 926, 'work_subscribe': 625, 'work_tracker_status': 1242}. Every char here is billed on every request of every session.
+E       assert not {'work_claim': 942, 'work_reopen': 1473, 'work_erratum': 837, 'work_add': 622, ...}
+
+modules/tool-work-tracker/tests/test_description_pins.py:171: AssertionError
+____________________ test_the_whole_tool_surface_stays_lean ____________________
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+
+    def test_the_whole_tool_surface_stays_lean(descriptions: dict[str, str]) -> None:
+        total = sum(len(d) for d in descriptions.values())
+>       assert total <= MAX_TOTAL_DESCRIPTION_CHARS, (
+            f"tool descriptions total {total} chars, over the "
+            f"{MAX_TOTAL_DESCRIPTION_CHARS} ceiling (was 12,758 before "
+            f"model_performance-b1tw, 11,206 after)"
+        )
+E       AssertionError: tool descriptions total 12758 chars, over the 11600 ceiling (was 12,758 before model_performance-b1tw, 11,206 after)
+E       assert 12758 <= 11600
+
+modules/tool-work-tracker/tests/test_description_pins.py:179: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[1 never list-then-pick-work_claim-Never list-then-pick] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '1 never list-then-pick', tool = 'work_claim'
+phrase = 'Never list-then-pick'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '1 never list-then-pick' is no longer stated in work_claim's description (looked for 'Never list-then-pick')
+E       assert 'Never list-then-pick' in "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 'start custody' s...l terminal outcome, not an error (queue mode only; a directed claim either succeeds or raises, it never returns null)."
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[1 double-claims silently-work_claim-double-claims SILENTLY] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '1 double-claims silently', tool = 'work_claim'
+phrase = 'double-claims SILENTLY'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '1 double-claims silently' is no longer stated in work_claim's description (looked for 'double-claims SILENTLY')
+E       assert 'double-claims SILENTLY' in "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 'start custody' s...l terminal outcome, not an error (queue mode only; a directed claim either succeeds or raises, it never returns null)."
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[2 renewal is one-strike-work_status-there is no retry on the next tick] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '2 renewal is one-strike', tool = 'work_status'
+phrase = 'there is no retry on the next tick'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '2 renewal is one-strike' is no longer stated in work_status's description (looked for 'there is no retry on the next tick')
+E       assert 'there is no retry on the next tick' in 'Read-only: every known project with its FULL status breakdown -- total plus per-status counts (ready/held/intake/bloc...stody was lost since claiming. Takes no arguments. For the same breakdown scoped to ONE named project, use work_stats.'
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[2 the passive signal-work_status-holding.custody_lost] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '2 the passive signal', tool = 'work_status'
+phrase = 'holding.custody_lost'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '2 the passive signal' is no longer stated in work_status's description (looked for 'holding.custody_lost')
+E       assert 'holding.custody_lost' in 'Read-only: every known project with its FULL status breakdown -- total plus per-status counts (ready/held/intake/bloc...stody was lost since claiming. Takes no arguments. For the same breakdown scoped to ONE named project, use work_stats.'
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[2 the TTL does not enforce itself-work_stats-The TTL does not enforce itself] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '2 the TTL does not enforce itself', tool = 'work_stats'
+phrase = 'The TTL does not enforce itself'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '2 the TTL does not enforce itself' is no longer stated in work_stats's description (looked for 'The TTL does not enforce itself')
+E       assert 'The TTL does not enforce itself' in 'Read-only: the FULL status breakdown for ONE named project in a single call -- total plus per-status counts (ready/he...ame figures work_status reports for every project, scoped to just this one. Never claims, mutates, or touches custody.'
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[2 no sweep, no reclaim-work_stats-persists indefinitely where no sweep runs] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '2 no sweep, no reclaim', tool = 'work_stats'
+phrase = 'persists indefinitely where no sweep runs'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '2 no sweep, no reclaim' is no longer stated in work_stats's description (looked for 'persists indefinitely where no sweep runs')
+E       assert 'persists indefinitely where no sweep runs' in 'Read-only: the FULL status breakdown for ONE named project in a single call -- total plus per-status counts (ready/he...ame figures work_status reports for every project, scoped to just this one. Never claims, mutates, or touches custody.'
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[2 awaiting_human is not exempt-work_declare-ZERO exemption from the custody clock] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '2 awaiting_human is not exempt', tool = 'work_declare'
+phrase = 'ZERO exemption from the custody clock'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '2 awaiting_human is not exempt' is no longer stated in work_declare's description (looked for 'ZERO exemption from the custody clock')
+E       assert 'ZERO exemption from the custody clock' in "Report this session's declared state for the item it currently holds: 'working' or 'awaiting_human'. This is reportin...tification, never reclaim eligibility. Use it right before you go idle waiting on a person, and again when you resume."
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[4 never speak to bd directly-work_list-never use a raw storage-layer CLI] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '4 never speak to bd directly', tool = 'work_list'
+phrase = 'never use a raw storage-layer CLI'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '4 never speak to bd directly' is no longer stated in work_list's description (looked for 'never use a raw storage-layer CLI')
+E       assert 'never use a raw storage-layer CLI' in 'List items in a project (read-only) -- id, title, status, holder, and (for closed items) resolution. Filterable by st...whether to claim it at all; work_claim is the only tool that used to expose that body, and it takes the item to do so.'
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[5 stop after a reclaimed refusal-work_resolve-then STOP, do not retry] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '5 stop after a reclaimed refusal', tool = 'work_resolve'
+phrase = 'then STOP, do not retry'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '5 stop after a reclaimed refusal' is no longer stated in work_resolve's description (looked for 'then STOP, do not retry')
+E       assert 'then STOP, do not retry' in "Fenced close of the item this session currently holds. Refuses if this session's claim was reclaimed while it was awa... reported the underlying issue -- write it for them, not for a changelog. Stops the custody-renewal thread on success."
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[5 stop after a reclaimed refusal-work_declare-STOP -- do not retry it] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '5 stop after a reclaimed refusal', tool = 'work_declare'
+phrase = 'STOP -- do not retry it'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '5 stop after a reclaimed refusal' is no longer stated in work_declare's description (looked for 'STOP -- do not retry it')
+E       assert 'STOP -- do not retry it' in "Report this session's declared state for the item it currently holds: 'working' or 'awaiting_human'. This is reportin...tification, never reclaim eligibility. Use it right before you go idle waiting on a person, and again when you resume."
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[6 a reported success IS confirmed-work_resolve-a reported success here is confirmed] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '6 a reported success IS confirmed', tool = 'work_resolve'
+phrase = 'a reported success here is confirmed'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '6 a reported success IS confirmed' is no longer stated in work_resolve's description (looked for 'a reported success here is confirmed')
+E       assert 'a reported success here is confirmed' in "Fenced close of the item this session currently holds. Refuses if this session's claim was reclaimed while it was awa... reported the underlying issue -- write it for them, not for a changelog. Stops the custody-renewal thread on success."
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[6 a reported success IS confirmed-work_release-a reported success here is confirmed] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '6 a reported success IS confirmed', tool = 'work_release'
+phrase = 'a reported success here is confirmed'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '6 a reported success IS confirmed' is no longer stated in work_release's description (looked for 'a reported success here is confirmed')
+E       assert 'a reported success here is confirmed' in 'Voluntarily hand the item this session currently holds back to the queue -- the inverse of work_claim, WITHOUT settin...s (mutating nothing) if this session does not hold the named item -- a session can never release work it does not own.'
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[6 unverified write, re-read first-work_add-does NOT prove the write failed] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '6 unverified write, re-read first', tool = 'work_add'
+phrase = 'does NOT prove the write failed'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '6 unverified write, re-read first' is no longer stated in work_add's description (looked for 'does NOT prove the write failed')
+E       assert 'does NOT prove the write failed' in "File a new engineering-lane work item directly into a project's queue -- the sanctioned way to seed the FIRST item(s)...need to know the label vocabulary (e.g. 'lane:eng') exists. The new item becomes claimable via work_claim immediately."
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[6 unverified write, re-read first-work_file-does NOT prove nothing was written] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '6 unverified write, re-read first', tool = 'work_file'
+phrase = 'does NOT prove nothing was written'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '6 unverified write, re-read first' is no longer stated in work_file's description (looked for 'does NOT prove nothing was written')
+E       assert 'does NOT prove nothing was written' in 'File a newly discovered problem, linked discovered-from the item this session currently holds. Non-blocking -- it wil...d acceptance criteria of its own to land in the queue. Requires this session to be holding an item (work_claim first).'
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+_ test_each_moved_hazard_lives_where_it_acts[7 resolve cannot overwrite-work_resolve-different text fails and writes nothing] _
+
+descriptions = {'work_claim': "Atomically claim work AND establish PID-bound custody in one indivisible call. There is no separate 's...STANDS and is reported with claimed:false plus claim_error; your existing custody is never dropped to make room.', ...}
+hazard = '7 resolve cannot overwrite', tool = 'work_resolve'
+phrase = 'different text fails and writes nothing'
+
+    @pytest.mark.parametrize(("hazard", "tool", "phrase"), _HAZARDS_AT_THE_TOOL)
+    def test_each_moved_hazard_lives_where_it_acts(
+        descriptions: dict[str, str], hazard: str, tool: str, phrase: str
+    ) -> None:
+        """Every hazard the always-on awareness file used to carry is asserted
+        in the description of the tool it is about. Deleting one is now a red
+        build, not a discovery three weeks later."""
+        assert tool in descriptions, f"{tool} is not mounted -- this pin is out of date"
+>       assert phrase in descriptions[tool], (
+            f"hazard {hazard!r} is no longer stated in {tool}'s description "
+            f"(looked for {phrase!r})"
+        )
+E       AssertionError: hazard '7 resolve cannot overwrite' is no longer stated in work_resolve's description (looked for 'different text fails and writes nothing')
+E       assert 'different text fails and writes nothing' in "Fenced close of the item this session currently holds. Refuses if this session's claim was reclaimed while it was awa... reported the underlying issue -- write it for them, not for a changelog. Stops the custody-renewal thread on success."
+
+modules/tool-work-tracker/tests/test_description_pins.py:194: AssertionError
+___________________ test_the_awareness_file_stays_a_pointer ____________________
+
+    def test_the_awareness_file_stays_a_pointer() -> None:
+        """`context/awareness.md` is always-on. It carries a concept, a trigger
+        and a pointer -- and must not regrow the operating rules that now live
+        in the tools and the skill."""
+        text = AWARENESS.read_text(encoding="utf-8")
+        size = len(text.encode("utf-8"))
+>       assert size <= MAX_AWARENESS_BYTES, (
+            f"context/awareness.md is {size} bytes, over the {MAX_AWARENESS_BYTES} "
+            f"ceiling (it was 7,529 before model_performance-b1tw). Operating rules "
+            f"belong in the description of the tool that enforces them."
+        )
+E       AssertionError: context/awareness.md is 7529 bytes, over the 1200 ceiling (it was 7,529 before model_performance-b1tw). Operating rules belong in the description of the tool that enforces them.
+E       assert 7529 <= 1200
+
+modules/tool-work-tracker/tests/test_description_pins.py:206: AssertionError
+--------------------------- Captured stderr teardown ---------------------------
+time="2026-09-07T13:46:56-07:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-09-07T13:46:56-07:00" level=info msg=ConnectionClosed connectionID=2
+time="2026-09-07T13:46:56-07:00" level=info msg="Server closing listener. No longer accepting connections."
+time="2026-09-07T13:46:56-07:00" level=info msg="stats stopped: context canceled"
+=========================== short test summary info ============================
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_every_description_is_trigger_first
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_every_description_names_when_not_to_use_it
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_no_description_exceeds_its_budget
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_the_whole_tool_surface_stays_lean
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[1 never list-then-pick-work_claim-Never list-then-pick]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[1 double-claims silently-work_claim-double-claims SILENTLY]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[2 renewal is one-strike-work_status-there is no retry on the next tick]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[2 the passive signal-work_status-holding.custody_lost]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[2 the TTL does not enforce itself-work_stats-The TTL does not enforce itself]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[2 no sweep, no reclaim-work_stats-persists indefinitely where no sweep runs]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[2 awaiting_human is not exempt-work_declare-ZERO exemption from the custody clock]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[4 never speak to bd directly-work_list-never use a raw storage-layer CLI]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[5 stop after a reclaimed refusal-work_resolve-then STOP, do not retry]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[5 stop after a reclaimed refusal-work_declare-STOP -- do not retry it]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[6 a reported success IS confirmed-work_resolve-a reported success here is confirmed]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[6 a reported success IS confirmed-work_release-a reported success here is confirmed]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[6 unverified write, re-read first-work_add-does NOT prove the write failed]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[6 unverified write, re-read first-work_file-does NOT prove nothing was written]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_each_moved_hazard_lives_where_it_acts[7 resolve cannot overwrite-work_resolve-different text fails and writes nothing]
+FAILED modules/tool-work-tracker/tests/test_description_pins.py::test_the_awareness_file_stays_a_pointer
+20 failed, 5 passed in 0.25s

@@ -234,22 +234,15 @@ class WorkTrackerStatusTool:
     @property
     def description(self) -> str:
         return (
-            "Read-only: is the amplifier-work-tracker background service (shared dolt server + "
-            "reap/notify sweeps) installed and healthy on THIS machine? Returns one of "
-            "'bd_missing', 'bd_too_old', 'dolt_missing', 'not_installed', "
-            "'installed_not_running', 'running_healthy', 'running_unmanaged', or "
-            "'running_systemd_unreachable', plus the exact fix command for every state except "
-            "'running_healthy'/'running_unmanaged'/'running_systemd_unreachable' (all three "
-            "already work; nothing to fix). 'running_unmanaged' means a dolt server is already "
-            "healthy and reachable but not managed by this service -- it is USABLE as-is, never "
-            "something to stop. 'running_systemd_unreachable' means a dolt server is reachable and "
-            "our unit IS installed, but THIS PROCESS could not query systemd --user at all "
-            "(commonly no reachable session bus, e.g. spawned outside a login session) to confirm "
-            "it's the one serving it -- also USABLE as-is, and also never something to stop; see "
-            "the `fix` for how to confirm from a shell that can reach systemd. Call this FIRST the "
-            "first time you use work-tracker in a session -- work_claim/work_status and the "
-            "amplifier-work-tracker CLI both need a reachable dolt server, and this is how you "
-            "find out whether one exists before assuming it does."
+            "USE FIRST the first time you touch work-tracker in a session, and whenever a "
+            "work_* call fails to connect: work_claim/work_status and the CLI need a reachable "
+            "dolt server, and this reports whether one exists. Read-only: the background "
+            "service's state (dolt server + reap/notify sweeps) here, plus the exact fix "
+            "when there is one. Three running states need NO fix and "
+            "must never be 'fixed' by stopping a server: running_healthy; "
+            "running_unmanaged (healthy, not ours); running_systemd_unreachable (reachable, "
+            "unit installed, systemd --user unqueryable). DO NOT USE to change "
+            "anything -- work_tracker_install."
         )
 
     @property
@@ -288,13 +281,14 @@ class WorkTrackerInstallTool:
     @property
     def description(self) -> str:
         return (
-            "Install and start the amplifier-work-tracker background service (systemd --user on "
-            "Linux, launchd on macOS): the shared dolt server plus the reap/notify sweeps, so "
-            "they survive logout and reboot. Installs, starts, and VERIFIES the dolt server is "
-            "actually reachable before reporting success -- a partial/failed install is reported "
-            "as failure, never silently swallowed. This is the ONLY tool that changes system "
-            "state here; it is never invoked automatically by work_tracker_status or any other "
-            "tool -- call it explicitly, and only when work_tracker_status says you need to."
+            "USE WHEN work_tracker_status says the background service is missing or stopped: "
+            "installs and starts it (systemd --user on Linux, launchd on macOS) -- the shared "
+            "dolt server plus the reap/notify sweeps, surviving logout and reboot. VERIFIES "
+            "the dolt server is actually reachable before reporting success; a partial or "
+            "failed install is reported as failure, never silently swallowed. The ONLY tool "
+            "here that changes system state, and never invoked automatically by any other. DO "
+            "NOT USE on 'running_healthy', 'running_unmanaged' or "
+            "'running_systemd_unreachable' -- all three already work."
         )
 
     @property

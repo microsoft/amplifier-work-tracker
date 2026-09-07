@@ -1227,21 +1227,16 @@ class WorkClaimTool:
     @property
     def description(self) -> str:
         return (
-            "Atomically claim work AND establish PID-bound custody in one "
-            "indivisible call. There is no separate 'start custody' step -- "
-            "calling this tool IS both the claim and the custody start, bound "
-            "to this session's own process. Two modes, both equally atomic: "
-            "omit item_id for the default (next ready item off a project's "
-            "queue -- prevents multiple agents converging on the same top "
-            "item); pass item_id to claim a SPECIFIC item instead (e.g. one a "
-            "human or planning session assigned directly). A directed claim "
-            "refuses -- loudly, with no override -- if the item is already "
-            "held by someone else (names the holder), does not exist, or is "
-            "blocked by an open dependency (names the blocker). Returns the "
-            "item's acceptance criteria (your spec) and description/design "
-            "for color, or {claimed: null} if the queue is empty -- which is "
-            "a normal terminal outcome, not an error (queue mode only; a "
-            "directed claim either succeeds or raises, it never returns null)."
+            "USE WHEN taking an item to work: the next ready item off a "
+            "project's queue (omit item_id), or a specific one assigned to you "
+            "(item_id). The ONLY atomic claim: claim AND PID-bound custody in "
+            "one call. Never list-then-pick: that read-then-write "
+            "double-claims SILENTLY (2 of 8 measured trials, all losers exit "
+            "0). Returns acceptance (your spec) + description/design. "
+            "`claimed: null` = queue empty, a normal terminal outcome: stop "
+            "and report, never retry or invent work (queue mode only; a "
+            "directed claim refuses instead and names why). "
+            "DO NOT USE to read an item you will not work -- work_list."
         )
 
     @property
@@ -1279,13 +1274,16 @@ class WorkDeclareTool:
     @property
     def description(self) -> str:
         return (
-            "Report this session's declared state for the item it currently "
-            "holds: 'working' or 'awaiting_human'. This is reporting only -- it "
-            "renews the custody signal (so it never causes staleness by itself) "
-            "but never buys exemption from the custody clock, and "
-            "'awaiting_human' only suppresses a human-attention notification, "
-            "never reclaim eligibility. Use it right before you go idle waiting "
-            "on a person, and again when you resume."
+            "USE WHEN you are about to go idle waiting on a person "
+            "(state='awaiting_human'), and again when you resume "
+            "(state='working'), for the item this session holds. Reporting "
+            "only: it renews the custody signal, so it never causes staleness "
+            "by itself, but 'awaiting_human' suppresses a human-attention "
+            "notification and buys ZERO exemption from the custody clock. DO "
+            "NOT USE to keep a hold alive. If it refuses because your custody "
+            "was reclaimed, STOP -- do not retry it and do not re-claim that "
+            "item to resume; report the state you left the work in "
+            "(work_claim still works for new work)."
         )
 
     @property
@@ -1318,12 +1316,16 @@ class WorkResolveTool:
     @property
     def description(self) -> str:
         return (
-            "Fenced close of the item this session currently holds. Refuses if "
-            "this session's claim was reclaimed while it was away, so a stale "
-            "session cannot silently close work it no longer owns. 'reason' is "
-            "read by the person who reported the underlying issue -- write it "
-            "for them, not for a changelog. Stops the custody-renewal thread on "
-            "success."
+            "USE WHEN the item this session holds is done. 'reason' is read by "
+            "the person who reported the issue -- write it for them, not as a "
+            "changelog. Fenced: refuses if your claim was reclaimed while you "
+            "were away; then STOP, do not retry, report what you left behind. "
+            "On a conflict it re-reads and reports success when the write did "
+            "land, and verifies its own success by read-back: a reported "
+            "success here is confirmed. DO NOT USE "
+            "to change an ALREADY-resolved item's text: byte-identical "
+            "is a no-op, different text fails and writes nothing -- "
+            "work_erratum (record wrong) or work_reopen (work wrong)."
         )
 
     @property
@@ -1356,29 +1358,16 @@ class WorkReopenTool:
     @property
     def description(self) -> str:
         return (
-            "Return a RESOLVED item to the queue so its official record can be "
-            "corrected -- the ONLY sanctioned way to change a published "
-            "resolution, and the remedy work_resolve names when it refuses. "
-            "Takes project + item_id (not work_resolve's bare id) because by "
-            "definition this session does not hold a closed item. Requires a "
-            "non-empty 'reason' (a reopen destroys a record's finality; an "
-            "unexplained one is not auditable). Before transitioning, it files "
-            "the VERBATIM previous resolution and previous closed_at into the "
-            "item's attributed comment history, so the old text survives "
-            "whatever bd does to it -- and echoes that text back in the result, "
-            "because the correction you are about to write is usually an edit "
-            "of it. Deliberately NOT idempotent: reopening an item that is not "
-            "resolved is an error, never a silent no-op. Deliberately explicit, "
-            "too -- reopening CLEARS closed_at, so the item re-lands on the "
-            "correction date and every throughput roll-up moves by one item; "
-            "that cost is reported ('closed_at_cleared', 'previous_closed_at') "
-            "rather than hidden, which is why this is not folded into "
-            "work_resolve. claim=true (the default) immediately claims the "
-            "reopened item for this session, because a reopened item lands back "
-            "in the ready queue other agents poll. If that claim leg fails -- "
-            "most often because this session already holds a different item -- "
-            "the REOPEN STILL STANDS and is reported with claimed:false plus "
-            "claim_error; your existing custody is never dropped to make room."
+            "USE WHEN a RESOLVED item's WORK must be redone -- the only "
+            "sanctioned way to change a published resolution. Takes project + "
+            "item_id (you do not hold a closed item) and a non-empty reason; "
+            "files the previous resolution and closed_at VERBATIM into "
+            "comment history. NOT idempotent: reopening a "
+            "non-resolved item is an error. CLEARS closed_at, so the item "
+            "re-lands on today and throughput roll-ups move by one -- "
+            "reported, never hidden. claim=true (default) re-claims it; if "
+            "that fails the REOPEN STILL STANDS and your custody is never "
+            "dropped. DO NOT USE when only the RECORD is wrong -- work_erratum."
         )
 
     @property
@@ -1433,17 +1422,14 @@ class WorkErratumTool:
     @property
     def description(self) -> str:
         return (
-            "Append an APPEND-ONLY erratum to a RESOLVED item's own record -- for when the "
-            "RECORD is wrong (a typo, a wrong claim you noticed) but the WORK itself stands. "
-            "Never rewrites 'resolution', never touches status/closed_at/the holder, and "
-            "requires no claim at all -- any actor, any time. Use work_reopen instead when "
-            "the underlying WORK must be redone (that clears closed_at and re-lands the item "
-            "in the queue; this never does). Refuses loudly on a missing item, an item that "
-            "is not resolved (naming work_edit as the remedy for an OPEN item's wrong "
-            "content), or empty text. A byte-identical erratum already recorded by any actor "
-            "is an idempotent no-op ('already_recorded': true, nothing written). The "
-            "resulting 'errata' list and 'corrected' flag travel with the item everywhere its "
-            "resolution is shown (work_list, the CLI, the web dashboard)."
+            "USE WHEN a RESOLVED item's RECORD is wrong (a typo, a wrong claim) but the WORK "
+            "itself stands: appends an APPEND-ONLY erratum. Never rewrites 'resolution', "
+            "never touches status/closed_at/the holder, and needs no claim at all -- any "
+            "actor, any time. A byte-identical erratum already recorded is an idempotent "
+            "no-op. The 'errata' list and 'corrected' flag then travel with the item "
+            "everywhere its resolution is shown. Refuses on a missing item, a not-resolved "
+            "item (work_edit is the remedy for an OPEN one) or empty text. DO NOT USE when "
+            "the WORK must be redone -- work_reopen, which clears closed_at."
         )
 
     @property
@@ -1480,15 +1466,15 @@ class WorkReleaseTool:
     @property
     def description(self) -> str:
         return (
-            "Voluntarily hand the item this session currently holds back to the "
-            "queue -- the inverse of work_claim, WITHOUT setting a resolution "
-            "(use work_resolve when the work is actually done). Returns the item "
-            "to open/ready and stops this session's custody renewal, so it is "
-            "immediately claimable again with no reclaim-timeout wait. Use it "
-            "when you claimed something you should not work after all, or need to "
-            "put it back for another agent. Refuses (mutating nothing) if this "
-            "session does not hold the named item -- a session can never release "
-            "work it does not own."
+            "USE WHEN you claimed something you should not work after all, or "
+            "must hand it to another agent: the inverse of work_claim. Returns "
+            "the item this session holds to open/ready WITHOUT setting a "
+            "resolution and stops custody renewal, so it is immediately "
+            "claimable again with no reclaim-timeout wait. Refuses, mutating "
+            "nothing, if this session does not hold it. On a conflict it "
+            "re-reads and reports success only when the write landed, so a "
+            "reported success here is confirmed. DO NOT USE when the work is "
+            "actually done -- work_resolve."
         )
 
     @property
@@ -1517,14 +1503,15 @@ class WorkStatusTool:
     @property
     def description(self) -> str:
         return (
-            "Read-only: every known project with its FULL status breakdown -- "
-            "total plus per-status counts (ready/held/intake/blocked/deferred/"
-            "resolved), aging/throughput (oldest-unclaimed age, resolved in the "
-            "last 24h/7d), and custody-staleness signals (held_stale, who holds "
-            "what) -- the same figures the CLI and web dashboard show. Also "
-            "reports what this session currently holds (if anything), including "
-            "whether its custody was lost since claiming. Takes no arguments. "
-            "For the same breakdown scoped to ONE named project, use work_stats."
+            "USE WHEN you need every project's breakdown at once, or to check "
+            "YOUR OWN hold. Read-only, no arguments: per-status counts "
+            "(ready/held/intake/blocked/deferred/resolved), aging/throughput, "
+            "custody staleness (held_stale, who holds what), plus what this "
+            "session holds. Read `holding.custody_lost`: non-null means a "
+            "single failed renewal ends renewal permanently -- there is no "
+            "retry on the next tick -- and this session still believes it "
+            "holds the item. Check it before any long-running step and after "
+            "any tool error. DO NOT USE for one named project -- work_stats."
         )
 
     @property
@@ -1547,13 +1534,16 @@ class WorkStatsTool:
     @property
     def description(self) -> str:
         return (
-            "Read-only: the FULL status breakdown for ONE named project in a "
-            "single call -- total plus per-status counts (ready/held/intake/"
-            "blocked/deferred/resolved), aging (oldest-unclaimed age), "
-            "throughput (resolved in the last 24h/7d), and custody-staleness "
-            "signals (held_stale, held_by). The same figures work_status "
-            "reports for every project, scoped to just this one. Never claims, "
-            "mutates, or touches custody."
+            "USE WHEN you want ONE named project's full breakdown: per-status "
+            "counts (ready/held/intake/blocked/deferred/resolved), aging, "
+            "throughput and staleness (held_stale, held_by) -- what "
+            "work_status reports for every project, scoped to one. Read-only: "
+            "never claims, mutates, or touches custody. The "
+            "TTL does not enforce itself: an unrenewed hold is only "
+            "reclaim-eligible, the out-of-band reap sweep is what actually "
+            "reclaims it, and a dead agent's hold persists indefinitely where "
+            "no sweep runs -- never wait on a stuck held item assuming it "
+            "frees itself. DO NOT USE for every project -- work_status."
         )
 
     @property
@@ -1582,11 +1572,15 @@ class WorkFileTool:
     @property
     def description(self) -> str:
         return (
-            "File a newly discovered problem, linked discovered-from the item "
-            "this session currently holds. Non-blocking -- it will not wedge "
-            "your current work, and does not need a resolved acceptance "
-            "criteria of its own to land in the queue. Requires this session "
-            "to be holding an item (work_claim first)."
+            "USE WHEN you discover a distinct new problem while working the "
+            "item you hold: files it linked discovered-from that item. "
+            "Non-blocking -- it will not wedge your current work, and does not "
+            "need acceptance criteria of its own to land in the queue. "
+            "Requires this session to be holding an item (work_claim first). A "
+            "reported write failure here does NOT prove nothing was written: "
+            "re-read with work_list before refiling, or a blind retry leaves a "
+            "duplicate. DO NOT USE with no item held, or to seed work you did "
+            "not discover mid-fix -- work_add."
         )
 
     @property
@@ -1627,14 +1621,14 @@ class WorkAddTool:
     @property
     def description(self) -> str:
         return (
-            "File a new engineering-lane work item directly into a project's queue -- the "
-            "sanctioned way to seed the FIRST item(s) in a brand-new project, or add more work "
-            "later. Unlike work_file (which requires holding an item and links it "
-            "discovered-from that item), work_add needs no held item at all. Use this when a "
-            "user asks you to add/file/create a task or work item that isn't already in the "
-            "queue -- never fall back to a raw storage-layer CLI to do this. Applies the "
-            "engineering lane label itself; you never need to know the label vocabulary (e.g. "
-            "'lane:eng') exists. The new item becomes claimable via work_claim immediately."
+            "USE WHEN a user asks you to add/file/create a work item that is not in the queue "
+            "yet, or to seed the FIRST item(s) in a brand-new project: no held item required, "
+            "and never fall back to a raw storage-layer CLI for it. Applies the engineering "
+            "lane label itself, so you never need the label vocabulary; the item is claimable "
+            "via work_claim immediately. A reported write failure does NOT prove the write "
+            "failed -- re-read with work_list before retrying, or a blind retry duplicates an "
+            "item that already landed. DO NOT USE for a problem found while holding an item "
+            "-- work_file, which links it."
         )
 
     @property
@@ -1698,16 +1692,14 @@ class WorkMoveTool:
     @property
     def description(self) -> str:
         return (
-            "Move one item from one project to another, preserving its id -- the feature request "
-            "behind this tool: before it existed, there was no sanctioned way (for an agent OR a "
-            "human) to migrate a work item to a different project's queue at all. No held item "
-            "required -- unlike work_file/work_resolve/work_release, this never touches this "
-            "session's custody state. Refuses (mutating nothing) if the item is currently HELD (an "
-            "agent may be actively working it -- resolve or reap it first), does not exist in the "
-            "source project, or already exists at the destination. A dependency edge to an item "
-            "that is NOT also moving cannot be expressed once the two live in different projects "
-            "-- such an edge is dropped (never silently left dangling) and reported back in "
-            "dropped_dependency_edges so you can see exactly what did not survive."
+            "USE WHEN an item belongs in a different project's queue: moves it preserving its "
+            "id, the only sanctioned way to migrate one. No held item required, and custody "
+            "is never touched. Refuses, mutating nothing, if the item is currently HELD (an "
+            "agent may be working it -- resolve or reap first), is missing from the source, "
+            "or already exists at the destination. A dependency edge to an item that is NOT "
+            "also moving cannot be expressed across projects: it is dropped, never left "
+            "dangling, and reported in dropped_dependency_edges. DO NOT USE to change an "
+            "item's content -- work_edit."
         )
 
     @property
@@ -1742,15 +1734,14 @@ class WorkEditTool:
     @property
     def description(self) -> str:
         return (
-            "Amend an existing item's own title/description/acceptance/design IN PLACE, "
-            "attributed via an audit-trail comment naming who changed what -- never a "
-            "silent edit. No held item required (like work_move/work_add, this never "
-            "touches this session's custody state). Pass merge_into instead of any field "
-            "to mark the item superseded by a different item id -- bd's own supersede "
-            "mechanism, which CLOSES the item automatically with a structural reference "
-            "to the replacement -- rather than resolving it with an invented reason that "
-            "loses the replacement's real id. merge_into cannot be combined with field "
-            "edits in the same call."
+            "USE WHEN an OPEN item's own title/description/acceptance/design is wrong: "
+            "amends IN PLACE, attributed via an audit-trail comment naming who changed "
+            "what -- never a silent edit. No held item required; custody untouched. Pass "
+            "merge_into INSTEAD of any field to mark the item superseded by another id -- "
+            "bd's own supersede, which CLOSES it structurally with a real reference to the "
+            "replacement rather than an invented resolution that loses that id; it cannot "
+            "be combined with field edits. DO NOT USE on a RESOLVED item -- work_erratum "
+            "(the record is wrong) or work_reopen (the work is wrong)."
         )
 
     @property
@@ -1803,11 +1794,12 @@ class WorkDeferTool:
     @property
     def description(self) -> str:
         return (
-            "Defer an open item with a reason -- it leaves work_claim's queue (bd's own "
-            "status-category system excludes non-active statuses from 'ready'), but stays "
-            "visible in the default list view and via an explicit status filter, reason "
-            "attached. Pass clear=true (no reason needed) to move a deferred item back to "
-            "open. No held item required."
+            "USE WHEN an open item should leave work_claim's queue but stay visible with a "
+            "reason attached -- deferred items still appear in the default list view and "
+            "via an explicit status filter. clear=true (no reason needed) moves it back to "
+            "open. No held item required. DO NOT USE when another ITEM is what it waits on "
+            "-- work_dep, whose 'blocks' edge work_claim enforces by name; or work_block "
+            "for a blocker with no item of its own."
         )
 
     @property
@@ -1850,12 +1842,12 @@ class WorkBlockTool:
     @property
     def description(self) -> str:
         return (
-            "Block an open item with a reason -- same visibility contract as work_defer "
+            "USE WHEN an open item is blocked by something that has no issue of its own: a "
+            "direct, reasoned status change, same visibility contract as work_defer "
             "(leaves work_claim's queue, stays visible in the default list view and via an "
-            "explicit status filter, reason attached). Distinct from a dependency-based "
-            "blocker (work_dep) -- this is a direct, reasoned status change with no other "
-            "issue involved. Pass clear=true (no reason needed) to move a blocked item back "
-            "to open. No held item required."
+            "explicit status filter, reason attached). clear=true (no reason needed) moves "
+            "it back to open. No held item required. DO NOT USE when another ITEM is what "
+            "blocks it -- work_dep, whose 'blocks' edge work_claim enforces by name."
         )
 
     @property
@@ -1898,11 +1890,13 @@ class WorkDepTool:
     @property
     def description(self) -> str:
         return (
-            "Declare item_id depends on (per dep_type, default 'blocks') depends_on, then "
-            "return every dependency/dependent edge item_id now carries -- or, with "
-            "depends_on omitted, just DISPLAY the current edges without writing anything. "
-            "A 'blocks'-type edge is enforced at claim time: work_claim on item_id refuses, "
-            "naming depends_on, until depends_on is resolved. No held item required."
+            "USE WHEN one item must wait on another, or you want to see an item's edges. "
+            "With depends_on: declares item_id depends on it (dep_type, default 'blocks') "
+            "and returns every dependency/dependent edge item_id now carries. Omit "
+            "depends_on to just DISPLAY those edges, writing nothing. A 'blocks' edge is "
+            "enforced at claim time -- work_claim on item_id refuses, naming depends_on, "
+            "until depends_on is resolved. No held item required. DO NOT USE for a blocker "
+            "with no item of its own -- work_block."
         )
 
     @property
@@ -1955,19 +1949,16 @@ class WorkListTool:
     @property
     def description(self) -> str:
         return (
-            "List items in a project (read-only) -- id, title, status, holder, and (for "
-            "closed items) resolution. Filterable by status; defaults to every status, "
-            f"capped at {A.LIST_DEFAULT_LIMIT} (max {A.LIST_MAX_LIMIT} via limit) -- the "
-            "response always reports total_count/returned_count/truncated so a cap is never "
-            "silent. Strictly read-only: never claims, mutates, or touches custody. Use this "
-            "to see who holds an item, or what happened to items you didn't claim (closed "
-            "items and their resolution are visible here, not just open ones) -- never shell "
-            "out to a raw storage-layer CLI to answer this. "
-            "Pass item_id to read ONE item's FULL record instead -- including "
-            "acceptance/description/design, the same body work_claim returns -- WITHOUT "
-            "claiming it, mutating it, or touching custody. This is how to understand what an "
-            "item is asking for before deciding whether to claim it at all; work_claim is the "
-            "only tool that used to expose that body, and it takes the item to do so."
+            "USE WHEN you need items you do not hold -- who holds what, or how one you "
+            "never claimed ended: id, title, status, holder and (closed items) "
+            "resolution. Filter by status, all by default, "
+            f"capped at {A.LIST_DEFAULT_LIMIT} (max {A.LIST_MAX_LIMIT}), with "
+            "total_count/returned_count/truncated, never a silent cap. Pass item_id for ONE "
+            "item's FULL record -- acceptance/description/design, work_claim's body -- "
+            "with no claim, no custody touched: never claim an item just to read it. "
+            "Read-only, so also the safe re-read after a reported write failure; "
+            "never use a raw storage-layer CLI. DO NOT USE when you will work the "
+            "item -- work_claim."
         )
 
     @property
@@ -2031,14 +2022,14 @@ class WorkSubscribeTool:
     @property
     def description(self) -> str:
         return (
-            "Subscribe THIS session to a project's status reminders -- a compact, cadence-gated "
-            "note (ready/held counts, whether you hold anything, whether it's stale) injected "
-            "into your context by the hooks-work-subscribe-reminder hook, shaped like the "
-            "existing todo/status system-reminders. work_claim already auto-subscribes you to "
-            "whatever project you claim from; call this to also watch a project you have not "
-            "(yet) claimed anything in. Subscriptions live only for this session -- they do NOT "
-            "persist across a restart and are NOT inherited by a forked sub-session. Idempotent: "
-            "subscribing again is a no-op that still reports success."
+            "USE WHEN you want THIS session's status reminders for a project you have not "
+            "(yet) claimed anything in -- work_claim already auto-subscribes you to whatever "
+            "project you claim from. The reminder is a compact, cadence-gated note "
+            "(ready/held counts, whether you hold anything, whether it is stale) injected "
+            "into your context, shaped like the todo/status system-reminders. Subscriptions "
+            "live only for this session: they do NOT survive a restart and are NOT inherited "
+            "by a forked sub-session. Idempotent. DO NOT USE to read state on demand -- "
+            "work_status or work_stats."
         )
 
     @property
@@ -2067,10 +2058,10 @@ class WorkUnsubscribeTool:
     @property
     def description(self) -> str:
         return (
-            "Stop THIS session's status reminders for a project (see work_subscribe). Does not "
-            "touch custody or any held item -- purely a reminder-noise preference. Idempotent: "
-            "unsubscribing from a project you were never subscribed to is a no-op that still "
-            "reports success."
+            "USE WHEN a project's reminders in THIS session are noise: stops them (see "
+            "work_subscribe). Purely a reminder preference -- never touches custody or any "
+            "held item. Idempotent: unsubscribing from a project you were never subscribed "
+            "to still reports success. DO NOT USE to hand back an item -- work_release."
         )
 
     @property
@@ -2099,9 +2090,10 @@ class WorkSubscriptionsTool:
     @property
     def description(self) -> str:
         return (
-            "List the projects THIS session is currently subscribed to for status reminders "
-            "(see work_subscribe/work_unsubscribe). Read-only; never claims, mutates, or "
-            "touches custody."
+            "USE WHEN you need the projects THIS session is currently subscribed to for "
+            "status reminders (see work_subscribe/work_unsubscribe). Read-only; never "
+            "claims, mutates, or touches custody. DO NOT USE for queue contents -- "
+            "work_status or work_list."
         )
 
     @property

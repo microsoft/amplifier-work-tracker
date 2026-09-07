@@ -1,0 +1,25 @@
+work_claim               desc=   942 schema=   555
+work_declare             desc=   421 schema=   174
+work_resolve             desc=   337 schema=   215
+work_reopen              desc=  1473 schema=   823
+work_erratum             desc=   837 schema=   551
+work_release             desc=   554 schema=   126
+work_status              desc=   526 schema=    36
+work_stats               desc=   403 schema=   346
+work_file                desc=   293 schema=   313
+work_add                 desc=   622 schema=  1089
+work_move                desc=   816 schema=   709
+work_edit                desc=   617 schema=   936
+work_defer               desc=   332 schema=   618
+work_block               desc=   415 schema=   616
+work_dep                 desc=   375 schema=   834
+work_list                desc=   926 schema=  1037
+work_subscribe           desc=   625 schema=   329
+work_unsubscribe         desc=   260 schema=   333
+work_subscriptions       desc=   171 schema=    36
+work_tracker_status      desc=  1242 schema=    36
+work_tracker_install     desc=   571 schema=    36
+TOTAL                    desc= 12758 schema=  9748  n=21
+ 7529 context/awareness.md
+11208 skills/claiming-work-safely/SKILL.md
+18737 total

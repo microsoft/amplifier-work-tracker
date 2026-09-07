@@ -57,7 +57,6 @@ from . import test_custody_rows as probes
 from . import test_operator_rows as op_probes
 from ._support import (
     ADAPTER,
-    AWARENESS,
     CI_WORKFLOW,
     CLAIM_SKILL,
     CONTRACT_PATH,
@@ -281,8 +280,13 @@ def _m005_reassurance_returns(w: World) -> None:
 
 
 def _m008_clock_releases_it(w: World) -> None:
+    # RE-ANCHORED with CCV1-008's own probe (model_performance-b1tw): the
+    # second prose surface moved off always-on `context/awareness.md` into
+    # `work_stats`'s tool description, and a rendered description is not a
+    # file this World can patch. The skill is the file surface the row's
+    # both-directions claim rests on, so the counterfactual lands there.
     w.append(
-        AWARENESS,
+        CLAIM_SKILL,
         "\nAn unrenewed 15-minute hold releases the item back to the queue.\n",
     )
 
@@ -326,8 +330,11 @@ def _m015_success_path_unverified(w: World) -> None:
 
 
 def _m016_transaction_guarantee_returns(w: World) -> None:
+    # RE-ANCHORED with CCV1-016's own probe (model_performance-b1tw): the
+    # agent-facing prose surface moved VERBATIM from always-on
+    # `context/awareness.md` into the claiming-work-safely skill.
     w.append(
-        AWARENESS,
+        CLAIM_SKILL,
         "\nBy dolt's own transaction semantics the write genuinely did not happen.\n",
     )
 
@@ -1129,7 +1136,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "CCV1-008",
-        "awareness.md states the TTL release as automatic again",
+        "the claim skill states the TTL release as automatic again",
         _m008_clock_releases_it,
     ),
     Mutation(
