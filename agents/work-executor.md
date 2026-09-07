@@ -1,28 +1,18 @@
 ---
 meta:
   name: work-executor
-  description: |
-    Claims and works engineering-lane (`lane:eng`) items from a work-tracker
-    project queue through to a user-readable resolution, and reports the
-    read-only state of that queue.
-
-    The deciding factor: work must come off a shared multi-agent queue rather
-    than be picked by hand. Specifically --
-    - A named work-tracker project has ready items and the next one should be
-      pulled and worked ("next item in the queue", "what should I work on").
-    - An item is already claimed and needs carrying through to resolution.
-    - A distinct new problem was found mid-fix and must be filed linked
-      `discovered-from` the item currently held.
-    - Someone asks what is currently held or ready in a project (read-only
-      `work_status`). This agent is the authoritative view because it is the
-      one that actually claims and holds items.
-
-    Authoritative on: `work_claim`, `work_declare`, `work_resolve`,
-    `work_file`, `work_status`, custody renewal and reclaim, empty-queue
-    handling, parallel-agent coordination on a shared queue.
-
-    Not this agent: triaging raw user reports into issues (that is
-    feedback-triage's intake lane), or any direct `bd` / CLI access.
+  description: >-
+    USE WHEN work comes off a shared multi-agent work-tracker queue, not
+    picked by hand: pull and work the next ready `lane:eng` item ("next item
+    in the queue", "what should I work on"), carry a claimed item to a
+    user-readable resolution,
+    file a problem found mid-fix `discovered-from` the held item, or report
+    what is held/ready (read-only work_status -- authoritative, since this
+    agent claims and holds). Owns
+    work_claim/work_declare/work_resolve/work_file, custody renewal/reclaim,
+    empty queues, parallel-agent coordination. DO NOT USE WHEN triaging raw
+    user reports (feedback-triage's intake lane) or for direct `bd`/CLI
+    access.
   model_role: [coding, general]
 ---
 

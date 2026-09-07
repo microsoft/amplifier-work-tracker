@@ -1,6 +1,6 @@
 ---
 name: claiming-work-safely
-description: "The claim/custody procedure for any session that claims work directly from a work-tracker project queue: why the obvious read-then-write approach double-claims silently, the loop through work_claim/work_declare/work_resolve, the custody freshness model (renew/TTL/escalation), the two declared states, what to do after a reap, empty-queue handling, filing discovered work, and the never-touch-bd rule. Use when claiming, holding, declaring state on, resolving, or losing custody of a work-tracker item -- or when in doubt about any of those mechanics."
+description: "Use when claiming, holding, declaring state on, resolving, or losing custody of a work-tracker item -- or in doubt about those mechanics. The claim/custody procedure for a session pulling from a project queue: why read-then-write double-claims silently, the claim/declare/resolve loop, custody freshness, the two declared states, post-reap recovery, empty queues, filing discovered work, never touching bd."
 version: 1.0.0
 ---
 

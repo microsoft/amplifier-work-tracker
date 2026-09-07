@@ -1,6 +1,6 @@
 ---
 name: work-tracker-operations
-description: "Operating and diagnosing amplifier-work-tracker: what `doctor` proves and how to read a violated assumption (fix scope is adapter.py only), the bd >= 1.1.2 version floor with the measured double-claim table, the shared-server topology requirement, scheduling reap and notify on timers (resolution does NOT propagate on its own), and the known silent sharp edges (dotted project names, TOCTOU name allocation, no storage authz, native leases don't replicate). Use when running doctor, upgrading bd, standing up a project, scheduling operator jobs, or diagnosing why something that should be automatic isn't happening."
+description: "Use when running `doctor`, upgrading bd, standing up a project, scheduling reap/notify timers, or diagnosing why something that should be automatic isn't happening. Operating and diagnosing amplifier-work-tracker: what `doctor` proves and how to read a violated assumption (fix scope: adapter.py only), the bd version floor, shared-server topology, and the known silent sharp edges."
 version: 1.0.0
 ---
 

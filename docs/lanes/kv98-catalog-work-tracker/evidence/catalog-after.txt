@@ -1,0 +1,16 @@
+===== AFTER =====
+--- delegate agent catalog (this repo's entries) ---
+  - work-tracker:feedback-triage: USE WHEN the input is a raw USER report (`lane:intake`), not an engineer-found problem: turn it into a `lane:eng` issue with real Given/When/Then acceptance criteria, judge a batch's engineering impact, dedupe similar-sounding reports, or pick one of six report outcomes (duplicate / new issue / needs info / not actionable / already fixed / out of scope). The ONLY creator of a `lane:eng` issue from `lane:intake`; owns that transform, dedup, and acceptance-criteria-as-spec. REQUIRES intake-lane tool access: the default `behaviors/work-tracker.yaml` cannot read `lane:intake` -- confirm first. DO NOT USE WHEN the problem was found mid-fix: work-executor files it via work_file `discovered-from` an existing item.
+  - work-tracker:work-executor: USE WHEN work comes off a shared multi-agent work-tracker queue, not picked by hand: pull and work the next ready `lane:eng` item ("next item in the queue", "what should I work on"), carry a claimed item to a user-readable resolution, file a problem found mid-fix `discovered-from` the held item, or report what is held/ready (read-only work_status -- authoritative, since this agent claims and holds). Owns work_claim/work_declare/work_resolve/work_file, custody renewal/reclaim, empty queues, parallel-agent coordination. DO NOT USE WHEN triaging raw user reports (feedback-triage's intake lane) or for direct `bd`/CLI access.
+[agent catalog bytes: 1411]
+
+--- hooks-skills-visibility (this repo's entries) ---
+<system-reminder source="hooks-skills-visibility">
+Available skills (use load_skill tool):
+
+- **claiming-work-safely**: Use when claiming, holding, declaring state on, resolving, or losing custody of a work-tracker item -- or in doubt about those mechanics. The claim/custody procedure for a session pulling from a project queue: why read-then-write double-claims silently, the claim/declare/resolve loop, custody freshness, the two declared states, post-reap recovery, empty queues, filing discovered work, never touching bd.
+- **work-tracker-operations**: Use when running `doctor`, upgrading bd, standing up a project, scheduling reap/notify timers, or diagnosing why something that should be automatic isn't happening. Operating and diagnosing amplifier-work-tracker: what `doctor` proves and how to read a violated assumption (fix scope: adapter.py only), the bd version floor, shared-server topology, and the known silent sharp edges.
+</system-reminder>
+[skills block bytes: 959]
+
+[COMBINED CATALOG BYTES: 2370]
