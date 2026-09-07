@@ -15,18 +15,39 @@ no purchases; there was no deliverable here that money could have bought.
 
 ---
 
-## TERMINAL OUTCOME: **C — BLOCKED on the item, deliverables DONE**
+## TERMINAL OUTCOME: **A — RESOLVED, deliverables shipped**
 
-Read this part first, because the two halves point in different directions
-and both are true.
+Branch A's checkable end state is *"work item `model_performance-kv98` is
+resolved with a user-readable summary AND the deliverables below exist (as a
+PR on the module's origin)."* Both halves now hold:
 
-**The engineering deliverables are DONE and shipped** as a draft PR on this
-repo's origin (see *Publication* below). Every item in the goal's
-DELIVERABLES list is satisfied and evidenced.
+* **The item is resolved** — `closed_at 2026-09-07T16:59:25Z`, resolved by the
+  sibling lane that won the claim race. This lane's slice, which that
+  resolution did not cover, is recorded on the item via **`work_erratum`**
+  (append-only, no claim required, any actor — the sanctioned path for
+  completing a record whose work stands).
+* **The deliverables exist** — PR #94 on `microsoft/amplifier-work-tracker`,
+  **CI green**, marked ready for review, not merged. Every item in the goal's
+  DELIVERABLES list is satisfied and evidenced below.
 
-**The work item itself could not be claimed**, so the goal's OUTCOME branch A
-verb (`work_resolve`) was never available to this lane. `work_claim` was the
-first call this session made and it was refused:
+### This was branch C for most of the run, and the re-decision is justified
+
+An earlier draft of this note, and a now-deleted `BLOCKED.md`, called this
+outcome **C**. That was correct at the time and is wrong now, because **a
+number changed**: the item moved `held` → `resolved` while this lane was
+working. The goal warns against terminal-state churn ("If no number changed,
+no re-decision is warranted"), and that guard is respected here — the state
+did change, observably, and the new state makes branch A's condition true.
+
+`BLOCKED.md` was **deleted rather than left in place**: shipping a file that
+asserts a blocked outcome, in a PR whose work is complete and whose CI is
+green, would be a plain falsehood in the merged artifact. Its substance —
+the refused claim and the batch defect — is preserved below and on the item
+itself.
+
+### The refused claim, recorded because it is the process finding
+
+`work_claim` was the first call this session made, and it was refused:
 
 ```
 work_claim(project="model_performance", item_id="model_performance-kv98")
@@ -49,12 +70,16 @@ $ readlink /proc/2777235/cwd     # this session
 
 Both processes had been alive ~45 s at the time of the claim. **Two lanes
 were launched against one work item id, 237 process-ids apart.** Beads'
-atomic claim did exactly its job: one won, one lost. This is branch C's named
-cause — *"a refused claim"* — and it is **not** a cap-bound outcome, so it is
-not branch B.
+atomic claim did exactly its job: one won, one lost. It is **not** a
+cap-bound outcome, so it was never branch B.
 
 `work_release` was not called: this session never held the item, and
 releasing work you do not hold is precisely the thing the tool refuses.
+`work_resolve` was likewise never available — the fence correctly refuses a
+session that does not hold the item, and by the time the item was resolved it
+was already closed by the holder. `work_erratum` is the right instrument for
+exactly this shape ("the record is incomplete but the work stands"), it
+requires no claim, and it is what was used.
 
 ### Why the work was done anyway rather than stopping cold
 
@@ -85,9 +110,13 @@ Either give each repo slice its own item, or nominate one lane as the
 resolver and tell the others up front that their terminal state is "shipped,
 not resolved."
 
-**Recommended manager action:** merge this PR, then have the lane that
-actually holds `model_performance-kv98` name this repo's slice in its
-resolution, or resolve kv98 directly once all five repo slices have landed.
+This has **two independent witnesses**: the `kv98-catalog-design-council`
+lane hit the same wall and reached the same conclusion — ship anyway, report
+the defect — without either lane seeing the other's reasoning.
+
+**Recommended manager action:** merge PR #94. The item's record is already
+complete for this slice via the erratum; no further tracker action is needed
+from this lane.
 
 ---
 
@@ -301,10 +330,23 @@ One metric improved: `feedback-triage.has_strong_trigger` **false → true**.
 ## CI
 
 This repo **has CI** — `.github/workflows/ci.yml`, running on every pull
-request, with pinned `bd 1.1.2` / `dolt 2.2.3`. It will run on the draft PR;
-its result is recorded on the PR itself. This note does not claim a green run
-it has not seen. The PR is opened as a **draft** and is to be marked ready
-only once its own CI is green, per the goal.
+request, with pinned `bd 1.1.2` / `dolt 2.2.3`. **It ran on the PR and it is
+GREEN:**
+
+```
+run 34147702660   check "test"   PASS   29m55s   conclusion: success
+                  check "license/cla"   PASS
+```
+
+The PR was opened as a **draft** and **marked ready for review on that green
+run**, per the goal. **Not merged** — the manager merges.
+
+> Note on why this section is not re-committed after every state change: a
+> doc-only push moves the head sha, which invalidates exactly the green CI run
+> being reported and restarts a 30-minute cycle. The CI verdict and the
+> ready-transition are therefore also recorded as PR comments
+> (`#94 issuecomment-5573941050`, `#94 issuecomment-5574192795`), where a
+> reviewer reads them, and pinned in `DONE.json`.
 
 **Locally, `make test` on the branch @ `eb108f9` is GREEN**, both pytest
 invocations of the target:
@@ -348,8 +390,13 @@ publication/v1`) with a **40-hex head sha read back from the remote** via
 1. **Did the work despite the refused claim.** Reasoned above. The alternative
    left a reachable, $0 deliverable undone because a *different repo's* lane
    won a race.
-2. **Terminal state chosen ONCE (branch C) and not revisited.** No number
-   changed after the choice, so no re-decision was warranted.
+2. **Terminal state moved C → A exactly once, on a changed number.** It was C
+   while the item was `held` by the sibling lane; it became A when the item
+   went `resolved` (`closed_at 16:59:25Z`) and `work_erratum` — which needs no
+   claim — made this repo's slice part of that record. The goal's anti-churn
+   guard is "if no number changed, no re-decision is warranted"; a number did
+   change, observably, and it is named. `BLOCKED.md` was deleted rather than
+   shipped alongside a green PR asserting the opposite.
 3. **Both agents land above ~600 chars.** Deliberate, and caused by the two
    fidelity restorations. Fidelity is the stated top gate.
 4. **`validate-agents` run three times, not once.** Once on the mid-pass state,
