@@ -373,7 +373,14 @@ ledger-mutate` reports every mutation proven and `ledger/checks` is 60 passed.
 | `pytest modules/.../test_project_name_rule.py` | passed — the 14-parameter NAME_RULE contract is untouched |
 | full suite, root tier (`pytest tests ledger/checks`) | **1,565 passed, 3 skipped, 89 deselected** in 36m55s, rc=0 |
 | full suite, module tier (`pytest modules/tool-work-tracker/tests`) | **156 passed** in 10m40s, rc=0 |
-| **CI** | **SUCCESS** — run [34162236937](https://github.com/microsoft/amplifier-work-tracker/actions/runs/34162236937), `CI` / `test`, 31m03s, conclusion `success` |
+| **CI** | **SUCCESS on every commit of this branch** — `1ab580f` run [34162236937](https://github.com/microsoft/amplifier-work-tracker/actions/runs/34162236937) (31m03s), `ce0bf88` run [34164256876](https://github.com/microsoft/amplifier-work-tracker/actions/runs/34164256876), `77a4398` run [34164362689](https://github.com/microsoft/amplifier-work-tracker/actions/runs/34164362689). All `conclusion: success` |
+
+`1ab580f` is the commit carrying every product, ledger and test change; the
+later commits are documentation and evidence under this lane's artifact root
+only, and each was verified green in its own right rather than assumed. The
+commit that adds *this* line is necessarily a fourth; its run id is recorded
+in `DONE.json`, which is written after it goes green — this note does not claim
+a verdict for a run that had not finished when it was written.
 
 The 89 deselected are the Tier-B browser kit (`-m "not tier_b"` in pyproject's
 addopts); CI runs that tier as its own step and the whole run concluded
