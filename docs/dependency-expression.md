@@ -1,6 +1,7 @@
 # Recommendation: Which Dependency/Link Mechanism to Use
 
-**Status:** ships alongside the `dep`/`work_dep` verb and the `related` field on `add`/`work_add`
+**Status:** ships alongside the `dep` CLI verb and `work_item(op="dep")`, plus
+the `related` field on `add`/`work_add`
 (work_tracker items kgi, sx2, 9e4).
 **Audience:** anyone declaring a relationship between two work items, by hand or from an agent.
 
@@ -15,8 +16,8 @@ blocks work that should not.
 
 | Mechanism | When to use it | Blocks `work_claim`? | How to create it |
 |---|---|---|---|
-| **`dep` / `work_dep`** with `dep_type="blocks"` (the default) | A genuinely CANNOT start until B is done | **Yes** -- refuses, naming B | `amplifier-work-tracker dep --project P --id A --depends-on B` / `work_dep(item_id=A, depends_on=B)` |
-| **`dep` / `work_dep`** with another `dep_type` (`tracks`, `parent-child`, `until`, `caused-by`, `validates`, ...) | A structural or informational edge that is not itself blocking | No (unless you also separately reason about it) | same verb, `--type <type>` / `dep_type=<type>` |
+| **`dep` / `work_item(op="dep")`** with `dep_type="blocks"` (the default) | A genuinely CANNOT start until B is done | **Yes** -- refuses, naming B | `amplifier-work-tracker dep --project P --id A --depends-on B` / `work_item(op="dep", item_id=A, depends_on=B)` |
+| **`dep` / `work_item(op="dep")`** with another `dep_type` (`tracks`, `parent-child`, `until`, `caused-by`, `validates`, ...) | A structural or informational edge that is not itself blocking | No (unless you also separately reason about it) | same CLI verb / `dep_type=<type>` |
 | **`related` on `add`/`work_add`** (`relates-to` \| `supersedes` \| `follow-up-of`) | A loose cross-reference recorded AT FILING TIME, alongside a brand-new item | No | `add --related` (CLI, if exposed) or `work_add(related=[{"id": B, "kind": "relates-to"}])` |
 | **`defer` / `block`** (a DIFFERENT mechanism entirely -- see below) | "This can't proceed right now" with NO other issue involved | N/A -- moves the item's own status, no second issue exists | `defer --reason ...` / `block --reason ...` |
 
@@ -44,6 +45,6 @@ dependency edges for "issue B, a real and separately trackable piece of work, mu
 `Item.links` -- entries carry `id`/`direction`/`type`/`title`/`status`/`holder`/`blocking`. This is
 the read side of everything in the table above except `defer`/`block` (which show up as the
 item's own `status` + its reason in metadata, not as a link). The CLI's `list --id` / the
-`work_list` tool's `item_id` mode do NOT populate `links` by default (a bulk list never does, to
-avoid an N+1 fetch per row) -- use `dep`/`work_dep` (with `depends_on` omitted) for a dedicated,
+`work_query(kind="item")` does NOT populate `links` by default (a bulk list never does, to
+avoid an N+1 fetch per row) -- use `dep`/`work_item(op="dep")` (with `depends_on` omitted) for a dedicated,
 always-populated read.

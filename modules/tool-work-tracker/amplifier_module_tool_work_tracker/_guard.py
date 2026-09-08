@@ -41,6 +41,17 @@ from amplifier_core import ToolResult
 _Execute = Callable[[Any, dict[str, Any]], Awaitable[ToolResult]]
 
 
+def _without_nulls(input: dict[str, Any]) -> dict[str, Any]:
+    """Map strict-schema null placeholders back to absent optional inputs.
+
+    Strict OpenAI-compatible schemas require every property on the wire.
+    Optional properties therefore arrive as ``None`` rather than being
+    omitted. Every work-tracker tool is guarded, so normalize that transport
+    detail here once; empty strings remain intentional text edits.
+    """
+    return {name: value for name, value in input.items() if value is not None}
+
+
 def guarded(execute: _Execute) -> _Execute:
     """Decorator for a Tool class's `async def execute(self, input)`.
 
@@ -56,7 +67,7 @@ def guarded(execute: _Execute) -> _Execute:
     @functools.wraps(execute)
     async def _wrapped(self: Any, input: dict[str, Any]) -> ToolResult:
         try:
-            return await execute(self, input)
+            return await execute(self, _without_nulls(input))
         except Exception as e:  # noqa: BLE001 -- last-resort net, see module docstring
             tool_name = getattr(self, "name", type(self).__name__)
             return ToolResult(

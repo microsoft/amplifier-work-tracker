@@ -1,4 +1,4 @@
-"""Conformance Fixtures 2, 3 and 4 of `contracts/custody-coordination.v1.md`
+"""Conformance Fixtures 2, 3 and 4 of custody-coordination (v2)
 (§Conformance Kit) -- the Freeze Bar's "All four Conformance fixtures
 implemented, passing, and executable via `make test`" (ledger row CCV1-023,
 work item `pipeline-qmj`).
@@ -12,7 +12,7 @@ pins BOTH halves, and says which is which.
 WHY THIS FILE LIVES IN THE MODULE SUITE
 ---------------------------------------
 All three fixtures are written in the contract against the AGENT SEAM --
-"call `work_resolve(id)`", "call `work_status()`", "claim -> claim again".
+"call `work_resolve(id)`", "call `work_query(kind=status)`", "claim -> claim again".
 That seam is `WorkTrackerSession`, which lives in this module, so this is
 the only suite that can exercise the fixtures as the contract states them.
 `modules/tool-work-tracker/tests` runs in `make test` and in CI as its own
@@ -48,7 +48,7 @@ import uuid
 from typing import Any
 
 import pytest
-from amplifier_module_tool_work_tracker import WorkTrackerSession
+from amplifier_module_tool_work_tracker import WorkQueryTool, WorkTrackerSession
 
 import amplifier_work_tracker.adapter as A
 import amplifier_work_tracker.supervisor as SV
@@ -274,7 +274,7 @@ async def test_fixture3_release_of_an_already_closed_held_item_clears_the_latch(
 
 
 @pytest.mark.asyncio
-async def test_fixture3_work_status_reports_custody_lost_while_the_hold_is_retained(project):
+async def test_fixture3_work_query_status_reports_custody_lost_while_the_hold_is_retained(project):
     """GOOD half: the passive signal the contract's Core 4 names --
     `holding.custody_lost` -- is actually visible at the tool seam, so a
     session can DISCOVER a renewal failure without any tool refusing it
@@ -304,10 +304,10 @@ async def test_fixture3_work_status_reports_custody_lost_while_the_hold_is_retai
     finally:
         A.Beads.renew_custody = original  # type: ignore[method-assign]
 
-    reported = await session.status()
+    reported = await WorkQueryTool(session).execute({"kind": "status"})
     holding = reported.output["holding"]  # type: ignore[index]
     assert holding is not None, (
-        "BAD half: the hold vanished from work_status, so a session that lost "
+        "BAD half: the hold vanished from work_query(kind=status), so a session that lost "
         "renewal has no way to see WHICH item it is still holding"
     )
     assert holding["id"] == item_id
@@ -344,7 +344,7 @@ async def test_fixture3_a_fenced_reclaim_clears_the_latch_with_no_manual_step(pr
     assert "reclaimed" in held.lost_reason.lower() or "reassigned" in held.lost_reason.lower()
     assert session._held is None  # noqa: SLF001
 
-    reported = await session.status()
+    reported = await WorkQueryTool(session).execute({"kind": "status"})
     assert reported.output["holding"] is None  # type: ignore[index]
 
     # The item itself was returned to the queue by the sweep, not closed.

@@ -261,7 +261,7 @@ def test_classify_state_running_unmanaged_advises_adoption_not_shutdown(tmp_path
     monkeypatch.setattr(SV, "port_holder_responds", lambda host, port: True)
 
     _, fix = classify_state(tmp_path / "root")
-    assert "work_tracker_install" in fix
+    assert "work_tracker(op=install)" in fix
     assert (
         "use it directly" in fix.lower() or "usable as-is" in fix.lower() or "use it" in fix.lower()
     )

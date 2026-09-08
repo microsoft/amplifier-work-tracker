@@ -52,18 +52,14 @@ this table whenever that module's tools change.
 | Tool | `work_resolve` | Fenced close of the currently held item -- refuses (writing nothing) if the item is already closed with DIFFERENT text |
 | Tool | `work_reopen` | Return a resolved item to the queue so its published resolution can be corrected; archives the previous record first |
 | Tool | `work_erratum` | Append an append-only correction to a resolved item's record when the record is wrong but the work stands -- never rewrites `resolution`, needs no claim |
-| Tool | `work_status` | Read-only: projects, queue depths, what this session holds |
+| Tool | `work_query` | Passive `kind=status|stats|list|item` reads: project roll-ups or items without claiming |
 | Tool | `work_file` | File newly discovered work, linked `discovered-from` the held item |
 | Tool | `work_add` | File a new engineering-lane item directly, no held item required -- the sanctioned way to seed a project's FIRST item(s) |
-| Tool | `work_move` | Move one item from one project's queue to another, preserving its id |
-| Tool | `work_list` | Read-only per-item listing (or one item's full record via `item_id`) |
-| Tool | `work_subscribe` / `work_unsubscribe` / `work_subscriptions` | Opt a project's status IN/OUT of this session's reminders (see the reminder hook below); `work_claim` auto-subscribes to whatever it claims from |
-| Tool | `work_tracker_status` | Read-only: is the background service (shared dolt server + reap/notify sweeps) installed and healthy on this machine |
-| Tool | `work_tracker_install` | Install and start the background service -- the only tool here that changes system state |
+| Tool | `work_item` | `op=move|edit|defer|block|dep` item administration |
+| Tool | `work_tracker` | `op=status|install` service diagnosis or explicit installation |
 | Hook | `hooks-work-subscribe-reminder` | Compact, cadence-gated status reminder (ready/held/holding/custody-stale) for subscribed projects, injected like the todo/status system-reminders |
 | Agent | `work-tracker:work-executor` | Claims and works engineering-lane items to resolution |
-| Skill | `claiming-work-safely` | The claim/custody procedure, freshness model, and post-reap recovery |
-| Skill | `work-tracker-operations` | Reading `doctor`, the seam, version floor, and scheduling reap/notify |
+| Skill | `claiming-work-safely` | The claim/custody procedure, freshness model, post-reap recovery, and linked operator reference |
 
 **No default feedback-triage agent.** `agents/feedback-triage.md` exists in
 this repo but is deliberately NOT composed into this bundle by default: its
@@ -91,7 +87,7 @@ amplifier-work-tracker doctor                  # run after any bd upgrade, and i
 
 Resolution does **not** propagate to reporters on its own, and stale custody
 does **not** release itself — both require `reap` and `notify` to actually
-run. **If the background service is installed** (`work_tracker_install`, or
+run. **If the background service is installed** (`work_tracker(op="install")`, or
 `amplifier-work-tracker service install`), both already run automatically as
 in-process sweeps inside it -- see `src/amplifier_work_tracker/supervisor.py`'s
 `reap_loop`/`notify_loop`. Only schedule `reap`/`notify` manually (cron,

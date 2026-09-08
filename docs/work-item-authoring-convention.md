@@ -157,7 +157,7 @@ conversion time.
 
 ## The description/design asymmetry
 
-**Finding:** `work_claim` / `work_list` return `design` as a readable field alongside `description`
+**Finding:** `work_claim` / `work_query(kind="item")` return `design` as a readable field alongside `description`
 and `acceptance`. Neither `work_add` nor `work_file` -- the *only* write paths -- accept a `design`
 parameter. The read side promises a field the write side cannot populate.
 
@@ -179,7 +179,7 @@ engineering item is the correct next step, distinct from this research item.
 
 ## Worked examples (read-only, real items in this queue)
 
-Pulled via `work_list(project="work_item_pipeline", item_id=...)` -- no items claimed or mutated to
+Pulled via `work_query(kind="item", project="<queue>", item_id=...)` -- no items claimed or mutated to
 produce this section, per this lane's scope.
 
 ### Good: rich handoff that worked
@@ -216,7 +216,7 @@ below are inert worked examples embedded in this document -- neither was written
 
 ```
 Given a project with items in every status (open, held, blocked, deferred, resolved)
-When `work_status` (or `amplifier-work-tracker instances`) is called
+When `work_query(kind="status")` (or `amplifier-work-tracker instances`) is called
 Then the response includes per-project counts for all five statuses, not just total/ready/held
 
 Given a single project name
@@ -245,18 +245,18 @@ item's own suggestion, adds the disjunctive exit and per-item terminals, and mov
 "KNOWN" already implicit in the description into its own block):
 
 ```
-One-sentence outcome: work_status reports a full open/held/blocked/deferred/resolved breakdown,
+One-sentence outcome: work_query(kind="status") reports a full open/held/blocked/deferred/resolved breakdown,
 both across all projects and for one project in detail.
 
 KNOWN:
-- work_status / `instances` today report only total/ready/held per project.
-- Getting the missing split today costs N `work_list` calls per project (one per status,
+- work_query(kind="status") / `instances` today report only total/ready/held per project.
+- Getting the missing split today costs N `work_query(kind="list")` calls per project (one per status,
   `limit=1`, reading only `total_count`) -- a workaround, not a fix.
 
 Complete when EACH of the following resolves independently to
 PASS / FAIL-<named reason> / BLOCKED-<named reason> / PENDING-HUMAN:
 
-(a) All-projects summary: `work_status` / `instances` includes per-project counts for all five
+(a) All-projects summary: `work_query(kind="status")` / `instances` includes per-project counts for all five
     statuses (open, held, blocked, deferred, resolved), not just total/ready/held.
 (b) Per-project detail: a single call returns the full status-count breakdown for one named
     project, without paginating through individual item records.
@@ -283,7 +283,7 @@ deciding *whether* to trust the convention, not by every session on every claim.
 
 **The operational half -- the crosswalk table and the floor/ceiling checklist, not the rationale --
 belongs in `skills/`**, alongside `skills/claiming-work-safely/SKILL.md` and
-`skills/work-tracker-operations/SKILL.md`, once this proposal is accepted. Skills are what actually
+`skills/claiming-work-safely/references/operations.md`, once this proposal is accepted. The Level 3 reference is what actually
 loads into an agent's context by convention in this ecosystem; a design doc in `docs/` is not
 automatically read by a filing session the way a skill is. This document deliberately does **not**
 create that skill -- doing so is implementation, out of this item's scope -- but names the correct

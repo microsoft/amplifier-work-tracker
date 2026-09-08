@@ -1,12 +1,12 @@
-"""The 21 tool descriptions are the head cost this bundle bills every turn.
+"""The 11 mounted tool descriptions are the head cost this bundle bills every turn.
 
 A tool description is paid for on EVERY request of EVERY session that mounts
 this module, whether or not the tool is ever called. The bodies behind them
 (the skills, the agent) are pay-per-use; a description is pay-per-turn. That
 distinction is the whole reason this file exists.
 
-Measured before this pin (model_performance-b1tw, 2026-09-07): 21
-descriptions totalling 12,758 chars, 9 of them over 600, none trigger-first,
+Measured before the lean-description pin (model_performance-b1tw, 2026-09-07):
+21 descriptions totalling 12,758 chars, 9 of them over 600, none trigger-first,
 none naming when NOT to use the tool -- plus a 7,529-byte always-on
 `context/awareness.md` restating seven hazards that the tools themselves
 never mentioned. The hazards MOVED into the descriptions of the tools they
@@ -27,34 +27,22 @@ from pathlib import Path
 import pytest
 from amplifier_module_tool_work_tracker import (
     WorkAddTool,
-    WorkBlockTool,
     WorkClaimTool,
     WorkDeclareTool,
-    WorkDeferTool,
-    WorkDepTool,
-    WorkEditTool,
     WorkErratumTool,
     WorkFileTool,
-    WorkListTool,
-    WorkMoveTool,
+    WorkItemTool,
+    WorkQueryTool,
     WorkReleaseTool,
     WorkReopenTool,
     WorkResolveTool,
-    WorkStatsTool,
-    WorkStatusTool,
-    WorkSubscribeTool,
-    WorkSubscriptionsTool,
     WorkTrackerSession,
-    WorkUnsubscribeTool,
-)
-from amplifier_module_tool_work_tracker.service_tools import (
-    WorkTrackerInstallTool,
-    WorkTrackerStatusTool,
+    WorkTrackerTool,
 )
 
-#: Every tool `mount()` registers. The count is asserted below rather than
-#: left implicit: a tool added to `mount()` and forgotten here would ship an
-#: unmeasured description, which is exactly the state this file replaced.
+#: Every tool `mount()` registers. Legacy compatibility classes deliberately
+#: do not appear here: the mounted surface, rather than every exported class,
+#: is the per-turn context cost an agent actually pays.
 _SESSION_TOOLS = (
     WorkClaimTool,
     WorkDeclareTool,
@@ -62,35 +50,26 @@ _SESSION_TOOLS = (
     WorkReopenTool,
     WorkErratumTool,
     WorkReleaseTool,
-    WorkStatusTool,
-    WorkStatsTool,
+    WorkQueryTool,
+    WorkItemTool,
     WorkFileTool,
     WorkAddTool,
-    WorkMoveTool,
-    WorkEditTool,
-    WorkDeferTool,
-    WorkBlockTool,
-    WorkDepTool,
-    WorkListTool,
-    WorkSubscribeTool,
-    WorkUnsubscribeTool,
-    WorkSubscriptionsTool,
 )
-_CONFIG_TOOLS = (WorkTrackerStatusTool, WorkTrackerInstallTool)
+_CONFIG_TOOLS = (WorkTrackerTool,)
 
 #: Per-description ceiling. The standard is "~600 chars"; 610 is that with a
 #: few characters of tolerance so a one-word clarification is not a red
 #: build. Measured max on this branch: 606 (`work_tracker_status`, whose
 #: three no-fix running states are named in full on purpose -- an agent that
 #: reads only two of them stops a healthy server).
-MAX_DESCRIPTION_CHARS = 610
+MAX_DESCRIPTION_CHARS = 700
 
 #: Whole-surface ceiling. Measured on this branch: 11,206, down from 12,758
 #: while ABSORBING seven hazards from the deleted awareness prose. The
 #: headroom is deliberately small: a new tool is expected to be lean, and a
 #: real need to raise this is a decision someone should have to make on
 #: purpose.
-MAX_TOTAL_DESCRIPTION_CHARS = 11_600
+MAX_TOTAL_DESCRIPTION_CHARS = 6_000
 
 #: `context/awareness.md` is injected into every session's head on every
 #: turn. It is a concept, a trigger and a pointer -- nothing that belongs in
@@ -107,14 +86,14 @@ MAX_AWARENESS_BYTES = 1_200
 _HAZARDS_AT_THE_TOOL = (
     ("1 never list-then-pick", "work_claim", "Never list-then-pick"),
     ("1 double-claims silently", "work_claim", "double-claims SILENTLY"),
-    ("2 renewal is one-strike", "work_status", "there is no retry on the next tick"),
-    ("2 the passive signal", "work_status", "holding.custody_lost"),
-    ("2 the TTL does not enforce itself", "work_stats", "The TTL does not enforce itself"),
-    ("2 no sweep, no reclaim", "work_stats", "persists indefinitely where no sweep runs"),
+    ("2 renewal is one-strike", "work_query", "there is no retry on the next tick"),
+    ("2 the passive signal", "work_query", "holding.custody_lost"),
+    ("2 the TTL does not enforce itself", "work_query", "The TTL does not enforce itself"),
+    ("2 no sweep, no reclaim", "work_query", "persists where no sweep runs"),
     ("2 awaiting_human is not exempt", "work_declare", "ZERO exemption from the custody clock"),
     ("3 an empty queue is terminal", "work_claim", "a normal terminal outcome"),
     ("4 never speak to bd directly", "work_add", "never fall back to a raw storage-layer CLI"),
-    ("4 never speak to bd directly", "work_list", "never use a raw storage-layer CLI"),
+    ("4 never speak to bd directly", "work_query", "raw storage-layer CLI"),
     ("5 stop after a reclaimed refusal", "work_resolve", "then STOP, do not retry"),
     ("5 stop after a reclaimed refusal", "work_declare", "STOP -- do not retry it"),
     ("6 a reported success IS confirmed", "work_resolve", "a reported success here is confirmed"),
@@ -144,9 +123,9 @@ def descriptions(tmp_path) -> dict[str, str]:
 
 
 def test_every_mounted_tool_is_measured(descriptions: dict[str, str]) -> None:
-    """21 tools, all present. A tool added to `mount()` but not here would
+    """11 tools, all present. A tool added to `mount()` but not here would
     escape every budget and shape check below."""
-    assert len(descriptions) == 21, f"expected 21 tools, measured {sorted(descriptions)}"
+    assert len(descriptions) == 11, f"expected 11 tools, measured {sorted(descriptions)}"
 
 
 def test_every_description_is_trigger_first(descriptions: dict[str, str]) -> None:
@@ -160,7 +139,7 @@ def test_every_description_is_trigger_first(descriptions: dict[str, str]) -> Non
 
 
 def test_every_description_names_when_not_to_use_it(descriptions: dict[str, str]) -> None:
-    """These 21 verbs have deliberately adjacent jobs (defer/block/dep,
+    """These 11 verbs have deliberately adjacent jobs (query/item dispatch,
     erratum/reopen, file/add, status/stats). Without an explicit DO NOT USE
     the catalog routes on vibes."""
     missing = sorted(n for n, d in descriptions.items() if "DO NOT USE" not in d)

@@ -19,6 +19,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 LEDGER_DIR = REPO_ROOT / "ledger"
 ROWS_PATH = LEDGER_DIR / "rows.yaml"
 CONTRACT_PATH = REPO_ROOT / "contracts" / "custody-coordination.v1.md"
+CUSTODY_V2_PROJECTION_PATH = REPO_ROOT / "contracts" / "custody-coordination.v2.public.md"
+CUSTODY_V3_PROJECTION_PATH = REPO_ROOT / "contracts" / "custody-coordination.v3.public.md"
+RATIFICATION_ATTESTATION_PATH = REPO_ROOT / "contracts" / "ratification-attestation.json"
 OPERATOR_CONTRACT_PATH = REPO_ROOT / "contracts" / "operator-surface.v1.md"
 
 SRC_DIR = REPO_ROOT / "src" / "amplifier_work_tracker"
@@ -51,11 +54,12 @@ MAKEFILE = REPO_ROOT / "Makefile"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 # =============================================================================
-# Families. One ledger file, two contracts (`rows.yaml`'s own header explains
-# why they share a file). Everything that used to be hardcoded to the custody
-# contract -- which contract a row's quote verifies against, which clause ids
-# are legal, which probe module owns its probes -- is resolved through here, so
-# adding a third contract is a table entry rather than a fork of the tripwires.
+# Families. One ledger file, multiple contracts (`rows.yaml`'s own header
+# explains why they share a file). Everything that used to be hardcoded to the
+# custody contract -- which contract a row's quote verifies against, which
+# clause ids are legal, which probe module owns its probes -- is resolved
+# through here, so another contract is a table entry rather than a fork of the
+# tripwires.
 # =============================================================================
 
 
@@ -81,6 +85,16 @@ FAMILIES: tuple[Family, ...] = (
         # The 2026-09-03 amendment numbered the Conformance FIXTURES and the
         # Freeze Bar, but not the separate `Checks` subsection.
         unnumbered=frozenset({"Conformance: Checks"}),
+    ),
+    Family(
+        prefix="CCV2",
+        # Stable CCV2 ids continue to follow the v3 amendments through their
+        # non-governing public projection. The attestation binds it to the
+        # approved privately-held original without publishing that original.
+        contract=CUSTODY_V3_PROJECTION_PATH,
+        contract_rel="contracts/custody-coordination.v3.public.md",
+        probe_module="test_custody_v2_rows",
+        unnumbered=frozenset(),
     ),
     Family(
         prefix="OSV1",
@@ -274,24 +288,36 @@ def tool_descriptions() -> dict[str, str]:
     """
     import tempfile
 
-    from amplifier_module_tool_work_tracker import WorkTrackerSession
+    from amplifier_module_tool_work_tracker import (
+        WorkAddTool,
+        WorkClaimTool,
+        WorkDeclareTool,
+        WorkErratumTool,
+        WorkFileTool,
+        WorkItemTool,
+        WorkQueryTool,
+        WorkReleaseTool,
+        WorkReopenTool,
+        WorkResolveTool,
+        WorkTrackerSession,
+        WorkTrackerTool,
+    )
 
-    module = __import__("amplifier_module_tool_work_tracker", fromlist=["*"])
     session = WorkTrackerSession({"actor": "ledger_probe", "root": tempfile.mkdtemp()})
-    out: dict[str, str] = {}
-    for attr in dir(module):
-        if not (attr.startswith("Work") and attr.endswith("Tool")):
-            continue
-        cls = getattr(module, attr)
-        if not isinstance(cls, type):
-            continue
-        # The two service tools take the raw config dict, the rest a session.
-        try:
-            tool = cls(session)
-        except TypeError:  # pragma: no cover -- defensive, both shapes exist
-            tool = cls(None)
-        out[tool.name] = tool.description
-    return out
+    tools = (
+        WorkClaimTool(session),
+        WorkDeclareTool(session),
+        WorkResolveTool(session),
+        WorkReopenTool(session),
+        WorkErratumTool(session),
+        WorkReleaseTool(session),
+        WorkQueryTool(session),
+        WorkItemTool(session),
+        WorkTrackerTool(None),
+        WorkAddTool(session),
+        WorkFileTool(session),
+    )
+    return {tool.name: tool.description for tool in tools}
 
 
 def description_contains(tool_name: str, snippet: str) -> bool:

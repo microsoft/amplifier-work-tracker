@@ -54,12 +54,15 @@ from pathlib import Path
 
 from . import _support
 from . import test_custody_rows as probes
+from . import test_custody_v2_rows as v2_probes
 from . import test_operator_rows as op_probes
 from ._support import (
     ADAPTER,
     CI_WORKFLOW,
     CLAIM_SKILL,
     CONTRACT_PATH,
+    CUSTODY_V2_PROJECTION_PATH,
+    CUSTODY_V3_PROJECTION_PATH,
     FLIP_VIOLATION_MOVEMENT,
     MAKEFILE,
     OPERATOR_CONTRACT_PATH,
@@ -91,7 +94,7 @@ TIER_B_SUMMARY = _support.REPO_ROOT / op_probes.TIER_B_SUMMARY
 #: them, so a mutation is seen the same way whichever family's probe runs --
 #: the alternative (patching only the family under test) would let a probe that
 #: happens to read through a sibling module silently see UNMUTATED source.
-PROBE_MODULES = (probes, op_probes)
+PROBE_MODULES = (probes, v2_probes, op_probes)
 
 
 class HarnessOutOfDate(Exception):
@@ -254,6 +257,14 @@ class Mutation:
 
 def _m000_contract_moved(w: World) -> None:
     w.append(CONTRACT_PATH, "\n<!-- a governed clause moved under the ledger -->\n")
+
+
+def _m_ccv2_000_v3_projection_moved(w: World) -> None:
+    w.append(CUSTODY_V3_PROJECTION_PATH, "\n<!-- a projected clause moved under the ledger -->\n")
+
+
+def _m_ccv2_000_v2_projection_moved(w: World) -> None:
+    w.append(CUSTODY_V2_PROJECTION_PATH, "\n<!-- a projected clause moved under the ledger -->\n")
 
 
 def _m003_bare_failure(w: World) -> None:
@@ -1119,6 +1130,16 @@ def _mo034_the_changelog_record_is_removed(w: World) -> None:
 #: rather than credited for the whole row.
 MUTATIONS: tuple[Mutation, ...] = (
     Mutation("CCV1-000", "the governed contract moved under the pinned hash", _m000_contract_moved),
+    Mutation(
+        "CCV2-000",
+        "the v3 public projection moved under the pinned hash",
+        _m_ccv2_000_v3_projection_moved,
+    ),
+    Mutation(
+        "CCV2-000",
+        "the v2 public projection moved under the pinned hash",
+        _m_ccv2_000_v2_projection_moved,
+    ),
     Mutation(
         "CCV1-003",
         "the failed-custody arm returns a bare failure again (no compensating release)",

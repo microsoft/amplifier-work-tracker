@@ -12,7 +12,9 @@ import uuid
 from typing import Any
 
 import pytest
-from amplifier_module_tool_work_tracker import WorkTrackerSession
+from amplifier_module_tool_work_tracker import WorkItemTool, WorkTrackerSession
+
+import amplifier_work_tracker.adapter as A
 
 pytestmark = pytest.mark.skipif(
     shutil.which("bd") is None, reason="real `bd` binary not present in this environment"
@@ -76,6 +78,62 @@ async def test_edit_merge_into_supersedes_and_closes_the_item(project):
     assert output["superseded"] == old_id
     assert output["with"] == new_id
     assert output["status"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_work_item_strict_null_merge_only_preserves_the_content_edit_fence(project):
+    add_session = WorkTrackerSession({"actor": _unique("actor")})
+    old = await add_session.add(project, "old item")
+    old_id = old.output["added"]  # type: ignore[index]
+    replacement = await add_session.add(project, "replacement item")
+    replacement_id = replacement.output["added"]  # type: ignore[index]
+    tool = WorkItemTool(WorkTrackerSession({"actor": _unique("merger")}))
+
+    merge_only = await tool.execute(
+        {
+            "op": "edit",
+            "project": project,
+            "item_id": old_id,
+            "from_project": None,
+            "to_project": None,
+            "title": None,
+            "description": None,
+            "acceptance": None,
+            "design": None,
+            "merge_into": replacement_id,
+            "reason": None,
+            "clear": None,
+            "depends_on": None,
+            "dep_type": None,
+        }
+    )
+    assert merge_only.success is True
+
+    conflicting = await add_session.add(project, "content must survive")
+    conflicting_id = conflicting.output["added"]  # type: ignore[index]
+    rejected = await tool.execute(
+        {
+            "op": "edit",
+            "project": project,
+            "item_id": conflicting_id,
+            "from_project": None,
+            "to_project": None,
+            "title": "attempted content edit",
+            "description": None,
+            "acceptance": None,
+            "design": None,
+            "merge_into": replacement_id,
+            "reason": None,
+            "clear": None,
+            "depends_on": None,
+            "dep_type": None,
+        }
+    )
+    assert rejected.success is False
+    assert "cannot be combined" in str(rejected.output)
+    persisted = A.Workspace(add_session._ws.root).project(project).get(conflicting_id)  # noqa: SLF001
+    assert persisted.status == "open"
+    assert persisted.title == "content must survive"
 
 
 @pytest.mark.asyncio

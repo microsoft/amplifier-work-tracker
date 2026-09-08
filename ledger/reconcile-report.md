@@ -3295,3 +3295,36 @@ vision pinned twice would mean two rows racing to re-hash the same bytes.
   `b5b23ca`. Freeze BLOCKED on 4 conformance blockers + 2 process items. Six
   contract "Current state" annotations found stale in the reverse direction and
   recorded here rather than silently corrected.
+
+## Publication re-check 2026-09-08 — custody-coordination projections
+
+The protocol-authority ruling permits separately named **non-governing public
+projections** and an attestation without a new ratification because no
+normative clause changes. `CCV2-000` now pins
+`contracts/custody-coordination.v3.public.md` and
+`contracts/custody-coordination.v2.public.md`. Their approved candidate
+identities, privately-held original-document hashes, normative-payload hashes,
+and public-projection hashes are explicitly bound by the repo-relative
+`contracts/ratification-attestation.json`.
+
+Mandatory full custody re-review completed before the SYNC pins changed. All
+24 CCV1 rows remain anchored to their unchanged public historical v1 source.
+All three CCV2 rows were walked against the v3 public projection:
+`CCV2-001` retains the approved retained-failure-reason, fenced-clear, and
+named-stale-refusal fixture cites; `CCV2-002` retains its Core 13 quote and
+eleven-tool CONFORMS disposition. No disposition changed: custody remains
+**24 CCV1 CONFORMS, 2 CCV1 NOT-ASSERTABLE, 2 CCV2 CONFORMS**, with zero GAP
+and zero VIOLATION rows.
+
+This publication run executed source assertions from the public worktree:
+`pytest ledger/checks -q` (**61 passed**), the projection-integrity test
+(**1 passed**), and the mutation harness (**71 / 71 proven**). The ledger
+checks verify the CCV2 quotes against the public projection bytes; the
+projection-integrity test verifies the public Core/Conformance byte range
+against the attested approved normative-payload hash. Ruff check and format
+check passed for the changed Python checks and test.
+
+These are publication-integrity results, not a rerun of runtime validation.
+The existing validation summary is retained as prior evidence only; no full
+suite, installation, or DTU run was performed for this publication change. No
+runtime source or module test file is changed by this ledger update.

@@ -7,7 +7,7 @@ meta:
     in the queue", "what should I work on"), carry a claimed item to a
     user-readable resolution,
     file a problem found mid-fix `discovered-from` the held item, or report
-    what is held/ready (read-only work_status -- authoritative, since this
+    what is held/ready (read-only work_query(kind="status") -- authoritative, since this
     agent claims and holds). Owns
     work_claim/work_declare/work_resolve/work_file, custody renewal/reclaim,
     empty queues, parallel-agent coordination. DO NOT USE WHEN triaging raw

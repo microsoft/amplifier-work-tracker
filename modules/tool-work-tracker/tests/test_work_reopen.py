@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import shutil
 import uuid
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from amplifier_core import ToolResult
 from amplifier_module_tool_work_tracker import WorkReopenTool, WorkTrackerSession
 
 import amplifier_work_tracker.adapter as A
@@ -181,5 +183,24 @@ async def test_work_reopen_tool_is_registered_with_the_expected_surface(project)
     schema = tool.input_schema
     # project + item_id, NOT work_resolve's bare `id`: by definition the
     # caller does not hold a closed item.
-    assert schema["required"] == ["project", "item_id", "reason"]
+    assert schema["required"] == list(schema["properties"])
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["claim"]["type"] == ["boolean", "null"]
     assert schema["properties"]["claim"]["default"] is True
+
+
+@pytest.mark.asyncio
+async def test_work_reopen_treats_a_strict_null_claim_as_its_true_default():
+    calls = []
+
+    async def reopen(project, item_id, reason, *, claim):
+        calls.append((project, item_id, reason, claim))
+        return ToolResult(success=True, output="reopened")
+
+    tool = WorkReopenTool(SimpleNamespace(reopen=reopen))  # type: ignore[arg-type]
+    result = await tool.execute(
+        {"project": "project", "item_id": "item", "reason": "redo", "claim": None}
+    )
+
+    assert result.success is True
+    assert calls == [("project", "item", "redo", True)]

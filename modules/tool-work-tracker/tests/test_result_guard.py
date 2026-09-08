@@ -15,7 +15,7 @@ These tests prove two things, both required for the fix to count as done:
      never swallows `asyncio.CancelledError` (which must keep propagating --
      that is task cancellation, not a tool failure).
 
-  2. Every one of the module's nine `work_*`/`work_tracker_*` tools actually
+  2. Every mounted tool actually
      has this net applied to its own `execute()` -- proven both
      structurally (every Tool class's `execute` is the wrapped function) and
      behaviorally (a forced, REAL, unexpected exception through two
@@ -40,16 +40,13 @@ from amplifier_module_tool_work_tracker import (
     WorkClaimTool,
     WorkDeclareTool,
     WorkFileTool,
-    WorkListTool,
+    WorkItemTool,
+    WorkQueryTool,
     WorkResolveTool,
-    WorkStatusTool,
     WorkTrackerSession,
+    WorkTrackerTool,
 )
 from amplifier_module_tool_work_tracker._guard import guarded
-from amplifier_module_tool_work_tracker.service_tools import (
-    WorkTrackerInstallTool,
-    WorkTrackerStatusTool,
-)
 
 import amplifier_work_tracker.adapter as A
 
@@ -57,12 +54,11 @@ ALL_TOOL_CLASSES = [
     WorkClaimTool,
     WorkDeclareTool,
     WorkResolveTool,
-    WorkStatusTool,
+    WorkQueryTool,
+    WorkItemTool,
     WorkFileTool,
     WorkAddTool,
-    WorkListTool,
-    WorkTrackerStatusTool,
-    WorkTrackerInstallTool,
+    WorkTrackerTool,
 ]
 
 
@@ -103,6 +99,24 @@ async def test_guarded_passes_through_a_normal_result_untouched():
     result = await _Fine().execute({})
     assert result.success is True
     assert result.output == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_guarded_discards_strict_null_placeholders_without_mutating_the_call_input():
+    seen = {}
+
+    class _Probe:
+        @guarded
+        async def execute(self, input):
+            seen["input"] = input
+            return ToolResult(success=True, output="ok")
+
+    call_input = {"optional": None, "intentional_empty_text": ""}
+    result = await _Probe().execute(call_input)
+
+    assert result.success is True
+    assert seen["input"] == {"intentional_empty_text": ""}
+    assert call_input == {"optional": None, "intentional_empty_text": ""}
 
 
 @pytest.mark.asyncio

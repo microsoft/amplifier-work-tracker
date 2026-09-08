@@ -1,13 +1,14 @@
 # Conformance ledger -- TWO contracts, TWO row families, ONE file.
 #
 #   CCV1-###   contracts/custody-coordination.v1.md (DRAFT)  seeded 2026-09-01
-#   OSV1-###   contracts/operator-surface.v1.md     (DRAFT)  seeded 2026-09-04
+#   CCV2-###   contracts/custody-coordination.v3.public.md (NON-GOVERNING) re-checked 2026-09-08
+#   OSV1-###   contracts/operator-surface.v1.md     (DRAFT)    seeded 2026-09-04
 #
 # One file rather than the `rows-<seam>.yaml` split LEDGER-FORMAT.md sec.1
 # also permits: the tripwires, the probe/row pairing and the mutation harness
 # all read ONE parsed list, and splitting would fork that machinery for no
-# gain at two families. Each family carries its OWN `<PREFIX>-000` SYNC row,
-# first within its family; ids sort so CCV1 precedes OSV1.
+# gain at three families. Each family carries its OWN `<PREFIX>-000` SYNC row,
+# first within its family; ids sort so CCV1 precedes CCV2 precedes OSV1.
 #
 # Top-level YAML LIST of rows. No wrapper mapping, no `meta:` key -- run
 # metadata (repo SHA, tallies, drift narrative) lives in reconcile-report.md,
@@ -1304,6 +1305,81 @@
 # Backlogged and Reserved get NO rows -- they are not promises -- except
 # Reserved 1, which the Phase-1 Need-4 ruling put on a NOT-ASSERTABLE cadence.
 # =============================================================================
+
+- id: CCV2-000
+  title: SYNC -- public v3 and v2 projections bound to approved attestations
+  contract:
+    files:
+      - file: contracts/custody-coordination.v3.public.md
+        sha256: 1bf77f72d85bf791e2c492534417153f5dc2902e3eba51670690d37001cd4cda
+      - file: contracts/custody-coordination.v2.public.md
+        sha256: 6743942e0be1882e447da34379eb1b6284746af95b7397931e36a828dd5041ba
+  disposition: CONFORMS
+  assertion:
+    kind: probe
+    ref: test_row_ccv2_000
+  notes: >-
+    PUBLICATION RE-CHECK 2026-09-08. The stable CCV2 ids retain the approved
+    v2 passive-query and mounted-surface family without inventing renamed or
+    duplicate rows. The non-governing public v3 and v2 projections are bound
+    through `contracts/ratification-attestation.json` to approved candidate,
+    privately-held original-document, and normative-payload hashes. All CCV2
+    rows were re-reviewed against the public v3 projection: CCV2-001 retains
+    its approved retained-failure-reason, fenced-clear, and named-stale-refusal
+    fixture cites; CCV2-002's Core 13 quote and CONFORMS disposition are
+    unchanged. All 24 CCV1 rows were also walked against their unchanged public
+    historical v1 source. Any projection or attestation binding change requires
+    a full CCV2 re-review; never update a SYNC pin alone.
+
+- id: CCV2-001
+  title: passive status query distinguishes retained and cleared custody loss
+  contract:
+    file: contracts/custody-coordination.v3.public.md
+    clause: Core 8
+    quote: >-
+      A session that loses custody via reclaim discovers the loss and recovers
+      in-process. After a failed non-fenced custody renewal, the passive query
+      `work_query(kind="status")` retains `holding` and returns
+      `holding.custody_lost` as the non-null string failure reason; after a fenced
+      reclaim clears the local hold, it returns `holding: null`, and the custody
+      operation that encounters the fence reports a named custody-loss error. Both
+      outcomes are actionable without manual intervention or session restart.
+  disposition: CONFORMS
+  assertion:
+    kind: indexed
+    last_measured: 2026-09-08
+    refs:
+      - file: modules/tool-work-tracker/tests/test_conformance_fixtures.py
+        name: test_fixture3_work_query_status_reports_custody_lost_while_the_hold_is_retained
+      - file: modules/tool-work-tracker/tests/test_conformance_fixtures.py
+        name: test_fixture3_a_fenced_reclaim_clears_the_latch_with_no_manual_step
+      - file: modules/tool-work-tracker/tests/test_conformance_fixtures.py
+        name: test_fixture2_bad_half_stale_holders_resolve_is_refused_after_a_real_reap
+  notes: >-
+    The approved fixture results retain their existing dispositions: the
+    retained hold exposes the non-empty failure-reason string; the fenced-reclaim
+    status result has holding null; and the stale resolve is refused with a
+    reclaim-naming error while the item remains open. The public publication
+    binding is `contracts/ratification-attestation.json`; this publication
+    re-check verifies projection and quote identity without re-running runtime
+    fixtures.
+
+- id: CCV2-002
+  title: all custody and item capability remains behind the eleven mounted tools
+  contract:
+    file: contracts/custody-coordination.v3.public.md
+    clause: Core 13
+    quote: >-
+      All capability to mutate, claim, release, resolve, or query items is exposed
+      through the tool seam (`work_claim`, `work_resolve`, `work_release`,
+      `work_declare`, `work_query`, `work_item`, etc.).
+  disposition: CONFORMS
+  assertion:
+    kind: indexed
+    last_measured: 2026-09-08
+    refs:
+      - file: modules/tool-work-tracker/tests/test_work_surface_migration.py
+        name: test_mounts_exactly_the_ratified_eleven_names_and_no_legacy_aliases
 
 - id: OSV1-000
   title: SYNC -- operator-surface AND custody-coordination pinned by content hash

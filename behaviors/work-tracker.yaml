@@ -39,8 +39,8 @@ tools:
 
 hooks:
   # Compact, cadence-gated status reminder for whatever projects this session
-  # is subscribed to (see tool-work-tracker's work_subscribe/work_claim
-  # auto-subscribe). Reads ONLY the work_tracker.reminder_snapshot capability
+  # is auto-subscribed by a successful work_claim. Reads ONLY the
+  # work_tracker.reminder_snapshot capability
   # tool-work-tracker registers above -- no Beads/dolt knowledge of its own.
   - module: hooks-work-subscribe-reminder
     source: ../modules/hooks-work-subscribe-reminder

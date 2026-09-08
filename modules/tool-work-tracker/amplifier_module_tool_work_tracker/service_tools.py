@@ -1,4 +1,4 @@
-"""`work_tracker_status` / `work_tracker_install` -- the bundle-bootstrap tools.
+"""Legacy service tools used by the mounted `work_tracker(op=...)` dispatcher.
 
 The scenario these exist for: a user installs ONLY the work-tracker behavior
 bundle, then generically asks a session "use work-tracker for this task."
@@ -51,8 +51,9 @@ there is no `bd`/`dolt` binary to run anything with in the first place:
                                bus. Same guardrail as `running_unmanaged`:
                                never advises stopping it.
 
-`work_tracker_install` is the ONLY thing that changes system state, and it is
-never invoked as a side effect of `work_tracker_status` or any other tool --
+`work_tracker(op="install")` is the ONLY mounted operation that changes system
+state, and it is never invoked as a side effect of
+`work_tracker(op="status")` or any other tool --
 both reference projects (amplifier-browser-bridge, muxplex) deliberately
 refuse ambient side effects for exactly this class of action (installing a
 persistent background service). The LLM must decide to call it, once,
@@ -153,7 +154,7 @@ def classify_state(root: Path) -> tuple[WorkTrackerState, str]:
                 f"assumption it's a stray/foreign server -- confirm first with `systemctl --user "
                 f"status amplifier-work-tracker` from a shell with a working session bus, or fix "
                 f"this process's own environment (export XDG_RUNTIME_DIR=/run/user/$(id -u)) and "
-                f"re-check work_tracker_status.",
+                f"re-check work_tracker(op=status).",
             )
         return (
             "installed_not_running",
@@ -181,8 +182,8 @@ def classify_state(root: Path) -> tuple[WorkTrackerState, str]:
             f"a dolt server is already healthy and reachable on "
             f"{SV.DEFAULT_DOLT_HOST}:{SV.DEFAULT_DOLT_PORT}, it just isn't managed by this "
             f"service yet -- this is a WORKING server, not a problem to fix. You can use it "
-            f"directly right now (work_claim/work_status/the CLI will all work against it), or "
-            f"call work_tracker_install to bring it under this service's supervision so it "
+            f"directly right now (work_claim/work_query(kind=status)/the CLI all work), or "
+            f"call work_tracker(op=install) to bring it under this service's supervision so it "
             f"survives reboot and gets the reap/notify sweeps -- installing does NOT stop or "
             f"replace it; the supervisor refuses to double-serve instead of colliding with it. "
             f"Do not stop this process -- it may be holding live claims from other sessions "
@@ -191,7 +192,7 @@ def classify_state(root: Path) -> tuple[WorkTrackerState, str]:
             f"containers where they often are not).",
         )
     if not info.installed:
-        return "not_installed", "call work_tracker_install to set up the background service"
+        return "not_installed", "call work_tracker(op=install) to set up the background service"
     if not info.active:
         return (
             "installed_not_running",
@@ -235,14 +236,15 @@ class WorkTrackerStatusTool:
     def description(self) -> str:
         return (
             "USE FIRST the first time you touch work-tracker in a session, and whenever a "
-            "work_* call fails to connect: work_claim/work_status and the CLI need a reachable "
+            "work_* call fails to connect: work_claim/work_query(kind=status) and the CLI need "
+            "a reachable "
             "dolt server, and this reports whether one exists. Read-only: the background "
             "service's state (dolt server + reap/notify sweeps) here, plus the exact fix "
             "when there is one. Three running states need NO fix and "
             "must never be 'fixed' by stopping a server: running_healthy; "
             "running_unmanaged (healthy, not ours); running_systemd_unreachable (reachable, "
             "unit installed, systemd --user unqueryable). DO NOT USE to change "
-            "anything -- work_tracker_install."
+            "anything -- work_tracker(op=install)."
         )
 
     @property
@@ -281,7 +283,7 @@ class WorkTrackerInstallTool:
     @property
     def description(self) -> str:
         return (
-            "USE WHEN work_tracker_status says the background service is missing or stopped: "
+            "USE WHEN work_tracker(op=status) says the background service is missing or stopped: "
             "installs and starts it (systemd --user on Linux, launchd on macOS) -- the shared "
             "dolt server plus the reap/notify sweeps, surviving logout and reboot. VERIFIES "
             "the dolt server is actually reachable before reporting success; a partial or "
@@ -321,10 +323,11 @@ class WorkTrackerInstallTool:
                 output=(
                     f"not installing: a dolt server is already healthy and reachable on "
                     f"{SV.DEFAULT_DOLT_HOST}:{SV.DEFAULT_DOLT_PORT} -- it works as-is, so there "
-                    f"is nothing broken to fix here. Use it directly (work_claim/work_status/the "
-                    f"CLI all work against it right now), or if you want it to survive reboot and "
+                    f"is nothing broken to fix here. Use it directly (work_claim/"
+                    f"work_query(kind=status)/the CLI all work against it right now), or if you "
+                    f"want it to survive reboot and "
                     f"get the reap/notify sweeps, stop whatever is running it yourself first, "
-                    f"THEN call work_tracker_install -- installing on top of a server already "
+                    f"THEN call work_tracker(op=install) -- installing on top of a server already "
                     f"bound to this port would only crash-loop, not adopt it. Do not stop it "
                     f"just to install; only do so if you actually want the switch to the "
                     f"supervised service."
