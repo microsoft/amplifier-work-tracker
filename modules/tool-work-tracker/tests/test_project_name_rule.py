@@ -17,42 +17,26 @@ from __future__ import annotations
 
 from amplifier_module_tool_work_tracker import (
     WorkAddTool,
-    WorkBlockTool,
     WorkClaimTool,
-    WorkDeferTool,
-    WorkDepTool,
-    WorkEditTool,
     WorkErratumTool,
-    WorkListTool,
-    WorkMoveTool,
+    WorkItemTool,
+    WorkQueryTool,
     WorkReopenTool,
-    WorkStatsTool,
-    WorkSubscribeTool,
     WorkTrackerSession,
-    WorkUnsubscribeTool,
     _project_param,
 )
 
 import amplifier_work_tracker.adapter as A
 
-#: Every tool class carrying at least one project-name parameter. The exact
-#: count is asserted below rather than left implicit, so a new
-#: project-taking tool added to `mount()` and forgotten here fails the count
-#: instead of silently shipping a parameter with no rule on it.
+#: Every mounted tool class carrying at least one project-name parameter.
+#: Legacy compatibility classes deliberately do not expand this population.
 _TOOLS_WITH_PROJECT_PARAMS = (
     WorkClaimTool,
     WorkReopenTool,
     WorkErratumTool,
-    WorkStatsTool,
+    WorkQueryTool,
     WorkAddTool,
-    WorkMoveTool,
-    WorkEditTool,
-    WorkDeferTool,
-    WorkBlockTool,
-    WorkDepTool,
-    WorkListTool,
-    WorkSubscribeTool,
-    WorkUnsubscribeTool,
+    WorkItemTool,
 )
 
 #: Parameter names that carry a project NAME (as opposed to an item id or a
@@ -85,17 +69,17 @@ def test_every_project_parameter_states_the_naming_rule(tmp_path):
             assert A.NAME_RULE in spec["description"], (
                 f"{tool_name}.{param} does not state the project-naming rule"
             )
-    assert checked == 14, f"expected 14 project-name parameters, found {checked}"
+    assert checked == 8, f"expected 8 project-name parameters, found {checked}"
 
 
 def test_the_two_destination_parameters_lead_with_the_rule(tmp_path):
-    """`work_add`'s `project` and `work_move`'s `to_project` are where a
+    """`work_add`'s `project` and `work_item(op=move)`'s `to_project` are where a
     caller names a destination rather than repeating a name that already
     worked -- so the rule goes FIRST there, ahead of the parameter's own
     sentence."""
     schemas = dict(_schemas(tmp_path))
     add = schemas["work_add"]["properties"]["project"]["description"]
-    to = schemas["work_move"]["properties"]["to_project"]["description"]
+    to = schemas["work_item"]["properties"]["to_project"]["description"]
     assert add.startswith(A.NAME_RULE)
     assert to.startswith(A.NAME_RULE)
 

@@ -62,7 +62,7 @@ amplifier bundle add "git+https://github.com/microsoft/amplifier-work-tracker@ma
 
 and load the `claiming-work-safely` skill (or delegate to `work-tracker:work-executor`) for the
 claim/custody/resolve loop and its hard rules -- see the bundle's tool table (`work_claim`,
-`work_resolve`, `work_status`, ...) rather than the raw CLI verbs below. Full design in
+`work_resolve`, `work_query`, ...) rather than the raw CLI verbs below. Full design in
 [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## How it works

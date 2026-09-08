@@ -197,7 +197,7 @@ def test_row_ccv1_005() -> None:
     RE-ANCHORED (model_performance-b1tw): the second surface used to be
     `context/awareness.md`. That file is always-on -- every session pays
     for it on every turn, and a session reads it long before the moment
-    this rule bites. The rule now lives in `work_status`'s own tool
+    this rule bites. The rule now lives in `work_query`'s own tool
     description, which is where an agent goes to READ `custody_lost`, and
     this probe follows it there. Same words, same both-directions pin, a
     surface that fires when it matters. The skill leg is unchanged.
@@ -208,12 +208,12 @@ def test_row_ccv1_005() -> None:
         "retry on the next tick.",
     ), "CCV1-005 (Core 4) pin: SKILL.md no longer states renewal as one-strike"
     assert description_contains(
-        "work_status",
+        "work_query",
         "a single failed renewal ends renewal permanently -- there is no retry on the next tick",
-    ), "CCV1-005 (Core 4) pin: work_status's description no longer states renewal as one-strike"
+    ), "CCV1-005 (Core 4) pin: work_query's description no longer states renewal as one-strike"
     for label, has in (
         ("SKILL.md", lambda s: contains(CLAIM_SKILL, s)),
-        ("work_status's description", lambda s: description_contains("work_status", s)),
+        ("work_query's description", lambda s: description_contains("work_query", s)),
     ):
         assert has("holding.custody_lost"), (
             f"CCV1-005 (Core 4) pin: {label} no longer names the passive signal an "
@@ -237,19 +237,19 @@ def test_row_ccv1_008() -> None:
 
     RE-ANCHORED (model_performance-b1tw), same reasoning as CCV1-005: the
     second surface moved off always-on `context/awareness.md` and into
-    `work_stats`'s own tool description -- the tool that shows you
+    `work_query`'s own tool description -- the tool that shows you
     `held_stale`/`held_by`, i.e. exactly where an agent is looking when it
     is tempted to wait for a stuck held item to free itself. The skill leg
     is unchanged.
     """
     assert description_contains(
-        "work_stats",
+        "work_query",
         "The TTL does not enforce itself: an unrenewed hold is only reclaim-eligible, "
         "the out-of-band reap sweep is what actually reclaims it",
-    ), "CCV1-008 (Core 6) pin: work_stats's description no longer states the TTL as sweep-enforced"
-    assert description_contains(
-        "work_stats", "a dead agent's hold persists indefinitely where no sweep runs"
-    ), "CCV1-008 (Core 6) pin: work_stats's description no longer names the no-sweep consequence"
+    ), "CCV1-008 (Core 6) pin: work_query's description no longer states the TTL as sweep-enforced"
+    assert description_contains("work_query", "a dead hold persists where no sweep runs"), (
+        "CCV1-008 (Core 6) pin: work_query's description no longer names the no-sweep consequence"
+    )
     assert contains(
         CLAIM_SKILL,
         "**The TTL is not self-enforcing.** Nothing in your process, and no timer in "
@@ -261,7 +261,7 @@ def test_row_ccv1_008() -> None:
     ), "CCV1-008 (Core 6) pin: SKILL.md no longer names the no-sweep consequence"
     for label, has in (
         ("SKILL.md", lambda s: contains(CLAIM_SKILL, s)),
-        ("work_stats's description", lambda s: description_contains("work_stats", s)),
+        ("work_query's description", lambda s: description_contains("work_query", s)),
     ):
         assert not has("releases the item back to the queue"), (
             f"CCV1-008 (Core 6) pin: {label} regressed to stating the release as "
@@ -589,7 +589,7 @@ def test_row_ccv1_016() -> None:
             f"success is read-back verified"
         )
     for verb in ("work_add", "work_file"):
-        assert description_contains(verb, "re-read with work_list"), (
+        assert description_contains(verb, "re-read with work_query(kind=item)"), (
             f"CCV1-016 (Core 11) pin: {verb}'s description no longer tells a caller to "
             f"re-read before retrying an unverified write"
         )

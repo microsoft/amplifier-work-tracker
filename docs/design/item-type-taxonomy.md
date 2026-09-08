@@ -182,7 +182,7 @@ Three additions, all mechanical once the column carries a real value:
 1. **`Beads.list(type=...)`** -- one more predicate in the WHERE clause it already builds:
    `` `issues`.`issue_type` = '<literal>' ``, through `_sql_literal`. No join, no scan. This is
    the entire reason the native column wins.
-2. **`--type` on the CLI `list`, `type` on `work_list`** -- choices drawn from a public
+2. **`--type` on the CLI `list`, `type` on `work_query(kind="list")`** -- choices drawn from a public
    `TYPES` tuple exported from `adapter.py`, exactly as `STATUSES` is today, so neither surface
    reinvents (or silently disagrees on) the vocabulary.
 3. **`kind` in `Item.summary()`'s lean row.**

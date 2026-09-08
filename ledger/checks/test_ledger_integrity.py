@@ -17,14 +17,14 @@ asserting nothing:
 They exist because the expensive failure is not a red row -- it is a ledger
 that has quietly stopped describing the contract it claims to describe.
 
-## Two families, one file
+## Families, one file
 
-`rows.yaml` carries two row families against two contracts (`CCV1-###` for
-custody-coordination.v1, `OSV1-###` for operator-surface.v1). Every tripwire
-below resolves per-family through `_support.FAMILIES` rather than against a
-single hardcoded contract -- so a row can never be checked against the wrong
-contract's bytes, and a family cannot be added without the tripwires reaching
-it.
+`rows.yaml` carries contract families (`CCV1-###` for historical
+custody-coordination.v1, stable `CCV2-###` ids for the non-governing public
+v3 projection, and `OSV1-###` for operator-surface.v1). Every
+tripwire below resolves per-family through `_support.FAMILIES` rather than
+against a single hardcoded contract -- so a row can never be checked against
+the wrong bytes, and a family cannot be added without the tripwires reaching it.
 """
 
 from __future__ import annotations

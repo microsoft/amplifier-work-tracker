@@ -94,8 +94,8 @@ human actually notices duplicate issues slipping through.
   intake lane) should be able to tell what happened to their report and why.
 
 For the full seam discipline and what `doctor` verifies before you rely on
-any of this, load the `work-tracker-operations` skill if you have doubts
-about the underlying guarantees.
+any of this, load `claiming-work-safely` and follow its linked operator
+reference if you have doubts about the underlying guarantees.
 
 ---
 

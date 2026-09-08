@@ -1,10 +1,8 @@
 """Amplifier tool module for amplifier-work-tracker.
 
-Exposes `work_claim`, `work_declare`, `work_resolve`, `work_release`,
-`work_status`, `work_stats`, `work_file`, `work_add`, `work_move`,
-`work_list`, `work_subscribe`, `work_unsubscribe`, and `work_subscriptions`
-as agent-callable tools, backed directly by `amplifier_work_tracker.adapter`
-/ `amplifier_work_tracker.custody`.
+Exposes the eleven-tool Work Tracker surface, including consolidated
+`work_query`, `work_item`, and `work_tracker` dispatch tools, backed directly
+by `amplifier_work_tracker.adapter` / `amplifier_work_tracker.custody`.
 This module contains no Beads knowledge of its own and shells out to nothing --
 all domain logic lives in the `amplifier_work_tracker` package it imports.
 
@@ -18,21 +16,15 @@ and clears `closed_at` (a real throughput cost, reported rather than
 hidden). Reach for `work_erratum` first; only use `work_reopen` when the
 underlying work is genuinely incomplete or wrong.
 
-`work_subscribe`/`work_unsubscribe`/`work_subscriptions` (amplifier-bxq) let a
-session opt a project's status IN to (or out of) a compact, cadence-gated
-reminder injected into its context by the separate `hooks-work-subscribe-
-reminder` hook module -- ready/held counts, whether this session holds
-anything, and whether that held item's custody is stale. `work_claim`
-auto-subscribes to whatever project it claims from (see `claim`'s
-`lane:gb-subscribe` note), so the common case needs no extra call. This tool
-module never injects anything itself: it only computes and exposes
+Successful `work_claim` calls auto-subscribe their project to a compact,
+cadence-gated reminder injected by the separate
+`hooks-work-subscribe-reminder` hook module. This tool module never injects
+anything itself: it only computes and exposes
 `WorkTrackerSession.reminder_snapshot` as the `work_tracker.reminder_snapshot`
 CAPABILITY (`coordinator.register_capability`, see `mount`), which the hook
-module reads. Subscriptions are session-scoped, in-memory only -- see
-`WorkTrackerSession.__init__`'s `lane:gb-subscribe` note for why that is an
-explicit design choice, not an oversight.
+module reads. Subscriptions remain session-scoped and in-memory only.
 
-`work_move` is the sanctioned way to migrate a work item from one project's
+`work_item(op="move")` is the sanctioned way to migrate a work item from one project's
 queue to another -- before it existed, there was no supported path for an
 agent (or a human, via the CLI's `move` counterpart) to do this at all. No
 held item required (unlike `work_file`/`work_resolve`/`work_release`); it
@@ -41,7 +33,8 @@ refusal/atomicity contract -- see that function's docstring for the full
 story on HELD-item safety, id preservation, and cross-project dependency
 handling.
 
-`work_list` is the read-only per-item view `work_status` deliberately does
+`work_query(kind="list")` is the read-only per-item view
+`work_query(kind="status")` deliberately does
 not provide (that tool reports project-level counts only). It exists because
 a real three-agent contention test surfaced a genuine gap: every agent could
 see `{held: 0, ready: 0}` after the queue drained, but none of them had a
@@ -51,11 +44,11 @@ resolution a closed item ended up with -- forcing a raw `bd list --all
 this bundle exists to make unnecessary. Strictly read-only: it never claims,
 mutates, or touches custody -- see `WorkTrackerSession.list_items`.
 
-`work_list`'s `item_id` parameter closes the OTHER read gap: until now,
+`work_query(kind="item")` closes the OTHER read gap: until now,
 `work_claim` was the ONLY thing that returned an item's `description` /
 `acceptance` / `design` -- so an agent that merely wanted to understand what
 an item was asking for had to take ownership of it first to find out. Pass
-`item_id` to `work_list` (or `--id` to the CLI's `list`) to read one item's
+`item_id` to `work_query` (or `--id` to the CLI's `list`) to read one item's
 full record instead, exactly like `work_claim`'s own directed-by-`item_id`
 mode (PR #4), but without claiming, mutating, or touching custody -- see
 `adapter.Beads.get_readonly`.
@@ -105,6 +98,7 @@ from __future__ import annotations
 import os
 import socket
 import threading
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -143,6 +137,49 @@ def _project_param(description: str, *, rule_first: bool = False) -> dict[str, s
     """
     text = f"{A.NAME_RULE} {description}" if rule_first else f"{description} {A.NAME_RULE}"
     return {"type": "string", "description": text}
+
+
+def _strict_input_schema(
+    properties: dict[str, dict[str, Any]], required: list[str]
+) -> dict[str, Any]:
+    """Express semantic optionality in the strict OpenAI tool-schema subset.
+
+    Strict schemas require every object property to be listed in ``required``.
+    Fields optional to this tool's semantics are consequently nullable on the
+    wire; dispatchers discard only ``None`` before applying their normal
+    operation-specific checks. Empty strings remain intentional text edits.
+    """
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+    }
+    return _make_schema_strict(deepcopy(schema))
+
+
+def _make_schema_strict(schema: dict[str, Any]) -> dict[str, Any]:
+    """Close every object and make semantic optional fields nullable in place."""
+    schema_type = schema.get("type")
+    if schema_type == "array" and isinstance(schema.get("items"), dict):
+        schema["items"] = _make_schema_strict(schema["items"])
+        return schema
+    if schema_type != "object":
+        return schema
+
+    properties = schema.get("properties", {})
+    semantic_required = set(schema.get("required", ()))
+    for name, property_schema in properties.items():
+        _make_schema_strict(property_schema)
+        if name in semantic_required:
+            continue
+        property_type = property_schema.get("type")
+        if isinstance(property_type, str):
+            property_schema["type"] = [property_type, "null"]
+            if "enum" in property_schema and None not in property_schema["enum"]:
+                property_schema["enum"].append(None)
+    schema["required"] = list(properties)
+    schema["additionalProperties"] = False
+    return schema
 
 
 def _summary_errored(summary: A.ProjectSummary) -> bool:
@@ -375,7 +412,7 @@ class WorkTrackerSession:
                 f"claim landed; custody could not be established; the compensating "
                 f"release ALSO FAILED -- {item_id} may STILL BE HELD by "
                 f"{self._actor!r} with no custody record. Re-read it "
-                f"(work_list item_id={item_id!r}) and release it explicitly before "
+                f"(work_query kind='item' item_id={item_id!r}) and release it explicitly before "
                 f"claiming again. custody failure: {cause}; release failure: "
                 f"{release_error}"
             )
@@ -1236,14 +1273,13 @@ class WorkClaimTool:
             "`claimed: null` = queue empty, a normal terminal outcome: stop "
             "and report, never retry or invent work (queue mode only; a "
             "directed claim refuses instead and names why). "
-            "DO NOT USE to read an item you will not work -- work_list."
+            "DO NOT USE to read an item you will not work -- work_query(kind=item)."
         )
 
     @property
     def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
+        return _strict_input_schema(
+            {
                 "project": _project_param("Named project to claim from."),
                 "item_id": {
                     "type": "string",
@@ -1255,8 +1291,8 @@ class WorkClaimTool:
                     ),
                 },
             },
-            "required": ["project"],
-        }
+            ["project"],
+        )
 
     @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
@@ -1288,17 +1324,16 @@ class WorkDeclareTool:
 
     @property
     def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
+        return _strict_input_schema(
+            {
                 "state": {
                     "type": "string",
                     "enum": list(C.VALID_STATES),
                     "description": "'working' or 'awaiting_human'.",
                 },
             },
-            "required": ["state"],
-        }
+            ["state"],
+        )
 
     @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
@@ -1330,17 +1365,16 @@ class WorkResolveTool:
 
     @property
     def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
+        return _strict_input_schema(
+            {
                 "id": {"type": "string", "description": "Item id this session holds."},
                 "reason": {
                     "type": "string",
                     "description": "User-readable resolution text.",
                 },
             },
-            "required": ["id", "reason"],
-        }
+            ["id", "reason"],
+        )
 
     @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
@@ -1372,9 +1406,8 @@ class WorkReopenTool:
 
     @property
     def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
+        return _strict_input_schema(
+            {
                 "project": _project_param("Project the item lives in."),
                 "item_id": {
                     "type": "string",
@@ -1398,8 +1431,8 @@ class WorkReopenTool:
                     ),
                 },
             },
-            "required": ["project", "item_id", "reason"],
-        }
+            ["project", "item_id", "reason"],
+        )
 
     @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
@@ -1428,15 +1461,15 @@ class WorkErratumTool:
             "actor, any time. A byte-identical erratum already recorded is an idempotent "
             "no-op. The 'errata' list and 'corrected' flag then travel with the item "
             "everywhere its resolution is shown. Refuses on a missing item, a not-resolved "
-            "item (work_edit is the remedy for an OPEN one) or empty text. DO NOT USE when "
+            "item (work_item(op=edit) is the remedy for an OPEN one) or empty text. "
+            "DO NOT USE when "
             "the WORK must be redone -- work_reopen, which clears closed_at."
         )
 
     @property
     def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
+        return _strict_input_schema(
+            {
                 "project": _project_param("Project the item lives in."),
                 "item_id": {
                     "type": "string",
@@ -1447,8 +1480,8 @@ class WorkErratumTool:
                     "description": "What's actually wrong about the stored resolution.",
                 },
             },
-            "required": ["project", "item_id", "text"],
-        }
+            ["project", "item_id", "text"],
+        )
 
     @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
@@ -1479,13 +1512,12 @@ class WorkReleaseTool:
 
     @property
     def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
+        return _strict_input_schema(
+            {
                 "id": {"type": "string", "description": "Item id this session holds."},
             },
-            "required": ["id"],
-        }
+            ["id"],
+        )
 
     @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
@@ -1578,16 +1610,15 @@ class WorkFileTool:
             "need acceptance criteria of its own to land in the queue. "
             "Requires this session to be holding an item (work_claim first). A "
             "reported write failure here does NOT prove nothing was written: "
-            "re-read with work_list before refiling, or a blind retry leaves a "
+            "re-read with work_query(kind=item) before refiling, or a blind retry leaves a "
             "duplicate. DO NOT USE with no item held, or to seed work you did "
             "not discover mid-fix -- work_add."
         )
 
     @property
     def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
+        return _strict_input_schema(
+            {
                 "title": {"type": "string", "description": "Short title for the new item."},
                 "description": {
                     "type": "string",
@@ -1598,8 +1629,8 @@ class WorkFileTool:
                     "description": "Given/When/Then acceptance criteria, if known.",
                 },
             },
-            "required": ["title"],
-        }
+            ["title"],
+        )
 
     @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
@@ -1626,16 +1657,16 @@ class WorkAddTool:
             "and never fall back to a raw storage-layer CLI for it. Applies the engineering "
             "lane label itself, so you never need the label vocabulary; the item is claimable "
             "via work_claim immediately. A reported write failure does NOT prove the write "
-            "failed -- re-read with work_list before retrying, or a blind retry duplicates an "
+            "failed -- re-read with work_query(kind=item) before retrying, or a blind retry "
+            "duplicates an "
             "item that already landed. DO NOT USE for a problem found while holding an item "
             "-- work_file, which links it."
         )
 
     @property
     def input_schema(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
+        return _strict_input_schema(
+            {
                 "project": _project_param("Named project to add the item to.", rule_first=True),
                 "title": {"type": "string", "description": "Short title for the new item."},
                 "description": {
@@ -1667,8 +1698,8 @@ class WorkAddTool:
                     },
                 },
             },
-            "required": ["project", "title"],
-        }
+            ["project", "title"],
+        )
 
     @guarded
     async def execute(self, input: dict[str, Any]) -> ToolResult:
@@ -2105,6 +2136,237 @@ class WorkSubscriptionsTool:
         return await self._session.subscriptions()
 
 
+def _missing_input(tool: str, fields: tuple[str, ...]) -> ToolResult:
+    names = ", ".join(fields)
+    return ToolResult(
+        success=False,
+        output=(
+            f"{tool} requires {names}; provide the required field(s) for the selected operation."
+        ),
+    )
+
+
+class WorkQueryTool:
+    """The mounted passive-query dispatcher.
+
+    The standalone tool classes remain available for library compatibility,
+    but are intentionally not mounted. Keeping this wrapper thin ensures the
+    established read-only session methods remain the one implementation of
+    query behavior.
+    """
+
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_query"
+
+    @property
+    def description(self) -> str:
+        return (
+            "USE WHEN you need a passive read: kind=status reports projects and your hold "
+            "(holding.custody_lost: a single failed renewal ends renewal permanently -- there "
+            "is no retry on the next tick); kind=stats reports one project. The TTL does not "
+            "enforce itself: an unrenewed hold is only reclaim-eligible, the out-of-band reap "
+            "sweep is what actually reclaims it, and a dead hold persists where no sweep runs. "
+            "kind=list lists items; kind=item reads a full record without claim, mutation, "
+            "custody, or a raw storage-layer CLI. stats, list, and item need project; item also "
+            "needs item_id. "
+            "DO NOT USE to claim or change an item."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return _strict_input_schema(
+            {
+                "kind": {
+                    "type": "string",
+                    "enum": ["status", "stats", "list", "item"],
+                    "description": "Passive query to run.",
+                },
+                "project": _project_param("Project for stats, list, or item."),
+                "item_id": {"type": "string", "description": "Item for kind=item."},
+                "status": {
+                    "type": "string",
+                    "enum": list(A.STATUSES),
+                    "description": "Optional status filter for kind=list.",
+                },
+                "limit": {"type": "integer", "description": "Optional result limit for kind=list."},
+            },
+            ["kind"],
+        )
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        kind = input.get("kind")
+        if kind not in {"status", "stats", "list", "item"}:
+            return ToolResult(
+                success=False,
+                output=f"work_query requires kind=status, stats, list, or item; received {kind!r}.",
+            )
+        if kind == "status":
+            return await self._session.status()
+        if "project" not in input:
+            return _missing_input("work_query", ("project",))
+        if kind == "stats":
+            return await self._session.stats(input["project"])
+        if kind == "list":
+            return await self._session.list_items(
+                input["project"], status=input.get("status"), limit=input.get("limit")
+            )
+        if "item_id" not in input:
+            return _missing_input("work_query(kind=item)", ("item_id",))
+        return await self._session.list_items(input["project"], item_id=input["item_id"])
+
+
+class WorkItemTool:
+    """The mounted item-administration dispatcher over existing session methods."""
+
+    def __init__(self, session: WorkTrackerSession):
+        self._session = session
+
+    @property
+    def name(self) -> str:
+        return "work_item"
+
+    @property
+    def description(self) -> str:
+        return (
+            "USE WHEN administering an item: op=move migrates it; op=edit amends or "
+            "supersedes an OPEN item; op=defer/op=block set a reasoned non-ready state; "
+            "op=dep displays or writes a dependency. Operations preserve existing fences, "
+            "audit trail, and readback. DO NOT USE to claim, resolve, or query."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return _strict_input_schema(
+            {
+                "op": {"type": "string", "enum": ["move", "edit", "defer", "block", "dep"]},
+                "project": _project_param("Project for edit, defer, block, or dep."),
+                "item_id": {"type": "string", "description": "Item to administer."},
+                "from_project": _project_param("Source project for op=move."),
+                "to_project": _project_param("Destination project for op=move.", rule_first=True),
+                "title": {"type": "string", "description": "Replacement title for op=edit."},
+                "description": {
+                    "type": "string",
+                    "description": "Replacement description for op=edit.",
+                },
+                "acceptance": {
+                    "type": "string",
+                    "description": "Replacement acceptance for op=edit.",
+                },
+                "design": {"type": "string", "description": "Replacement design for op=edit."},
+                "merge_into": {"type": "string", "description": "Replacement item for op=edit."},
+                "reason": {"type": "string", "description": "Reason for op=defer or op=block."},
+                "clear": {"type": "boolean", "description": "Clear op=defer or op=block."},
+                "depends_on": {"type": "string", "description": "Dependency to add for op=dep."},
+                "dep_type": {"type": "string", "description": "Dependency type for op=dep."},
+            },
+            ["op"],
+        )
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        op = input.get("op")
+        if op not in {"move", "edit", "defer", "block", "dep"}:
+            return ToolResult(
+                success=False,
+                output=f"work_item requires op=move, edit, defer, block, or dep; received {op!r}.",
+            )
+        required = (
+            ("item_id", "from_project", "to_project") if op == "move" else ("project", "item_id")
+        )
+        missing = tuple(field for field in required if field not in input)
+        if missing:
+            return _missing_input(f"work_item(op={op})", missing)
+        if op in {"defer", "block"} and not input.get("clear") and not input.get("reason"):
+            return _missing_input(f"work_item(op={op})", ("reason (unless clear=true)",))
+        if op == "move":
+            return await self._session.move(
+                input["item_id"], input["from_project"], input["to_project"]
+            )
+        if op == "edit":
+            return await self._session.edit(
+                input["project"],
+                input["item_id"],
+                title=input.get("title"),
+                description=input.get("description"),
+                acceptance=input.get("acceptance"),
+                design=input.get("design"),
+                merge_into=input.get("merge_into"),
+            )
+        if op == "defer":
+            return await self._session.defer(
+                input["project"],
+                input["item_id"],
+                reason=input.get("reason"),
+                clear=bool(input.get("clear", False)),
+            )
+        if op == "block":
+            return await self._session.block(
+                input["project"],
+                input["item_id"],
+                reason=input.get("reason"),
+                clear=bool(input.get("clear", False)),
+            )
+        return await self._session.dep(
+            input["project"],
+            input["item_id"],
+            depends_on=input.get("depends_on"),
+            dep_type=input.get("dep_type") or "blocks",
+        )
+
+
+class WorkTrackerTool:
+    """The mounted background-service dispatcher."""
+
+    def __init__(self, config: dict[str, Any] | None):
+        self._status = WorkTrackerStatusTool(config)
+        self._install = WorkTrackerInstallTool(config)
+
+    @property
+    def name(self) -> str:
+        return "work_tracker"
+
+    @property
+    def description(self) -> str:
+        return (
+            "USE FIRST when starting work-tracker or after a connection failure: op=status "
+            "reports prerequisites, the dolt service, sweeps, and the actionable fix. Use "
+            "op=install only when status says the service is missing or stopped; it is the "
+            "only operation here that changes system state. Never stop a running_healthy, "
+            "running_unmanaged, or running_systemd_unreachable server. DO NOT USE op=install "
+            "as a side effect of checking status."
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return _strict_input_schema(
+            {
+                "op": {
+                    "type": "string",
+                    "enum": ["status", "install"],
+                    "description": "Read status or explicitly install the background service.",
+                }
+            },
+            ["op"],
+        )
+
+    @guarded
+    async def execute(self, input: dict[str, Any]) -> ToolResult:
+        op = input.get("op")
+        if op == "status":
+            return await self._status.execute({})
+        if op == "install":
+            return await self._install.execute({})
+        return ToolResult(
+            success=False,
+            output=f"work_tracker requires op=status or install; received {op!r}.",
+        )
+
+
 async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Mount every work_* tool, sharing one WorkTrackerSession.
 
@@ -2130,21 +2392,11 @@ async def mount(coordinator: Any, config: dict[str, Any] | None = None) -> dict[
         WorkReopenTool(session),
         WorkErratumTool(session),
         WorkReleaseTool(session),
-        WorkStatusTool(session),
-        WorkStatsTool(session),
+        WorkQueryTool(session),
+        WorkItemTool(session),
+        WorkTrackerTool(config),
         WorkFileTool(session),
         WorkAddTool(session),
-        WorkMoveTool(session),
-        WorkEditTool(session),
-        WorkDeferTool(session),
-        WorkBlockTool(session),
-        WorkDepTool(session),
-        WorkListTool(session),
-        WorkSubscribeTool(session),
-        WorkUnsubscribeTool(session),
-        WorkSubscriptionsTool(session),
-        WorkTrackerStatusTool(config),
-        WorkTrackerInstallTool(config),
     ]
     for tool in tools:
         await coordinator.mount("tools", tool, name=tool.name)

@@ -39,7 +39,7 @@ was fixed, `work_claim` was the ONLY thing that returned an item's
 `acceptance` / `description` / `design` — so understanding an item meant
 taking ownership of it first, purely to look. If you just want to read one
 item's full record (e.g. to decide whether it's worth claiming, or to look
-at something you don't hold), call `work_list(project=<name>,
+at something you don't hold), call `work_query(kind="item", project=<name>,
 item_id=<id>)` — same body fields `work_claim` returns, but no claim, no
 mutation, no custody touched. Only call `work_claim` when you actually
 intend to do the work.
@@ -68,7 +68,8 @@ intend to do the work.
    context. A linked user report (if any) is color, never the spec.
 3. Work the item. Custody renews automatically in the background while your
    session process lives — but renewal is **one-strike**, and its failure
-   is silent. See "Renewal is one-strike" below: check `work_status`'s
+   is silent. See "Renewal is one-strike" below: check
+   `work_query(kind="status")`'s
    `holding.custody_lost` before any long-running step and after any tool
    error, rather than assuming the hold is still fresh.
 4. If you're about to go idle waiting on a human, call
@@ -105,7 +106,7 @@ you must plan for:
   after the last renewal at the defaults, not exactly 15.
 - Where no sweep runs, a dead agent's hold **persists indefinitely**. An
   item stuck in `held` is not evidence that its holder is alive, and
-  waiting will not free it; check `work_tracker_status` (which reports
+  waiting will not free it; check `work_tracker(op="status")` (which reports
   whether the service, and therefore the sweep, is running at all).
 
 ### Renewal is one-strike
@@ -121,7 +122,7 @@ holds the item. A plain, non-fenced failure — a transient bd/dolt command
 failure — does **not**: renewal has stopped, but the session still believes
 it holds the item, and nothing tells you.
 
-The one way to discover it is a passive check: `work_status` reports
+The one way to discover it is a passive check: `work_query(kind="status")` reports
 `holding.custody_lost`. Non-null means renewal stopped, and carries the
 reason. Check it:
 
@@ -197,15 +198,16 @@ incident, and the reason the read-back behaviour below exists. So:
   conflict they re-read the item and report success when the write did
   in fact land, and they verify their own success path by read-back
   too. A *reported success* from those two is independently confirmed.
-- Every other write verb (`work_add`, `work_edit`, `work_file`,
-  `work_defer`, `work_block`, `work_dep`, and the CLI equivalents)
+- Every other write verb (`work_add`, `work_item(op="edit")`, `work_file`,
+  `work_item(op="defer")`, `work_item(op="block")`, `work_item(op="dep")`,
+  and the CLI equivalents)
   still surfaces the raw conflict unverified. There, a reported failure
   means *unknown*, never *didn't happen*.
 
 The unsafe move is resubmitting blind: for a non-idempotent write
 (creating a new item) a blind retry can leave a duplicate of a write
 that already landed. The safe move is always the same: re-read the item
-first (`work_list`'s `item_id` form, or `get_readonly` — a read-only
+first (`work_query(kind="item")`, or `get_readonly` — a read-only
 path that cannot itself conflict) to see its real current state, then
 decide whether the original operation still needs doing.
 
@@ -228,7 +230,7 @@ correction had landed, and seven wrong resolutions shipped that way.
   all (any actor, any time). A byte-identical erratum already recorded
   is an idempotent no-op (`already_recorded: true`). The corrected
   item's `errata` list and `corrected: true` flag travel with it
-  everywhere the resolution is shown (`work_list`, the CLI, the web
+  everywhere the resolution is shown (`work_query(kind="item")`, the CLI, the web
   dashboard).
 - **The work itself must be redone**: `work_reopen(project, item_id,
   reason)` → `work_claim` → `work_resolve` with the corrected text.
@@ -260,12 +262,18 @@ currently doing.
 ## Never touch `bd` directly
 
 Every interaction with the queue goes through `work_claim`, `work_declare`,
-`work_resolve`, `work_status`, `work_file`, or (for CLI/operator use) the
+`work_resolve`, `work_query`, `work_item`, `work_file`, or (for CLI/operator use) the
 `amplifier-work-tracker` command. Never shell out to `bd` itself. Nothing
 else knows Beads' field names or CLI shape, and that seam is the entire
 reason a Beads upgrade fails loudly (via `doctor`) instead of silently
-corrupting parallel work — see the `work-tracker-operations` skill for what
-the seam covers and how to read a violation.
+corrupting parallel work.
 
 If no command here expresses what you actually need, that is a finding
 worth reporting, not a reason to go around the seam.
+
+## Operator reference (L3)
+
+For `doctor`, Beads-version changes, project/service setup, or scheduling
+`reap`/`notify`, read [the operator reference](references/operations.md).
+It is an on-demand Level 3 reference rather than a separately mounted skill;
+agents that only claim and work items do not pay its context cost.

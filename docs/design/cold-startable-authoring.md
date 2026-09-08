@@ -33,7 +33,7 @@ reads**, and that changes what "cold-startable" means: a cold session can be han
 context files mechanically, not by hoping a model notices a paragraph.
 
 **2. Reading an item no longer costs you ownership of it.**
-`Beads.get_readonly` / `work_list(item_id=...)` / `list --id` return the full body -- acceptance,
+`Beads.get_readonly` / `work_query(kind="item", item_id=...)` / `list --id` return the full body -- acceptance,
 description, design, bootstrap metadata -- with no claim, no mutation, no custody touched
 (proven by the `read.no_mutation` contract assumption). Previously `work_claim` was the only path
 that returned an item's body. The practical effect: **a session can now evaluate whether an item
@@ -54,7 +54,7 @@ ability to ask a follow-up question and get an answer in-flight. The item is the
 channel. Six things are load-bearing; everything else is a nicety.
 
 **1. A stop condition, not a task description.**
-One sentence naming a checkable end state. "Improve the summary path" is an activity; "`work_stats`
+One sentence naming a checkable end state. "Improve the summary path" is an activity; "`work_query(kind="stats")`
 returns a full per-status breakdown for one project in a single call" is a state you can stand in
 front of and test.
 
