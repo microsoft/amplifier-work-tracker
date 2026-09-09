@@ -51,8 +51,10 @@ import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import httpx
+if TYPE_CHECKING:
+    import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +250,8 @@ async def send_alarm(
         unconditionally when the operator has not opted in.
       - Enabled but no topic -> `AlarmConfigError` (loud): a configured-on but
         unusable alarm is itself an alarm-worthy condition.
+      - Enabled without the optional httpx dependency -> `AlarmConfigError`
+        with installation guidance; disabled alarms never import httpx.
       - 2xx -> `AlarmResult(delivered=True, ...)`.
       - Transient failure (network/timeout error, 429, or 5xx) -> retried up to
         `max_attempts` with exponential backoff.
@@ -267,6 +271,18 @@ async def send_alarm(
             f"ntfy alarm is enabled ({ENV_ENABLED}) but {ENV_TOPIC} is unset -- "
             "cannot send; set the topic in the environment"
         )
+
+    # httpx is part of the optional `web` extra. Keep it out of module import
+    # time so core CLI/service imports remain usable without that extra.
+    try:
+        import httpx
+    except ModuleNotFoundError as exc:
+        if exc.name != "httpx":
+            raise
+        raise AlarmConfigError(
+            "The ntfy alarm channel requires httpx; install the 'web' extra "
+            "(amplifier-work-tracker[web]) to enable it"
+        ) from exc
 
     attempts = max_attempts if max_attempts is not None else config.max_attempts
     attempts = max(1, attempts)

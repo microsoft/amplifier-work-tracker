@@ -96,10 +96,14 @@ sync and swallow-and-loud-log, which is correct inside the `asyncio.to_thread`
 reap-sweep worker (no running event loop there) and keeps one bad push from
 aborting the sweep for other projects.
 
-Dependency note: `httpx` is currently declared only under the `dev` extra in
-`pyproject.toml`. When this wiring ships, add `httpx>=0.27` to the runtime
-dependencies (either the base `dependencies` or the `web` extra, since the
-alarm is a service concern) so a non-dev install can import `webpush`.
+Dependency note: `httpx` is declared under the optional `web` extra in
+`pyproject.toml`, not the base runtime dependencies. `webpush` imports it
+lazily, so a core install can import the supervisor without the extra; an
+enabled alarm requires `amplifier-work-tracker[web]` (or an equivalent
+installation that provides `httpx`). With a topic configured but no `httpx`,
+`send_alarm()` raises `AlarmConfigError` with that installation hint. The
+supervisor's `fire_reclaim_alarm()` boundary logs the configuration error and
+returns non-delivery without aborting reclaim.
 
 ## Confirming on a REAL phone (PENDING-HUMAN)
 

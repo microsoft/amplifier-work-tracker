@@ -66,6 +66,12 @@ for the per-tier targets. **`modules/tool-work-tracker/tests/` is a separate
 package with its own suite and is NOT exercised by root CI** -- a green root
 CI run does not cover it; run it directly if you touch that module.
 
+The development environment installs `[web]`, so it can hide optional-dependency
+import leaks. Keep web-only imports behind their feature's enabled check. When
+changing that boundary, verify base CLI/service imports and disabled behavior
+without the optional dependency; an enabled but unavailable feature must fail
+with installation guidance. `test_webpush.py` pins this with a fresh subprocess.
+
 ## Tests run against an ISOLATED dolt server, never the shared one
 
 Both suites (`tests/conftest.py` and
