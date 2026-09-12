@@ -13,14 +13,114 @@ Test/function names all contain ``push`` so ``pytest -k push`` selects them.
 from __future__ import annotations
 
 import asyncio
+import builtins
 import logging
+import os
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import httpx
 import pytest
 
 from amplifier_work_tracker import custody as C
 from amplifier_work_tracker import webpush as W
+
+
+def test_push_import_does_not_require_optional_httpx_extra():
+    """Core imports and disabled alarms work; enabled alarms fail actionably."""
+    src_dir = Path(__file__).parents[2] / "src"
+    script = """
+import sys
+
+
+class _BlockHttpx:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "httpx" or fullname.startswith("httpx."):
+            raise ModuleNotFoundError(
+                "httpx blocked for optional-dependency test", name="httpx"
+            )
+        return None
+
+
+sys.meta_path.insert(0, _BlockHttpx())
+import amplifier_work_tracker.supervisor  # noqa: E402
+import amplifier_work_tracker.cli  # noqa: E402
+assert "httpx" not in sys.modules
+
+import asyncio  # noqa: E402
+from amplifier_work_tracker import webpush  # noqa: E402
+
+disabled = webpush.NtfyConfig(
+    server="https://ntfy.example", topic="", token=None, enabled=False,
+)
+result = asyncio.run(webpush.send_alarm("title", "message", config=disabled))
+assert result.disabled and not result.delivered and result.attempts == 0
+assert "httpx" not in sys.modules
+
+missing_topic = webpush.NtfyConfig(
+    server="https://ntfy.example", topic="", token=None, enabled=True,
+)
+try:
+    asyncio.run(webpush.send_alarm("title", "message", config=missing_topic))
+except webpush.AlarmConfigError as exc:
+    assert "NTFY_TOPIC is unset" in str(exc)
+else:
+    raise AssertionError("enabled alarm unexpectedly worked without a topic")
+
+config = webpush.NtfyConfig(
+    server="https://ntfy.example",
+    topic="topic",
+    token=None,
+    enabled=True,
+)
+try:
+    asyncio.run(webpush.send_alarm("title", "message", config=config))
+except webpush.AlarmConfigError as exc:
+    assert "requires httpx" in str(exc)
+    assert "amplifier-work-tracker[web]" in str(exc)
+else:
+    raise AssertionError("enabled alarm unexpectedly worked without httpx")
+
+# A push configuration failure must be loud but must not abort reclaim.
+result = webpush.fire_reclaim_alarm("wt-1", "worker", "expired", config=config)
+assert not result.delivered and result.attempts == 0
+assert "requires httpx" in result.error
+assert "httpx" not in sys.modules
+"""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(src_dir), env.get("PYTHONPATH")) if part
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=src_dir.parent,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ntfy alarm misconfigured" in result.stderr
+    assert "unexpected failure" not in result.stderr
+
+
+def test_push_broken_httpx_dependency_is_not_misreported(monkeypatch):
+    """An installed httpx with a broken dependency is not a missing web extra."""
+    real_import = builtins.__import__
+
+    def broken_import(name, *args, **kwargs):
+        if name == "httpx":
+            raise ModuleNotFoundError("No module named 'httpcore'", name="httpcore")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", broken_import)
+    with pytest.raises(ModuleNotFoundError) as error:
+        asyncio.run(W.send_alarm("title", "message", config=_enabled_config()))
+    assert error.value.name == "httpcore"
+
 
 # --------------------------------------------------------------------------- #
 # helpers                                                                      #
