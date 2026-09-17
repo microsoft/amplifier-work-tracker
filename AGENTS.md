@@ -71,6 +71,12 @@ the run is committed at
 
 ## Test scope
 
+The browser tier intentionally refreshes its tracked `LAST_RUN.json`; preserve
+and review that new measurement rather than discarding it to satisfy a source
+hash check. Its Linux/aarch64 fixture uses direct Chromium child startup because
+the pinned shell's zygotes can crash before rendering; the browser pin and all
+rendered assertions remain unchanged.
+
 Root CI (`.github/workflows/ci.yml`) runs `tests/unit`, `tests/integration`
 (marker `integration`), and `tests/cli` (marker `cli`) -- see the Makefile
 for the per-tier targets. **`modules/tool-work-tracker/tests/` is a separate
