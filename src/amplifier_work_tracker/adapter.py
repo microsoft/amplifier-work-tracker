@@ -5015,6 +5015,65 @@ class RenameReport:
     old_database_dropped: bool
 
 
+@dataclass
+class RepairReport:
+    """What ``Workspace.repair_registration`` actually did (or would do in
+    dry-run mode).  Every field is set whether or not ``applied`` is True, so
+    the caller can inspect the diagnosis even when no mutation happened.
+
+    ``backup_path`` is None in dry-run or when the apply failed before the
+    backup was created.  ``rolled_back`` is True only when an apply was
+    attempted, the post-check failed, and the original bytes were restored.
+    """
+
+    name: str
+    applied: bool
+    dry_run: bool
+    old_local_id: str
+    new_local_id: str
+    server_id: str
+    witness_item_id: str
+    witness_title: str | None
+    backup_path: Path | None = None
+    rolled_back: bool = False
+
+
+def _server_project_id(db_name: str) -> str | None:
+    """Read the ``_project_id`` from the ``metadata`` table of *db_name* on
+    the shared dolt server, returning ``None`` when no such row exists.
+
+    This is a READ-ONLY query through the existing SQL adapter seam -- it
+    never writes to the server.
+    """
+    p = _dolt_sql(f"SELECT value FROM `{db_name}`.metadata WHERE `key`='_project_id'")
+    if p.returncode != 0:
+        raise BeadsError(
+            f"could not read server _project_id for database {db_name!r}: "
+            f"{_clean_bd_error(p.stderr or p.stdout)}"
+        )
+    rows = [ln for ln in (p.stdout or "").splitlines() if ln.strip()][1:]
+    if not rows:
+        return None
+    return rows[0].strip()
+
+
+def _read_beads_metadata(beads_dir: Path) -> dict:
+    """Read and return the parsed contents of ``.beads/metadata.json``."""
+    meta_path = beads_dir / "metadata.json"
+    try:
+        return json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise BeadsError(f"could not read bd metadata at {meta_path}: {e}") from e
+
+
+def _validate_uuid(value: str, label: str) -> None:
+    """Raise ``BeadsError`` if *value* is not a valid UUID."""
+    try:
+        uuid.UUID(value)
+    except (ValueError, AttributeError) as e:
+        raise BeadsError(f"{label} is not a valid UUID: {value!r}") from e
+
+
 def _read_lock_pid(lock: Path) -> int | None:
     """The pid recorded in a `.create.lock` file, or None if it cannot be
     read as one (missing, empty, non-numeric) -- treated as dead by
@@ -5255,7 +5314,15 @@ class Workspace:
                     timeout=_GIT_TIMEOUT_SECONDS,
                 )
             _disable_telemetry_once()  # see docstring -- BD_NON_INTERACTIVE alone does not do this
-            init_args = ["bd", "init", "--prefix", name, *_bd_init_server_args()]
+            init_args = [
+                "bd",
+                "init",
+                "--prefix",
+                name,
+                "--database",
+                name,
+                *_bd_init_server_args(),
+            ]
             p = _run_bounded(init_args, cwd=d, env=_bd_env(), timeout=_BD_INIT_TIMEOUT_SECONDS)
             if p.returncode != 0:
                 blob = p.stderr or p.stdout or ""
@@ -5519,6 +5586,253 @@ class Workspace:
             item_count=item_count,
             old_database_dropped=old_database_dropped,
         )
+
+    def repair_registration(
+        self,
+        name: str,
+        *,
+        host: str,
+        port: int,
+        expected_local_id: str,
+        expected_server_id: str,
+        witness_item_id: str,
+        witness_title: str | None = None,
+        apply: bool = False,
+    ) -> RepairReport:
+        """Repair a stale local ``project_id`` in ``.beads/metadata.json`` so
+        it matches the server's authoritative ``_project_id``.
+
+        **Default is dry-run** -- ``apply=True`` must be passed explicitly to
+        write.  Every precondition is checked before any mutation; the full
+        diagnosis is returned in the ``RepairReport`` regardless.
+
+        Preconditions (all checked before any mutation):
+          - ``name`` passes ``NAME_RE``.
+          - ``expected_local_id`` and ``expected_server_id`` are valid UUIDs.
+          - A ``.beads/metadata.json`` exists at ``self.path(name)/.beads``
+            and is readable JSON.
+          - The metadata's ``project_id`` equals ``expected_local_id`` (the
+            known-stale value).
+          - The metadata's endpoint (``dolt_server_host``, ``dolt_server_port``)
+            matches ``host``/``port``.
+          - The database ``name`` exists on the server.
+          - The server's ``_project_id`` equals ``expected_server_id``.
+          - ``witness_item_id`` exists as an issue in the database (queried
+            through the read-only SQL seam).
+          - If ``witness_title`` is supplied, it must match the witness item's
+            actual title.
+          - No symlink escape: ``.beads`` and ``metadata.json`` are not
+            symlinks.
+          - No concurrent creation lock on this project.
+
+        On apply:
+          1. Acquire a ``.repair.lock`` (same PID-file pattern as
+             ``.create.lock``).
+          2. Atomically back up the original ``metadata.json`` to a
+             timestamped path (exclusive -- never overwrites).
+          3. Replace ONLY ``project_id``, preserving every other field and
+             file permissions.
+          4. Re-read local bytes, server identity and witness as a post-check.
+          5. Roll back (restore backup) if the post-check fails.
+        """
+        # ---- input validation ----
+        if not NAME_RE.match(name):
+            raise BeadsError(invalid_project_name_error(name, label="project name"))
+
+        _validate_uuid(expected_local_id, "expected_local_id")
+        _validate_uuid(expected_server_id, "expected_server_id")
+
+        beads_dir = self.path(name) / ".beads"
+        meta_path = beads_dir / "metadata.json"
+
+        # refuse symlink escape
+        if beads_dir.is_symlink():
+            raise BeadsError(
+                f"refusing repair: {beads_dir} is a symlink -- cannot safely "
+                f"write metadata through a symlink"
+            )
+        if meta_path.exists() and meta_path.is_symlink():
+            raise BeadsError(
+                f"refusing repair: {meta_path} is a symlink -- cannot safely "
+                f"write metadata through a symlink"
+            )
+
+        if not meta_path.is_file():
+            raise BeadsError(
+                f"project {name!r} has no metadata at {meta_path} -- nothing to repair"
+            )
+
+        meta = _read_beads_metadata(beads_dir)
+
+        # ---- local identity check ----
+        local_id = meta.get("project_id")
+        if local_id != expected_local_id:
+            raise BeadsError(
+                f"local project_id mismatch: expected {expected_local_id!r} "
+                f"(the known-stale value) but found {local_id!r}. Refusing -- "
+                f"verify you are targeting the correct project and client."
+            )
+
+        # ---- endpoint check ----
+        meta_host = meta.get("dolt_server_host")
+        meta_port = meta.get("dolt_server_port")
+        if meta_host != host or meta_port != port:
+            raise BeadsError(
+                f"endpoint mismatch: metadata says {meta_host}:{meta_port} "
+                f"but repair targets {host}:{port}. Refusing -- the metadata "
+                f"must point at the server you intend to align with."
+            )
+
+        # ---- server identity check ----
+        if not database_exists(name):
+            raise BeadsError(
+                f"database {name!r} does not exist on the server at "
+                f"{host}:{port} -- nothing to align with"
+            )
+
+        server_id = _server_project_id(name)
+        if server_id is None:
+            raise BeadsError(
+                f"database {name!r} has no _project_id in its metadata table "
+                f"-- cannot determine authoritative identity"
+            )
+        if server_id != expected_server_id:
+            raise BeadsError(
+                f"server _project_id mismatch: expected {expected_server_id!r} "
+                f"but server reports {server_id!r}. Refusing -- verify the "
+                f"correct server identity before retrying."
+            )
+
+        # ---- witness check ----
+        witness_q = (
+            f"SELECT id, title FROM `{name}`.issues WHERE id='{_sql_literal(witness_item_id)}'"
+        )
+        wp = _dolt_sql_json(witness_q)
+        if wp.returncode != 0:
+            raise BeadsError(
+                f"could not query witness item {witness_item_id!r} in "
+                f"database {name!r}: {_clean_bd_error(wp.stderr or wp.stdout)}"
+            )
+        try:
+            witness_rows = json.loads(wp.stdout or "{}").get("rows", [])
+        except json.JSONDecodeError:
+            witness_rows = []
+
+        if not witness_rows:
+            raise BeadsError(
+                f"witness item {witness_item_id!r} not found in database "
+                f"{name!r} -- cannot corroborate identity"
+            )
+        actual_title = witness_rows[0].get("title")
+        if witness_title is not None and actual_title != witness_title:
+            raise BeadsError(
+                f"witness title mismatch: expected {witness_title!r} but "
+                f"found {actual_title!r}. Refusing -- the witness must "
+                f"corroborate the database identity."
+            )
+
+        # ---- concurrent lock check ----
+        create_lock = self.path(name) / ".create.lock"
+        if create_lock.exists() and _pid_alive(_read_lock_pid(create_lock)):
+            raise BeadsError(
+                f"project {name!r} has an active creation lock -- refusing concurrent repair"
+            )
+
+        if not apply:
+            return RepairReport(
+                name=name,
+                applied=False,
+                dry_run=True,
+                old_local_id=expected_local_id,
+                new_local_id=expected_server_id,
+                server_id=server_id,
+                witness_item_id=witness_item_id,
+                witness_title=actual_title,
+            )
+
+        # ---- apply: acquire repair lock ----
+        repair_lock = self.path(name) / ".repair.lock"
+        try:
+            fd = os.open(str(repair_lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+        except FileExistsError as e:
+            lock_pid = _read_lock_pid(repair_lock)
+            if _pid_alive(lock_pid):
+                raise BeadsError(
+                    f"project {name!r} has an active repair lock (pid {lock_pid}) "
+                    f"-- refusing concurrent repair"
+                ) from e
+            # Dead lock -- safe to heal and proceed
+            repair_lock.unlink(missing_ok=True)
+            fd = os.open(str(repair_lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+
+        try:
+            # ---- backup ----
+            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            backup_path = beads_dir / f"metadata.json.backup-{ts}"
+            if backup_path.exists():
+                raise BeadsError(
+                    f"backup path {backup_path} already exists -- refusing "
+                    f"to overwrite (was a repair already run this second?)"
+                )
+            original_bytes = meta_path.read_bytes()
+            # exclusive create -- no overwriting
+            bfd = os.open(str(backup_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(bfd, original_bytes)
+            os.close(bfd)
+
+            # ---- mutate: replace ONLY project_id ----
+            meta["project_id"] = expected_server_id
+            meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+            # ---- post-check ----
+            post_meta = _read_beads_metadata(beads_dir)
+            post_local_id = post_meta.get("project_id")
+            post_server_id = _server_project_id(name)
+
+            # Re-check witness still accessible
+            post_wp = _dolt_sql_json(witness_q)
+            try:
+                post_witness = json.loads(post_wp.stdout or "{}").get("rows", [])
+            except json.JSONDecodeError:
+                post_witness = []
+
+            if (
+                post_local_id != expected_server_id
+                or post_server_id != expected_server_id
+                or not post_witness
+            ):
+                # ---- rollback ----
+                meta_path.write_bytes(original_bytes)
+                return RepairReport(
+                    name=name,
+                    applied=False,
+                    dry_run=False,
+                    old_local_id=expected_local_id,
+                    new_local_id=expected_server_id,
+                    server_id=server_id,
+                    witness_item_id=witness_item_id,
+                    witness_title=actual_title,
+                    backup_path=backup_path,
+                    rolled_back=True,
+                )
+
+            return RepairReport(
+                name=name,
+                applied=True,
+                dry_run=False,
+                old_local_id=expected_local_id,
+                new_local_id=expected_server_id,
+                server_id=server_id,
+                witness_item_id=witness_item_id,
+                witness_title=actual_title,
+                backup_path=backup_path,
+            )
+        finally:
+            repair_lock.unlink(missing_ok=True)
 
     def move_item(self, src: str, dst: str, item_id: str) -> MoveReport:
         """Move one item from project `src` to project `dst` -- the

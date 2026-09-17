@@ -582,6 +582,50 @@ def cmd_rename(a):
     )
 
 
+def cmd_repair_registration(a):
+    """Repair a stale local project_id so it matches the server's authoritative
+    identity.  Default is DRY RUN -- pass ``--apply`` to actually write.
+
+    Operator-only, like ``remove``/``rename``: this rewrites the local
+    ``.beads/metadata.json`` so that a client whose ``project_id`` drifted
+    (e.g. from a ``bd init`` that generated a new identity instead of adopting
+    the existing one) is re-aligned with the shared server.  The server
+    identity is never modified.
+
+    All six guard inputs (``--name``, ``--host``, ``--port``,
+    ``--expected-local-id``, ``--expected-server-id``, ``--witness-item``)
+    are mandatory so the operator demonstrates knowledge of both the stale
+    and correct state before any mutation.
+    """
+    _guard()
+    try:
+        report = _ws(a).repair_registration(
+            a.name,
+            host=a.host,
+            port=a.port,
+            expected_local_id=a.expected_local_id,
+            expected_server_id=a.expected_server_id,
+            witness_item_id=a.witness_item,
+            witness_title=a.witness_title,
+            apply=a.apply,
+        )
+    except A.BeadsError as e:
+        die(str(e))
+    result = {
+        "project": report.name,
+        "dry_run": report.dry_run,
+        "applied": report.applied,
+        "rolled_back": report.rolled_back,
+        "old_local_id": report.old_local_id,
+        "new_local_id": report.new_local_id,
+        "server_id": report.server_id,
+        "witness_item_id": report.witness_item_id,
+        "witness_title": report.witness_title,
+        "backup_path": str(report.backup_path) if report.backup_path else None,
+    }
+    print(json.dumps(result, indent=2))
+
+
 def cmd_move(a):
     """Move one item from project `--from` to project `--to`, preserving its
     id -- the single-item counterpart to `rename`/`remove`'s whole-project
@@ -1817,6 +1861,44 @@ def main():
     p.add_argument("old", help=f"current {_PROJECT_NAME_HELP}")
     p.add_argument("new", help=f"new {_PROJECT_NAME_HELP}")
     p.set_defaults(fn=cmd_rename)
+
+    p = sub.add_parser(
+        "repair-registration",
+        help=(
+            "repair a stale local project_id to match the server's authoritative "
+            "identity (DRY RUN by default; --apply is mandatory to write)"
+        ),
+        parents=[root_parent],
+    )
+    p.add_argument("name", help=_PROJECT_NAME_HELP)
+    p.add_argument("--host", required=True, help="dolt server host to align with")
+    p.add_argument("--port", required=True, type=int, help="dolt server port to align with")
+    p.add_argument(
+        "--expected-local-id",
+        required=True,
+        help="the STALE local project_id (UUID) currently in metadata.json",
+    )
+    p.add_argument(
+        "--expected-server-id",
+        required=True,
+        help="the CORRECT server _project_id (UUID) to adopt",
+    )
+    p.add_argument(
+        "--witness-item",
+        required=True,
+        help="an item id known to exist in the database, for corroboration",
+    )
+    p.add_argument(
+        "--witness-title",
+        default=None,
+        help="optional: expected title of the witness item (extra corroboration)",
+    )
+    p.add_argument(
+        "--apply",
+        action="store_true",
+        help="actually write the repaired metadata (without this flag, dry-run only)",
+    )
+    p.set_defaults(fn=cmd_repair_registration)
 
     p = sub.add_parser(
         "move",
