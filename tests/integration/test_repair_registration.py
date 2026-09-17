@@ -312,13 +312,14 @@ def test_refuses_symlink_beads_dir(repair_project):
 
 
 def test_refuses_concurrent_repair_lock(repair_project):
-    """If a ``.repair.lock`` exists with a live PID, the repair is refused."""
+    """If a ``.repair.lock`` exists (any PID), the repair is refused --
+    conservative: no dead-lock healing."""
     p = repair_project
     lock_path = p["workspace"].path(p["name"]) / ".repair.lock"
     # Write our own PID -- guaranteed alive.
     lock_path.write_text(str(os.getpid()))
     try:
-        with pytest.raises(A.BeadsError, match="active repair lock"):
+        with pytest.raises(A.BeadsError, match="existing repair lock"):
             p["workspace"].repair_registration(
                 p["name"],
                 host=p["host"],
@@ -332,24 +333,24 @@ def test_refuses_concurrent_repair_lock(repair_project):
         lock_path.unlink(missing_ok=True)
 
 
-def test_heals_dead_repair_lock(repair_project):
-    """A ``.repair.lock`` with a dead PID is healed and the repair
-    proceeds."""
+def test_refuses_dead_repair_lock(repair_project):
+    """A ``.repair.lock`` with a dead PID is also refused -- no dead-lock
+    healing (conservative: operator must remove stale locks manually)."""
     p = repair_project
     lock_path = p["workspace"].path(p["name"]) / ".repair.lock"
     # PID 2^30 is almost certainly dead.
     lock_path.write_text(str(2**30))
     try:
-        report = p["workspace"].repair_registration(
-            p["name"],
-            host=p["host"],
-            port=p["port"],
-            expected_local_id=p["stale_id"],
-            expected_server_id=p["server_id"],
-            witness_item_id=p["item_id"],
-            apply=True,
-        )
-        assert report.applied is True
+        with pytest.raises(A.BeadsError, match="existing repair lock"):
+            p["workspace"].repair_registration(
+                p["name"],
+                host=p["host"],
+                port=p["port"],
+                expected_local_id=p["stale_id"],
+                expected_server_id=p["server_id"],
+                witness_item_id=p["item_id"],
+                apply=True,
+            )
     finally:
         lock_path.unlink(missing_ok=True)
 
@@ -387,4 +388,198 @@ def test_refuses_invalid_project_name(workspace):
             expected_local_id=str(uuid.uuid4()),
             expected_server_id=str(uuid.uuid4()),
             witness_item_id="x",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: Effective endpoint binding
+# ---------------------------------------------------------------------------
+
+
+def test_refuses_effective_endpoint_mismatch(repair_project):
+    """Supplied host:port matches metadata but differs from the actual SQL
+    endpoint (supervisor defaults) -- repair must refuse.
+
+    Regression: without this guard, a caller could supply an endpoint that
+    passes the metadata check but routes reads through a different server,
+    silently writing an identity that disagrees with what future reads see.
+    """
+    p = repair_project
+    meta = json.loads(p["meta_path"].read_text(encoding="utf-8"))
+
+    # Corrupt metadata to point at a fake endpoint that we'll also supply.
+    fake_host = "fake.endpoint.test"
+    fake_port = 12345
+    meta["dolt_server_host"] = fake_host
+    meta["dolt_server_port"] = fake_port
+    p["meta_path"].write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    with pytest.raises(A.BeadsError, match="does not match the actual SQL endpoint"):
+        p["workspace"].repair_registration(
+            p["name"],
+            host=fake_host,
+            port=fake_port,
+            expected_local_id=p["stale_id"],
+            expected_server_id=p["server_id"],
+            witness_item_id=p["item_id"],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: Database mapping guard
+# ---------------------------------------------------------------------------
+
+
+def test_refuses_database_mapping_mismatch(repair_project):
+    """Metadata ``dolt_database`` doesn't match the project name --
+    repair must refuse.
+
+    Regression: without this guard, a corrupted dolt_database field could
+    cause subsequent reads to target the wrong database on the server.
+    """
+    p = repair_project
+    meta = json.loads(p["meta_path"].read_text(encoding="utf-8"))
+
+    # Corrupt dolt_database to differ from the project name.
+    meta["dolt_database"] = "wrong_database_name"
+    p["meta_path"].write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    with pytest.raises(A.BeadsError, match="database mapping mismatch"):
+        p["workspace"].repair_registration(
+            p["name"],
+            host=p["host"],
+            port=p["port"],
+            expected_local_id=p["stale_id"],
+            expected_server_id=p["server_id"],
+            witness_item_id=p["item_id"],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Fix 3: Atomic and guarded local replacement
+# ---------------------------------------------------------------------------
+
+
+def test_refuses_invalid_host(workspace):
+    """Empty or non-string host is rejected at input validation."""
+    with pytest.raises(A.BeadsError, match="host must be a non-empty string"):
+        workspace.repair_registration(
+            "anyproject",
+            host="",
+            port=3306,
+            expected_local_id=str(uuid.uuid4()),
+            expected_server_id=str(uuid.uuid4()),
+            witness_item_id="x",
+        )
+
+
+def test_refuses_invalid_port(workspace):
+    """Port outside 1-65535 is rejected at input validation."""
+    with pytest.raises(A.BeadsError, match="port must be in range"):
+        workspace.repair_registration(
+            "anyproject",
+            host="localhost",
+            port=0,
+            expected_local_id=str(uuid.uuid4()),
+            expected_server_id=str(uuid.uuid4()),
+            witness_item_id="x",
+        )
+
+
+def test_refuses_symlinked_repair_lock(repair_project):
+    """A symlinked ``.repair.lock`` is refused (symlink escape guard)."""
+    p = repair_project
+    proj_dir = p["workspace"].path(p["name"])
+    lock_path = proj_dir / ".repair.lock"
+    # Create a symlink pointing at a harmless target.
+    target = proj_dir / ".repair.lock.target"
+    target.write_text(str(os.getpid()))
+    lock_path.symlink_to(target)
+    try:
+        with pytest.raises(A.BeadsError, match="symlinked repair lock"):
+            p["workspace"].repair_registration(
+                p["name"],
+                host=p["host"],
+                port=p["port"],
+                expected_local_id=p["stale_id"],
+                expected_server_id=p["server_id"],
+                witness_item_id=p["item_id"],
+                apply=True,
+            )
+    finally:
+        lock_path.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
+
+
+def test_refuses_any_create_lock(repair_project):
+    """ANY ``.create.lock`` (even with a dead PID) causes refusal --
+    conservative: operator must remove stale creation locks manually."""
+    p = repair_project
+    lock_path = p["workspace"].path(p["name"]) / ".create.lock"
+    # Dead PID -- previously would have been ignored.
+    lock_path.write_text(str(2**30))
+    try:
+        with pytest.raises(A.BeadsError, match="creation lock"):
+            p["workspace"].repair_registration(
+                p["name"],
+                host=p["host"],
+                port=p["port"],
+                expected_local_id=p["stale_id"],
+                expected_server_id=p["server_id"],
+                witness_item_id=p["item_id"],
+                apply=True,
+            )
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+
+def test_atomic_write_preserves_permissions(repair_project):
+    """After a successful apply, the metadata file retains its original
+    Unix permissions (mode bits)."""
+    p = repair_project
+    meta_path = p["meta_path"]
+
+    # Set a distinctive mode before repair.
+    os.chmod(str(meta_path), 0o644)
+    mode_before = os.stat(str(meta_path)).st_mode & 0o7777
+
+    report = p["workspace"].repair_registration(
+        p["name"],
+        host=p["host"],
+        port=p["port"],
+        expected_local_id=p["stale_id"],
+        expected_server_id=p["server_id"],
+        witness_item_id=p["item_id"],
+        apply=True,
+    )
+    assert report.applied is True
+
+    mode_after = os.stat(str(meta_path)).st_mode & 0o7777
+    assert mode_after == mode_before, (
+        f"file permissions changed: {oct(mode_before)} -> {oct(mode_after)}"
+    )
+
+
+def test_apply_preserves_all_metadata_fields(repair_project):
+    """Apply must change ONLY ``project_id`` and preserve every other
+    field in ``metadata.json`` byte-for-byte (modulo JSON re-serialisation)."""
+    p = repair_project
+    meta_before = json.loads(p["meta_path"].read_text(encoding="utf-8"))
+    preserved_keys = [k for k in meta_before if k != "project_id"]
+
+    report = p["workspace"].repair_registration(
+        p["name"],
+        host=p["host"],
+        port=p["port"],
+        expected_local_id=p["stale_id"],
+        expected_server_id=p["server_id"],
+        witness_item_id=p["item_id"],
+        apply=True,
+    )
+    assert report.applied is True
+
+    meta_after = json.loads(p["meta_path"].read_text(encoding="utf-8"))
+    for key in preserved_keys:
+        assert meta_after[key] == meta_before[key], (
+            f"field {key!r} was mutated: {meta_before[key]!r} -> {meta_after[key]!r}"
         )

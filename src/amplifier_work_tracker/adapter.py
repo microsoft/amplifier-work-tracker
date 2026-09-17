@@ -5066,12 +5066,52 @@ def _read_beads_metadata(beads_dir: Path) -> dict:
         raise BeadsError(f"could not read bd metadata at {meta_path}: {e}") from e
 
 
+def _atomic_write_metadata(meta_path: Path, data: bytes, *, mode: int) -> None:
+    """Atomically replace *meta_path* with *data* via same-directory tempfile,
+    fsync, and ``os.replace``.  *mode* is applied before the rename so the
+    replacement preserves the original file's permissions.
+
+    A crash at any point before ``os.replace`` completes leaves the original
+    file intact; a crash during or after leaves the new content in place.
+    """
+    parent = str(meta_path.parent)
+    fd, tmp_name = tempfile.mkstemp(dir=parent, prefix=".metadata.", suffix=".tmp")
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.chmod(tmp_name, mode)
+        os.replace(tmp_name, str(meta_path))
+    except BaseException:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 def _validate_uuid(value: str, label: str) -> None:
     """Raise ``BeadsError`` if *value* is not a valid UUID."""
     try:
         uuid.UUID(value)
     except (ValueError, AttributeError) as e:
         raise BeadsError(f"{label} is not a valid UUID: {value!r}") from e
+
+
+def _validate_host_port(host: str, port: int) -> None:
+    """Raise ``BeadsError`` if *host* or *port* are invalid."""
+    if not isinstance(host, str) or not host.strip():
+        raise BeadsError(f"host must be a non-empty string, got {host!r}")
+    if isinstance(port, bool) or not isinstance(port, int):
+        raise BeadsError(f"port must be an integer, got {type(port).__name__}: {port!r}")
+    if not (1 <= port <= 65535):
+        raise BeadsError(f"port must be in range 1-65535, got {port}")
 
 
 def _read_lock_pid(lock: Path) -> int | None:
@@ -5641,6 +5681,7 @@ class Workspace:
 
         _validate_uuid(expected_local_id, "expected_local_id")
         _validate_uuid(expected_server_id, "expected_server_id")
+        _validate_host_port(host, port)
 
         beads_dir = self.path(name) / ".beads"
         meta_path = beads_dir / "metadata.json"
@@ -5662,7 +5703,12 @@ class Workspace:
                 f"project {name!r} has no metadata at {meta_path} -- nothing to repair"
             )
 
-        meta = _read_beads_metadata(beads_dir)
+        original_bytes = meta_path.read_bytes()
+        original_mode = meta_path.stat().st_mode & 0o7777
+        try:
+            meta = json.loads(original_bytes.decode("utf-8"))
+        except json.JSONDecodeError as e:
+            raise BeadsError(f"could not parse metadata at {meta_path}: {e}") from e
 
         # ---- local identity check ----
         local_id = meta.get("project_id")
@@ -5681,6 +5727,29 @@ class Workspace:
                 f"endpoint mismatch: metadata says {meta_host}:{meta_port} "
                 f"but repair targets {host}:{port}. Refusing -- the metadata "
                 f"must point at the server you intend to align with."
+            )
+
+        # ---- effective endpoint binding ----
+        from . import supervisor as SV
+
+        effective_host = SV.DEFAULT_DOLT_HOST
+        effective_port = SV.DEFAULT_DOLT_PORT
+        if host != effective_host or port != effective_port:
+            raise BeadsError(
+                f"supplied endpoint {host}:{port} does not match the actual "
+                f"SQL endpoint {effective_host}:{effective_port} that reads "
+                f"route through. Configure AMPLIFIER_WORK_TRACKER_DOLT_HOST/"
+                f"PORT to match, or supply the effective endpoint."
+            )
+
+        # ---- database mapping guard ----
+        meta_database = meta.get("dolt_database")
+        if meta_database != name:
+            raise BeadsError(
+                f"database mapping mismatch: metadata dolt_database="
+                f"{meta_database!r} but repair targets project {name!r}. "
+                f"Refusing -- the metadata must map to the database you "
+                f"intend to align with."
             )
 
         # ---- server identity check ----
@@ -5731,11 +5800,12 @@ class Workspace:
                 f"corroborate the database identity."
             )
 
-        # ---- concurrent lock check ----
+        # ---- concurrent lock check: refuse ANY create lock ----
         create_lock = self.path(name) / ".create.lock"
-        if create_lock.exists() and _pid_alive(_read_lock_pid(create_lock)):
+        if create_lock.exists() or create_lock.is_symlink():
             raise BeadsError(
-                f"project {name!r} has an active creation lock -- refusing concurrent repair"
+                f"project {name!r} has a creation lock -- refusing repair "
+                f"(remove it manually if the creating process has ended)"
             )
 
         if not apply:
@@ -5750,27 +5820,33 @@ class Workspace:
                 witness_title=actual_title,
             )
 
-        # ---- apply: acquire repair lock ----
+        # ---- apply: acquire repair lock (conservative -- no dead-lock healing) ----
         repair_lock = self.path(name) / ".repair.lock"
+        if repair_lock.is_symlink():
+            raise BeadsError(f"project {name!r} has a symlinked repair lock -- refusing")
         try:
             fd = os.open(str(repair_lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             os.write(fd, str(os.getpid()).encode())
             os.close(fd)
         except FileExistsError as e:
-            lock_pid = _read_lock_pid(repair_lock)
-            if _pid_alive(lock_pid):
-                raise BeadsError(
-                    f"project {name!r} has an active repair lock (pid {lock_pid}) "
-                    f"-- refusing concurrent repair"
-                ) from e
-            # Dead lock -- safe to heal and proceed
-            repair_lock.unlink(missing_ok=True)
-            fd = os.open(str(repair_lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, str(os.getpid()).encode())
-            os.close(fd)
+            raise BeadsError(
+                f"project {name!r} has an existing repair lock at "
+                f"{repair_lock} -- refusing concurrent repair (remove it "
+                f"manually if the previous repair has ended)"
+            ) from e
 
+        new_data: bytes | None = None
+        backup_path: Path | None = None
         try:
-            # ---- backup ----
+            # ---- pre-write drift check ----
+            fresh_bytes = meta_path.read_bytes()
+            if fresh_bytes != original_bytes:
+                raise BeadsError(
+                    "metadata changed between validation and lock acquisition "
+                    "-- refusing to write stale data"
+                )
+
+            # ---- backup (preserve source mode, fsync) ----
             ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
             backup_path = beads_dir / f"metadata.json.backup-{ts}"
             if backup_path.exists():
@@ -5778,35 +5854,69 @@ class Workspace:
                     f"backup path {backup_path} already exists -- refusing "
                     f"to overwrite (was a repair already run this second?)"
                 )
-            original_bytes = meta_path.read_bytes()
-            # exclusive create -- no overwriting
             bfd = os.open(str(backup_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             os.write(bfd, original_bytes)
+            os.fsync(bfd)
             os.close(bfd)
+            os.chmod(str(backup_path), original_mode)
 
-            # ---- mutate: replace ONLY project_id ----
+            # ---- mutate: replace ONLY project_id (atomic) ----
             meta["project_id"] = expected_server_id
-            meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+            new_data = json.dumps(meta, indent=2).encode("utf-8")
+            _atomic_write_metadata(meta_path, new_data, mode=original_mode)
 
-            # ---- post-check ----
-            post_meta = _read_beads_metadata(beads_dir)
-            post_local_id = post_meta.get("project_id")
-            post_server_id = _server_project_id(name)
-
-            # Re-check witness still accessible
-            post_wp = _dolt_sql_json(witness_q)
+            # ---- post-check (roll back on any failure or exception) ----
+            rollback_needed = False
             try:
-                post_witness = json.loads(post_wp.stdout or "{}").get("rows", [])
-            except json.JSONDecodeError:
-                post_witness = []
+                post_meta = _read_beads_metadata(beads_dir)
+                post_server_id = _server_project_id(name)
 
-            if (
-                post_local_id != expected_server_id
-                or post_server_id != expected_server_id
-                or not post_witness
-            ):
-                # ---- rollback ----
-                meta_path.write_bytes(original_bytes)
+                post_wp = _dolt_sql_json(witness_q)
+                try:
+                    post_witness = json.loads(post_wp.stdout or "{}").get("rows", [])
+                except json.JSONDecodeError:
+                    post_witness = []
+
+                # written project_id
+                if post_meta.get("project_id") != expected_server_id:
+                    rollback_needed = True
+                # all preserved fields unchanged
+                if not rollback_needed:
+                    for key, val in meta.items():
+                        if key != "project_id" and post_meta.get(key) != val:
+                            rollback_needed = True
+                            break
+                # database mapping
+                if not rollback_needed and post_meta.get("dolt_database") != name:
+                    rollback_needed = True
+                # server identity
+                if not rollback_needed and post_server_id != expected_server_id:
+                    rollback_needed = True
+                # witness present
+                if not rollback_needed and not post_witness:
+                    rollback_needed = True
+                # witness title (if supplied)
+                if (
+                    not rollback_needed
+                    and witness_title is not None
+                    and post_witness
+                    and post_witness[0].get("title") != witness_title
+                ):
+                    rollback_needed = True
+            except Exception:
+                rollback_needed = True
+
+            if rollback_needed:
+                # Guarded rollback: only replace bytes THIS repair wrote
+                rolled_back = False
+                try:
+                    current_bytes = meta_path.read_bytes()
+                    if current_bytes == new_data:
+                        _atomic_write_metadata(meta_path, original_bytes, mode=original_mode)
+                        rolled_back = True
+                    # else: foreign change -- backup at backup_path is recovery
+                except Exception:
+                    pass  # rollback failed -- backup on disk is the recovery
                 return RepairReport(
                     name=name,
                     applied=False,
@@ -5817,7 +5927,7 @@ class Workspace:
                     witness_item_id=witness_item_id,
                     witness_title=actual_title,
                     backup_path=backup_path,
-                    rolled_back=True,
+                    rolled_back=rolled_back,
                 )
 
             return RepairReport(
@@ -5831,6 +5941,18 @@ class Workspace:
                 witness_title=actual_title,
                 backup_path=backup_path,
             )
+        except BeadsError:
+            raise
+        except BaseException:
+            # Unexpected exception after write -- attempt guarded rollback
+            if new_data is not None and backup_path is not None:
+                try:
+                    current_bytes = meta_path.read_bytes()
+                    if current_bytes == new_data:
+                        _atomic_write_metadata(meta_path, original_bytes, mode=original_mode)
+                except Exception:
+                    pass  # rollback failed -- backup on disk is the recovery
+            raise
         finally:
             repair_lock.unlink(missing_ok=True)
 
