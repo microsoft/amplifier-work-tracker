@@ -88,20 +88,34 @@ def test_second_client_adopts_server_identity(identity_project):
 
 
 def test_second_client_can_read_items_created_by_first(identity_project):
-    """After adoption, client B should be able to list items that client A
-    created -- proving they share a single database identity, not two
-    isolated ones that happen to have the same name.
-    """
+    """B can read, and A's identity-checked writes and audit history still work."""
     name, ws_a, ws_b = identity_project
     bd_a = ws_a.project(name)
     item_id = bd_a.create("cross-client witness", tags=[A.LANE_WORK])
+    original_id = _local_project_id(ws_a, name)
 
     # Client B adopts.
     ws_b.create(name)
     bd_b = ws_b.project(name)
+    assert _local_project_id(ws_b, name) == original_id
+    assert _local_project_id(ws_a, name) == original_id
 
     items_b = [i.id for i in bd_b.list(include_resolved=True)]
     assert item_id in items_b, (
         f"client B cannot see item {item_id} created by client A -- "
         f"the two clients may not share the same database"
     )
+
+    # SQL listing alone can hide an identity split. Exercise the guarded path.
+    note = "client A remains usable after client B adopts"
+    resolution = "resolution preserved across the two-client correction cycle"
+    bd_a.comment(item_id, note, actor="client_a")
+    closed = bd_a.resolve(item_id, resolution, actor="client_a")
+    assert closed.closed_at is not None
+    reopened = bd_a.reopen(item_id, "verify both clients remain usable", actor="client_a")
+    assert reopened.item.status == "open" and reopened.item.holder is None
+    assert reopened.previous_resolution == resolution
+    assert reopened.previous_closed_at == closed.closed_at
+    comments = "\n".join(e.detail or "" for e in bd_a.activity(item_id) if e.kind == "comment")
+    assert note in comments and resolution in comments
+    assert closed.closed_at.isoformat() in comments
