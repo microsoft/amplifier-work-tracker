@@ -23,6 +23,17 @@ lives in `src/amplifier_work_tracker/adapter.py` and nowhere else. If
 `doctor` reports a violated assumption, the fix scope is that one file.
 Nothing above the seam should ever need to change for a Beads upgrade.
 
+## Project identity and registration repair
+
+`Workspace.create` must pass an explicit database name when adopting an existing
+project, preserving its server identity and other clients' registrations.
+`repair-registration` is explicit local recovery, never automatic identity-guard
+bypass: validate the effective endpoint, mapping, IDs and witness before writing,
+and recheck both metadata bytes and permissions under the repair lock.
+Keep replacement/rollback atomic and preserve the exact backup and mode.
+Run `test_identity_preservation.py` and `test_repair_registration.py` using the
+isolated-server fixtures; never test a repair against the shared server.
+
 ## `doctor` is the gate, not a suggestion
 
 Run `amplifier-work-tracker doctor` after any `bd` upgrade and before

@@ -65,6 +65,27 @@ claim/custody/resolve loop and its hard rules -- see the bundle's tool table (`w
 `work_resolve`, `work_query`, ...) rather than the raw CLI verbs below. Full design in
 [`docs/DESIGN.md`](docs/DESIGN.md).
 
+### Recover a verified stale local project registration
+
+`new` preserves an existing database's identity when attaching another client.
+If an older attachment already left a client stale, first verify the intended
+server and a known item; do not bypass the normal identity rejection.
+
+```bash
+amplifier-work-tracker repair-registration PROJECT --root CLIENT_ROOT \
+  --host HOST --port PORT --expected-local-id OLD_UUID \
+  --expected-server-id SERVER_UUID --witness-item ITEM_ID \
+  --witness-title "Exact known item title"
+# Inspect the dry-run JSON, then repeat with --apply only if every guard matches.
+```
+
+The supplied endpoint must match the configured
+`AMPLIFIER_WORK_TRACKER_DOLT_HOST` / `AMPLIFIER_WORK_TRACKER_DOLT_PORT` endpoint.
+Apply changes only local `metadata.json`'s project ID, with an exact backup,
+preserved permissions, atomic replacement and guarded rollback on verification
+failure. It never changes the database identity, issues or comments. A mismatch
+or concurrent metadata change is a refusal, not permission to force the repair.
+
 ## How it works
 
 **Reports and issues are two different objects.** A report is a user's raw, sloppy words, captured

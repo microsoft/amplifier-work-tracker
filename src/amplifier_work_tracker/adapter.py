@@ -5840,7 +5840,8 @@ class Workspace:
         try:
             # ---- pre-write drift check ----
             fresh_bytes = meta_path.read_bytes()
-            if fresh_bytes != original_bytes:
+            fresh_mode = os.stat(meta_path).st_mode & 0o7777
+            if fresh_bytes != original_bytes or fresh_mode != original_mode:
                 raise BeadsError(
                     "metadata changed between validation and lock acquisition "
                     "-- refusing to write stale data"

@@ -533,6 +533,41 @@ def test_refuses_any_create_lock(repair_project):
         lock_path.unlink(missing_ok=True)
 
 
+def test_refuses_permission_drift_before_lock(repair_project, monkeypatch):
+    """A concurrent chmod must not be overwritten by the validated old mode."""
+    p = repair_project
+    assert p["port"] not in (3308, 13308)
+    meta_path = p["meta_path"]
+    os.chmod(meta_path, 0o640)
+    original_bytes = meta_path.read_bytes()
+    original_reader = A._server_project_id
+    calls = 0
+
+    def change_mode_after_validation(name):
+        nonlocal calls
+        result = original_reader(name)
+        calls += 1
+        if calls == 1:
+            os.chmod(meta_path, 0o600)
+        return result
+
+    monkeypatch.setattr(A, "_server_project_id", change_mode_after_validation)
+    with pytest.raises(A.BeadsError, match="metadata changed"):
+        p["workspace"].repair_registration(
+            p["name"],
+            host=p["host"],
+            port=p["port"],
+            expected_local_id=p["stale_id"],
+            expected_server_id=p["server_id"],
+            witness_item_id=p["item_id"],
+            apply=True,
+        )
+    assert meta_path.read_bytes() == original_bytes
+    assert meta_path.stat().st_mode & 0o7777 == 0o600
+    assert not list(p["beads_dir"].glob("metadata.json.backup-*"))
+    assert not (p["workspace"].path(p["name"]) / ".repair.lock").exists()
+
+
 def test_atomic_write_preserves_permissions(repair_project):
     """After a successful apply, the metadata file retains its original
     Unix permissions (mode bits)."""
