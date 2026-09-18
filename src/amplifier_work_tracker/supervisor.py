@@ -979,6 +979,7 @@ async def _async_serve(
     stop_event = asyncio.Event()
     cancellation_event = threading.Event()
     state: dict[str, subprocess.Popen | None] = {"proc": None}
+    forced_child_shutdown = False
 
     def _request_stop() -> None:
         logger.info("shutdown requested")
@@ -1033,10 +1034,12 @@ async def _async_serve(
 
     def _force_reap_owned_dolt() -> None:
         """KILL only the currently recorded child after its TERM grace elapsed."""
+        nonlocal forced_child_shutdown
         proc = state.get("proc")
         if proc is not None and proc.poll() is None:
             logger.error("owned dolt child %s ignored shutdown TERM; sending KILL", proc.pid)
             proc.kill()
+            forced_child_shutdown = True
 
     async def _drain_shutdown_tasks() -> bool:
         """Let shutdown-aware work drain, then bound child and task cleanup."""
@@ -1082,7 +1085,8 @@ async def _async_serve(
         if not await _drain_shutdown_tasks():
             return 1
         await gathered
-        return 0
+        # Reaping a forced child is containment, not a clean database shutdown.
+        return 1 if forced_child_shutdown else 0
     except (
         DoltSupervisionExhaustedError,
         WebServerStartupError,

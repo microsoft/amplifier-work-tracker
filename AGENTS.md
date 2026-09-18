@@ -169,7 +169,9 @@ both the stop request and readback, and require observed clean state before
 reporting success. Interrupted sweeps must not write a completed heartbeat.
 Do not leave an owned child behind an unbounded executor `proc.wait`: use a
 bounded shutdown drain, then KILL/reap only the recorded owned child if TERM
-does not finish it.
+does not finish it. Forced child termination must return nonzero even on the
+ordinary signal path: successful reaping does not make a forced database stop
+clean.
 
 ## What "done" looks like
 

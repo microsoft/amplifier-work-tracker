@@ -242,16 +242,23 @@ def test_sigterm_drains_real_dolt_and_blocking_sweep_descendant(tmp_path: Path, 
 
 
 @pytest.mark.integration
-def test_cleanup_failure_force_reaps_term_ignoring_owned_dolt_and_exits_nonzero(
+@pytest.mark.parametrize("inject_cleanup_failure", [True, False], ids=["cleanup-failure", "sigterm"])
+def test_force_reaps_term_ignoring_owned_dolt_and_exits_nonzero(
     tmp_path: Path,
+    inject_cleanup_failure: bool,
 ) -> None:
-    """An outer supervisor process must not wait for systemd to kill this child."""
+    """Forced child termination is nonzero for both failure and signal paths."""
     harness = tmp_path / "cleanup_failure_harness.py"
     root = tmp_path / "root"
     ready = tmp_path / "ready"
     child_pid_path = tmp_path / "dolt-like.pid"
     trigger = tmp_path / "trigger-cleanup-failure"
-    harness.write_text(textwrap.dedent(_CLEANUP_FAILURE_HARNESS), encoding="utf-8")
+    harness_source = _CLEANUP_FAILURE_HARNESS
+    if not inject_cleanup_failure:
+        injection = "SV.reap_loop = cleanup_failed\n"
+        assert harness_source.count(injection) == 1
+        harness_source = harness_source.replace(injection, "")
+    harness.write_text(textwrap.dedent(harness_source), encoding="utf-8")
     proc = subprocess.Popen(
         [sys.executable, str(harness), str(root), str(ready), str(child_pid_path), str(trigger)],
         stdout=subprocess.PIPE,
@@ -265,11 +272,15 @@ def test_cleanup_failure_force_reaps_term_ignoring_owned_dolt_and_exits_nonzero(
         _wait_for(ready)
         child_pid = int(child_pid_path.read_text(encoding="utf-8"))
         started = time.monotonic()
-        trigger.write_text("fail", encoding="utf-8")
+        if inject_cleanup_failure:
+            trigger.write_text("fail", encoding="utf-8")
+        else:
+            proc.send_signal(signal.SIGTERM)
         _stdout, stderr = proc.communicate(timeout=9.5)
         assert proc.returncode == 1, stderr
         assert time.monotonic() - started < 9.5
-        assert "owned dolt child" in stderr
+        assert "sending KILL" in stderr
+        assert "dolt sql-server stopped (exit -9)" in stderr
         assert _pid_is_gone(child_pid), f"TERM-ignoring owned child survived: {child_pid}"
     finally:
         if proc.poll() is None:
