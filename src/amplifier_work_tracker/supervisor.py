@@ -161,9 +161,9 @@ def reap_project(
                 failed.append({"id": item.id, "holder": item.holder, "error": str(e)})
                 continue
             reclaimed.append({"id": item.id, "was_holder": item.holder, "reason": reason})
-            # ALARM: custody-TTL breach is a real alarm condition. Sync, never raises
-            # (a push failure must never prevent/undo the reclaim above); any failure
-            # is LOUD-logged inside webpush, not swallowed.
+            # ALARM: custody-TTL breach is a real alarm condition. Ordinary delivery
+            # failures do not prevent/undo the reclaim above and are LOUD-logged in
+            # webpush; supervisor-scoped cancellation deliberately propagates.
             try:
                 WP.fire_reclaim_alarm(
                     item.id,
@@ -172,6 +172,12 @@ def reap_project(
                     cancellation_event=A.current_supervisor_cancellation(),
                 )
             except WP.AlarmShutdownError as e:
+                logger.error(
+                    "reap alarm interrupted after reclaim committed: item=%s holder=%s; "
+                    "HTTP acceptance/delivery UNKNOWN",
+                    item.id,
+                    item.holder,
+                )
                 raise A.SupervisorShutdownError(str(e)) from e
         else:
             note = "quiet (awaiting_human)" if not C.should_notify(rec) else "ok"

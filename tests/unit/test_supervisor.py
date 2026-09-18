@@ -12,17 +12,20 @@ real `bd` binary, mirroring the forged-clock style already used by
 from __future__ import annotations
 
 import asyncio
+import logging
 import signal
 import threading
 import time
 from typing import Any
 
+import httpx
 import pytest
 
 from amplifier_work_tracker import adapter as A
 from amplifier_work_tracker import custody as C
 from amplifier_work_tracker import heartbeat as HB
 from amplifier_work_tracker import supervisor as SV
+from amplifier_work_tracker import webpush as W
 
 # --------------------------------------------------------- classify_port_holders
 
@@ -495,6 +498,80 @@ def test_reap_project_reports_an_item_it_could_not_release_instead_of_aborting()
     assert "simulated wedged release" in result["failed"][0]["error"]
 
 
+def test_reap_alarm_shutdown_logs_unknown_outcome_after_the_committed_release(monkeypatch, caplog):
+    """A cancellation crossing the actual HTTP alarm path must stay visible.
+
+    The request transport signals only after POST starts and never returns a
+    response.  That forces the exact reap_project -> fire_reclaim_alarm ->
+    send_alarm cancellation path without a network request or a mocked alarm.
+    """
+
+    post_started = threading.Event()
+    original_client = W.httpx.AsyncClient
+
+    async def block_after_post_starts(_request: httpx.Request) -> httpx.Response:
+        post_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("cancellation must end the request before a response")
+
+    def controlled_client(*_args, **_kwargs):
+        return original_client(transport=httpx.MockTransport(block_after_post_starts))
+
+    monkeypatch.setattr(W.httpx, "AsyncClient", controlled_client)
+    monkeypatch.setattr(
+        W,
+        "resolve_config",
+        lambda: W.NtfyConfig(
+            server="https://ntfy.example",
+            topic="test-topic",
+            token=None,
+            enabled=True,
+            max_attempts=4,
+            backoff_base=0,
+        ),
+    )
+    item = _FakeItem(
+        "work-42",
+        status="held",
+        holder="holder-7",
+        meta={C.CUSTODY_KEY: {"holder": "holder-7", "last_seen": _ts(3600)}},
+    )
+    bd = _FakeBeads({item.id: item})
+    cancelled = threading.Event()
+    outcome: list[BaseException] = []
+
+    def reap() -> None:
+        try:
+            with A.supervisor_cancellation_scope(cancelled):
+                SV.reap_project(bd, ttl_seconds=900)  # type: ignore[arg-type]
+        except BaseException as error:
+            outcome.append(error)
+
+    with caplog.at_level(logging.ERROR, logger="amplifier_work_tracker.supervisor"):
+        thread = threading.Thread(target=reap)
+        thread.start()
+        assert post_started.wait(timeout=5), "POST did not start"
+        cancelled.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive(), "reap did not terminate after cancellation"
+    assert bd.released == ["work-42"]
+    assert item.status == "open"
+    assert len(outcome) == 1
+    assert isinstance(outcome[0], A.SupervisorShutdownError)
+    assert isinstance(outcome[0].__cause__, W.AlarmShutdownError)
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "amplifier_work_tracker.supervisor"
+        and "reap alarm interrupted after reclaim committed" in record.getMessage()
+    ]
+    assert messages == [
+        "reap alarm interrupted after reclaim committed: item=work-42 holder=holder-7; "
+        "HTTP acceptance/delivery UNKNOWN"
+    ]
+
+
 def test_notify_project_flips_only_linked_unresolved_reports():
     report = _FakeItem("r-1", status="open", holder=None)
     work = _FakeItem("w-1", status="resolved", holder="agent-a")
@@ -631,6 +708,72 @@ def test_reap_shutdown_interrupt_does_not_record_completed_heartbeat(monkeypatch
         await task
 
     asyncio.run(run())
+    rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
+    assert rec is not None
+    assert rec["last_completed"] is None
+
+
+def test_reap_loop_alarm_shutdown_after_post_start_has_no_completed_heartbeat(
+    monkeypatch, tmp_path
+):
+    """Both stop signals stop the composed alarm path without a completion mark."""
+
+    post_started = threading.Event()
+    original_client = W.httpx.AsyncClient
+
+    async def block_after_post_starts(_request: httpx.Request) -> httpx.Response:
+        post_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("cancellation must end the request before a response")
+
+    monkeypatch.setattr(
+        W.httpx,
+        "AsyncClient",
+        lambda *_args, **_kwargs: original_client(
+            transport=httpx.MockTransport(block_after_post_starts)
+        ),
+    )
+    monkeypatch.setattr(
+        W,
+        "resolve_config",
+        lambda: W.NtfyConfig(
+            server="https://ntfy.example",
+            topic="test-topic",
+            token=None,
+            enabled=True,
+            max_attempts=4,
+            backoff_base=0,
+        ),
+    )
+    item = _FakeItem(
+        "work-43",
+        status="held",
+        holder="holder-8",
+        meta={C.CUSTODY_KEY: {"holder": "holder-8", "last_seen": _ts(3600)}},
+    )
+    ws = _FakeWorkspace({"project": _FakeBeads({item.id: item})})
+    stop_event = asyncio.Event()
+    cancellation_event = threading.Event()
+    hb_path = HB.heartbeat_path(tmp_path)
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            SV.reap_loop(
+                ws,  # type: ignore[arg-type]
+                interval=0.01,
+                stop_event=stop_event,
+                heartbeat_path=hb_path,
+                cancellation_event=cancellation_event,
+                ttl_seconds=900,
+            )
+        )
+        await _wait_until(post_started.is_set)
+        stop_event.set()
+        cancellation_event.set()
+        await task
+
+    asyncio.run(run())
+    assert item.status == "open"
     rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
     assert rec is not None
     assert rec["last_completed"] is None

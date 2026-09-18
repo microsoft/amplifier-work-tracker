@@ -79,12 +79,12 @@ def _run(coro):
 
 
 def test_push_shutdown_interrupts_inflight_alarm_without_a_retry_delay():
-    class BlockingClient:
-        async def post(self, *args, **kwargs):
-            await asyncio.Event().wait()
+    post_started = threading.Event()
 
-        async def aclose(self):
-            return None
+    async def block_after_post_starts(_request: httpx.Request) -> httpx.Response:
+        post_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("cancellation must end the request before a response")
 
     async def run():
         cancelled = threading.Event()
@@ -93,11 +93,12 @@ def test_push_shutdown_interrupts_inflight_alarm_without_a_retry_delay():
                 "t",
                 "m",
                 config=_enabled_config(),
-                client=BlockingClient(),  # type: ignore[arg-type]
+                client=httpx.AsyncClient(transport=httpx.MockTransport(block_after_post_starts)),
                 cancellation_event=cancelled,
             )
         )
-        await asyncio.sleep(0.02)
+        while not post_started.is_set():
+            await asyncio.sleep(0)
         cancelled.set()
         with pytest.raises(W.AlarmShutdownError):
             await task

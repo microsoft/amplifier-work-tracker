@@ -512,12 +512,13 @@ def _run_bounded(
     POSIX process group) and killing the whole group on timeout is what
     actually reaches them.
 
-    On timeout, returns a `CompletedProcess` with `returncode=124` (the
-    conventional shell `timeout` exit code) and an explanatory message
-    folded into `stderr` -- this never raises, so every existing call
-    site's `p.returncode != 0` / `(p.stderr or p.stdout)` handling treats a
-    hang exactly like any other bd failure, with no second exception type
-    for callers to catch.
+    On ordinary timeout, returns a `CompletedProcess` with `returncode=124`
+    (the conventional shell `timeout` exit code) and an explanatory message
+    folded into `stderr`, so existing call sites' `p.returncode != 0` /
+    `(p.stderr or p.stdout)` handling treats a hang like any other bd failure.
+    Within a supervisor cancellation scope, however, cancellation deliberately
+    raises `SupervisorShutdownError` after draining the command group: the
+    caller must not report that interrupted sweep as completed.
     """
     proc = subprocess.Popen(
         args,

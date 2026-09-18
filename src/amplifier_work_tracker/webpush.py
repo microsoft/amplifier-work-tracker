@@ -40,8 +40,9 @@ heartbeat push is the natural extension and is left as a follow-up.
 This module is import-light and knows nothing about Beads. It takes plain
 values (an item id, a holder, a reason string) and speaks HTTP. The reap/notify
 loops that would call it live in `supervisor.py` (not owned by this change);
-`fire_reclaim_alarm` is the sync, never-raises entry point built for that
-caller, and the exact wiring is recorded as a residual.
+`fire_reclaim_alarm` is the sync entry point built for that caller: ordinary
+delivery/configuration failures become returned results, while supervisor-scoped
+cancellation deliberately raises so shutdown is visible to the supervisor.
 """
 
 from __future__ import annotations
@@ -442,14 +443,16 @@ def fire_reclaim_alarm(
     config: NtfyConfig | None = None,
     cancellation_event: threading.Event | None = None,
 ) -> AlarmResult:
-    """Sync, NEVER-raises entry point for the reap loop's worker thread.
+    """Sync entry point for the reap loop's worker thread.
 
     The reap sweep runs via `asyncio.to_thread(...)`, i.e. in a thread with no
     running event loop, so `asyncio.run` is safe here. A push failure must
     never prevent (or undo) the reclaim that already happened, so every failure
     is caught and returned as a non-delivered result -- the loud `logger.error`
     inside `send_alarm` (and the ones here) is what surfaces the problem, not a
-    propagated exception that could abort the sweep.
+    propagated exception that could abort the sweep. A supervisor-scoped
+    cancellation is different: it deliberately raises `AlarmShutdownError` so
+    the supervisor can stop without recording a completed sweep heartbeat.
     """
     try:
         return asyncio.run(
