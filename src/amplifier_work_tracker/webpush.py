@@ -49,6 +49,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -108,6 +109,10 @@ class AlarmDeliveryError(RuntimeError):
         self.attempts = attempts
         self.last_status = last_status
         self.last_error = last_error
+
+
+class AlarmShutdownError(RuntimeError):
+    """A supervisor shutdown interrupted a reclaim alarm before delivery."""
 
 
 # --------------------------------------------------------------------------- #
@@ -234,6 +239,7 @@ async def send_alarm(
     max_attempts: int | None = None,
     backoff_base: float | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
+    cancellation_event: threading.Event | None = None,
 ) -> AlarmResult:
     """POST an alarm to `{NTFY_SERVER}/{NTFY_TOPIC}`, retrying transient
     failures and failing LOUDLY on exhaustion.
@@ -273,6 +279,27 @@ async def send_alarm(
     base = backoff_base if backoff_base is not None else config.backoff_base
     do_sleep = sleep if sleep is not None else asyncio.sleep
 
+    async def await_or_cancel(awaitable: Awaitable):
+        """Poll a supervisor-only cancellation event without adding a thread."""
+        if cancellation_event is None:
+            return await awaitable
+        task = asyncio.ensure_future(awaitable)
+        try:
+            while True:
+                done, _ = await asyncio.wait({task}, timeout=0.05)
+                if done:
+                    return task.result()
+                if cancellation_event.is_set():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    raise AlarmShutdownError("supervisor shutdown interrupted reclaim alarm")
+        finally:
+            if not task.done():
+                task.cancel()
+
     url = config.url
     body = message.encode("utf-8")
     headers = _headers(config, title=title, priority=priority, tags=tags, click=click)
@@ -287,12 +314,12 @@ async def send_alarm(
     try:
         for attempt in range(1, attempts + 1):
             try:
-                resp = await client.post(url, content=body, headers=headers)
+                resp = await await_or_cancel(client.post(url, content=body, headers=headers))
             except httpx.RequestError as exc:  # connect/read/write/timeout -- transient
                 last_error = f"{type(exc).__name__}: {exc}"
                 last_status = None
                 if attempt < attempts:
-                    await do_sleep(base * (2 ** (attempt - 1)))
+                    await await_or_cancel(do_sleep(base * (2 ** (attempt - 1))))
                     continue
                 break
 
@@ -303,7 +330,7 @@ async def send_alarm(
                     delivered=True, attempts=attempt, status=resp.status_code, url=url
                 )
             if is_transient_status(resp.status_code) and attempt < attempts:
-                await do_sleep(base * (2 ** (attempt - 1)))
+                await await_or_cancel(do_sleep(base * (2 ** (attempt - 1))))
                 continue
             # Either a transient status on the final attempt, or a non-transient
             # 4xx -- both terminal. Stop and fail loudly below.
@@ -385,6 +412,7 @@ async def alarm_for_reclaimed_item(
     max_attempts: int | None = None,
     backoff_base: float | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
+    cancellation_event: threading.Event | None = None,
 ) -> AlarmResult:
     """Format a custody-breach alarm and send it via `send_alarm` (urgent)."""
     config = config or resolve_config()
@@ -402,6 +430,7 @@ async def alarm_for_reclaimed_item(
         max_attempts=max_attempts,
         backoff_base=backoff_base,
         sleep=sleep,
+        cancellation_event=cancellation_event,
     )
 
 
@@ -411,6 +440,7 @@ def fire_reclaim_alarm(
     reason: str,
     *,
     config: NtfyConfig | None = None,
+    cancellation_event: threading.Event | None = None,
 ) -> AlarmResult:
     """Sync, NEVER-raises entry point for the reap loop's worker thread.
 
@@ -422,7 +452,17 @@ def fire_reclaim_alarm(
     propagated exception that could abort the sweep.
     """
     try:
-        return asyncio.run(alarm_for_reclaimed_item(item_id, holder, reason, config=config))
+        return asyncio.run(
+            alarm_for_reclaimed_item(
+                item_id,
+                holder,
+                reason,
+                config=config,
+                cancellation_event=cancellation_event,
+            )
+        )
+    except AlarmShutdownError:
+        raise
     except AlarmConfigError as exc:
         logger.error("ntfy alarm misconfigured for reclaimed %s: %s", item_id, exc)
         return AlarmResult(delivered=False, attempts=0, error=str(exc))
@@ -439,6 +479,7 @@ def fire_reclaim_alarm(
 __all__ = [
     "AlarmConfigError",
     "AlarmDeliveryError",
+    "AlarmShutdownError",
     "AlarmResult",
     "NtfyConfig",
     "PRIORITY_ALARM",

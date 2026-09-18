@@ -25,6 +25,80 @@ from amplifier_work_tracker import service as S
 _HAVE_SYSTEMD_ANALYZE = shutil.which("systemd-analyze") is not None
 
 
+def _systemd_result(stdout: str = "", returncode: int = 0, stderr: str = ""):
+    return subprocess.CompletedProcess(["systemctl"], returncode, stdout, stderr)
+
+
+def _clean_stop_properties(**overrides: str) -> str:
+    values = {
+        "ActiveState": "inactive",
+        "SubState": "dead",
+        "Result": "success",
+        "ExecMainCode": "exited",
+        "ExecMainStatus": "0",
+        "MainPID": "0",
+    }
+    values.update(overrides)
+    return "".join(f"{key}={value}\n" for key, value in values.items())
+
+
+def test_systemd_stop_requires_clean_readback(monkeypatch):
+    calls = []
+
+    def fake_call(args, *, check):
+        calls.append(args)
+        return _systemd_result(_clean_stop_properties() if "show" in args else "")
+
+    monkeypatch.setattr(S, "_systemd_call", fake_call)
+    state = S._systemd_stop()
+    assert state.is_clean_stop is True
+    assert calls[0][-2:] == ["stop", S.SERVICE_NAME]
+    assert "show" in calls[1]
+
+
+@pytest.mark.parametrize(
+    "properties",
+    [
+        _clean_stop_properties(Result="timeout"),
+        _clean_stop_properties(ExecMainCode="killed", ExecMainStatus="15"),
+        _clean_stop_properties(ActiveState="active", SubState="running", MainPID="123"),
+        _clean_stop_properties(Result="unknown"),
+        "ActiveState=inactive\nMainPID=0\n",
+    ],
+)
+def test_systemd_stop_refuses_failed_running_unknown_or_missing_state(monkeypatch, properties):
+    def fake_call(args, *, check):
+        return _systemd_result(properties if "show" in args else "")
+
+    monkeypatch.setattr(S, "_systemd_call", fake_call)
+    with pytest.raises(S.ServiceStopError) as excinfo:
+        S._systemd_stop()
+    assert "returned zero" in str(excinfo.value)
+
+
+def test_systemd_stop_surfaces_stop_command_failure(monkeypatch):
+    monkeypatch.setattr(
+        S,
+        "_systemd_call",
+        lambda args, *, check: _systemd_result(returncode=1, stderr="unit failed"),
+    )
+    with pytest.raises(S.ServiceStopError, match="exit 1"):
+        S._systemd_stop()
+
+
+def test_systemd_stop_surfaces_readback_command_failure(monkeypatch):
+    def fake_call(args, *, check):
+        return (
+            _systemd_result(returncode=2, stderr="show failed")
+            if "show" in args
+            else _systemd_result()
+        )
+
+    monkeypatch.setattr(S, "_systemd_call", fake_call)
+    with pytest.raises(S.ServiceStopError, match="could not read back"):
+        S._systemd_stop()
+
+
 def test_resolve_root_expands_and_resolves():
     resolved = S._resolve_root("~")
     assert resolved.is_absolute()

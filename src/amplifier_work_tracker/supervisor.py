@@ -48,6 +48,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -145,6 +146,8 @@ def reap_project(
         if eligible:
             try:
                 bd.release(item.id)
+            except A.SupervisorShutdownError:
+                raise
             except Exception as e:  # noqa: BLE001 -- one wedged item must never shadow the queue
                 logger.exception("reap could not release %s -- continuing with the rest", item.id)
                 failed.append({"id": item.id, "holder": item.holder, "error": str(e)})
@@ -153,7 +156,15 @@ def reap_project(
             # ALARM: custody-TTL breach is a real alarm condition. Sync, never raises
             # (a push failure must never prevent/undo the reclaim above); any failure
             # is LOUD-logged inside webpush, not swallowed.
-            WP.fire_reclaim_alarm(item.id, item.holder, reason)
+            try:
+                WP.fire_reclaim_alarm(
+                    item.id,
+                    item.holder,
+                    reason,
+                    cancellation_event=A.current_supervisor_cancellation(),
+                )
+            except WP.AlarmShutdownError as e:
+                raise A.SupervisorShutdownError(str(e)) from e
         else:
             note = "quiet (awaiting_human)" if not C.should_notify(rec) else "ok"
             kept.append({"id": item.id, "holder": item.holder, "note": note})
@@ -205,6 +216,8 @@ def reap_sweep(
             out[name] = reap_project(
                 ws.project(name), ttl_seconds=ttl_seconds, escalation_hours=escalation_hours
             )
+        except A.SupervisorShutdownError:
+            raise
         except Exception as e:  # noqa: BLE001 -- one broken project must never break the sweep
             out[name] = {"error": str(e)}
     return out
@@ -237,6 +250,8 @@ def notify_sweep(ws: A.Workspace) -> dict[str, dict[str, Any]]:
     for name in ws.names():
         try:
             out[name] = notify_project(ws.project(name))
+        except A.SupervisorShutdownError:
+            raise
         except Exception as e:  # noqa: BLE001 -- one broken project must never break the sweep
             out[name] = {"error": str(e)}
     return out
@@ -250,6 +265,7 @@ async def reap_loop(
     ttl_seconds: int | None = None,
     escalation_hours: float | None = None,
     heartbeat_path: Path | None = None,
+    cancellation_event: threading.Event | None = None,
 ) -> None:
     """Trivial wrapper: sleep, sweep, repeat -- until `stop_event` fires.
 
@@ -274,9 +290,18 @@ async def reap_loop(
         if stop_event.is_set():
             return
         try:
-            result = await asyncio.to_thread(
-                reap_sweep, ws, ttl_seconds=ttl_seconds, escalation_hours=escalation_hours
-            )
+
+            def run_sweep() -> dict[str, dict[str, Any]]:
+                if cancellation_event is None:
+                    return reap_sweep(
+                        ws, ttl_seconds=ttl_seconds, escalation_hours=escalation_hours
+                    )
+                with A.supervisor_cancellation_scope(cancellation_event):
+                    return reap_sweep(
+                        ws, ttl_seconds=ttl_seconds, escalation_hours=escalation_hours
+                    )
+
+            result = await asyncio.to_thread(run_sweep)
             failed = sorted(sweep_failures(result))
             if failed:
                 logger.error(
@@ -296,6 +321,10 @@ async def reap_loop(
                 ),
                 failed_projects=failed,
             )
+        except A.SupervisorShutdownError:
+            if stop_event.is_set():
+                return
+            raise
         except Exception:  # noqa: BLE001 -- see docstring
             logger.exception("reap sweep crashed -- continuing on the next interval")
 
@@ -306,6 +335,7 @@ async def notify_loop(
     interval: float,
     stop_event: asyncio.Event,
     heartbeat_path: Path | None = None,
+    cancellation_event: threading.Event | None = None,
 ) -> None:
     """Trivial wrapper around `notify_sweep` -- see `reap_loop`'s docstring,
     including the heartbeat writes."""
@@ -319,8 +349,19 @@ async def notify_loop(
         if stop_event.is_set():
             return
         try:
-            await asyncio.to_thread(notify_sweep, ws)
+
+            def run_sweep() -> dict[str, dict[str, Any]]:
+                if cancellation_event is None:
+                    return notify_sweep(ws)
+                with A.supervisor_cancellation_scope(cancellation_event):
+                    return notify_sweep(ws)
+
+            await asyncio.to_thread(run_sweep)
             HB.record_sweep_completed(hb_path, HB.NOTIFY, pid=os.getpid())
+        except A.SupervisorShutdownError:
+            if stop_event.is_set():
+                return
+            raise
         except Exception:  # noqa: BLE001 -- see docstring
             logger.exception("notify sweep crashed -- continuing on the next interval")
 
@@ -909,11 +950,13 @@ async def _async_serve(
     root.mkdir(parents=True, exist_ok=True)
     pid_file = root / ".dolt-server.pid"
     stop_event = asyncio.Event()
+    cancellation_event = threading.Event()
     state: dict[str, subprocess.Popen | None] = {"proc": None}
 
     def _request_stop() -> None:
         logger.info("shutdown requested")
         stop_event.set()
+        cancellation_event.set()
         proc = state.get("proc")
         if proc is not None and proc.poll() is None:
             proc.terminate()
@@ -938,9 +981,21 @@ async def _async_serve(
             restart_budget_window=dolt_restart_budget_window,
         )
     )
-    reap_task = asyncio.create_task(reap_loop(ws, interval=reap_interval, stop_event=stop_event))
+    reap_task = asyncio.create_task(
+        reap_loop(
+            ws,
+            interval=reap_interval,
+            stop_event=stop_event,
+            cancellation_event=cancellation_event,
+        )
+    )
     notify_task = asyncio.create_task(
-        notify_loop(ws, interval=notify_interval, stop_event=stop_event)
+        notify_loop(
+            ws,
+            interval=notify_interval,
+            stop_event=stop_event,
+            cancellation_event=cancellation_event,
+        )
     )
     tasks = [dolt_task, reap_task, notify_task]
     # The web task is OPTIONAL (only when `--web-port` was given) -- when

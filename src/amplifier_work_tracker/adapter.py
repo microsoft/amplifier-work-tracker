@@ -25,9 +25,11 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -313,6 +315,42 @@ def invalid_project_name_error(name: str, *, label: str = "project name") -> str
 _DEFAULT_BD_TIMEOUT_SECONDS = 60.0
 _BD_INIT_TIMEOUT_SECONDS = 240.0
 _GIT_TIMEOUT_SECONDS = 30.0
+_SUPERVISOR_CANCEL_POLL_SECONDS = 0.1
+_SUPERVISOR_CANCEL_TERM_GRACE_SECONDS = 1.0
+_supervisor_cancellation = threading.local()
+
+
+class SupervisorShutdownError(RuntimeError):
+    """A supervisor-owned synchronous command was stopped during shutdown.
+
+    This is deliberately distinct from an ordinary timeout/result failure:
+    the supervisor loops must return without writing a completed-sweep
+    heartbeat, while ordinary adapter callers remain unchanged.
+    """
+
+
+@contextmanager
+def supervisor_cancellation_scope(cancel_event: threading.Event):
+    """Make synchronous adapter work in this thread interruptible by *cancel_event*.
+
+    The scope is thread-local because ``asyncio.to_thread`` reuses worker
+    threads. Restoring the old value prevents a later, unrelated adapter call
+    in the same worker from inheriting a completed supervisor shutdown.
+    """
+    old = getattr(_supervisor_cancellation, "event", None)
+    _supervisor_cancellation.event = cancel_event
+    try:
+        yield
+    finally:
+        if old is None:
+            del _supervisor_cancellation.event
+        else:
+            _supervisor_cancellation.event = old
+
+
+def current_supervisor_cancellation() -> threading.Event | None:
+    """The current supervisor-only cancellation event, if this thread has one."""
+    return getattr(_supervisor_cancellation, "event", None)
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
@@ -334,6 +372,57 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
         os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+
+
+def _terminate_process_group_for_shutdown(proc: subprocess.Popen) -> tuple[str, str]:
+    """TERM a scoped command group, then KILL/reap it if it does not drain."""
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return "", ""
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        return proc.communicate(timeout=_SUPERVISOR_CANCEL_TERM_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(proc)
+        try:
+            return proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            return "", ""
+
+
+def _communicate_bounded_or_cancelled(proc: subprocess.Popen, *, timeout: float) -> tuple[str, str]:
+    """Wait for a command, polling only when a supervisor scope is active."""
+    cancel_event = current_supervisor_cancellation()
+    if cancel_event is None:
+        return proc.communicate(timeout=timeout)
+
+    deadline = time.monotonic() + timeout
+    while True:
+        if cancel_event.is_set():
+            _terminate_process_group_for_shutdown(proc)
+            raise SupervisorShutdownError(f"supervisor shutdown cancelled command: {proc.args!r}")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(proc.args, timeout)
+        try:
+            return proc.communicate(timeout=min(_SUPERVISOR_CANCEL_POLL_SECONDS, remaining))
+        except subprocess.TimeoutExpired:
+            if time.monotonic() >= deadline:
+                raise
+
+
+def _sleep_or_cancel(seconds: float) -> None:
+    """Preserve ordinary retry waits, but never add one after supervisor stop."""
+    cancel_event = current_supervisor_cancellation()
+    if cancel_event is None:
+        time.sleep(seconds)
+        return
+    if cancel_event.wait(seconds):
+        raise SupervisorShutdownError("supervisor shutdown interrupted retry backoff")
 
 
 def _run_bounded(
@@ -377,7 +466,7 @@ def _run_bounded(
         start_new_session=True,  # own process group -- see `_kill_process_group`
     )
     try:
-        stdout, stderr = proc.communicate(timeout=timeout)
+        stdout, stderr = _communicate_bounded_or_cancelled(proc, timeout=timeout)
         return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
     except subprocess.TimeoutExpired:
         _kill_process_group(proc)
@@ -3186,7 +3275,7 @@ class Beads:
                 if connection_attempt >= _MAX_CONNECTION_RETRIES:
                     return p  # transient-connection budget spent -- surface it, as before
                 backoff = min(_CONNECTION_RETRY_BACKOFF_CAP, 0.1 * (2**connection_attempt))
-                time.sleep(backoff * (0.5 + os.urandom(1)[0] / 255))
+                _sleep_or_cancel(backoff * (0.5 + os.urandom(1)[0] / 255))
                 connection_attempt += 1
                 continue
             # `p.returncode != 0` gate here mirrors the connection-retryable
@@ -3211,7 +3300,7 @@ class Beads:
             if p.returncode != 0 and _retryable(blob):
                 if serialization_attempt >= _MAX_RETRIES - 1:
                     break
-                time.sleep(0.15 * (2**serialization_attempt) * (0.5 + os.urandom(1)[0] / 255))
+                _sleep_or_cancel(0.15 * (2**serialization_attempt) * (0.5 + os.urandom(1)[0] / 255))
                 serialization_attempt += 1
                 continue
             return p

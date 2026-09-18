@@ -1783,7 +1783,7 @@ def cmd_service_start(a):
 def cmd_service_stop(a):
     try:
         S.service_stop()
-    except S.ServiceUnsupportedError as e:
+    except (S.ServiceStopError, S.ServiceUnsupportedError) as e:
         die(str(e))
     print(f"Stopped the {S.SERVICE_NAME} service.")
 

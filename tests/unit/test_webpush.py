@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 
 import httpx
@@ -75,6 +76,33 @@ class _SleepSpy:
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def test_push_shutdown_interrupts_inflight_alarm_without_a_retry_delay():
+    class BlockingClient:
+        async def post(self, *args, **kwargs):
+            await asyncio.Event().wait()
+
+        async def aclose(self):
+            return None
+
+    async def run():
+        cancelled = threading.Event()
+        task = asyncio.create_task(
+            W.send_alarm(
+                "t",
+                "m",
+                config=_enabled_config(),
+                client=BlockingClient(),  # type: ignore[arg-type]
+                cancellation_event=cancelled,
+            )
+        )
+        await asyncio.sleep(0.02)
+        cancelled.set()
+        with pytest.raises(W.AlarmShutdownError):
+            await task
+
+    _run(run())
 
 
 # --------------------------------------------------------------------------- #

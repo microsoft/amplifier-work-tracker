@@ -160,6 +160,42 @@ class ServiceUnsupportedError(RuntimeError):
     """
 
 
+_SYSTEMD_STOP_PROPERTIES = (
+    "ActiveState",
+    "SubState",
+    "Result",
+    "ExecMainCode",
+    "ExecMainStatus",
+    "MainPID",
+)
+
+
+@dataclass(frozen=True)
+class SystemdStopState:
+    """Observed systemd state read after a requested service stop."""
+
+    properties: dict[str, str]
+
+    @property
+    def is_clean_stop(self) -> bool:
+        return self.properties == {
+            "ActiveState": "inactive",
+            "SubState": "dead",
+            "Result": "success",
+            "ExecMainCode": "exited",
+            "ExecMainStatus": "0",
+            "MainPID": "0",
+        }
+
+
+class ServiceStopError(RuntimeError):
+    """A stop command did not prove that the supervisor is cleanly quiescent."""
+
+    def __init__(self, message: str, *, state: SystemdStopState | None = None) -> None:
+        super().__init__(message)
+        self.state = state
+
+
 _WEB_EXTRA_INSTALL_REMEDY = (
     "Install it with: uv tool install --reinstall --with 'amplifier-work-tracker[web]' "
     "'git+https://github.com/microsoft/amplifier-work-tracker@main'\n"
@@ -972,9 +1008,59 @@ def _systemd_start() -> None:
     _systemd_call(["systemctl", "--user", "start", SERVICE_NAME], check=True)
 
 
-def _systemd_stop() -> None:
-    # Not check=True -- stopping an already-stopped service is a normal no-op.
-    _systemd_call(["systemctl", "--user", "stop", SERVICE_NAME], check=False)
+def _systemd_stop() -> SystemdStopState:
+    """Stop, then prove the unit reached the one accepted clean-stop state.
+
+    ``systemctl stop`` returning zero only acknowledges the request; it does
+    not prove a timed-out/signalled supervisor, a still-running process, or an
+    unreadable unit is safe for a replacement rollout.
+    """
+    stopped = _systemd_call(["systemctl", "--user", "stop", SERVICE_NAME], check=False)
+    if stopped.returncode != 0:
+        detail = (stopped.stderr or stopped.stdout or "").strip()
+        raise ServiceStopError(
+            f"systemctl stop {SERVICE_NAME} failed (exit {stopped.returncode})"
+            + (f": {detail}" if detail else "")
+        )
+
+    shown = _systemd_call(
+        [
+            "systemctl",
+            "--user",
+            "show",
+            SERVICE_NAME,
+            *(f"--property={name}" for name in _SYSTEMD_STOP_PROPERTIES),
+        ],
+        check=False,
+    )
+    if shown.returncode != 0:
+        detail = (shown.stderr or shown.stdout or "").strip()
+        raise ServiceStopError(
+            f"systemctl stop returned zero, but could not read back {SERVICE_NAME} state "
+            f"(show exited {shown.returncode})" + (f": {detail}" if detail else "")
+        )
+    values = {
+        name: value
+        for line in shown.stdout.splitlines()
+        if "=" in line
+        for name, value in [line.split("=", 1)]
+        if name in _SYSTEMD_STOP_PROPERTIES
+    }
+    state = SystemdStopState(values)
+    missing = [name for name in _SYSTEMD_STOP_PROPERTIES if name not in values or not values[name]]
+    if missing:
+        raise ServiceStopError(
+            f"systemctl stop returned zero, but {SERVICE_NAME} state is unknown: missing "
+            f"{', '.join(missing)} (observed: {values})",
+            state=state,
+        )
+    if not state.is_clean_stop:
+        raise ServiceStopError(
+            f"systemctl stop returned zero, but {SERVICE_NAME} is not cleanly stopped "
+            f"(observed: {values})",
+            state=state,
+        )
+    return state
 
 
 def _systemd_restart() -> None:
@@ -1440,14 +1526,15 @@ def service_start() -> None:
         raise ServiceUnsupportedError(_no_systemctl_detail())
 
 
-def service_stop() -> None:
+def service_stop() -> SystemdStopState | None:
     """Stop the supervisor service without uninstalling it."""
     if _is_windows():
         raise ServiceUnsupportedError(_WINDOWS_UNSUPPORTED_DETAIL)
     if _is_darwin():
         _launchd_stop()
+        return None
     elif _have_systemctl():
-        _systemd_stop()
+        return _systemd_stop()
     else:
         raise ServiceUnsupportedError(_no_systemctl_detail())
 
@@ -1525,7 +1612,9 @@ def describe_service() -> ServiceInfo:
 __all__ = [
     "SERVICE_NAME",
     "ServiceInfo",
+    "ServiceStopError",
     "ServiceUnsupportedError",
+    "SystemdStopState",
     "SystemdBusProbeState",
     "describe_service",
     "diagnose_systemd_failure",
