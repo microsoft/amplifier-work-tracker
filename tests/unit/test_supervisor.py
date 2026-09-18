@@ -12,11 +12,13 @@ real `bd` binary, mirroring the forged-clock style already used by
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from typing import Any
 
 import pytest
 
+from amplifier_work_tracker import adapter as A
 from amplifier_work_tracker import custody as C
 from amplifier_work_tracker import heartbeat as HB
 from amplifier_work_tracker import supervisor as SV
@@ -595,6 +597,75 @@ def test_reap_loop_records_completion_after_a_sweep(tmp_path):
     rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
     assert rec is not None
     assert rec["last_completed"] is not None
+
+
+def test_reap_shutdown_interrupt_does_not_record_completed_heartbeat(monkeypatch, tmp_path):
+    """A requested stop during a worker sweep is not a completed sweep."""
+    ws = _FakeWorkspace({})
+    stop_event = asyncio.Event()
+    cancellation_event = threading.Event()
+    entered = threading.Event()
+    hb_path = HB.heartbeat_path(tmp_path)
+
+    def blocking_sweep(*_args, **_kwargs):
+        entered.set()
+        cancellation_event.wait(timeout=5)
+        raise A.SupervisorShutdownError("test shutdown")
+
+    monkeypatch.setattr(SV, "reap_sweep", blocking_sweep)
+
+    async def run():
+        task = asyncio.create_task(
+            SV.reap_loop(
+                ws,
+                interval=0.01,
+                stop_event=stop_event,
+                heartbeat_path=hb_path,
+                cancellation_event=cancellation_event,
+            )
+        )
+        await _wait_until(entered.is_set)
+        stop_event.set()
+        cancellation_event.set()
+        await task
+
+    asyncio.run(run())
+    rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
+    assert rec is not None
+    assert rec["last_completed"] is None
+
+
+def test_unexpected_reap_task_cancellation_stays_loud_without_completion(monkeypatch, tmp_path):
+    """Cancelling the loop without a stop request must propagate, not look healthy."""
+    ws = _FakeWorkspace({})
+    stop_event = asyncio.Event()
+    entered = threading.Event()
+    release = threading.Event()
+    hb_path = HB.heartbeat_path(tmp_path)
+
+    def blocking_sweep(*_args, **_kwargs):
+        entered.set()
+        release.wait(timeout=5)
+        return {}
+
+    monkeypatch.setattr(SV, "reap_sweep", blocking_sweep)
+
+    async def run():
+        task = asyncio.create_task(
+            SV.reap_loop(ws, interval=0.01, stop_event=stop_event, heartbeat_path=hb_path)
+        )
+        await _wait_until(entered.is_set)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    try:
+        asyncio.run(run())
+    finally:
+        release.set()
+    rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
+    assert rec is not None
+    assert rec["last_completed"] is None
 
 
 def test_notify_loop_records_completion_after_a_sweep(tmp_path):

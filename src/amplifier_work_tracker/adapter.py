@@ -317,6 +317,7 @@ _BD_INIT_TIMEOUT_SECONDS = 240.0
 _GIT_TIMEOUT_SECONDS = 30.0
 _SUPERVISOR_CANCEL_POLL_SECONDS = 0.1
 _SUPERVISOR_CANCEL_TERM_GRACE_SECONDS = 1.0
+_SUPERVISOR_CANCEL_KILL_GRACE_SECONDS = 3.0
 _supervisor_cancellation = threading.local()
 
 
@@ -326,6 +327,15 @@ class SupervisorShutdownError(RuntimeError):
     This is deliberately distinct from an ordinary timeout/result failure:
     the supervisor loops must return without writing a completed-sweep
     heartbeat, while ordinary adapter callers remain unchanged.
+    """
+
+
+class SupervisorShutdownCleanupError(SupervisorShutdownError):
+    """A scoped command group remained alive after TERM, KILL, and the cleanup bound.
+
+    This is intentionally distinct from a successful shutdown cancellation.  The
+    supervisor must not turn an unconfirmed process-group drain into a clean
+    exit merely because the immediate command parent has already exited.
     """
 
 
@@ -353,7 +363,7 @@ def current_supervisor_cancellation() -> threading.Event | None:
     return getattr(_supervisor_cancellation, "event", None)
 
 
-def _kill_process_group(proc: subprocess.Popen) -> None:
+def _kill_process_group(proc: subprocess.Popen, *, pgid: int | None = None) -> None:
     """Terminate *proc* and every process in its OWN process group -- reaches
     grandchildren a bare `proc.kill()` leaves orphaned (e.g. a dolt
     sql-server `bd --shared-server` spawned as ITS OWN child). Requires the
@@ -364,34 +374,87 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
     a failure -- the process may have exited on its own between the
     timeout firing and this call running.
     """
-    try:
-        pgid = os.getpgid(proc.pid)
-    except ProcessLookupError:
-        return
+    if pgid is None:
+        try:
+            pgid = os.getpgid(proc.pid)
+        except ProcessLookupError:
+            return
     try:
         os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
         pass
 
 
-def _terminate_process_group_for_shutdown(proc: subprocess.Popen) -> tuple[str, str]:
-    """TERM a scoped command group, then KILL/reap it if it does not drain."""
+def _process_group_exists(pgid: int) -> bool:
+    """Whether the dedicated group still has a member, without inspecting a PID.
+
+    ``proc`` can exit on TERM before a descendant which closed or redirected
+    its inherited pipes.  Its PID then cannot be used to discover the group,
+    but the dedicated PGID remains observable until that descendant is gone.
+    """
     try:
-        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, 0)
     except ProcessLookupError:
-        return "", ""
+        return False
+    except PermissionError:
+        # This should not happen for our own session, but claiming a clean
+        # drain without being able to observe the group would be dishonest.
+        return True
+    return True
+
+
+def _wait_for_process_group_exit(pgid: int, *, deadline: float) -> bool:
+    """Poll a known dedicated group until it is gone or its hard deadline passes."""
+    while _process_group_exists(pgid):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(_SUPERVISOR_CANCEL_POLL_SECONDS, remaining))
+    return True
+
+
+def _terminate_process_group_for_shutdown(proc: subprocess.Popen) -> tuple[str, str]:
+    """TERM a scoped command group, then prove every member is gone.
+
+    ``start_new_session=True`` makes ``proc.pid`` the dedicated PGID at spawn
+    time.  Capture that fact before TERM: after the immediate parent exits,
+    ``os.getpgid(proc.pid)`` raises even when a pipe-less descendant still
+    lives in the group.
+    """
+    pgid = proc.pid
     try:
         os.killpg(pgid, signal.SIGTERM)
     except ProcessLookupError:
         pass
+    stdout = ""
+    stderr = ""
     try:
-        return proc.communicate(timeout=_SUPERVISOR_CANCEL_TERM_GRACE_SECONDS)
+        stdout, stderr = proc.communicate(timeout=_SUPERVISOR_CANCEL_TERM_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
-        _kill_process_group(proc)
-        try:
-            return proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            return "", ""
+        # The parent is still present; the group observation below decides
+        # whether any member survived rather than treating this alone as the
+        # criterion.
+        pass
+
+    if _wait_for_process_group_exit(
+        pgid, deadline=time.monotonic() + _SUPERVISOR_CANCEL_TERM_GRACE_SECONDS
+    ):
+        return stdout, stderr
+
+    _kill_process_group(proc, pgid=pgid)
+    try:
+        stdout, stderr = proc.communicate(timeout=_SUPERVISOR_CANCEL_KILL_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        # Do not return an empty successful-looking drain: the group check
+        # below supplies the actual answer within the same cleanup bound.
+        pass
+    if not _wait_for_process_group_exit(
+        pgid, deadline=time.monotonic() + _SUPERVISOR_CANCEL_KILL_GRACE_SECONDS
+    ):
+        raise SupervisorShutdownCleanupError(
+            f"supervisor shutdown could not confirm command group {pgid} exited after SIGKILL"
+        )
+    return stdout, stderr
 
 
 def _communicate_bounded_or_cancelled(proc: subprocess.Popen, *, timeout: float) -> tuple[str, str]:

@@ -160,6 +160,14 @@ refuses any database that still has HELD items. It is deliberately not
 wired into CI, `doctor`, or any install path -- a destructive command that
 runs itself is how you lose data you meant to keep.
 
+## Shutdown and stop proof
+
+A supervisor stop is not proved by the immediate command parent exiting: retain
+and drain its dedicated process group so pipe-less descendants cannot survive.
+A service stop is not proved by `systemctl stop` returning zero either; bound
+both the stop request and readback, and require observed clean state before
+reporting success. Interrupted sweeps must not write a completed heartbeat.
+
 ## What "done" looks like
 
 Full suite green, `doctor` 38/38, `ruff check` / `ruff format --check` /

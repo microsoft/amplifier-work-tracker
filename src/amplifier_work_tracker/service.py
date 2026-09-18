@@ -168,6 +168,8 @@ _SYSTEMD_STOP_PROPERTIES = (
     "ExecMainStatus",
     "MainPID",
 )
+_SYSTEMD_STOP_COMMAND_TIMEOUT_SECONDS = 15.0
+_SYSTEMD_SHOW_COMMAND_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -877,7 +879,9 @@ def diagnose_systemd_failure(stderr: str) -> str:
     return "systemctl --user failed" + (f": {detail}" if detail else " (no output)")
 
 
-def _systemd_call(args: list[str], *, check: bool) -> subprocess.CompletedProcess:
+def _systemd_call(
+    args: list[str], *, check: bool, timeout: float | None = None
+) -> subprocess.CompletedProcess:
     """Every non-interactive systemctl invocation in this module goes
     through here: `capture_output=True` so nothing -- e.g. a
     session-bus-less container's `Failed to connect to bus: No medium
@@ -897,7 +901,12 @@ def _systemd_call(args: list[str], *, check: bool) -> subprocess.CompletedProces
     """
     env, note = _systemd_user_env()
     try:
-        result = subprocess.run(args, capture_output=True, text=True, check=check, env=env)
+        if timeout is None:
+            result = subprocess.run(args, capture_output=True, text=True, check=check, env=env)
+        else:
+            result = subprocess.run(
+                args, capture_output=True, text=True, check=check, env=env, timeout=timeout
+            )
     except subprocess.CalledProcessError as e:
         e.env_injection_note = note  # type: ignore[attr-defined]
         raise
@@ -1015,7 +1024,14 @@ def _systemd_stop() -> SystemdStopState:
     not prove a timed-out/signalled supervisor, a still-running process, or an
     unreadable unit is safe for a replacement rollout.
     """
-    stopped = _systemd_call(["systemctl", "--user", "stop", SERVICE_NAME], check=False)
+    try:
+        stopped = _systemd_call(
+            ["systemctl", "--user", "stop", SERVICE_NAME],
+            check=False,
+            timeout=_SYSTEMD_STOP_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise _systemd_stop_timeout_error("stop", error) from error
     if stopped.returncode != 0:
         detail = (stopped.stderr or stopped.stdout or "").strip()
         raise ServiceStopError(
@@ -1023,16 +1039,20 @@ def _systemd_stop() -> SystemdStopState:
             + (f": {detail}" if detail else "")
         )
 
-    shown = _systemd_call(
-        [
-            "systemctl",
-            "--user",
-            "show",
-            SERVICE_NAME,
-            *(f"--property={name}" for name in _SYSTEMD_STOP_PROPERTIES),
-        ],
-        check=False,
-    )
+    try:
+        shown = _systemd_call(
+            [
+                "systemctl",
+                "--user",
+                "show",
+                SERVICE_NAME,
+                *(f"--property={name}" for name in _SYSTEMD_STOP_PROPERTIES),
+            ],
+            check=False,
+            timeout=_SYSTEMD_SHOW_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise _systemd_stop_timeout_error("show", error) from error
     if shown.returncode != 0:
         detail = (shown.stderr or shown.stdout or "").strip()
         raise ServiceStopError(
@@ -1061,6 +1081,26 @@ def _systemd_stop() -> SystemdStopState:
             state=state,
         )
     return state
+
+
+def _systemd_stop_timeout_error(phase: str, error: subprocess.TimeoutExpired) -> ServiceStopError:
+    """Preserve partial output when a bounded stop/readback client hangs."""
+
+    def text(value: str | bytes | None) -> str:
+        if isinstance(value, bytes):
+            return value.decode(errors="replace")
+        return value or ""
+
+    partial = []
+    if stdout := text(error.output).strip():
+        partial.append(f"partial stdout: {stdout}")
+    if stderr := text(error.stderr).strip():
+        partial.append(f"partial stderr: {stderr}")
+    detail = f" ({'; '.join(partial)})" if partial else ""
+    return ServiceStopError(
+        f"systemctl {phase} {SERVICE_NAME} timed out after {error.timeout}s; "
+        f"service state is unknown{detail}"
+    )
 
 
 def _systemd_restart() -> None:
