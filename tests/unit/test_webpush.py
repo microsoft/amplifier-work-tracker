@@ -80,8 +80,11 @@ def _run(coro):
 
 def test_push_shutdown_interrupts_inflight_alarm_without_a_retry_delay():
     post_started = threading.Event()
+    post_count = 0
 
     async def block_after_post_starts(_request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        post_count += 1
         post_started.set()
         await asyncio.Event().wait()
         raise AssertionError("cancellation must end the request before a response")
@@ -104,6 +107,7 @@ def test_push_shutdown_interrupts_inflight_alarm_without_a_retry_delay():
             await task
 
     _run(run())
+    assert post_count == 1
 
 
 # --------------------------------------------------------------------------- #

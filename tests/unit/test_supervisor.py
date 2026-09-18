@@ -507,9 +507,12 @@ def test_reap_alarm_shutdown_logs_unknown_outcome_after_the_committed_release(mo
     """
 
     post_started = threading.Event()
+    post_count = 0
     original_client = W.httpx.AsyncClient
 
     async def block_after_post_starts(_request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        post_count += 1
         post_started.set()
         await asyncio.Event().wait()
         raise AssertionError("cancellation must end the request before a response")
@@ -557,6 +560,7 @@ def test_reap_alarm_shutdown_logs_unknown_outcome_after_the_committed_release(mo
     assert not thread.is_alive(), "reap did not terminate after cancellation"
     assert bd.released == ["work-42"]
     assert item.status == "open"
+    assert post_count == 1, "cancellation must not retry a POST whose outcome is unknown"
     assert len(outcome) == 1
     assert isinstance(outcome[0], A.SupervisorShutdownError)
     assert isinstance(outcome[0].__cause__, W.AlarmShutdownError)
@@ -719,9 +723,12 @@ def test_reap_loop_alarm_shutdown_after_post_start_has_no_completed_heartbeat(
     """Both stop signals stop the composed alarm path without a completion mark."""
 
     post_started = threading.Event()
+    post_count = 0
     original_client = W.httpx.AsyncClient
 
     async def block_after_post_starts(_request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        post_count += 1
         post_started.set()
         await asyncio.Event().wait()
         raise AssertionError("cancellation must end the request before a response")
@@ -774,6 +781,7 @@ def test_reap_loop_alarm_shutdown_after_post_start_has_no_completed_heartbeat(
 
     asyncio.run(run())
     assert item.status == "open"
+    assert post_count == 1, "cancellation must not retry a POST whose outcome is unknown"
     rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
     assert rec is not None
     assert rec["last_completed"] is None

@@ -113,7 +113,10 @@ class AlarmDeliveryError(RuntimeError):
 
 
 class AlarmShutdownError(RuntimeError):
-    """A supervisor shutdown interrupted a reclaim alarm before delivery."""
+    """A supervisor shutdown interrupted a reclaim alarm before its outcome was known.
+
+    The HTTP POST may already have been accepted; delivery must not be inferred.
+    """
 
 
 # --------------------------------------------------------------------------- #
