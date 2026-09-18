@@ -125,7 +125,7 @@ def test_systemd_stop_reports_raised_command_timeout_with_partial_evidence(monke
         command_phase = "show" if "show" in args else "stop"
         if command_phase == phase:
             raise subprocess.TimeoutExpired(
-                args, timeout, output=b"partial out", stderr=b"partial err"
+                args, timeout or 1.0, output=b"partial out", stderr=b"partial err"
             )
         return _systemd_result()
 

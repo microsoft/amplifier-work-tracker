@@ -617,7 +617,7 @@ def test_reap_shutdown_interrupt_does_not_record_completed_heartbeat(monkeypatch
     async def run():
         task = asyncio.create_task(
             SV.reap_loop(
-                ws,
+                ws,  # type: ignore[arg-type]
                 interval=0.01,
                 stop_event=stop_event,
                 heartbeat_path=hb_path,
@@ -652,7 +652,12 @@ def test_unexpected_reap_task_cancellation_stays_loud_without_completion(monkeyp
 
     async def run():
         task = asyncio.create_task(
-            SV.reap_loop(ws, interval=0.01, stop_event=stop_event, heartbeat_path=hb_path)
+            SV.reap_loop(  # type: ignore[arg-type]
+                ws,  # type: ignore[arg-type]
+                interval=0.01,
+                stop_event=stop_event,
+                heartbeat_path=hb_path,
+            )
         )
         await _wait_until(entered.is_set)
         task.cancel()
