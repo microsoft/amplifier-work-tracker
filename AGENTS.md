@@ -23,6 +23,20 @@ lives in `src/amplifier_work_tracker/adapter.py` and nowhere else. If
 `doctor` reports a violated assumption, the fix scope is that one file.
 Nothing above the seam should ever need to change for a Beads upgrade.
 
+## Project identity and registration repair
+
+`Workspace.create` must pass an explicit database name when adopting an existing
+project, preserving its server identity and other clients' registrations.
+`repair-registration` is explicit local recovery, never automatic identity-guard
+bypass: validate the effective endpoint, mapping, IDs and witness before writing,
+and recheck both metadata bytes and permissions under the repair lock.
+Keep replacement/rollback atomic and preserve the exact backup and mode.
+If post-write verification fails, return the observed final metadata state and
+separate verification from rollback failure/refusal; never infer either state
+without readback.
+Run `test_identity_preservation.py` and `test_repair_registration.py` using the
+isolated-server fixtures; never test a repair against the shared server.
+
 ## `doctor` is the gate, not a suggestion
 
 Run `amplifier-work-tracker doctor` after any `bd` upgrade and before
@@ -59,6 +73,12 @@ the run is committed at
 `docs/lanes/oy4-dead-holder-reclaim/evidence/doctor-measured.txt`.)
 
 ## Test scope
+
+The browser tier intentionally refreshes its tracked `LAST_RUN.json`; preserve
+and review that new measurement rather than discarding it to satisfy a source
+hash check. Its Linux/aarch64 fixture uses direct Chromium child startup because
+the pinned shell's zygotes can crash before rendering; the browser pin and all
+rendered assertions remain unchanged.
 
 Root CI (`.github/workflows/ci.yml`) runs `tests/unit`, `tests/integration`
 (marker `integration`), and `tests/cli` (marker `cli`) -- see the Makefile

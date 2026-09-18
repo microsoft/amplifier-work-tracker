@@ -35,6 +35,7 @@ Isolation, in four layers
 from __future__ import annotations
 
 import os
+import platform
 import secrets
 import threading
 import time
@@ -243,8 +244,13 @@ def browser() -> Iterator[Browser]:
     presenting as a mysterious protocol error.
     """
     with sync_playwright() as p:
+        launch_args = ["--disable-gpu"]
+        if platform.system() == "Linux" and platform.machine() == "aarch64":
+            # The pinned ARM64 shell's zygotes can segfault before page creation.
+            # Direct child startup keeps the same renderer and conformance checks.
+            launch_args.append("--no-zygote")
         try:
-            instance = p.chromium.launch(args=["--disable-gpu"])
+            instance = p.chromium.launch(args=launch_args)
         except Exception as exc:  # noqa: BLE001 -- re-raised with the remedy attached
             raise RuntimeError(
                 f"could not launch the pinned chromium: {exc}. Run `make playwright-install`."

@@ -27,7 +27,7 @@
         "blocked": 0,
         "pixels_swept": 3002880,
         "retired_amber": 0,
-        "watch": 5444
+        "watch": 5292
       },
       "bad-alarm-fixture/L0/dark": {
         "alarm": 0,
@@ -48,7 +48,7 @@
         "blocked": 0,
         "pixels_swept": 3002880,
         "retired_amber": 16681,
-        "watch": 5237
+        "watch": 5090
       },
       "calm/L0/dark": {
         "alarm": 0,
@@ -62,7 +62,7 @@
         "blocked": 0,
         "pixels_swept": 3002880,
         "retired_amber": 0,
-        "watch": 5380
+        "watch": 5275
       },
       "calm/L1/dark": {
         "alarm": 0,
@@ -76,7 +76,7 @@
         "blocked": 0,
         "pixels_swept": 3877120,
         "retired_amber": 0,
-        "watch": 6323
+        "watch": 6340
       }
     },
     "kit.pinned_browser": {
@@ -224,7 +224,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 430,
         "text_below_floor": 0,
-        "text_scored": 178
+        "text_scored": 179
       },
       "calm/L1/430/light": {
         "client_width": 430,
@@ -280,7 +280,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 1280,
         "text_below_floor": 0,
-        "text_scored": 58
+        "text_scored": 56
       },
       "calm/L2/1280/light": {
         "client_width": 1280,
@@ -294,7 +294,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 1280,
         "text_below_floor": 0,
-        "text_scored": 58
+        "text_scored": 56
       },
       "calm/L2/430/dark": {
         "client_width": 430,
@@ -308,7 +308,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 430,
         "text_below_floor": 0,
-        "text_scored": 58
+        "text_scored": 56
       },
       "calm/L2/430/light": {
         "client_width": 430,
@@ -322,7 +322,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 430,
         "text_below_floor": 0,
-        "text_scored": 58
+        "text_scored": 56
       },
       "calm/L2/900/dark": {
         "client_width": 900,
@@ -336,7 +336,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 900,
         "text_below_floor": 0,
-        "text_scored": 58
+        "text_scored": 56
       },
       "calm/L2/900/light": {
         "client_width": 900,
@@ -350,7 +350,7 @@
         "running_animations_under_reduced_motion": 0,
         "scroll_width": 900,
         "text_below_floor": 0,
-        "text_scored": 58
+        "text_scored": 56
       }
     },
     "state.not_colour_only": {
@@ -418,6 +418,6 @@
       }
     }
   },
-  "recorded_at": "2026-09-05T23:46:45Z",
+  "recorded_at": "2026-09-17T22:48:47Z",
   "schema": "operator-surface-tier-b/1"
 }
