@@ -12,14 +12,20 @@ real `bd` binary, mirroring the forged-clock style already used by
 from __future__ import annotations
 
 import asyncio
+import logging
+import signal
+import threading
 import time
 from typing import Any
 
+import httpx
 import pytest
 
+from amplifier_work_tracker import adapter as A
 from amplifier_work_tracker import custody as C
 from amplifier_work_tracker import heartbeat as HB
 from amplifier_work_tracker import supervisor as SV
+from amplifier_work_tracker import webpush as W
 
 # --------------------------------------------------------- classify_port_holders
 
@@ -492,6 +498,84 @@ def test_reap_project_reports_an_item_it_could_not_release_instead_of_aborting()
     assert "simulated wedged release" in result["failed"][0]["error"]
 
 
+def test_reap_alarm_shutdown_logs_unknown_outcome_after_the_committed_release(monkeypatch, caplog):
+    """A cancellation crossing the actual HTTP alarm path must stay visible.
+
+    The request transport signals only after POST starts and never returns a
+    response.  That forces the exact reap_project -> fire_reclaim_alarm ->
+    send_alarm cancellation path without a network request or a mocked alarm.
+    """
+
+    post_started = threading.Event()
+    post_count = 0
+    original_client = W.httpx.AsyncClient
+
+    async def block_after_post_starts(_request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        post_count += 1
+        post_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("cancellation must end the request before a response")
+
+    def controlled_client(*_args, **_kwargs):
+        return original_client(transport=httpx.MockTransport(block_after_post_starts))
+
+    monkeypatch.setattr(W.httpx, "AsyncClient", controlled_client)
+    monkeypatch.setattr(
+        W,
+        "resolve_config",
+        lambda: W.NtfyConfig(
+            server="https://ntfy.example",
+            topic="test-topic",
+            token=None,
+            enabled=True,
+            max_attempts=4,
+            backoff_base=0,
+        ),
+    )
+    item = _FakeItem(
+        "work-42",
+        status="held",
+        holder="holder-7",
+        meta={C.CUSTODY_KEY: {"holder": "holder-7", "last_seen": _ts(3600)}},
+    )
+    bd = _FakeBeads({item.id: item})
+    cancelled = threading.Event()
+    outcome: list[BaseException] = []
+
+    def reap() -> None:
+        try:
+            with A.supervisor_cancellation_scope(cancelled):
+                SV.reap_project(bd, ttl_seconds=900)  # type: ignore[arg-type]
+        except BaseException as error:
+            outcome.append(error)
+
+    with caplog.at_level(logging.ERROR, logger="amplifier_work_tracker.supervisor"):
+        thread = threading.Thread(target=reap)
+        thread.start()
+        assert post_started.wait(timeout=5), "POST did not start"
+        cancelled.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive(), "reap did not terminate after cancellation"
+    assert bd.released == ["work-42"]
+    assert item.status == "open"
+    assert post_count == 1, "cancellation must not retry a POST whose outcome is unknown"
+    assert len(outcome) == 1
+    assert isinstance(outcome[0], A.SupervisorShutdownError)
+    assert isinstance(outcome[0].__cause__, W.AlarmShutdownError)
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "amplifier_work_tracker.supervisor"
+        and "reap alarm interrupted after reclaim committed" in record.getMessage()
+    ]
+    assert messages == [
+        "reap alarm interrupted after reclaim committed: item=work-42 holder=holder-7; "
+        "HTTP acceptance/delivery UNKNOWN"
+    ]
+
+
 def test_notify_project_flips_only_linked_unresolved_reports():
     report = _FakeItem("r-1", status="open", holder=None)
     work = _FakeItem("w-1", status="resolved", holder="agent-a")
@@ -595,6 +679,286 @@ def test_reap_loop_records_completion_after_a_sweep(tmp_path):
     rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
     assert rec is not None
     assert rec["last_completed"] is not None
+
+
+def test_reap_shutdown_interrupt_does_not_record_completed_heartbeat(monkeypatch, tmp_path):
+    """A requested stop during a worker sweep is not a completed sweep."""
+    ws = _FakeWorkspace({})
+    stop_event = asyncio.Event()
+    cancellation_event = threading.Event()
+    entered = threading.Event()
+    hb_path = HB.heartbeat_path(tmp_path)
+
+    def blocking_sweep(*_args, **_kwargs):
+        entered.set()
+        cancellation_event.wait(timeout=5)
+        raise A.SupervisorShutdownError("test shutdown")
+
+    monkeypatch.setattr(SV, "reap_sweep", blocking_sweep)
+
+    async def run():
+        task = asyncio.create_task(
+            SV.reap_loop(
+                ws,  # type: ignore[arg-type]
+                interval=0.01,
+                stop_event=stop_event,
+                heartbeat_path=hb_path,
+                cancellation_event=cancellation_event,
+            )
+        )
+        await _wait_until(entered.is_set)
+        stop_event.set()
+        cancellation_event.set()
+        await task
+
+    asyncio.run(run())
+    rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
+    assert rec is not None
+    assert rec["last_completed"] is None
+
+
+def test_reap_loop_alarm_shutdown_after_post_start_has_no_completed_heartbeat(
+    monkeypatch, tmp_path
+):
+    """Both stop signals stop the composed alarm path without a completion mark."""
+
+    post_started = threading.Event()
+    post_count = 0
+    original_client = W.httpx.AsyncClient
+
+    async def block_after_post_starts(_request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        post_count += 1
+        post_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("cancellation must end the request before a response")
+
+    monkeypatch.setattr(
+        W.httpx,
+        "AsyncClient",
+        lambda *_args, **_kwargs: original_client(
+            transport=httpx.MockTransport(block_after_post_starts)
+        ),
+    )
+    monkeypatch.setattr(
+        W,
+        "resolve_config",
+        lambda: W.NtfyConfig(
+            server="https://ntfy.example",
+            topic="test-topic",
+            token=None,
+            enabled=True,
+            max_attempts=4,
+            backoff_base=0,
+        ),
+    )
+    item = _FakeItem(
+        "work-43",
+        status="held",
+        holder="holder-8",
+        meta={C.CUSTODY_KEY: {"holder": "holder-8", "last_seen": _ts(3600)}},
+    )
+    ws = _FakeWorkspace({"project": _FakeBeads({item.id: item})})
+    stop_event = asyncio.Event()
+    cancellation_event = threading.Event()
+    hb_path = HB.heartbeat_path(tmp_path)
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            SV.reap_loop(
+                ws,  # type: ignore[arg-type]
+                interval=0.01,
+                stop_event=stop_event,
+                heartbeat_path=hb_path,
+                cancellation_event=cancellation_event,
+                ttl_seconds=900,
+            )
+        )
+        await _wait_until(post_started.is_set)
+        stop_event.set()
+        cancellation_event.set()
+        await task
+
+    asyncio.run(run())
+    assert item.status == "open"
+    assert post_count == 1, "cancellation must not retry a POST whose outcome is unknown"
+    rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
+    assert rec is not None
+    assert rec["last_completed"] is None
+
+
+@pytest.mark.parametrize(
+    ("loop_name", "sweep_name", "heartbeat_name"),
+    [
+        ("reap_loop", "reap_sweep", HB.REAP),
+        ("notify_loop", "notify_sweep", HB.NOTIFY),
+    ],
+)
+def test_shutdown_cleanup_failure_propagates_even_when_stop_was_requested(
+    monkeypatch, tmp_path, loop_name, sweep_name, heartbeat_name
+):
+    """A failed command-group drain must never be downgraded to clean stop."""
+    ws = _FakeWorkspace({})
+    stop_event = asyncio.Event()
+    cancellation_event = threading.Event()
+    entered = threading.Event()
+    hb_path = HB.heartbeat_path(tmp_path)
+
+    def cleanup_failed(*_args, **_kwargs):
+        entered.set()
+        cancellation_event.wait(timeout=5)
+        raise A.SupervisorShutdownCleanupError("could not confirm owned group drained")
+
+    monkeypatch.setattr(SV, sweep_name, cleanup_failed)
+
+    async def run():
+        task = asyncio.create_task(
+            getattr(SV, loop_name)(
+                ws,  # type: ignore[arg-type]
+                interval=0.01,
+                stop_event=stop_event,
+                heartbeat_path=hb_path,
+                cancellation_event=cancellation_event,
+            )
+        )
+        await _wait_until(entered.is_set)
+        stop_event.set()
+        cancellation_event.set()
+        with pytest.raises(A.SupervisorShutdownCleanupError):
+            await task
+
+    asyncio.run(run())
+    rec = HB.read_loop_heartbeat(hb_path, heartbeat_name)
+    assert rec is not None
+    assert rec["last_completed"] is None
+
+
+def test_async_serve_returns_nonzero_after_shutdown_cleanup_failure(monkeypatch, tmp_path):
+    """The supervisor drains its other tasks but exposes cleanup failure as exit 1."""
+    stopped = threading.Event()
+
+    async def cleanup_failed(*_args, **_kwargs):
+        raise A.SupervisorShutdownCleanupError("owned command group remained alive")
+
+    async def waiting_loop(*_args, stop_event, **_kwargs):
+        await stop_event.wait()
+        stopped.set()
+
+    monkeypatch.setattr(SV, "dolt_supervisor_loop", waiting_loop)
+    monkeypatch.setattr(SV, "reap_loop", cleanup_failed)
+    monkeypatch.setattr(SV, "notify_loop", waiting_loop)
+
+    result = asyncio.run(
+        SV._async_serve(
+            tmp_path / "root",
+            host="127.0.0.1",
+            port=1,
+            reap_interval=1,
+            notify_interval=1,
+            dolt_restart_backoff=0,
+        )
+    )
+
+    assert result == 1
+    assert stopped.is_set()
+
+
+def test_async_serve_force_reaps_term_ignoring_owned_dolt_after_cleanup_failure(
+    monkeypatch, tmp_path
+):
+    """The bounded failure drain escalates only its recorded Dolt child."""
+
+    class _TermIgnoringDolt:
+        pid = 4321
+
+        def __init__(self) -> None:
+            self.returncode: int | None = None
+            self.terminated = False
+            self.killed = False
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -signal.SIGKILL
+
+    proc = _TermIgnoringDolt()
+
+    async def cleanup_failed(*_args, **_kwargs):
+        raise A.SupervisorShutdownCleanupError("owned command group remained alive")
+
+    async def waiting_dolt(*_args, state, stop_event, **_kwargs):
+        state["proc"] = proc
+        while proc.poll() is None:
+            await asyncio.sleep(0)
+        state["proc"] = None
+
+    async def waiting_loop(*_args, stop_event, **_kwargs):
+        await stop_event.wait()
+
+    monkeypatch.setattr(SV, "dolt_supervisor_loop", waiting_dolt)
+    monkeypatch.setattr(SV, "reap_loop", cleanup_failed)
+    monkeypatch.setattr(SV, "notify_loop", waiting_loop)
+    monkeypatch.setattr(SV, "_SUPERVISOR_SHUTDOWN_DRAIN_SECONDS", 0.01)
+    monkeypatch.setattr(SV, "_SUPERVISOR_FINAL_REAP_SECONDS", 0.1)
+
+    result = asyncio.run(
+        SV._async_serve(
+            tmp_path / "root",
+            host="127.0.0.1",
+            port=1,
+            reap_interval=1,
+            notify_interval=1,
+            dolt_restart_backoff=0,
+        )
+    )
+
+    assert result == 1
+    assert proc.terminated
+    assert proc.killed
+    assert proc.poll() == -signal.SIGKILL
+
+
+def test_unexpected_reap_task_cancellation_stays_loud_without_completion(monkeypatch, tmp_path):
+    """Cancelling the loop without a stop request must propagate, not look healthy."""
+    ws = _FakeWorkspace({})
+    stop_event = asyncio.Event()
+    entered = threading.Event()
+    release = threading.Event()
+    hb_path = HB.heartbeat_path(tmp_path)
+
+    def blocking_sweep(*_args, **_kwargs):
+        entered.set()
+        release.wait(timeout=5)
+        return {}
+
+    monkeypatch.setattr(SV, "reap_sweep", blocking_sweep)
+
+    async def run():
+        task = asyncio.create_task(
+            SV.reap_loop(  # type: ignore[arg-type]
+                ws,  # type: ignore[arg-type]
+                interval=0.01,
+                stop_event=stop_event,
+                heartbeat_path=hb_path,
+            )
+        )
+        await _wait_until(entered.is_set)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    try:
+        asyncio.run(run())
+    finally:
+        release.set()
+    rec = HB.read_loop_heartbeat(hb_path, HB.REAP)
+    assert rec is not None
+    assert rec["last_completed"] is None
 
 
 def test_notify_loop_records_completion_after_a_sweep(tmp_path):

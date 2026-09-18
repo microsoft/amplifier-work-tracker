@@ -48,6 +48,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,6 +89,14 @@ DEFAULT_DOLT_RESTART_BUDGET_WINDOW_SECONDS = 60.0
 
 _PORT_PROBE_TIMEOUT_S = 2.0
 _PORT_HOLDER_KILL_WAIT_S = 1.0
+# This is deliberately below the unchanged systemd ten-second stop grace:
+# supervisor-owned command cancellation can spend eight seconds in its
+# TERM/KILL process-group drain (adapter.py), then this leaves one bounded
+# second to reap an owned Dolt child and asyncio tasks before systemd has to
+# intervene.
+_SUPERVISOR_SHUTDOWN_DRAIN_SECONDS = 8.0
+_SUPERVISOR_FINAL_REAP_SECONDS = 1.0
+_DOLT_WAIT_POLL_SECONDS = 0.05
 
 
 def default_dolt_dir() -> Path:
@@ -145,15 +154,31 @@ def reap_project(
         if eligible:
             try:
                 bd.release(item.id)
+            except A.SupervisorShutdownError:
+                raise
             except Exception as e:  # noqa: BLE001 -- one wedged item must never shadow the queue
                 logger.exception("reap could not release %s -- continuing with the rest", item.id)
                 failed.append({"id": item.id, "holder": item.holder, "error": str(e)})
                 continue
             reclaimed.append({"id": item.id, "was_holder": item.holder, "reason": reason})
-            # ALARM: custody-TTL breach is a real alarm condition. Sync, never raises
-            # (a push failure must never prevent/undo the reclaim above); any failure
-            # is LOUD-logged inside webpush, not swallowed.
-            WP.fire_reclaim_alarm(item.id, item.holder, reason)
+            # ALARM: custody-TTL breach is a real alarm condition. Ordinary delivery
+            # failures do not prevent/undo the reclaim above and are LOUD-logged in
+            # webpush; supervisor-scoped cancellation deliberately propagates.
+            try:
+                WP.fire_reclaim_alarm(
+                    item.id,
+                    item.holder,
+                    reason,
+                    cancellation_event=A.current_supervisor_cancellation(),
+                )
+            except WP.AlarmShutdownError as e:
+                logger.error(
+                    "reap alarm interrupted after reclaim committed: item=%s holder=%s; "
+                    "HTTP acceptance/delivery UNKNOWN",
+                    item.id,
+                    item.holder,
+                )
+                raise A.SupervisorShutdownError(str(e)) from e
         else:
             note = "quiet (awaiting_human)" if not C.should_notify(rec) else "ok"
             kept.append({"id": item.id, "holder": item.holder, "note": note})
@@ -205,6 +230,8 @@ def reap_sweep(
             out[name] = reap_project(
                 ws.project(name), ttl_seconds=ttl_seconds, escalation_hours=escalation_hours
             )
+        except A.SupervisorShutdownError:
+            raise
         except Exception as e:  # noqa: BLE001 -- one broken project must never break the sweep
             out[name] = {"error": str(e)}
     return out
@@ -237,6 +264,8 @@ def notify_sweep(ws: A.Workspace) -> dict[str, dict[str, Any]]:
     for name in ws.names():
         try:
             out[name] = notify_project(ws.project(name))
+        except A.SupervisorShutdownError:
+            raise
         except Exception as e:  # noqa: BLE001 -- one broken project must never break the sweep
             out[name] = {"error": str(e)}
     return out
@@ -250,6 +279,7 @@ async def reap_loop(
     ttl_seconds: int | None = None,
     escalation_hours: float | None = None,
     heartbeat_path: Path | None = None,
+    cancellation_event: threading.Event | None = None,
 ) -> None:
     """Trivial wrapper: sleep, sweep, repeat -- until `stop_event` fires.
 
@@ -274,9 +304,18 @@ async def reap_loop(
         if stop_event.is_set():
             return
         try:
-            result = await asyncio.to_thread(
-                reap_sweep, ws, ttl_seconds=ttl_seconds, escalation_hours=escalation_hours
-            )
+
+            def run_sweep() -> dict[str, dict[str, Any]]:
+                if cancellation_event is None:
+                    return reap_sweep(
+                        ws, ttl_seconds=ttl_seconds, escalation_hours=escalation_hours
+                    )
+                with A.supervisor_cancellation_scope(cancellation_event):
+                    return reap_sweep(
+                        ws, ttl_seconds=ttl_seconds, escalation_hours=escalation_hours
+                    )
+
+            result = await asyncio.to_thread(run_sweep)
             failed = sorted(sweep_failures(result))
             if failed:
                 logger.error(
@@ -296,6 +335,17 @@ async def reap_loop(
                 ),
                 failed_projects=failed,
             )
+        except A.SupervisorShutdownCleanupError:
+            # A cancellation request reached the command, but its dedicated
+            # process group was not confirmed drained.  Stop is not a normal
+            # completed sweep in this case: let the supervisor turn it into a
+            # nonzero process outcome after it shuts its other children down.
+            logger.error("reap shutdown could not drain its command process group")
+            raise
+        except A.SupervisorShutdownError:
+            if stop_event.is_set():
+                return
+            raise
         except Exception:  # noqa: BLE001 -- see docstring
             logger.exception("reap sweep crashed -- continuing on the next interval")
 
@@ -306,6 +356,7 @@ async def notify_loop(
     interval: float,
     stop_event: asyncio.Event,
     heartbeat_path: Path | None = None,
+    cancellation_event: threading.Event | None = None,
 ) -> None:
     """Trivial wrapper around `notify_sweep` -- see `reap_loop`'s docstring,
     including the heartbeat writes."""
@@ -319,8 +370,23 @@ async def notify_loop(
         if stop_event.is_set():
             return
         try:
-            await asyncio.to_thread(notify_sweep, ws)
+
+            def run_sweep() -> dict[str, dict[str, Any]]:
+                if cancellation_event is None:
+                    return notify_sweep(ws)
+                with A.supervisor_cancellation_scope(cancellation_event):
+                    return notify_sweep(ws)
+
+            await asyncio.to_thread(run_sweep)
             HB.record_sweep_completed(hb_path, HB.NOTIFY, pid=os.getpid())
+        except A.SupervisorShutdownCleanupError:
+            # See reap_loop: a failed group drain is not benign cancellation.
+            logger.error("notify shutdown could not drain its command process group")
+            raise
+        except A.SupervisorShutdownError:
+            if stop_event.is_set():
+                return
+            raise
         except Exception:  # noqa: BLE001 -- see docstring
             logger.exception("notify sweep crashed -- continuing on the next interval")
 
@@ -591,7 +657,15 @@ async def dolt_supervisor_loop(
         pid_file.write_text(str(proc.pid), encoding="utf-8")
         logger.info("dolt sql-server started (pid %s) on %s:%s", proc.pid, host, port)
         try:
-            returncode = await asyncio.to_thread(proc.wait)
+            # Do not park a default-executor thread in ``proc.wait()``.  If a
+            # broken child ignores TERM, asyncio.run() joins that thread during
+            # its own teardown without our shutdown deadline.  Cooperative
+            # polling has the same ordinary exit/restart behavior and lets
+            # _async_serve force-reap only this recorded child on its bounded
+            # failure path.
+            while proc.poll() is None:
+                await asyncio.sleep(_DOLT_WAIT_POLL_SECONDS)
+            returncode = proc.returncode
         finally:
             state["proc"] = None
             pid_file.unlink(missing_ok=True)
@@ -909,11 +983,14 @@ async def _async_serve(
     root.mkdir(parents=True, exist_ok=True)
     pid_file = root / ".dolt-server.pid"
     stop_event = asyncio.Event()
+    cancellation_event = threading.Event()
     state: dict[str, subprocess.Popen | None] = {"proc": None}
+    forced_child_shutdown = False
 
     def _request_stop() -> None:
         logger.info("shutdown requested")
         stop_event.set()
+        cancellation_event.set()
         proc = state.get("proc")
         if proc is not None and proc.poll() is None:
             proc.terminate()
@@ -938,9 +1015,21 @@ async def _async_serve(
             restart_budget_window=dolt_restart_budget_window,
         )
     )
-    reap_task = asyncio.create_task(reap_loop(ws, interval=reap_interval, stop_event=stop_event))
+    reap_task = asyncio.create_task(
+        reap_loop(
+            ws,
+            interval=reap_interval,
+            stop_event=stop_event,
+            cancellation_event=cancellation_event,
+        )
+    )
     notify_task = asyncio.create_task(
-        notify_loop(ws, interval=notify_interval, stop_event=stop_event)
+        notify_loop(
+            ws,
+            interval=notify_interval,
+            stop_event=stop_event,
+            cancellation_event=cancellation_event,
+        )
     )
     tasks = [dolt_task, reap_task, notify_task]
     # The web task is OPTIONAL (only when `--web-port` was given) -- when
@@ -949,9 +1038,66 @@ async def _async_serve(
     if web is not None:
         tasks.append(asyncio.create_task(web_server_loop(ws, web, stop_event=stop_event)))
 
+    def _force_reap_owned_dolt() -> None:
+        """KILL only the currently recorded child after its TERM grace elapsed."""
+        nonlocal forced_child_shutdown
+        proc = state.get("proc")
+        if proc is not None and proc.poll() is None:
+            logger.error("owned dolt child %s ignored shutdown TERM; sending KILL", proc.pid)
+            proc.kill()
+            forced_child_shutdown = True
+
+    async def _drain_shutdown_tasks() -> bool:
+        """Let shutdown-aware work drain, then bound child and task cleanup."""
+        pending = {task for task in tasks if not task.done()}
+        if not pending:
+            return True
+        loop_deadline = asyncio.get_running_loop().time() + _SUPERVISOR_SHUTDOWN_DRAIN_SECONDS
+        _, pending = await asyncio.wait(
+            pending,
+            timeout=max(0.0, loop_deadline - asyncio.get_running_loop().time()),
+        )
+        if pending:
+            _force_reap_owned_dolt()
+            _, pending = await asyncio.wait(pending, timeout=_SUPERVISOR_FINAL_REAP_SECONDS)
+        if not pending:
+            return True
+        # The scoped sweep was given its full adapter-side group-drain window
+        # before this point.  This is only a final bounded cleanup for a task
+        # which has already missed the supervisor's own deadline.
+        logger.error("shutdown deadline expired with %d task(s) still pending", len(pending))
+        for task in pending:
+            task.cancel()
+        _, pending = await asyncio.wait(pending, timeout=_SUPERVISOR_FINAL_REAP_SECONDS)
+        if pending:
+            logger.error(
+                "final task reap deadline expired with %d task(s) still pending",
+                len(pending),
+            )
+        return not pending
+
+    gathered = asyncio.gather(*tasks)
+    stop_waiter = asyncio.create_task(stop_event.wait())
     try:
-        await asyncio.gather(*tasks)
-    except (DoltSupervisionExhaustedError, WebServerStartupError) as e:
+        done, _ = await asyncio.wait({gathered, stop_waiter}, return_when=asyncio.FIRST_COMPLETED)
+        if gathered in done:
+            await gathered
+            return 0
+
+        # A normal SIGTERM must use the same bounded drain as a failure path:
+        # TERM first, then KILL/reap only our recorded Dolt child if it refuses
+        # to exit.  This prevents an uncooperative child from consuming the
+        # systemd grace and makes the clean-stop result honest.
+        if not await _drain_shutdown_tasks():
+            return 1
+        await gathered
+        # Reaping a forced child is containment, not a clean database shutdown.
+        return 1 if forced_child_shutdown else 0
+    except (
+        DoltSupervisionExhaustedError,
+        WebServerStartupError,
+        A.SupervisorShutdownCleanupError,
+    ) as e:
         # The deeper bug this closes: giving up on dolt (or failing to start
         # the web dashboard) must be LOUD and non-zero, never a tidy
         # shutdown indistinguishable from an operator's own `systemctl
@@ -964,29 +1110,32 @@ async def _async_serve(
         # orphans. Generalized over `tasks` (not hand-enumerated) so this
         # keeps working correctly regardless of whether `web` is present.
         #
-        # `_request_stop()`, not a bare `stop_event.set()` -- this is the
-        # second half of the same bug. Cancelling `dolt_task` (below) only
-        # cancels the ASYNCIO wrapper around `await
-        # asyncio.to_thread(proc.wait)`; it does NOT terminate the real
-        # `dolt sql-server` OS process, which keeps its executor thread
-        # blocked in `proc.wait()` for as long as dolt stays alive (i.e.
-        # forever, for a healthy server). `asyncio.run()`'s own cleanup
-        # (`shutdown_default_executor()`) then blocks waiting for that
-        # thread to finish -- so with only `stop_event.set()` here, this
-        # whole process would hang indefinitely rather than actually
-        # exiting non-zero, reproducing the exact silent-degrade symptom
-        # (dolt still up, nothing telling anyone the web task died) this
-        # fix exists to close. `_request_stop()` does everything
-        # `stop_event.set()` did AND sends the real child process a
-        # SIGTERM, so `dolt_supervisor_loop`'s blocking wait actually
-        # resolves and this function can really return/raise.
-        logger.error("supervisor giving up: %s", e)
+        # `_request_stop()`, not a bare `stop_event.set()` -- it also sends
+        # the recorded real child a SIGTERM. `dolt_supervisor_loop` polls
+        # that child without parking an executor thread in `proc.wait()`,
+        # and `_drain_shutdown_tasks` KILLs/reaps it under the same deadline
+        # if TERM does not resolve it.  A failed subsystem therefore cannot
+        # leave a child or executor waiter holding the process open.
+        cleanup_failed = isinstance(e, A.SupervisorShutdownCleanupError)
+        if cleanup_failed:
+            logger.error("supervisor shutdown cleanup FAILED: %s", e)
+        else:
+            logger.error("supervisor giving up: %s", e)
         _request_stop()
-        remaining = [t for t in tasks if not t.done()]
-        for t in remaining:
-            t.cancel()
-        await asyncio.gather(*remaining, return_exceptions=True)
+        # Do not cancel the asyncio wrappers before `_drain_shutdown_tasks`
+        # gives their executor-side process-group drain its bounded
+        # opportunity.  There is deliberately no unconditional final gather:
+        # every wait in this failure path is under the supervisor deadline.
+        drained = await _drain_shutdown_tasks()
+        if cleanup_failed or not drained:
+            return 1
         raise
+    finally:
+        stop_waiter.cancel()
+        try:
+            await stop_waiter
+        except asyncio.CancelledError:
+            pass
     return 0
 
 
@@ -1014,7 +1163,8 @@ def serve(
     this supervisor (and the systemd/launchd unit wrapping it) runs.
 
     Returns 1 (never a bare, silent 0) for a port conflict,
-    `DoltSupervisionExhaustedError`, OR `WebServerStartupError` -- the
+    `DoltSupervisionExhaustedError`, `WebServerStartupError`, OR a failed
+    supervisor command-group cleanup -- the
     supervisor giving up on dolt, or failing to start the web dashboard, is
     a real failure and must be reported as one at the process-exit level,
     not swallowed into a tidy-looking shutdown. See those exceptions'

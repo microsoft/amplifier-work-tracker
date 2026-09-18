@@ -160,6 +160,47 @@ class ServiceUnsupportedError(RuntimeError):
     """
 
 
+_SYSTEMD_STOP_PROPERTIES = (
+    "ActiveState",
+    "SubState",
+    "Result",
+    "ExecMainCode",
+    "ExecMainStatus",
+    "MainPID",
+)
+_SYSTEMD_STOP_COMMAND_TIMEOUT_SECONDS = 15.0
+_SYSTEMD_SHOW_COMMAND_TIMEOUT_SECONDS = 5.0
+
+
+@dataclass(frozen=True)
+class SystemdStopState:
+    """Observed systemd state read after a requested service stop."""
+
+    properties: dict[str, str]
+
+    @property
+    def is_clean_stop(self) -> bool:
+        # `systemctl show` reports CLD_EXITED as the numeric "1" on some
+        # systemd versions, while others render it as "exited".  "0" is not
+        # a normal observed exit code and must not authorize a clean stop.
+        return self.properties == {
+            "ActiveState": "inactive",
+            "SubState": "dead",
+            "Result": "success",
+            "ExecMainCode": self.properties.get("ExecMainCode", ""),
+            "ExecMainStatus": "0",
+            "MainPID": "0",
+        } and self.properties["ExecMainCode"] in {"exited", "1"}
+
+
+class ServiceStopError(RuntimeError):
+    """A stop command did not prove that the supervisor is cleanly quiescent."""
+
+    def __init__(self, message: str, *, state: SystemdStopState | None = None) -> None:
+        super().__init__(message)
+        self.state = state
+
+
 _WEB_EXTRA_INSTALL_REMEDY = (
     "Install it with: uv tool install --reinstall --with 'amplifier-work-tracker[web]' "
     "'git+https://github.com/microsoft/amplifier-work-tracker@main'\n"
@@ -841,7 +882,9 @@ def diagnose_systemd_failure(stderr: str) -> str:
     return "systemctl --user failed" + (f": {detail}" if detail else " (no output)")
 
 
-def _systemd_call(args: list[str], *, check: bool) -> subprocess.CompletedProcess:
+def _systemd_call(
+    args: list[str], *, check: bool, timeout: float | None = None
+) -> subprocess.CompletedProcess:
     """Every non-interactive systemctl invocation in this module goes
     through here: `capture_output=True` so nothing -- e.g. a
     session-bus-less container's `Failed to connect to bus: No medium
@@ -861,7 +904,12 @@ def _systemd_call(args: list[str], *, check: bool) -> subprocess.CompletedProces
     """
     env, note = _systemd_user_env()
     try:
-        result = subprocess.run(args, capture_output=True, text=True, check=check, env=env)
+        if timeout is None:
+            result = subprocess.run(args, capture_output=True, text=True, check=check, env=env)
+        else:
+            result = subprocess.run(
+                args, capture_output=True, text=True, check=check, env=env, timeout=timeout
+            )
     except subprocess.CalledProcessError as e:
         e.env_injection_note = note  # type: ignore[attr-defined]
         raise
@@ -972,9 +1020,90 @@ def _systemd_start() -> None:
     _systemd_call(["systemctl", "--user", "start", SERVICE_NAME], check=True)
 
 
-def _systemd_stop() -> None:
-    # Not check=True -- stopping an already-stopped service is a normal no-op.
-    _systemd_call(["systemctl", "--user", "stop", SERVICE_NAME], check=False)
+def _systemd_stop() -> SystemdStopState:
+    """Stop, then prove the unit reached the one accepted clean-stop state.
+
+    ``systemctl stop`` returning zero only acknowledges the request; it does
+    not prove a timed-out/signalled supervisor, a still-running process, or an
+    unreadable unit is safe for a replacement rollout.
+    """
+    try:
+        stopped = _systemd_call(
+            ["systemctl", "--user", "stop", SERVICE_NAME],
+            check=False,
+            timeout=_SYSTEMD_STOP_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise _systemd_stop_timeout_error("stop", error) from error
+    if stopped.returncode != 0:
+        detail = (stopped.stderr or stopped.stdout or "").strip()
+        raise ServiceStopError(
+            f"systemctl stop {SERVICE_NAME} failed (exit {stopped.returncode})"
+            + (f": {detail}" if detail else "")
+        )
+
+    try:
+        shown = _systemd_call(
+            [
+                "systemctl",
+                "--user",
+                "show",
+                SERVICE_NAME,
+                *(f"--property={name}" for name in _SYSTEMD_STOP_PROPERTIES),
+            ],
+            check=False,
+            timeout=_SYSTEMD_SHOW_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise _systemd_stop_timeout_error("show", error) from error
+    if shown.returncode != 0:
+        detail = (shown.stderr or shown.stdout or "").strip()
+        raise ServiceStopError(
+            f"systemctl stop returned zero, but could not read back {SERVICE_NAME} state "
+            f"(show exited {shown.returncode})" + (f": {detail}" if detail else "")
+        )
+    values = {
+        name: value
+        for line in shown.stdout.splitlines()
+        if "=" in line
+        for name, value in [line.split("=", 1)]
+        if name in _SYSTEMD_STOP_PROPERTIES
+    }
+    state = SystemdStopState(values)
+    missing = [name for name in _SYSTEMD_STOP_PROPERTIES if name not in values or not values[name]]
+    if missing:
+        raise ServiceStopError(
+            f"systemctl stop returned zero, but {SERVICE_NAME} state is unknown: missing "
+            f"{', '.join(missing)} (observed: {values})",
+            state=state,
+        )
+    if not state.is_clean_stop:
+        raise ServiceStopError(
+            f"systemctl stop returned zero, but {SERVICE_NAME} is not cleanly stopped "
+            f"(observed: {values})",
+            state=state,
+        )
+    return state
+
+
+def _systemd_stop_timeout_error(phase: str, error: subprocess.TimeoutExpired) -> ServiceStopError:
+    """Preserve partial output when a bounded stop/readback client hangs."""
+
+    def text(value: str | bytes | None) -> str:
+        if isinstance(value, bytes):
+            return value.decode(errors="replace")
+        return value or ""
+
+    partial = []
+    if stdout := text(error.output).strip():
+        partial.append(f"partial stdout: {stdout}")
+    if stderr := text(error.stderr).strip():
+        partial.append(f"partial stderr: {stderr}")
+    detail = f" ({'; '.join(partial)})" if partial else ""
+    return ServiceStopError(
+        f"systemctl {phase} {SERVICE_NAME} timed out after {error.timeout}s; "
+        f"service state is unknown{detail}"
+    )
 
 
 def _systemd_restart() -> None:
@@ -1440,14 +1569,15 @@ def service_start() -> None:
         raise ServiceUnsupportedError(_no_systemctl_detail())
 
 
-def service_stop() -> None:
+def service_stop() -> SystemdStopState | None:
     """Stop the supervisor service without uninstalling it."""
     if _is_windows():
         raise ServiceUnsupportedError(_WINDOWS_UNSUPPORTED_DETAIL)
     if _is_darwin():
         _launchd_stop()
+        return None
     elif _have_systemctl():
-        _systemd_stop()
+        return _systemd_stop()
     else:
         raise ServiceUnsupportedError(_no_systemctl_detail())
 
@@ -1525,7 +1655,9 @@ def describe_service() -> ServiceInfo:
 __all__ = [
     "SERVICE_NAME",
     "ServiceInfo",
+    "ServiceStopError",
     "ServiceUnsupportedError",
+    "SystemdStopState",
     "SystemdBusProbeState",
     "describe_service",
     "diagnose_systemd_failure",

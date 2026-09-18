@@ -25,9 +25,11 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -313,9 +315,55 @@ def invalid_project_name_error(name: str, *, label: str = "project name") -> str
 _DEFAULT_BD_TIMEOUT_SECONDS = 60.0
 _BD_INIT_TIMEOUT_SECONDS = 240.0
 _GIT_TIMEOUT_SECONDS = 30.0
+_SUPERVISOR_CANCEL_POLL_SECONDS = 0.1
+_SUPERVISOR_CANCEL_TERM_GRACE_SECONDS = 1.0
+_SUPERVISOR_CANCEL_KILL_GRACE_SECONDS = 3.0
+_supervisor_cancellation = threading.local()
 
 
-def _kill_process_group(proc: subprocess.Popen) -> None:
+class SupervisorShutdownError(RuntimeError):
+    """A supervisor-owned synchronous command was stopped during shutdown.
+
+    This is deliberately distinct from an ordinary timeout/result failure:
+    the supervisor loops must return without writing a completed-sweep
+    heartbeat, while ordinary adapter callers remain unchanged.
+    """
+
+
+class SupervisorShutdownCleanupError(SupervisorShutdownError):
+    """A scoped command group remained alive after TERM, KILL, and the cleanup bound.
+
+    This is intentionally distinct from a successful shutdown cancellation.  The
+    supervisor must not turn an unconfirmed process-group drain into a clean
+    exit merely because the immediate command parent has already exited.
+    """
+
+
+@contextmanager
+def supervisor_cancellation_scope(cancel_event: threading.Event):
+    """Make synchronous adapter work in this thread interruptible by *cancel_event*.
+
+    The scope is thread-local because ``asyncio.to_thread`` reuses worker
+    threads. Restoring the old value prevents a later, unrelated adapter call
+    in the same worker from inheriting a completed supervisor shutdown.
+    """
+    old = getattr(_supervisor_cancellation, "event", None)
+    _supervisor_cancellation.event = cancel_event
+    try:
+        yield
+    finally:
+        if old is None:
+            del _supervisor_cancellation.event
+        else:
+            _supervisor_cancellation.event = old
+
+
+def current_supervisor_cancellation() -> threading.Event | None:
+    """The current supervisor-only cancellation event, if this thread has one."""
+    return getattr(_supervisor_cancellation, "event", None)
+
+
+def _kill_process_group(proc: subprocess.Popen, *, pgid: int | None = None) -> None:
     """Terminate *proc* and every process in its OWN process group -- reaches
     grandchildren a bare `proc.kill()` leaves orphaned (e.g. a dolt
     sql-server `bd --shared-server` spawned as ITS OWN child). Requires the
@@ -326,14 +374,118 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
     a failure -- the process may have exited on its own between the
     timeout firing and this call running.
     """
-    try:
-        pgid = os.getpgid(proc.pid)
-    except ProcessLookupError:
-        return
+    if pgid is None:
+        try:
+            pgid = os.getpgid(proc.pid)
+        except ProcessLookupError:
+            return
     try:
         os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+
+
+def _process_group_exists(pgid: int) -> bool:
+    """Whether the dedicated group still has a member, without inspecting a PID.
+
+    ``proc`` can exit on TERM before a descendant which closed or redirected
+    its inherited pipes.  Its PID then cannot be used to discover the group,
+    but the dedicated PGID remains observable until that descendant is gone.
+    """
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # This should not happen for our own session, but claiming a clean
+        # drain without being able to observe the group would be dishonest.
+        return True
+    return True
+
+
+def _wait_for_process_group_exit(pgid: int, *, deadline: float) -> bool:
+    """Poll a known dedicated group until it is gone or its hard deadline passes."""
+    while _process_group_exists(pgid):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(_SUPERVISOR_CANCEL_POLL_SECONDS, remaining))
+    return True
+
+
+def _terminate_process_group_for_shutdown(proc: subprocess.Popen) -> tuple[str, str]:
+    """TERM a scoped command group, then prove every member is gone.
+
+    ``start_new_session=True`` makes ``proc.pid`` the dedicated PGID at spawn
+    time.  Capture that fact before TERM: after the immediate parent exits,
+    ``os.getpgid(proc.pid)`` raises even when a pipe-less descendant still
+    lives in the group.
+    """
+    pgid = proc.pid
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    stdout = ""
+    stderr = ""
+    try:
+        stdout, stderr = proc.communicate(timeout=_SUPERVISOR_CANCEL_TERM_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        # The parent is still present; the group observation below decides
+        # whether any member survived rather than treating this alone as the
+        # criterion.
+        pass
+
+    if _wait_for_process_group_exit(
+        pgid, deadline=time.monotonic() + _SUPERVISOR_CANCEL_TERM_GRACE_SECONDS
+    ):
+        return stdout, stderr
+
+    _kill_process_group(proc, pgid=pgid)
+    try:
+        stdout, stderr = proc.communicate(timeout=_SUPERVISOR_CANCEL_KILL_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        # Do not return an empty successful-looking drain: the group check
+        # below supplies the actual answer within the same cleanup bound.
+        pass
+    if not _wait_for_process_group_exit(
+        pgid, deadline=time.monotonic() + _SUPERVISOR_CANCEL_KILL_GRACE_SECONDS
+    ):
+        raise SupervisorShutdownCleanupError(
+            f"supervisor shutdown could not confirm command group {pgid} exited after SIGKILL"
+        )
+    return stdout, stderr
+
+
+def _communicate_bounded_or_cancelled(proc: subprocess.Popen, *, timeout: float) -> tuple[str, str]:
+    """Wait for a command, polling only when a supervisor scope is active."""
+    cancel_event = current_supervisor_cancellation()
+    if cancel_event is None:
+        return proc.communicate(timeout=timeout)
+
+    deadline = time.monotonic() + timeout
+    while True:
+        if cancel_event.is_set():
+            _terminate_process_group_for_shutdown(proc)
+            raise SupervisorShutdownError(f"supervisor shutdown cancelled command: {proc.args!r}")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(proc.args, timeout)
+        try:
+            return proc.communicate(timeout=min(_SUPERVISOR_CANCEL_POLL_SECONDS, remaining))
+        except subprocess.TimeoutExpired:
+            if time.monotonic() >= deadline:
+                raise
+
+
+def _sleep_or_cancel(seconds: float) -> None:
+    """Preserve ordinary retry waits, but never add one after supervisor stop."""
+    cancel_event = current_supervisor_cancellation()
+    if cancel_event is None:
+        time.sleep(seconds)
+        return
+    if cancel_event.wait(seconds):
+        raise SupervisorShutdownError("supervisor shutdown interrupted retry backoff")
 
 
 def _run_bounded(
@@ -360,12 +512,13 @@ def _run_bounded(
     POSIX process group) and killing the whole group on timeout is what
     actually reaches them.
 
-    On timeout, returns a `CompletedProcess` with `returncode=124` (the
-    conventional shell `timeout` exit code) and an explanatory message
-    folded into `stderr` -- this never raises, so every existing call
-    site's `p.returncode != 0` / `(p.stderr or p.stdout)` handling treats a
-    hang exactly like any other bd failure, with no second exception type
-    for callers to catch.
+    On ordinary timeout, returns a `CompletedProcess` with `returncode=124`
+    (the conventional shell `timeout` exit code) and an explanatory message
+    folded into `stderr`, so existing call sites' `p.returncode != 0` /
+    `(p.stderr or p.stdout)` handling treats a hang like any other bd failure.
+    Within a supervisor cancellation scope, however, cancellation deliberately
+    raises `SupervisorShutdownError` after draining the command group: the
+    caller must not report that interrupted sweep as completed.
     """
     proc = subprocess.Popen(
         args,
@@ -377,7 +530,7 @@ def _run_bounded(
         start_new_session=True,  # own process group -- see `_kill_process_group`
     )
     try:
-        stdout, stderr = proc.communicate(timeout=timeout)
+        stdout, stderr = _communicate_bounded_or_cancelled(proc, timeout=timeout)
         return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
     except subprocess.TimeoutExpired:
         _kill_process_group(proc)
@@ -3186,7 +3339,7 @@ class Beads:
                 if connection_attempt >= _MAX_CONNECTION_RETRIES:
                     return p  # transient-connection budget spent -- surface it, as before
                 backoff = min(_CONNECTION_RETRY_BACKOFF_CAP, 0.1 * (2**connection_attempt))
-                time.sleep(backoff * (0.5 + os.urandom(1)[0] / 255))
+                _sleep_or_cancel(backoff * (0.5 + os.urandom(1)[0] / 255))
                 connection_attempt += 1
                 continue
             # `p.returncode != 0` gate here mirrors the connection-retryable
@@ -3211,7 +3364,7 @@ class Beads:
             if p.returncode != 0 and _retryable(blob):
                 if serialization_attempt >= _MAX_RETRIES - 1:
                     break
-                time.sleep(0.15 * (2**serialization_attempt) * (0.5 + os.urandom(1)[0] / 255))
+                _sleep_or_cancel(0.15 * (2**serialization_attempt) * (0.5 + os.urandom(1)[0] / 255))
                 serialization_attempt += 1
                 continue
             return p

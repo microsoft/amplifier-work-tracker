@@ -54,6 +54,14 @@ amplifier-work-tracker remove my-project --yes     # permanently remove a projec
 That's the operator side: install, stand up a project, start the background service that keeps
 custody and notifications alive, and confirm the queue is there.
 
+`service stop` is deliberately strict: it reports success only after systemd
+confirms the supervisor is inactive, PID-zero, cleanly exited, and dead.  The
+supervisor's own reap/notify subprocess work is cancellation-scoped, so an
+in-flight sweep is drained with its process descendants during the existing
+ten-second service stop grace rather than delaying replacement recovery. Its
+inner drain is bounded; an owned Dolt child that ignores TERM is KILLed and
+reaped, and the supervisor exits nonzero rather than waiting for systemd.
+
 **Agents don't run these commands to do the work.** Compose the behavior bundle into your app:
 
 ```bash

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 
 import httpx
@@ -75,6 +76,38 @@ class _SleepSpy:
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def test_push_shutdown_interrupts_inflight_alarm_without_a_retry_delay():
+    post_started = threading.Event()
+    post_count = 0
+
+    async def block_after_post_starts(_request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        post_count += 1
+        post_started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("cancellation must end the request before a response")
+
+    async def run():
+        cancelled = threading.Event()
+        task = asyncio.create_task(
+            W.send_alarm(
+                "t",
+                "m",
+                config=_enabled_config(),
+                client=httpx.AsyncClient(transport=httpx.MockTransport(block_after_post_starts)),
+                cancellation_event=cancelled,
+            )
+        )
+        while not post_started.is_set():
+            await asyncio.sleep(0)
+        cancelled.set()
+        with pytest.raises(W.AlarmShutdownError):
+            await task
+
+    _run(run())
+    assert post_count == 1
 
 
 # --------------------------------------------------------------------------- #
