@@ -12,6 +12,7 @@ real `bd` binary, mirroring the forged-clock style already used by
 from __future__ import annotations
 
 import asyncio
+import signal
 import threading
 import time
 from typing import Any
@@ -709,6 +710,66 @@ def test_async_serve_returns_nonzero_after_shutdown_cleanup_failure(monkeypatch,
 
     assert result == 1
     assert stopped.is_set()
+
+
+def test_async_serve_force_reaps_term_ignoring_owned_dolt_after_cleanup_failure(
+    monkeypatch, tmp_path
+):
+    """The bounded failure drain escalates only its recorded Dolt child."""
+
+    class _TermIgnoringDolt:
+        pid = 4321
+
+        def __init__(self) -> None:
+            self.returncode: int | None = None
+            self.terminated = False
+            self.killed = False
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -signal.SIGKILL
+
+    proc = _TermIgnoringDolt()
+
+    async def cleanup_failed(*_args, **_kwargs):
+        raise A.SupervisorShutdownCleanupError("owned command group remained alive")
+
+    async def waiting_dolt(*_args, state, stop_event, **_kwargs):
+        state["proc"] = proc
+        while proc.poll() is None:
+            await asyncio.sleep(0)
+        state["proc"] = None
+
+    async def waiting_loop(*_args, stop_event, **_kwargs):
+        await stop_event.wait()
+
+    monkeypatch.setattr(SV, "dolt_supervisor_loop", waiting_dolt)
+    monkeypatch.setattr(SV, "reap_loop", cleanup_failed)
+    monkeypatch.setattr(SV, "notify_loop", waiting_loop)
+    monkeypatch.setattr(SV, "_SUPERVISOR_SHUTDOWN_DRAIN_SECONDS", 0.01)
+    monkeypatch.setattr(SV, "_SUPERVISOR_FINAL_REAP_SECONDS", 0.1)
+
+    result = asyncio.run(
+        SV._async_serve(
+            tmp_path / "root",
+            host="127.0.0.1",
+            port=1,
+            reap_interval=1,
+            notify_interval=1,
+            dolt_restart_backoff=0,
+        )
+    )
+
+    assert result == 1
+    assert proc.terminated
+    assert proc.killed
+    assert proc.poll() == -signal.SIGKILL
 
 
 def test_unexpected_reap_task_cancellation_stays_loud_without_completion(monkeypatch, tmp_path):

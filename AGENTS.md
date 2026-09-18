@@ -167,6 +167,9 @@ and drain its dedicated process group so pipe-less descendants cannot survive.
 A service stop is not proved by `systemctl stop` returning zero either; bound
 both the stop request and readback, and require observed clean state before
 reporting success. Interrupted sweeps must not write a completed heartbeat.
+Do not leave an owned child behind an unbounded executor `proc.wait`: use a
+bounded shutdown drain, then KILL/reap only the recorded owned child if TERM
+does not finish it.
 
 ## What "done" looks like
 

@@ -67,6 +67,59 @@ ready.write_text("ready", encoding="utf-8")
 child.wait()
 """
 
+_CLEANUP_FAILURE_HARNESS = r"""
+import asyncio
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+from amplifier_work_tracker import adapter as A
+from amplifier_work_tracker import supervisor as SV
+
+root = Path(sys.argv[1])
+ready = Path(sys.argv[2])
+child_pid_path = Path(sys.argv[3])
+trigger = Path(sys.argv[4])
+
+child_script = (
+    "import os, signal, sys, time; "
+    "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+    "Path(sys.argv[1]).write_text(str(os.getpid()), encoding='utf-8'); "
+    "Path(sys.argv[2]).write_text('ready', encoding='utf-8'); "
+    "time.sleep(600)"
+)
+
+def spawn_ignoring_dolt(_host, _port, _data_dir):
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; " + child_script,
+            str(child_pid_path),
+            str(ready),
+        ]
+    )
+
+async def cleanup_failed(*_args, **_kwargs):
+    while not trigger.exists():
+        await asyncio.sleep(0.01)
+    raise A.SupervisorShutdownCleanupError("injected sweep cleanup failure")
+
+SV.ensure_port_available = lambda *_args, **_kwargs: None
+SV.spawn_dolt = spawn_ignoring_dolt
+SV.reap_loop = cleanup_failed
+
+raise SystemExit(SV.serve(
+    root,
+    host="127.0.0.1",
+    port=1,
+    reap_interval=300,
+    notify_interval=300,
+    dolt_restart_backoff=0.01,
+))
+"""
+
 
 def _free_port() -> int:
     import socket
@@ -186,3 +239,43 @@ def test_sigterm_drains_real_dolt_and_blocking_sweep_descendant(tmp_path: Path, 
                 pass
         if descendant is not None and not _pid_is_gone(descendant):
             os.kill(descendant, signal.SIGKILL)
+
+
+@pytest.mark.integration
+def test_cleanup_failure_force_reaps_term_ignoring_owned_dolt_and_exits_nonzero(
+    tmp_path: Path,
+) -> None:
+    """An outer supervisor process must not wait for systemd to kill this child."""
+    harness = tmp_path / "cleanup_failure_harness.py"
+    root = tmp_path / "root"
+    ready = tmp_path / "ready"
+    child_pid_path = tmp_path / "dolt-like.pid"
+    trigger = tmp_path / "trigger-cleanup-failure"
+    harness.write_text(textwrap.dedent(_CLEANUP_FAILURE_HARNESS), encoding="utf-8")
+    proc = subprocess.Popen(
+        [sys.executable, str(harness), str(root), str(ready), str(child_pid_path), str(trigger)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+        env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+    )
+    child_pid: int | None = None
+    try:
+        _wait_for(ready)
+        child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+        started = time.monotonic()
+        trigger.write_text("fail", encoding="utf-8")
+        _stdout, stderr = proc.communicate(timeout=9.5)
+        assert proc.returncode == 1, stderr
+        assert time.monotonic() - started < 9.5
+        assert "owned dolt child" in stderr
+        assert _pid_is_gone(child_pid), f"TERM-ignoring owned child survived: {child_pid}"
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait(timeout=5)
+        if child_pid is None and child_pid_path.exists():
+            child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+        if child_pid is not None and not _pid_is_gone(child_pid):
+            os.kill(child_pid, signal.SIGKILL)
