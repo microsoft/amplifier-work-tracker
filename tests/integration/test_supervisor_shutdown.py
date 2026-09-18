@@ -171,6 +171,14 @@ def test_sigterm_drains_real_dolt_and_blocking_sweep_descendant(tmp_path: Path, 
         if proc.poll() is None:
             os.killpg(proc.pid, signal.SIGKILL)
             proc.wait(timeout=5)
+        # Read the marker files again here: readiness may have failed after
+        # the adapter launched its separate-session blocker but before local
+        # variables were populated.  That group is ours; never signal a
+        # broad process name or the retained guest service.
+        if blocker_parent is None and blocker_pid_path.exists():
+            blocker_parent = int(blocker_pid_path.read_text(encoding="utf-8"))
+        if descendant is None and child_pid.exists():
+            descendant = int(child_pid.read_text(encoding="utf-8"))
         if blocker_parent is not None and not _pid_is_gone(blocker_parent):
             try:
                 os.killpg(blocker_parent, signal.SIGKILL)

@@ -180,14 +180,17 @@ class SystemdStopState:
 
     @property
     def is_clean_stop(self) -> bool:
+        # `systemctl show` reports CLD_EXITED as the numeric "1" on some
+        # systemd versions, while others render it as "exited".  "0" is not
+        # a normal observed exit code and must not authorize a clean stop.
         return self.properties == {
             "ActiveState": "inactive",
             "SubState": "dead",
             "Result": "success",
-            "ExecMainCode": "exited",
+            "ExecMainCode": self.properties.get("ExecMainCode", ""),
             "ExecMainStatus": "0",
             "MainPID": "0",
-        }
+        } and self.properties["ExecMainCode"] in {"exited", "1"}
 
 
 class ServiceStopError(RuntimeError):

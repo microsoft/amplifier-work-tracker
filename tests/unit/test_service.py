@@ -56,11 +56,22 @@ def test_systemd_stop_requires_clean_readback(monkeypatch):
     assert "show" in calls[1]
 
 
+def test_systemd_stop_accepts_numeric_normal_exited_readback(monkeypatch):
+    def fake_call(args, *, check, timeout=None):
+        return _systemd_result(_clean_stop_properties(ExecMainCode="1") if "show" in args else "")
+
+    monkeypatch.setattr(S, "_systemd_call", fake_call)
+    state = S._systemd_stop()
+    assert state.properties["ExecMainCode"] == "1"
+    assert state.is_clean_stop is True
+
+
 @pytest.mark.parametrize(
     "properties",
     [
         _clean_stop_properties(Result="timeout"),
         _clean_stop_properties(ExecMainCode="killed", ExecMainStatus="15"),
+        _clean_stop_properties(ExecMainCode="0"),
         _clean_stop_properties(ActiveState="active", SubState="running", MainPID="123"),
         _clean_stop_properties(Result="unknown"),
         "ActiveState=inactive\nMainPID=0\n",

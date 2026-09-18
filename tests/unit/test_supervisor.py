@@ -635,6 +635,82 @@ def test_reap_shutdown_interrupt_does_not_record_completed_heartbeat(monkeypatch
     assert rec["last_completed"] is None
 
 
+@pytest.mark.parametrize(
+    ("loop_name", "sweep_name", "heartbeat_name"),
+    [
+        ("reap_loop", "reap_sweep", HB.REAP),
+        ("notify_loop", "notify_sweep", HB.NOTIFY),
+    ],
+)
+def test_shutdown_cleanup_failure_propagates_even_when_stop_was_requested(
+    monkeypatch, tmp_path, loop_name, sweep_name, heartbeat_name
+):
+    """A failed command-group drain must never be downgraded to clean stop."""
+    ws = _FakeWorkspace({})
+    stop_event = asyncio.Event()
+    cancellation_event = threading.Event()
+    entered = threading.Event()
+    hb_path = HB.heartbeat_path(tmp_path)
+
+    def cleanup_failed(*_args, **_kwargs):
+        entered.set()
+        cancellation_event.wait(timeout=5)
+        raise A.SupervisorShutdownCleanupError("could not confirm owned group drained")
+
+    monkeypatch.setattr(SV, sweep_name, cleanup_failed)
+
+    async def run():
+        task = asyncio.create_task(
+            getattr(SV, loop_name)(
+                ws,  # type: ignore[arg-type]
+                interval=0.01,
+                stop_event=stop_event,
+                heartbeat_path=hb_path,
+                cancellation_event=cancellation_event,
+            )
+        )
+        await _wait_until(entered.is_set)
+        stop_event.set()
+        cancellation_event.set()
+        with pytest.raises(A.SupervisorShutdownCleanupError):
+            await task
+
+    asyncio.run(run())
+    rec = HB.read_loop_heartbeat(hb_path, heartbeat_name)
+    assert rec is not None
+    assert rec["last_completed"] is None
+
+
+def test_async_serve_returns_nonzero_after_shutdown_cleanup_failure(monkeypatch, tmp_path):
+    """The supervisor drains its other tasks but exposes cleanup failure as exit 1."""
+    stopped = threading.Event()
+
+    async def cleanup_failed(*_args, **_kwargs):
+        raise A.SupervisorShutdownCleanupError("owned command group remained alive")
+
+    async def waiting_loop(*_args, stop_event, **_kwargs):
+        await stop_event.wait()
+        stopped.set()
+
+    monkeypatch.setattr(SV, "dolt_supervisor_loop", waiting_loop)
+    monkeypatch.setattr(SV, "reap_loop", cleanup_failed)
+    monkeypatch.setattr(SV, "notify_loop", waiting_loop)
+
+    result = asyncio.run(
+        SV._async_serve(
+            tmp_path / "root",
+            host="127.0.0.1",
+            port=1,
+            reap_interval=1,
+            notify_interval=1,
+            dolt_restart_backoff=0,
+        )
+    )
+
+    assert result == 1
+    assert stopped.is_set()
+
+
 def test_unexpected_reap_task_cancellation_stays_loud_without_completion(monkeypatch, tmp_path):
     """Cancelling the loop without a stop request must propagate, not look healthy."""
     ws = _FakeWorkspace({})

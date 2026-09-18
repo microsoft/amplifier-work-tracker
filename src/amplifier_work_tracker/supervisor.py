@@ -321,6 +321,13 @@ async def reap_loop(
                 ),
                 failed_projects=failed,
             )
+        except A.SupervisorShutdownCleanupError:
+            # A cancellation request reached the command, but its dedicated
+            # process group was not confirmed drained.  Stop is not a normal
+            # completed sweep in this case: let the supervisor turn it into a
+            # nonzero process outcome after it shuts its other children down.
+            logger.error("reap shutdown could not drain its command process group")
+            raise
         except A.SupervisorShutdownError:
             if stop_event.is_set():
                 return
@@ -358,6 +365,10 @@ async def notify_loop(
 
             await asyncio.to_thread(run_sweep)
             HB.record_sweep_completed(hb_path, HB.NOTIFY, pid=os.getpid())
+        except A.SupervisorShutdownCleanupError:
+            # See reap_loop: a failed group drain is not benign cancellation.
+            logger.error("notify shutdown could not drain its command process group")
+            raise
         except A.SupervisorShutdownError:
             if stop_event.is_set():
                 return
@@ -1006,7 +1017,11 @@ async def _async_serve(
 
     try:
         await asyncio.gather(*tasks)
-    except (DoltSupervisionExhaustedError, WebServerStartupError) as e:
+    except (
+        DoltSupervisionExhaustedError,
+        WebServerStartupError,
+        A.SupervisorShutdownCleanupError,
+    ) as e:
         # The deeper bug this closes: giving up on dolt (or failing to start
         # the web dashboard) must be LOUD and non-zero, never a tidy
         # shutdown indistinguishable from an operator's own `systemctl
@@ -1035,12 +1050,20 @@ async def _async_serve(
         # `stop_event.set()` did AND sends the real child process a
         # SIGTERM, so `dolt_supervisor_loop`'s blocking wait actually
         # resolves and this function can really return/raise.
-        logger.error("supervisor giving up: %s", e)
+        cleanup_failed = isinstance(e, A.SupervisorShutdownCleanupError)
+        if cleanup_failed:
+            logger.error("supervisor shutdown cleanup FAILED: %s", e)
+        else:
+            logger.error("supervisor giving up: %s", e)
         _request_stop()
         remaining = [t for t in tasks if not t.done()]
-        for t in remaining:
-            t.cancel()
+        # Do not cancel the asyncio wrappers here.  A scoped sweep's wrapper
+        # owns a real process-group drain in its executor thread; cancelling
+        # only its await would abandon that cleanup.  The stop events above
+        # make the remaining loops and the owned Dolt child finish naturally.
         await asyncio.gather(*remaining, return_exceptions=True)
+        if cleanup_failed:
+            return 1
         raise
     return 0
 
@@ -1069,7 +1092,8 @@ def serve(
     this supervisor (and the systemd/launchd unit wrapping it) runs.
 
     Returns 1 (never a bare, silent 0) for a port conflict,
-    `DoltSupervisionExhaustedError`, OR `WebServerStartupError` -- the
+    `DoltSupervisionExhaustedError`, `WebServerStartupError`, OR a failed
+    supervisor command-group cleanup -- the
     supervisor giving up on dolt, or failing to start the web dashboard, is
     a real failure and must be reported as one at the process-exit level,
     not swallowed into a tidy-looking shutdown. See those exceptions'
