@@ -1508,9 +1508,9 @@ def test_row_osv1_017() -> None:
         for ln, line in enumerate(read(p).splitlines(), start=1)
         if "fire_reclaim_alarm" in line or "send_alarm(" in line
     ]
-    assert call_sites == [("supervisor.py", 156)], (
+    assert call_sites == [("supervisor.py", 168)], (
         f"OSV1-017 (Core 11): the push channel's call sites moved -- pinned exactly "
-        f"one, `supervisor.py:156`, observed {call_sites}. Core 11 freezes the channel "
+        f"one, `supervisor.py:168`, observed {call_sites}. Core 11 freezes the channel "
         f"at ONE event class: a sweep reclaiming custody after a TTL breach. A second "
         f"sender is Backlogged 5 and needs the owner to ratify a specific second event "
         f"class first."
