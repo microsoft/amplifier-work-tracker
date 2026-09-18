@@ -622,8 +622,14 @@ def cmd_repair_registration(a):
         "witness_item_id": report.witness_item_id,
         "witness_title": report.witness_title,
         "backup_path": str(report.backup_path) if report.backup_path else None,
+        "metadata_state": report.metadata_state,
+        "verification_failure": report.verification_failure,
+        "rollback_failure": report.rollback_failure,
+        "rollback_refusal": report.rollback_refusal,
     }
     print(json.dumps(result, indent=2))
+    if not report.dry_run and not report.applied:
+        return 1
 
 
 def cmd_move(a):

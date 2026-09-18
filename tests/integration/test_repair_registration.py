@@ -21,6 +21,7 @@ import json
 import os
 import shutil
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -83,6 +84,22 @@ def repair_project(workspace):
         A.drop_database(name)
     finally:
         shutil.rmtree(workspace.path(name), ignore_errors=True)
+
+
+def _apply_repair(p):
+    return p["workspace"].repair_registration(
+        p["name"],
+        host=p["host"],
+        port=p["port"],
+        expected_local_id=p["stale_id"],
+        expected_server_id=p["server_id"],
+        witness_item_id=p["item_id"],
+        apply=True,
+    )
+
+
+def _assert_repair_lock_cleaned(p):
+    assert not (p["workspace"].path(p["name"]) / ".repair.lock").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +388,192 @@ def test_lock_cleaned_up_after_apply(repair_project):
     )
 
     assert not lock_path.exists(), ".repair.lock must be removed after a successful apply"
+
+
+# ---------------------------------------------------------------------------
+# Post-check and rollback failures
+# ---------------------------------------------------------------------------
+
+
+def test_post_check_server_identity_change_restores_original_metadata_and_mode(
+    repair_project, monkeypatch
+):
+    """A changed post-check identity returns a diagnostic report after restoring
+    the exact original bytes and mode; the server is never changed for this test.
+    """
+    p = repair_project
+    meta_path = p["meta_path"]
+    os.chmod(meta_path, 0o640)
+    original_bytes = meta_path.read_bytes()
+    original_mode = meta_path.stat().st_mode & 0o7777
+    original_reader = A._server_project_id
+    calls = 0
+
+    def changed_on_post_check(name):
+        nonlocal calls
+        calls += 1
+        return str(uuid.uuid4()) if calls == 2 else original_reader(name)
+
+    monkeypatch.setattr(A, "_server_project_id", changed_on_post_check)
+    report = _apply_repair(p)
+
+    assert report.applied is False
+    assert report.rolled_back is True
+    assert report.metadata_state == "original"
+    assert report.verification_failure == (
+        "post-check server _project_id does not match the expected identity"
+    )
+    assert report.rollback_failure is None
+    assert report.rollback_refusal is None
+    assert meta_path.read_bytes() == original_bytes
+    assert meta_path.stat().st_mode & 0o7777 == original_mode
+    assert report.backup_path is not None
+    assert report.backup_path.read_bytes() == original_bytes
+    assert report.backup_path.stat().st_mode & 0o7777 == original_mode
+    _assert_repair_lock_cleaned(p)
+
+
+def test_post_check_exception_is_reported_and_rolls_back(repair_project, monkeypatch):
+    """An exception in the post-check follows the real rollback path and is
+    retained in the returned report rather than escaping as a false success.
+    """
+    p = repair_project
+    original_reader = A._server_project_id
+    calls = 0
+
+    def raise_on_post_check(name):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected post-check read failure")
+        return original_reader(name)
+
+    monkeypatch.setattr(A, "_server_project_id", raise_on_post_check)
+    report = _apply_repair(p)
+
+    assert report.applied is False
+    assert report.rolled_back is True
+    assert report.metadata_state == "original"
+    assert report.verification_failure == (
+        "post-check raised OSError: injected post-check read failure"
+    )
+    assert report.rollback_failure is None
+    assert report.rollback_refusal is None
+    _assert_repair_lock_cleaned(p)
+
+
+def test_rollback_write_failure_reports_repaired_bytes_left_in_place(repair_project, monkeypatch):
+    """If restoration fails, final readback must report the still-repaired bytes
+    and retain the exact backup instead of claiming a rollback occurred.
+    """
+    p = repair_project
+    meta_path = p["meta_path"]
+    original_bytes = meta_path.read_bytes()
+    original_writer = A._atomic_write_metadata
+    original_reader = A._server_project_id
+    calls = 0
+
+    def changed_on_post_check(name):
+        nonlocal calls
+        calls += 1
+        return str(uuid.uuid4()) if calls == 2 else original_reader(name)
+
+    def fail_only_restore(path, data, *, mode):
+        if path == meta_path and data == original_bytes:
+            raise OSError("injected restore write failure")
+        original_writer(path, data, mode=mode)
+
+    monkeypatch.setattr(A, "_server_project_id", changed_on_post_check)
+    monkeypatch.setattr(A, "_atomic_write_metadata", fail_only_restore)
+    report = _apply_repair(p)
+
+    assert report.applied is False
+    assert report.rolled_back is False
+    assert report.metadata_state == "repaired"
+    assert report.rollback_failure == (
+        "could not restore original metadata: OSError: injected restore write failure"
+    )
+    assert report.rollback_refusal is None
+    assert json.loads(meta_path.read_text(encoding="utf-8"))["project_id"] == p["server_id"]
+    assert report.backup_path is not None
+    assert report.backup_path.read_bytes() == original_bytes
+    _assert_repair_lock_cleaned(p)
+
+
+def test_foreign_metadata_is_left_untouched_after_post_check_failure(repair_project, monkeypatch):
+    """Guarded rollback refuses to overwrite bytes that appeared after this
+    repair, and names them as foreign only after reading them back.
+    """
+    p = repair_project
+    meta_path = p["meta_path"]
+    foreign_bytes = b'{"project_id": "foreign-metadata"}\n'
+    original_reader = A._server_project_id
+    calls = 0
+
+    def replace_with_foreign_metadata_on_post_check(name):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            meta_path.write_bytes(foreign_bytes)
+            return str(uuid.uuid4())
+        return original_reader(name)
+
+    monkeypatch.setattr(A, "_server_project_id", replace_with_foreign_metadata_on_post_check)
+    report = _apply_repair(p)
+
+    assert report.applied is False
+    assert report.rolled_back is False
+    assert report.metadata_state == "foreign"
+    assert report.rollback_failure is None
+    assert report.rollback_refusal == (
+        "metadata no longer contains this repair's bytes; refusing to overwrite foreign metadata"
+    )
+    assert meta_path.read_bytes() == foreign_bytes
+    _assert_repair_lock_cleaned(p)
+
+
+def test_unreadable_final_metadata_state_is_unknown(repair_project, monkeypatch):
+    """When guarded rollback cannot read the metadata, the report explicitly
+    stays unknown rather than asserting original or repaired bytes.
+    """
+    p = repair_project
+    meta_path = p["meta_path"]
+    original_reader = A._server_project_id
+    original_writer = A._atomic_write_metadata
+    original_read_bytes = Path.read_bytes
+    calls = 0
+    repair_written = False
+
+    def changed_on_post_check(name):
+        nonlocal calls
+        calls += 1
+        return str(uuid.uuid4()) if calls == 2 else original_reader(name)
+
+    def remember_repair_write(path, data, *, mode):
+        nonlocal repair_written
+        original_writer(path, data, mode=mode)
+        if path == meta_path:
+            repair_written = True
+
+    def unreadable_after_repair(path):
+        if path == meta_path and repair_written:
+            raise OSError("injected final metadata read failure")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(A, "_server_project_id", changed_on_post_check)
+    monkeypatch.setattr(A, "_atomic_write_metadata", remember_repair_write)
+    monkeypatch.setattr(Path, "read_bytes", unreadable_after_repair)
+    report = _apply_repair(p)
+
+    assert report.applied is False
+    assert report.rolled_back is False
+    assert report.metadata_state == "unknown"
+    assert report.rollback_failure == (
+        "could not read metadata for guarded rollback: "
+        "OSError: injected final metadata read failure"
+    )
+    assert report.rollback_refusal is None
+    _assert_repair_lock_cleaned(p)
 
 
 # ---------------------------------------------------------------------------

@@ -5023,7 +5023,11 @@ class RepairReport:
 
     ``backup_path`` is None in dry-run or when the apply failed before the
     backup was created.  ``rolled_back`` is True only when an apply was
-    attempted, the post-check failed, and the original bytes were restored.
+    attempted, the post-check failed, and readback confirmed that the original
+    bytes and mode were restored.  A failed apply records its post-check reason
+    and separately records a rollback failure or refusal.  ``metadata_state``
+    is ``original``, ``repaired``, ``foreign``, or ``unknown`` only after a
+    readback; dry-runs are ``not_applied``.
     """
 
     name: str
@@ -5036,6 +5040,10 @@ class RepairReport:
     witness_title: str | None
     backup_path: Path | None = None
     rolled_back: bool = False
+    metadata_state: str = "not_applied"
+    verification_failure: str | None = None
+    rollback_failure: str | None = None
+    rollback_refusal: str | None = None
 
 
 def _server_project_id(db_name: str) -> str | None:
@@ -5673,7 +5681,8 @@ class Workspace:
           3. Replace ONLY ``project_id``, preserving every other field and
              file permissions.
           4. Re-read local bytes, server identity and witness as a post-check.
-          5. Roll back (restore backup) if the post-check fails.
+          5. Roll back (restore backup) if the post-check fails, then report
+             the observed metadata state without guessing if readback fails.
         """
         # ---- input validation ----
         if not NAME_RE.match(name):
@@ -5867,12 +5876,17 @@ class Workspace:
             _atomic_write_metadata(meta_path, new_data, mode=original_mode)
 
             # ---- post-check (roll back on any failure or exception) ----
-            rollback_needed = False
+            verification_failure: str | None = None
             try:
                 post_meta = _read_beads_metadata(beads_dir)
                 post_server_id = _server_project_id(name)
 
                 post_wp = _dolt_sql_json(witness_q)
+                if post_wp.returncode != 0:
+                    raise BeadsError(
+                        f"could not query witness item {witness_item_id!r}: "
+                        f"{_clean_bd_error(post_wp.stderr or post_wp.stdout)}"
+                    )
                 try:
                     post_witness = json.loads(post_wp.stdout or "{}").get("rows", [])
                 except json.JSONDecodeError:
@@ -5880,44 +5894,84 @@ class Workspace:
 
                 # written project_id
                 if post_meta.get("project_id") != expected_server_id:
-                    rollback_needed = True
+                    verification_failure = (
+                        "post-check metadata project_id does not match the expected server identity"
+                    )
                 # all preserved fields unchanged
-                if not rollback_needed:
+                if verification_failure is None:
                     for key, val in meta.items():
                         if key != "project_id" and post_meta.get(key) != val:
-                            rollback_needed = True
+                            verification_failure = (
+                                f"post-check metadata field {key!r} changed unexpectedly"
+                            )
                             break
                 # database mapping
-                if not rollback_needed and post_meta.get("dolt_database") != name:
-                    rollback_needed = True
+                if verification_failure is None and post_meta.get("dolt_database") != name:
+                    verification_failure = "post-check database mapping does not match the project"
                 # server identity
-                if not rollback_needed and post_server_id != expected_server_id:
-                    rollback_needed = True
+                if verification_failure is None and post_server_id != expected_server_id:
+                    verification_failure = (
+                        "post-check server _project_id does not match the expected identity"
+                    )
                 # witness present
-                if not rollback_needed and not post_witness:
-                    rollback_needed = True
+                if verification_failure is None and not post_witness:
+                    verification_failure = "post-check witness item is missing"
                 # witness title (if supplied)
                 if (
-                    not rollback_needed
+                    verification_failure is None
                     and witness_title is not None
                     and post_witness
                     and post_witness[0].get("title") != witness_title
                 ):
-                    rollback_needed = True
-            except Exception:
-                rollback_needed = True
+                    verification_failure = "post-check witness title does not match"
+            except Exception as e:
+                verification_failure = f"post-check raised {type(e).__name__}: {e}"
 
-            if rollback_needed:
+            if verification_failure is not None:
                 # Guarded rollback: only replace bytes THIS repair wrote
                 rolled_back = False
+                rollback_failure: str | None = None
+                rollback_refusal: str | None = None
                 try:
                     current_bytes = meta_path.read_bytes()
                     if current_bytes == new_data:
-                        _atomic_write_metadata(meta_path, original_bytes, mode=original_mode)
-                        rolled_back = True
-                    # else: foreign change -- backup at backup_path is recovery
-                except Exception:
-                    pass  # rollback failed -- backup on disk is the recovery
+                        try:
+                            _atomic_write_metadata(meta_path, original_bytes, mode=original_mode)
+                        except Exception as e:
+                            rollback_failure = (
+                                f"could not restore original metadata: {type(e).__name__}: {e}"
+                            )
+                    else:
+                        rollback_refusal = (
+                            "metadata no longer contains this repair's bytes; "
+                            "refusing to overwrite foreign metadata"
+                        )
+                except Exception as e:
+                    rollback_failure = (
+                        f"could not read metadata for guarded rollback: {type(e).__name__}: {e}"
+                    )
+
+                metadata_state = "unknown"
+                try:
+                    final_bytes = meta_path.read_bytes()
+                    final_mode = os.stat(meta_path).st_mode & 0o7777
+                    if final_bytes == original_bytes and final_mode == original_mode:
+                        metadata_state = "original"
+                        if rollback_refusal is None and rollback_failure is None:
+                            rolled_back = True
+                    elif final_bytes == new_data:
+                        metadata_state = "repaired"
+                        if rollback_failure is None and rollback_refusal is None:
+                            rollback_failure = (
+                                "rollback completed without restoring the original metadata"
+                            )
+                    else:
+                        metadata_state = "foreign"
+                except Exception as e:
+                    if rollback_failure is None:
+                        rollback_failure = (
+                            f"could not read final metadata state: {type(e).__name__}: {e}"
+                        )
                 return RepairReport(
                     name=name,
                     applied=False,
@@ -5929,6 +5983,10 @@ class Workspace:
                     witness_title=actual_title,
                     backup_path=backup_path,
                     rolled_back=rolled_back,
+                    metadata_state=metadata_state,
+                    verification_failure=verification_failure,
+                    rollback_failure=rollback_failure,
+                    rollback_refusal=rollback_refusal,
                 )
 
             return RepairReport(
@@ -5941,6 +5999,7 @@ class Workspace:
                 witness_item_id=witness_item_id,
                 witness_title=actual_title,
                 backup_path=backup_path,
+                metadata_state="repaired",
             )
         except BeadsError:
             raise

@@ -85,6 +85,9 @@ Apply changes only local `metadata.json`'s project ID, with an exact backup,
 preserved permissions, atomic replacement and guarded rollback on verification
 failure. It never changes the database identity, issues or comments. A mismatch
 or concurrent metadata change is a refusal, not permission to force the repair.
+If an applied repair fails verification, its JSON report names the verification
+failure, separately reports any rollback failure or refusal, and reports only
+the metadata state observed by final readback; it exits nonzero.
 
 ## How it works
 

@@ -31,6 +31,9 @@ project, preserving its server identity and other clients' registrations.
 bypass: validate the effective endpoint, mapping, IDs and witness before writing,
 and recheck both metadata bytes and permissions under the repair lock.
 Keep replacement/rollback atomic and preserve the exact backup and mode.
+If post-write verification fails, return the observed final metadata state and
+separate verification from rollback failure/refusal; never infer either state
+without readback.
 Run `test_identity_preservation.py` and `test_repair_registration.py` using the
 isolated-server fixtures; never test a repair against the shared server.
 
