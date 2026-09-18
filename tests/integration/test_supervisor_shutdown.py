@@ -242,7 +242,9 @@ def test_sigterm_drains_real_dolt_and_blocking_sweep_descendant(tmp_path: Path, 
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("inject_cleanup_failure", [True, False], ids=["cleanup-failure", "sigterm"])
+@pytest.mark.parametrize(
+    "inject_cleanup_failure", [True, False], ids=["cleanup-failure", "sigterm"]
+)
 def test_force_reaps_term_ignoring_owned_dolt_and_exits_nonzero(
     tmp_path: Path,
     inject_cleanup_failure: bool,
